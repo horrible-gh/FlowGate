@@ -153,14 +153,40 @@
     v-else
     ref="rootEl"
     class="tl-status"
-    :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running }]"
+    :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running, 'tl-status--flow-wait': activity.code === 'follow_up_flow_waiting' }]"
     data-test="tl-status"
     :data-code="activity.code ?? undefined"
     role="status"
   >
     <!-- flowgate.v02gui.0026: the run in progress looks like the question policy conversation's "AI가 답하는 중…". -->
     <span v-if="running" class="tl-dots" data-test="tl-running-dots" aria-hidden="true"><i /><i /><i /></span>
+    <!-- flowgate.v02test.0067 #46: messages wait for the answer after the current one. -->
+    <span v-if="activity.code === 'follow_up_waiting'" data-test="tl-follow-up" aria-hidden="true">⏳</span>
+    <!-- flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card's run of the Flow. -->
+    <span v-if="activity.code === 'follow_up_flow_waiting'" data-test="tl-flow-wait" aria-hidden="true">⏳</span>
     <span class="tl-status-text">{{ statusText }}</span>
+    <!-- flowgate.v02test.0067 #2: [중지] gives up the wait only; the card's run goes on. -->
+    <button
+      v-if="activity.code === 'follow_up_flow_waiting' && !readOnly"
+      type="button"
+      class="tl-act-btn tl-act-btn--cancel-wait"
+      data-test="tl-flow-wait-cancel"
+      :title="t('gui.conversation.status.follow_up_flow_cancel_title')"
+      @click="emit('cancel-wait')"
+    >{{ t('gui.conversation.status.follow_up_flow_cancel') }}</button>
+    <!-- flowgate.v02test.0067 card 3: drop the running answer now and answer again with the waiting messages. -->
+    <template v-if="activity.code === 'follow_up_waiting' && replyNow">
+      <button
+        type="button"
+        class="tl-act-btn tl-act-btn--reply-now"
+        data-test="tl-reply-now"
+        :disabled="replyNow.stopping || readOnly"
+        :title="replyNow.editsFiles ? t('gui.conversation.status.follow_up_reply_now_edit_warning') : undefined"
+        :aria-describedby="replyNow.editsFiles ? replyNowWarnId : undefined"
+        @click="emit('reply-now')"
+      >{{ replyNow.stopping ? t('gui.conversation.status.follow_up_reply_now_stopping') : t('gui.conversation.status.follow_up_reply_now') }}</button>
+      <span v-if="replyNow.editsFiles" :id="replyNowWarnId" class="tl-sr" data-test="tl-reply-now-warning">{{ t('gui.conversation.status.follow_up_reply_now_edit_warning') }}</span>
+    </template>
     <template v-if="activity.code === 'run_history_unconfirmed'">
       <button type="button" class="tl-act-btn" data-test="tl-history-retry" @click="emit('retry-history')">{{ t('gui.common.retry') }}</button>
       <button type="button" class="tl-act-btn" data-test="tl-history-dismiss" @click="emit('dismiss-history')">{{ t('gui.conversation.close') }}</button>
@@ -194,9 +220,17 @@ const props = defineProps<{
   /** A decision for this command is in flight. */
   busy?: boolean
   readOnly?: boolean
+  /**
+   * flowgate.v02test.0067 card 3: the [지금 멈추고 다시 답하기] of the follow-up line (code `follow_up_waiting`). Given only
+   * while a message waits; `stopping`: it was pressed and the stop is under way; `editsFiles`: the running call may
+   * edit files, so the button warns that a stop can leave an edit half done.
+   */
+  replyNow?: { stopping: boolean; editsFiles: boolean }
 }>()
 
 const emit = defineEmits<{
+  'reply-now': []
+  'cancel-wait': []
   decide: [decision: CommandDecision]
   'retry-history': []
   'dismiss-history': []
@@ -230,6 +264,7 @@ const commandStateText = computed(() => {
 
 const detailOpen = ref(false)
 const detailId = computed(() => `tl-command-detail-${props.activity.id}`)
+const replyNowWarnId = computed(() => `tl-reply-now-warning-${props.activity.id}`)
 
 /** Every reason the server gave for the outcome, the raw code next to its wording. */
 const errorLines = computed(() => {
@@ -295,6 +330,18 @@ const statusText = computed(() => {
       : a.run?.access === 'execute' ? t('gui.conversation.composer.source.execute')
       : a.run?.access === 'read' ? t('gui.conversation.composer.source.read_only') : ''
     return [t('gui.conversation.status.run_running'), a.run?.providerName, access].filter(Boolean).join(' · ')
+  }
+  // flowgate.v02test.0067 #46: the follow-up line, with how many messages wait (text: the count, none when no waiting message is on screen).
+  if (a.code === 'follow_up_waiting') {
+    const count = Number(a.text ?? 0)
+    const head = t('gui.conversation.status.follow_up_waiting')
+    return count > 0 ? `${head} · ${t('gui.conversation.status.follow_up_waiting_count', { n: count })}` : head
+  }
+  // flowgate.v02test.0067 #2: the same line while the call waits for the Flow's card run.
+  if (a.code === 'follow_up_flow_waiting') {
+    const count = Number(a.text ?? 0)
+    const head = t('gui.conversation.status.follow_up_flow_waiting')
+    return count > 0 ? `${head} · ${t('gui.conversation.status.follow_up_waiting_count', { n: count })}` : head
   }
   // B: a recorded chat error keeps the wording its notice had.
   const key = a.code ? `gui.conversation.status.${a.code}` : ''
@@ -681,6 +728,11 @@ async function copyError(): Promise<void> {
   border-color: var(--fg2-status-success-border);
 }
 
+.tl-status--flow-wait {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
 .tl-status--warning {
   color: var(--fg2-status-warning-fg);
   border-color: var(--fg2-status-warning-border);

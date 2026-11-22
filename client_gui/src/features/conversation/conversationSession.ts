@@ -17,7 +17,12 @@ import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } fro
 import { ConversationRequestError, DEFAULT_CHAT_SETTINGS, newIdempotencyKey, type CreateChatOptions } from './api'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
 import { buildTimeline, mergeTurns, replaceServerActivities, sendFailureOf, upsertActivity, type PendingTurn, type SendFailure, type TimelineItem } from './timeline'
-import { runBelongsToChat, runBodyState, runStatusLines, type RunBodyState, type TurnReadResult } from './runAssessment'
+import { finishedRunFailed, runBelongsToChat, runBodyState, runStatusLines, type RunBodyState, type TurnReadResult } from './runAssessment'
+import {
+  flowCalled, flowWaitingFollowUps, followUpStorageKey, readFollowUps, replyNowRequested, waitingFollowUps, waitingMessageSeqs,
+  withFlowWait, withFollowUp, withoutFlowWait, withoutReplyNow, writeFollowUps,
+  type FollowUpMark, type FollowUpView, type RunEnd,
+} from './followUps'
 import { chatErrorActivity, keepLocalChatError, newChatErrorId, readLocalChatErrors, redactChatError, type ChatErrorRecord } from './chatErrors'
 import type {
   AiRunState,
@@ -48,6 +53,21 @@ export const PREPEND_PAGE_SIZE = 10
 export const CATCHUP_MAX_ROUNDS = 20
 export const SEND_RETRY_MAX = 2
 export const RUN_POLL_MS = 2500
+/**
+ * flowgate.v02test.0067 #2: how often a call that waits for the Flow (a card's run) looks at the Flow's run again. The
+ * Designer's own run lock (ConversationPanel `sourceLocked` going off) wakes it at once.
+ */
+export const FLOW_WAIT_POLL_MS = 5000
+/** The Flow run statuses an edit / edit-once / execute chat waits through (server LOCKED: running, paused, stopping). */
+const FLOW_RUN_LOCKED: ReadonlySet<string> = new Set(['running', 'paused', 'stopping'])
+/** How a start of the chat's AI ended (0067 #2: the Flow wait reads it). */
+type StartOutcome = 'started' | 'adopted' | 'flow' | 'failed' | 'stopped' | 'skipped'
+/** 0067 #2: the call a 409 `run_in_progress` adopted a run for — used when that run turns out to be a card's. */
+interface AdoptedFor {
+  providerId: string
+  providerOrigin?: ProviderOrigin
+  forSeq: number | null
+}
 export const RUN_POLL_MAX = 480
 export const FINAL_TURN_READ_ATTEMPTS = 3
 // T-A2 (NR ⑤): the activity read after a run ended is tried as often as its final turn read.
@@ -100,6 +120,7 @@ export function mergeChatRefresh(a: ChatRefresh | null, b: ChatRefresh): ChatRef
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export type { ProviderOrigin }
+export type { FollowUpView }
 
 /**
  * whether the open chat's AI is settled. 'loading' = its stored pick is still being read (and
@@ -237,6 +258,16 @@ export interface ConversationSession {
   readonly activeChat: ComputedRef<DeepReadonly<ChatSummary> | null>
   readonly timeline: ComputedRef<TimelineItem[]>
   readonly running: ComputedRef<boolean>
+  /**
+   * flowgate.v02test.0067 #46: the open chat's messages waiting for the answer after the current one (null: none, or
+   * no run to wait for). Card 3 puts its [지금 멈추고 다시 답하기] next to this line; card 4 waits on it for a Flow run.
+   */
+  readonly followUp: ComputedRef<FollowUpView | null>
+  /**
+   * flowgate.v02test.0067 #2: the open chat last saw its Flow's Graph run running / paused / stopping (from a refused
+   * call or the Flow wait's reads). The panel shows «플로우 실행 중» from this and the Designer's run lock.
+   */
+  readonly flowRunning: ComputedRef<boolean>
   /** B: the stop button's state for the open chat (see StartStopState). */
   readonly startStop: ComputedRef<StartStopState>
   readonly hasProviders: ComputedRef<boolean>
@@ -321,6 +352,20 @@ export interface ConversationSession {
    * (the run id is not known yet); a running call is cancelled by its run id.
    */
   stopRun(): Promise<void>
+  /**
+   * flowgate.v02test.0067 card 3 — [지금 멈추고 다시 답하기]: stops the open chat's run the way [중지] does and, once
+   * the stop is confirmed (the run has ended, not before), calls the AI once more; that call reads the waiting messages
+   * too. Only while a message waits (`followUp`); pressing it again meanwhile does nothing. A refused stop leaves the
+   * run and the waiting messages as they were.
+   */
+  replyNow(): Promise<void>
+  /**
+   * flowgate.v02test.0067 #2: [중지] of the «카드 실행이 끝나면 이어서 답합니다» line — gives up the wait only (the
+   * messages stay stored, no call follows). The card's run goes on: nothing is sent to the Flow.
+   */
+  cancelFlowWait(): void
+  /** flowgate.v02test.0067 #2: the Flow's run lock went off (the Designer saw it): a waiting call looks again now. */
+  wakeFlowWait(): void
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
   setManualCopyText(text: string | null): void
@@ -769,53 +814,265 @@ export function createConversationSession(options: ConversationSessionOptions = 
   // run's own result lines take over.
   const timeline = computed(() => {
     const display = state.runId !== null ? state.runDisplay : null
-    const activities = display ? [...state.activities, runLine(display)] : state.activities
+    // flowgate.v02test.0029 / 0067 #46: a person's message sent with [AI 호출] while the AI was answering waits ("대기")
+    // for the answer that follows the current one, and one untimed line after every entry says so (with how many wait).
+    const view = followUp.value
+    const activities = display || view
+      ? [...state.activities, ...(display ? [runLine(display)] : []), ...(view ? [followUpLine(view)] : [])]
+      : state.activities
     const items = buildTimeline(state.turns, activities, state.pending, state.readSeq)
-    // flowgate.v02test.0029: a person's stored message sent while the AI was answering waits ("대기") for the answer
-    // that follows the current one.
-    const queued = followUp.value
-    if (!queued || queued.chatId !== state.activeChatId) return items
+    if (!view) return items
+    const waiting = new Set(view.waitingSeqs)
     return items.map((item) => item.kind === 'message' && !item.pending && !item.failed && item.turn.speaker === 'user' &&
-      item.turn.seq > queued.afterSeq ? { ...item, waiting: true } : item)
+      waiting.has(item.turn.seq) ? { ...item, waiting: true } : item)
   })
   const running = computed(() => state.runId !== null)
   /**
-   * messages may be sent while the chat's AI answers. The server stores them at once; the AI
-   * that is answering may not see them. Their AI call is not started next to the running one (one run per chat): it is
-   * kept here — one per chat, whatever the number of messages — and started once the current run has ended, on the AI
-   * of the latest such message. `afterSeq` is the head the first of them was sent on: every person's message after it
-   * waits for this answer. Leaving the chat (another chat, Flow, reload) drops it; the messages stay stored.
+   * flowgate.v02test.0067 #46 — the follow-up ("이어서 답하기"), judged from the chat, not from the screen.
+   *
+   * A message sent with [AI 호출] while the chat's AI answers is stored at once; its AI call is not started next to
+   * the running one (one run per chat). It is marked instead (followUps.ts: kept in this browser per user and chat, so
+   * F5, another chat or Flow and another tab of this browser keep it) and, once the run has ended, ONE call answers
+   * every waiting message — on the AI of the latest one. The same happens to a message whose call met another tab's
+   * run (409 run_in_progress): that run is followed and judged when it ends. When the run ends:
+   *   - stopped ([중지]) or failed (or its end could not be confirmed): no call; the marks go, the messages stay —
+   *     except a stop made by [지금 멈추고 다시 답하기] (card 3: the marks carry `replyNow`), which is called for as if
+   *     the run had ended done: the stop and the new call are one act;
+   *   - done: the marks an AI answer has read since (`based_on_seq`, else `stale_since_seq`) go; the rest are called
+   *     for once (`auto`) — a follow-up that ends without covering them does not call again (no loop).
+   * Opening a chat whose run ended meanwhile (F5, back from another chat) judges the same way from its last run.
    */
-  interface FollowUp { chatId: string; gen: number; providerId: string; afterSeq: number; providerOrigin?: ProviderOrigin }
-  const followUp = ref<FollowUp | null>(null)
-
-  function queueFollowUp(chatId: string, gen: number, providerId: string, afterSeq: number, providerOrigin?: ProviderOrigin): void {
-    const now = followUp.value
-    // the AI of the latest message is pinned with how it was chosen.
-    if (now && now.chatId === chatId && now.gen === gen) followUp.value = { ...now, providerId, providerOrigin }
-    else followUp.value = { chatId, gen, providerId, afterSeq, providerOrigin }
-  }
-
-  /** Runs once the chat's run has ended: the follow-up call, unless the answer already read every waiting message. */
-  function startFollowUp(): void {
-    const queued = followUp.value
-    if (!queued || disposed || running.value) return
-    followUp.value = null
-    if (!isCurrentChat(queued.chatId, queued.gen) || state.turnsStatus !== 'ready') return
-    const waiting = state.turns.filter((t) => t.speaker === 'user' && t.seq > queued.afterSeq)
-    const lastWaiting = waiting.at(-1)?.seq ?? 0
-    // An AI that read the turns again before writing (a remote agent) may have answered them already.
-    const answered = lastWaiting > 0 && state.turns.some((t) => t.speaker === 'ai' && t.seq > lastWaiting &&
-      (t.basedOnSeq ?? 0) >= lastWaiting)
-    if (answered) return
-    void startAiRun(queued.providerId, queued.providerOrigin)
-  }
-  watch(() => state.runId, (runId) => {
-    if (runId === null && followUp.value) void Promise.resolve().then(startFollowUp)
+  const followUpMarks = ref<{ chatId: string | null; marks: FollowUpMark[] }>({ chatId: null, marks: [] })
+  // how the open chat's last run ended, noted right before its runId goes to null (read by the watch below).
+  let runEnd: { chatId: string; gen: number; end: RunEnd } | null = null
+  const followUp = computed<FollowUpView | null>(() => {
+    const chatId = state.activeChatId
+    const shown = followUpMarks.value
+    if (!chatId || shown.chatId !== chatId || !shown.marks.length) return null
+    const waiting = waitingFollowUps(state.turns, shown.marks)
+    if (!waiting.length) return null
+    const waitingSeqs = waitingMessageSeqs(state.turns, shown.marks)
+    // 0067 #2: a call refused for the Flow waits with no run of the chat at all (and keeps waiting while its retry starts).
+    if (waiting.some((m) => m.flow)) {
+      return { chatId, reason: 'flow_run', waitingSeqs, count: waitingSeqs.length, stopping: false, editsFiles: false }
+    }
+    if (state.runId === null) return null
+    return {
+      chatId, reason: 'run', waitingSeqs, count: waitingSeqs.length,
+      stopping: replyNowRequested(state.turns, shown.marks),
+      // the run's own access once its detail is read; before that (an adopted run, F5) the chat's mode, the safe side.
+      editsFiles: (state.runDisplay?.access ?? accessOfMode(state.settings.sourceAccessMode)) === 'read_write',
+    }
   })
+
+  function followUpLine(view: FollowUpView): StatusActivity {
+    return {
+      kind: 'status', id: 'local-status-follow-up', chatId: view.chatId, createdAt: null, tone: 'info',
+      code: view.reason === 'flow_run' ? 'follow_up_flow_waiting' : 'follow_up_waiting',
+      text: view.count > 0 ? String(view.count) : null,
+    }
+  }
+
+  /** Reads the open chat's marks again (its chat opened, or another tab changed them). */
+  function refreshFollowUps(chatId: string): void {
+    if (disposed || state.activeChatId !== chatId) return
+    followUpMarks.value = { chatId, marks: readFollowUps(draftUserId(), chatId) }
+  }
+
+  function storeFollowUps(chatId: string, marks: FollowUpMark[]): void {
+    writeFollowUps(draftUserId(), chatId, marks)
+    if (!disposed && state.activeChatId === chatId) followUpMarks.value = { chatId, marks }
+  }
+
+  /** Marks one message sent with [AI 호출] as waiting for the chat's next answer. */
+  function queueFollowUp(chatId: string, seq: number, providerId: string, providerOrigin?: ProviderOrigin): void {
+    if (!providerId) return
+    const mark: FollowUpMark = { seq, providerId, at: Date.now(), ...(providerOrigin ? { providerOrigin } : {}) }
+    storeFollowUps(chatId, withFollowUp(readFollowUps(draftUserId(), chatId), mark))
+  }
+
+  function noteRunEnd(chatId: string, gen: number, end: RunEnd): void {
+    runEnd = { chatId, gen, end }
+  }
+
+  function runEndOf(run: AiRunState): RunEnd {
+    if (run.endReason === 'cancelled') return 'stopped'
+    const succeeded = (run as { succeeded?: boolean | null }).succeeded
+    if (run.status !== 'finished' || succeeded === false || finishedRunFailed(run.endReason, run.exitCode)) return 'failed'
+    return 'done'
+  }
+
+  /** Judges the open chat's marks once its run has ended `end` (see above). */
+  function settleFollowUp(chatId: string, gen: number, end: RunEnd): void {
+    if (!isCurrentChat(chatId, gen) || running.value || state.turnsStatus !== 'ready') return
+    const marks = readFollowUps(draftUserId(), chatId)
+    if (!marks.length) {
+      refreshFollowUps(chatId)
+      return
+    }
+    const unanswered = waitingFollowUps(state.turns, marks)
+    // 0067 #2: messages waiting for the Flow are called by the Flow wait, not by the end of the chat's own run.
+    if (unanswered.some((m) => m.flow)) {
+      void runFlowWait(chatId, gen)
+      return
+    }
+    // card 3: a run stopped for [지금 멈추고 다시 답하기] is answered again; a failed one never is, and a [중지] pressed
+    // by the person (which cleared the `replyNow` marks) is not.
+    const waiting = end === 'done' || (end === 'stopped' && unanswered.some((m) => m.replyNow)) ? unanswered : []
+    // the marks it calls for stay (as `auto`) until the next end: a mark is answered at most once automatically.
+    storeFollowUps(chatId, withoutReplyNow(waiting).map((m) => ({ ...m, auto: true })))
+    const latest = waiting.at(-1)
+    if (latest) void startAiRun(latest.providerId, latest.providerOrigin, null)
+  }
+
+  /**
+   * A chat opened (or reopened) with marks and no run going on: its run ended while this screen did not watch it. The
+   * chat's last run decides — when it ended after the first waiting mark was queued (a minute of clock skew allowed).
+   */
+  async function settleFollowUpOnOpen(chatId: string, gen: number, ready: Promise<unknown>): Promise<void> {
+    refreshFollowUps(chatId)
+    if (!followUpMarks.value.marks.length) return
+    await ready
+    if (!isCurrentChat(chatId, gen) || running.value) return
+    const marks = readFollowUps(draftUserId(), chatId)
+    const waiting = waitingFollowUps(state.turns, marks)
+    if (!waiting.length) {
+      storeFollowUps(chatId, [])
+      return
+    }
+    // 0067 #2: still waiting for the Flow (F5, back from another chat): the wait goes on here.
+    if (waiting.some((m) => m.flow)) {
+      void runFlowWait(chatId, gen)
+      return
+    }
+    const since = Math.min(...waiting.map((m) => m.at)) - 60_000
+    const ended = (run: AiRunState) => Date.parse(run.finishedAt ?? run.startedAt ?? '') || 0
+    const last = [...terminalRuns.values()].sort((a, b) => ended(b) - ended(a))[0]
+    settleFollowUp(chatId, gen, last && ended(last) >= since ? runEndOf(last) : 'done')
+  }
+
+  watch(() => state.runId, (runId) => {
+    if (runId !== null) return
+    const ended = runEnd
+    runEnd = null
+    if (ended) void Promise.resolve().then(() => settleFollowUp(ended.chatId, ended.gen, ended.end))
+  })
+  /**
+   * flowgate.v02test.0067 #2 — an edit / edit-once / execute call while a card of the Flow runs.
+   *
+   * The server refuses it (409 `graph_run_locked` while the Flow's Graph run is running, paused or stopping; 409
+   * `run_in_progress` while another run — a card's, or another chat's edit — holds the group's AI slot). That is no
+   * error any more: the message is marked to wait for the Flow (`flow`, kept like every mark), the line says
+   * «카드 실행이 끝나면 이어서 답합니다», and the open chat looks at the Flow's run every FLOW_WAIT_POLL_MS (or at once when
+   * the Designer's run lock goes off). A paused / stopping run is waited through. Once the run is over ONE call answers
+   * every waiting message; refused again, it waits again (no error, no count); failing otherwise, the wait ends with
+   * the error like any call. [중지] on the line gives up the wait only — the card is never touched. Only the open chat
+   * waits actively; another chat's marks wait in storage and its wait goes on once it is opened.
+   */
+  const flowRunSeen = ref<{ chatId: string | null; locked: boolean }>({ chatId: null, locked: false })
+  // only while the open chat waits for its Flow: otherwise the Designer's own run lock tells it (ConversationPanel).
+  const flowRunning = computed(() => flowRunSeen.value.chatId !== null && flowRunSeen.value.chatId === state.activeChatId &&
+    flowRunSeen.value.locked && followUp.value?.reason === 'flow_run')
+  let flowWait: { chatId: string; gen: number; wake: (() => void) | null; due: boolean } | null = null
+
+  const flowIdOf = (chatId: string) => chatId.split('.').slice(0, 3).join('.')
+
+  function noteFlowRun(chatId: string, status: string | null): void {
+    flowRunSeen.value = { chatId, locked: !!status && FLOW_RUN_LOCKED.has(status) }
+  }
+
+  /** The chat's call met the Flow: its message (and the ones this call answered) wait for the Flow from now on. */
+  function enterFlowWait(chatId: string, gen: number, providerId: string, providerOrigin: ProviderOrigin | undefined,
+    forSeq: number | null, flowLocked: boolean): void {
+    const onScreen = isCurrentChat(chatId, gen)
+    // a bare [AI 호출] names no message: it waits to answer the chat as it stands (its latest turn).
+    const seq = forSeq ?? (onScreen ? state.turns.at(-1)?.seq ?? null : null)
+    const mark: FollowUpMark | null = seq !== null && providerId
+      ? { seq, providerId, at: Date.now(), flow: true, ...(providerOrigin ? { providerOrigin } : {}) }
+      : null
+    storeFollowUps(chatId, withFlowWait(onScreen ? state.turns : [], readFollowUps(draftUserId(), chatId), mark))
+    if (flowLocked) noteFlowRun(chatId, 'running')
+    if (onScreen) void runFlowWait(chatId, gen)
+  }
+
+  function wakeFlowWait(): void {
+    const wait = flowWait
+    if (!wait) return
+    wait.due = true
+    wait.wake?.()
+  }
+
+  function cancelFlowWait(): void {
+    const chatId = state.activeChatId
+    if (!chatId) return
+    storeFollowUps(chatId, withoutFlowWait(readFollowUps(draftUserId(), chatId)))
+    wakeFlowWait()
+  }
+
+  /** The open chat's wait for its Flow (one per chat; see above). */
+  async function runFlowWait(chatId: string, gen: number): Promise<void> {
+    if (disposed || !isCurrentChat(chatId, gen)) return
+    if (flowWait && flowWait.chatId === chatId && flowWait.gen === gen) return
+    flowWait?.wake?.()
+    const me: { chatId: string; gen: number; wake: (() => void) | null; due: boolean } = { chatId, gen, wake: null, due: false }
+    flowWait = me
+    const current = () => !disposed && flowWait === me && isCurrentChat(chatId, gen)
+    try {
+      for (;;) {
+        if (!me.due) {
+          await new Promise<void>((resolve) => {
+            me.wake = resolve
+            void sleep(FLOW_WAIT_POLL_MS).then(resolve)
+          })
+        }
+        me.wake = null
+        me.due = false
+        if (!current()) return
+        const waiting = flowWaitingFollowUps(state.turns, readFollowUps(draftUserId(), chatId))
+        if (!waiting.length) {
+          refreshFollowUps(chatId)
+          return
+        }
+        // the chat's own run (another tab answered meanwhile) or its history being read: look again on the next tick.
+        if (running.value || state.turnsStatus !== 'ready') continue
+        if (source.fetchFlowRunStatus) {
+          let status: string | null
+          try {
+            status = await source.fetchFlowRunStatus(flowIdOf(chatId))
+          } catch {
+            if (!current()) return
+            continue
+          }
+          if (!current()) return
+          noteFlowRun(chatId, status)
+          if (status && FLOW_RUN_LOCKED.has(status)) continue
+        }
+        const latest = waiting.at(-1)!
+        const outcome = await startAiRun(latest.providerId, latest.providerOrigin, null, true)
+        if (!current()) return
+        // refused for the Flow again: wait on. Anything else ends this wait (a run answers, or the call failed).
+        if (outcome === 'flow') continue
+        if (outcome === 'failed' || outcome === 'stopped' || outcome === 'skipped') {
+          storeFollowUps(chatId, withoutFlowWait(readFollowUps(draftUserId(), chatId)))
+        }
+        return
+      }
+    } finally {
+      if (flowWait === me) flowWait = null
+    }
+  }
+
+  // another tab of this browser changed the open chat's marks (queued, answered, called for).
+  const onStorage = (event: StorageEvent) => {
+    const chatId = state.activeChatId
+    if (chatId && event.key === followUpStorageKey(draftUserId(), chatId)) refreshFollowUps(chatId)
+  }
+  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage)
   // B: messages (local ids) whose AI call the user stopped while they were being stored. Kept
   // until the send action of that message runs (it starts no AI then) or its store fails.
   const stoppedSends = reactive(new Set<string>())
+  // 0067 #46: the seq the server gave each accepted message (local id), until its send action runs.
+  const acceptedSeqs = new Map<string, number>()
   let liveStart: LiveStart | null = null
   const startStop = computed<StartStopState>(() => {
     if (state.runId !== null) return state.cancelling ? 'requested' : 'available'
@@ -981,7 +1238,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.turns = []
     state.pending = []
     state.sending = false
-    followUp.value = null
+    // the marks stay stored for the chat (followUps.ts); only the open chat's copy goes.
+    followUpMarks.value = { chatId: null, marks: [] }
+    runEnd = null
+    // 0067 #2: the old chat's Flow wait ends (its marks stay stored; opening it again waits on).
+    const wait = flowWait
+    flowWait = null
+    wait?.wake?.()
+    flowRunSeen.value = { chatId: null, locked: false }
     state.activities = []
     state.participants = []
     state.headSeq = 0
@@ -1400,8 +1664,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     } finally {
       turnsRead()
     }
-    void openActivities(chatId, gen).then(() => restoreRuns(chatId, gen))
-    void adoptActiveRun(chatId, gen, ACTIVE_RUN_ADOPT_ATTEMPTS)
+    const history = openActivities(chatId, gen).then(() => restoreRuns(chatId, gen))
+    const adopted = adoptActiveRun(chatId, gen, ACTIVE_RUN_ADOPT_ATTEMPTS)
+    // 0067 #46: messages still waiting from before (F5, another chat, another tab) are judged once the chat's run
+    // history and its active run are known.
+    void settleFollowUpOnOpen(chatId, gen, Promise.allSettled([history, adopted]))
     // A signal that came while the chat was opening (after its pages were read, possibly) is served now.
     flushDeferredRefresh()
   }
@@ -1994,6 +2261,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
         trace.mark('turn_end', { docId: chatId, attempt: attempt + 1, result: 'ok' })
         publishOutbox(key, (outbox.get(key) ?? []).filter((p) => p.localId !== item.localId))
         traces.delete(item.localId)
+        // 0067 #46: the stored message's seq — a follow-up mark names it (runSendAction).
+        acceptedSeqs.set(item.localId, res.turn?.seq ?? res.headSeq)
         if (!isCurrentChat(chatId, gen)) {
           if (visibleOwner(key)) void catchUp()
           return true
@@ -2052,6 +2321,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * current value. Without a usable one startAiRun ends with the `no_provider` notice (the turn itself stays stored).
    */
   function runSendAction(chatId: string, gen: number, trace: SubmissionTrace, item: PendingTurn): void {
+    const seq = acceptedSeqs.get(item.localId) ?? null
+    acceptedSeqs.delete(item.localId)
     if (disposed) return
     const action = item.sendAction ?? state.settings.sendAction
     const onScreen = isCurrentChat(chatId, gen)
@@ -2065,10 +2336,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
         return
       }
       trace.mark('ai_start', { docId: chatId })
-      // sent while the AI answers: its call waits for that answer to end.
-      if (onScreen && running.value) queueFollowUp(chatId, gen, item.providerId, item.basedOnSeq, item.providerOrigin)
-      else if (onScreen) void startAiRun(item.providerId, item.providerOrigin)
-      else void startAiRunOffScreen(chatId, gen, item.providerId, item.providerOrigin)
+      // sent while the AI answers: its call waits for that answer to end (0067 #46: marked for the chat, not the screen).
+      const forSeq = seq ?? item.basedOnSeq
+      if (onScreen && running.value) queueFollowUp(chatId, forSeq, item.providerId, item.providerOrigin)
+      // 0067 #2: the chat already waits for its Flow: this message joins the wait (one call answers them all).
+      else if (onScreen && followUp.value?.reason === 'flow_run') enterFlowWait(chatId, gen, item.providerId, item.providerOrigin, forSeq, false)
+      else if (onScreen) void startAiRun(item.providerId, item.providerOrigin, forSeq)
+      else void startAiRunOffScreen(chatId, gen, item.providerId, item.providerOrigin, forSeq)
     }
   }
 
@@ -2305,20 +2579,20 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function pollRun(chatId: string, runId: string, gen: number): Promise<void> {
+  async function pollRun(chatId: string, runId: string, gen: number, adopted?: AdoptedFor): Promise<void> {
     if (!isCurrentChat(chatId, gen)) return
     // the run is polled already (an adoption racing a start's answer): one poll per run.
     if (currentPoll(chatId, gen)?.runId === runId) return
     const poll: LivePoll = { chatId, gen, runId, due: false, wake: null }
     livePoll = poll
     try {
-      await trackRun(chatId, runId, gen, poll)
+      await trackRun(chatId, runId, gen, poll, adopted)
     } finally {
       if (livePoll === poll) livePoll = null
     }
   }
 
-  async function trackRun(chatId: string, runId: string, gen: number, poll: LivePoll): Promise<void> {
+  async function trackRun(chatId: string, runId: string, gen: number, poll: LivePoll, adopted?: AdoptedFor): Promise<void> {
     state.runId = runId
     // D: an adopted run (another tab, F5, a 409 run_in_progress) shows its line at once; the
     // AI name and the access come with its first detail read.
@@ -2326,6 +2600,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
     trackedRunId = runId
     runChecks.set(runId, (runChecks.get(runId) ?? 0) + 1)
     const current = () => isCurrentChat(chatId, gen) && state.runId === runId
+    // 0067 #2: the run a 409 run_in_progress named is not this chat's (a card's run, or another chat's edit holds the
+    // group's AI slot): it is not followed here. The call waits for the Flow instead, with no error and no run line.
+    const leaveForFlow = () => {
+      state.runId = null
+      state.runDisplay = null
+      trackedRunId = null
+      state.cancelling = false
+      if (adopted) enterFlowWait(chatId, gen, adopted.providerId, adopted.providerOrigin, adopted.forSeq, false)
+    }
     // RUN_POLL_MS between ticks, cut short by a signal (wakePoll); a signal during a tick skips the next wait.
     const wait = async (): Promise<void> => {
       if (!poll.due) {
@@ -2406,6 +2689,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (!current()) return
       seen = true
       startedAt = run.startedAt ?? startedAt
+      if (adopted && ((run.actionScope != null && run.actionScope !== 'chat') || (run.docRef != null && run.docRef !== chatId))) {
+        leaveForFlow()
+        return
+      }
       if (!runBelongsToChat(run, runId, chatId)) {
         const liveWithoutDoc = run.status === 'running' && run.runId === runId && run.docRef == null &&
           run.actionScope === 'chat' && run.groupId === chatId.split('.').slice(0, 3).join('.')
@@ -2427,6 +2714,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
           if (!current()) return
           // A null answer can mean it finished between the two reads. Do not apply an
           // unowned detail; the next poll verifies the finished payload's own doc_ref.
+          // 0067 #2: an adopted run still running that is not the chat's active run is another chat's: wait for the slot.
+          if (active !== runId && adopted && run.status === 'running') {
+            leaveForFlow()
+            return
+          }
           if (active !== runId) continue
           liveMembershipConfirmed = true
         }
@@ -2444,6 +2736,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       if (!current() || result.status === 'discarded') return
       terminalRuns.set(runId, run)
       renderTerminal(chatId, run, result)
+      noteRunEnd(chatId, gen, runEndOf(run))
       state.runId = null
       state.cancelling = false
       await loadFinalActivities(chatId, gen)
@@ -2451,6 +2744,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
     if (current()) {
       showRunUnconfirmed(chatId, runId, startedAt)
+      // an end that could not be confirmed is not answered again automatically (it may have failed).
+      noteRunEnd(chatId, gen, 'failed')
       state.runId = null
       state.cancelling = false
       await loadFinalActivities(chatId, gen)
@@ -2461,20 +2756,27 @@ export function createConversationSession(options: ConversationSessionOptions = 
   async function invokeAi(): Promise<void> {
     // not before the open chat's AI is known.
     if (state.chatProviderStatus !== 'ready') return
-    await startAiRun(state.selectedProviderId, state.providerOrigin)
+    // 0067 #46: a bare press names no message; when another tab's run already answers the chat (409), following that
+    // run is the answer to this press (no follow-up after it).
+    await startAiRun(state.selectedProviderId, state.providerOrigin, null)
   }
 
   /**
    * starts the chat AI run on `providerId` and on nothing else — it is not read from the
    * selection again here, and an empty / unknown / unlisted id never falls back to the server default or to another
    * connection: the run ends with the `no_provider` notice and no /start request.
+   *
+   * 0067 #46: `forSeq` is the sent message this call answers (null: the button, or a follow-up). When another tab's run already
+   * owns the chat (409 run_in_progress) that run is followed and the message is marked to be answered after it; a
+   * follow-up call itself passes null (its marks are already called for).
    */
-  async function startAiRun(providerId: string, providerOrigin?: ProviderOrigin): Promise<void> {
+  async function startAiRun(providerId: string, providerOrigin?: ProviderOrigin, forSeq: number | null = null,
+    flowRetry = false): Promise<StartOutcome> {
     const chatId = state.activeChatId
-    if (!chatId || running.value) return
+    if (!chatId || running.value) return 'skipped'
     if (!providerId || !hasProviders.value || !state.providers.some((p) => p.id === providerId)) {
       notify('warning', 'no_provider')
-      return
+      return 'failed'
     }
     const gen = chatGen
     const stale = () => disposed || gen !== chatGen
@@ -2489,6 +2791,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     const press: LiveStart = { chatId, requestId, stopRequested: false, stopped: false }
     liveStart = press
     const endStopped = () => {
+      noteRunEnd(chatId, gen, 'stopped')
       state.runId = null
       state.cancelling = false
       notifyIfCurrent(gen, 'info', 'start_stopped')
@@ -2502,29 +2805,36 @@ export function createConversationSession(options: ConversationSessionOptions = 
           if (press.stopped) {
             // The server said nothing would start; a run named anyway (a restarted server) is stopped too.
             if (runId) void source.cancelRun(runId).catch(() => undefined)
-            return
+            return 'stopped'
           }
-          if (stale()) return
+          if (stale()) return 'skipped'
           if (!runId) {
             state.runId = null
             if (press.stopRequested) endStopped()
-            return
+            return press.stopRequested ? 'stopped' : 'failed'
           }
+          // 0067 #2: the Flow let the waiting call through — its messages are called for now (once).
+          if (flowRetry) storeFollowUps(chatId, flowCalled(readFollowUps(draftUserId(), chatId)))
           // A stop sent meanwhile was applied to this run by the server; pollRun shows it stopping and ending.
           void pollRun(chatId, runId, gen)
-          return
+          return 'started'
         } catch (error) {
-          if (press.stopped || stale()) return
+          if (press.stopped || stale()) return press.stopped ? 'stopped' : 'skipped'
           if (isStartCancelled(error)) {
             endStopped()
-            return
+            return 'stopped'
           }
           // 409 run_in_progress: adopt the run that already owns the group (L0008 §5) -- unless this press was
           // stopped: it started nothing, and the run that owns the group is not the one the user stopped.
           if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
-            if (press.stopRequested) endStopped()
-            else void pollRun(chatId, error.runId, gen)
-            return
+            if (press.stopRequested) {
+              endStopped()
+              return 'stopped'
+            }
+            if (forSeq !== null) queueFollowUp(chatId, forSeq, providerId, providerOrigin)
+            // 0067 #2: when the run turns out to be a card's (not this chat's), the call waits for the Flow instead.
+            void pollRun(chatId, error.runId, gen, { providerId, providerOrigin, forSeq })
+            return 'adopted'
           }
           // no answer (the first call of a chat used to run past the 30s wait while the server went
           // on to run the AI), or the server still admitting this press: send the same press again. state.runId stays
@@ -2533,29 +2843,33 @@ export function createConversationSession(options: ConversationSessionOptions = 
             && resends < START_RESEND_MAX && Date.now() - recoveryStarted < START_RECOVERY_MS) {
             resends += 1
             await sleep(RUN_POLL_MS)
-            if (press.stopped || stale()) return
+            if (press.stopped || stale()) return press.stopped ? 'stopped' : 'skipped'
             continue
           }
           // recovery ran out without an answer naming a run — adopt the chat's active run if
           // there is one.
           if (isNoResponse(error) || isStartPending(error)) {
             const adopted = await findActiveRun(chatId)
-            if (press.stopped || stale()) return
+            if (press.stopped || stale()) return press.stopped ? 'stopped' : 'skipped'
             if (adopted) {
               void pollRun(chatId, adopted, gen)
-              return
+              return 'adopted'
             }
           }
           state.runId = null
           // B: the user stopped this press and it ended without a run: that is the stop's result.
           if (press.stopRequested) {
             endStopped()
-            return
+            return 'stopped'
           }
-          // an edit / edit-once call while the Flow's Graph run is locked (WP answer 2).
-          if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false)
-          else recordChatError(chatId, gen, 'invoke_failed', error)
-          return
+          // an edit / edit-once / execute call while the Flow's Graph run is locked (WP answer 2): 0067 #2 — no error,
+          // the call waits for the Flow and answers once its run is over.
+          if (isSourceLocked(error)) {
+            enterFlowWait(chatId, gen, providerId, providerOrigin, forSeq, true)
+            return 'flow'
+          }
+          recordChatError(chatId, gen, 'invoke_failed', error)
+          return 'failed'
         }
       }
     } finally {
@@ -2571,7 +2885,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * server default. A refusal is recorded for that chat (shown when it is open again, kept over F5). When that chat is
    * open again by the time the server names the run, the run is shown there; otherwise opening it adopts the run.
    */
-  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string, providerOrigin?: ProviderOrigin): Promise<void> {
+  async function startAiRunOffScreen(chatId: string, gen: number, providerId: string, providerOrigin?: ProviderOrigin, forSeq: number | null = null): Promise<void> {
     const userId = draftUserId()
     const ended = () => disposed || userId !== draftUserId()
     if (!providerId) {
@@ -2589,7 +2903,10 @@ export function createConversationSession(options: ConversationSessionOptions = 
       } catch (error) {
         if (ended()) return
         if (error instanceof ConversationRequestError && error.code === 'run_in_progress' && error.runId) {
-          showRunIfOpen(chatId, error.runId)
+          // 0067 #46: the chat's run (another tab's, or the one this message was sent during) answers first; the
+          // message is marked for the chat, so ending that run — watched here, or judged when the chat opens — calls once.
+          if (forSeq !== null) queueFollowUp(chatId, forSeq, providerId, providerOrigin)
+          showRunIfOpen(chatId, error.runId, { providerId, providerOrigin, forSeq })
           return
         }
         if ((isNoResponse(error) || isStartPending(error))
@@ -2607,7 +2924,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
             return
           }
         }
-        if (isSourceLocked(error)) recordChatError(chatId, gen, 'source_locked', error, false, true)
+        // 0067 #2: refused for the Flow — the message waits for it (the wait goes on when that chat is open again).
+        if (isSourceLocked(error)) enterFlowWait(chatId, gen, providerId, providerOrigin, forSeq, true)
         else recordChatError(chatId, gen, 'invoke_failed', error, true, true)
         return
       }
@@ -2615,9 +2933,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   /** an off-screen run is polled only once its chat is the open, loaded one again. */
-  function showRunIfOpen(chatId: string, runId: string): void {
+  function showRunIfOpen(chatId: string, runId: string, adopted?: AdoptedFor): void {
     if (disposed || state.activeChatId !== chatId || state.turnsStatus !== 'ready' || running.value) return
-    void pollRun(chatId, runId, chatGen)
+    void pollRun(chatId, runId, chatGen, adopted)
   }
 
   async function findActiveRun(chatId: string): Promise<string | null> {
@@ -2664,9 +2982,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
    *   it, so pollRun shows it stopping and ending.
    * A stop without an answer (network) is kept for an F5 and shown as unconfirmed; the button can be pressed again.
    */
-  async function stopStarting(chatId: string): Promise<void> {
+  async function stopStarting(chatId: string): Promise<StopOutcome> {
     const press = liveStart
-    if (!press || press.chatId !== chatId || press.stopRequested || !source.cancelChatStart) return
+    if (!press || press.chatId !== chatId || press.stopRequested || !source.cancelChatStart) return 'idle'
     press.stopRequested = true
     state.cancelling = true
     const gen = chatGen
@@ -2674,19 +2992,22 @@ export function createConversationSession(options: ConversationSessionOptions = 
     try {
       const answer = await source.cancelChatStart(chatId, press.requestId)
       forgetStartStop(press.requestId)
-      if (answer.state !== 'cancelled') return
+      if (answer.state !== 'cancelled') return 'sent'
       press.stopped = true
-      if (!isCurrentChat(chatId, gen) || state.runId !== 'starting' || liveStart !== press) return
+      if (!isCurrentChat(chatId, gen) || state.runId !== 'starting' || liveStart !== press) return 'sent'
+      noteRunEnd(chatId, gen, 'stopped')
       state.runId = null
       state.cancelling = false
       notify('info', 'start_stopped')
+      return 'sent'
     } catch (error) {
       if (!isNoResponse(error)) forgetStartStop(press.requestId)
       press.stopRequested = false
-      if (!isCurrentChat(chatId, gen)) return
+      if (!isCurrentChat(chatId, gen)) return isNoResponse(error) ? 'unconfirmed' : 'refused'
       state.cancelling = false
       if (isNoResponse(error)) notify('warning', 'cancel_unconfirmed')
       else notify('danger', 'cancel_failed', messageOf(error))
+      return isNoResponse(error) ? 'unconfirmed' : 'refused'
     }
   }
 
@@ -2703,32 +3024,81 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function stopRun(): Promise<void> {
+  /** How a stop of the open chat's run went: nothing to stop, asked and not refused, refused, or no answer (it may have arrived). */
+  type StopOutcome = 'idle' | 'sent' | 'refused' | 'unconfirmed'
+
+  /** The stop of the open chat's run, shared by [중지] and [지금 멈추고 다시 답하기] (card 3): the same requests, the same notices. */
+  async function stopCurrentRun(): Promise<StopOutcome> {
     const runId = state.runId
     const chatId = state.activeChatId
-    if (!chatId || state.cancelling) return
+    if (!chatId || state.cancelling) return 'idle'
     if (!runId) {
       stopPendingSend()
-      return
+      return 'idle'
     }
-    if (runId === 'starting') {
-      await stopStarting(chatId)
-      return
-    }
+    if (runId === 'starting') return stopStarting(chatId)
     state.cancelling = true
     const gen = chatGen
     try {
       await source.cancelRun(runId)
       // pollRun observes the finish and releases the button exactly once.
+      return 'sent'
     } catch (error) {
-      if (!isCurrentChat(chatId, gen) || state.runId !== runId) return
+      if (!isCurrentChat(chatId, gen) || state.runId !== runId) return 'sent'
       const status = error instanceof ConversationRequestError ? error.status : null
-      if (status === 404 || status === 410) return
+      // the run is gone already: its end is what pollRun is about to see.
+      if (status === 404 || status === 410) return 'sent'
       state.cancelling = false
       // B: no answer is not a refusal -- the stop may have arrived; say so, and allow another press.
-      if (isNoResponse(error)) notifyIfCurrent(gen, 'warning', 'cancel_unconfirmed')
-      else notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
+      if (isNoResponse(error)) {
+        notifyIfCurrent(gen, 'warning', 'cancel_unconfirmed')
+        return 'unconfirmed'
+      }
+      notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
+      return 'refused'
     }
+  }
+
+  /** Takes the press of [지금 멈추고 다시 답하기] off the open chat's waiting messages (the marks stay). */
+  function clearReplyNow(chatId: string): void {
+    const marks = readFollowUps(draftUserId(), chatId)
+    if (marks.some((m) => m.replyNow)) storeFollowUps(chatId, withoutReplyNow(marks))
+  }
+
+  async function stopRun(): Promise<void> {
+    const chatId = state.activeChatId
+    // [중지] is the person giving up this answer: a stop that [지금 멈추고 다시 답하기] left unconfirmed (no answer, the run
+    // went on) must not turn it into a new call. While that stop is in flight (`cancelling`) this press does nothing.
+    if (chatId && !state.cancelling) clearReplyNow(chatId)
+    // 0067 #2: no run, only a wait for the Flow — [중지] gives up the wait (the card goes on).
+    if (state.runId === null && !state.sending && followUp.value?.reason === 'flow_run') {
+      cancelFlowWait()
+      return
+    }
+    await stopCurrentRun()
+  }
+
+  /**
+   * flowgate.v02test.0067 card 3 — stop the running answer and answer again, as ONE act.
+   *
+   * The press marks the waiting messages (`replyNow`, kept like the marks themselves) BEFORE it asks for the stop, so
+   * the flag is there whenever the run's end is judged: by this screen, by another tab, or after an F5. The stop is the
+   * one [중지] sends. The new call is not started here: settleFollowUp starts it when the run has ended (the stop is
+   * confirmed by the run's own end, the same as every other end), and it calls once (`auto`) for every waiting message.
+   * Pressing again while the stop is in flight, or after the flag is set, does nothing — so two presses are one call.
+   */
+  async function replyNow(): Promise<void> {
+    const chatId = state.activeChatId
+    const view = followUp.value
+    if (!chatId || !view || view.stopping || state.cancelling || state.runId === null) return
+    const marks = readFollowUps(draftUserId(), chatId)
+    const waiting = new Set(waitingFollowUps(state.turns, marks).map((m) => m.seq))
+    if (!waiting.size) return
+    storeFollowUps(chatId, marks.map((m) => (waiting.has(m.seq) ? { ...m, replyNow: true } : m)))
+    const outcome = await stopCurrentRun()
+    // nothing was stopped (no run to stop, or the server refused): back to waiting for the run to end by itself. No
+    // answer to the stop (`unconfirmed`) keeps the press: the stop may have arrived.
+    if (outcome === 'idle' || outcome === 'refused') clearReplyNow(chatId)
   }
 
   // ── Mention / settings ─────────────────────────────────────────────────────────────
@@ -2829,7 +3199,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
+    if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage)
     stopRevealWatch()
+    const wait = flowWait
+    flowWait = null
+    wait?.wake?.()
     const poll = livePoll
     livePoll = null
     poll?.wake?.()
@@ -2848,6 +3222,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     activeChat,
     timeline,
     running,
+    followUp,
+    flowRunning,
     startStop,
     hasProviders,
     submission,
@@ -2882,6 +3258,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
     supportsChatDocSettings: !!(source.fetchChatDocSettings && source.saveChatDocSettings),
     invokeAi,
     stopRun,
+    replyNow,
+    cancelFlowWait,
+    wakeFlowWait,
     issueMention,
     setManualCopyText,
     mutateTurn,

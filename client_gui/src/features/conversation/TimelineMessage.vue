@@ -28,6 +28,14 @@
           data-test="tl-waiting"
           :title="t('gui.conversation.message.waiting_title')"
         >{{ t('gui.conversation.message.waiting') }}</span>
+        <!-- flowgate.v02test.0067 #2: a read chat's answer written while a card of the Flow ran (it may have read files
+             the card was changing). -->
+        <span
+          v-if="!isUser && !isSystem && turn.observedDuringCardRun"
+          class="tl-seen-during-run"
+          data-test="tl-seen-during-run"
+          :title="t('gui.conversation.message.seen_during_card_run_title')"
+        >{{ t('gui.conversation.message.seen_during_card_run') }}</span>
         <!-- the message as written (Markdown source, not the rendered page), on both sides. -->
         <button
           v-if="turn.body && !turn.deletedAt"
@@ -240,6 +248,18 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 
 <style scoped>
 .tl-edit-input { width: 100%; min-height: 5em; box-sizing: border-box; font: inherit; }
+.tl-seen-during-run {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--fg2-status-warning-border);
+  border-radius: 8px;
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .tl-waiting {
   flex: 0 0 auto;
   padding: 0 5px;

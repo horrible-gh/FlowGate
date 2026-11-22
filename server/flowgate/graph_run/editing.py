@@ -59,6 +59,13 @@ def chat_source_refusal(group_id, locale=None) -> None:
                                                  "run_id": run["run_id"], "status": run["status"]})
 
 
+def chat_read_observation(group_id) -> bool:
+    """Stored execution state only; no reconcile, start, or Flow lock."""
+    return bool(run_store._one(
+        "SELECT e.ai_run_id FROM graph_attempt_runs e JOIN graph_runs r ON r.run_id = e.run_id "
+        "WHERE r.group_id = ? AND e.status IN ('requested', 'running') LIMIT 1", [group_id]))
+
+
 def require_settings_editable(flow_id: str) -> None:
     """flowgate.v02.0113 T#1 (0030-M §4, 0002-D revision §3.13): a card's settings — its AI roles and [고급] included — follow
     the card's own running lock (``card_settings.legacy_adapter.node_running``: an AI works on it now), not the run's

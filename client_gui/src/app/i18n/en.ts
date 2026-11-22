@@ -1176,6 +1176,9 @@ export default {
       list_loading: 'Loading chats...',
       list_failed: 'Could not load the chat list.',
       list_empty: 'This flow has no chats.',
+      // flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart.
+      flow_running: 'Flow running',
+      chat_running: 'Chat AI running',
     },
     timeline: {
       loading: 'Loading the conversation...',
@@ -1221,6 +1224,9 @@ export default {
       // a message sent while the AI answered.
       waiting: 'Queued',
       waiting_title: 'When the current answer ends, the AI reads this message and answers it.',
+      // flowgate.v02test.0067 #2: a read chat's answer written while a card of the flow ran.
+      seen_during_card_run: 'Read while a card ran',
+      seen_during_card_run_title: 'Read while a card of the flow was running. Files the card was changing may have changed since.',
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',
@@ -1305,6 +1311,17 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: 'Will answer next, once the current reply ends',
+      follow_up_waiting_count: '{n} waiting message(s)',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: 'Stop now and answer again',
+      follow_up_reply_now_stopping: 'Stopping…',
+      follow_up_reply_now_edit_warning: 'An edit in progress may be left half done',
+      // flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card run of the flow; [중지] cancels the wait only.
+      follow_up_flow_waiting: 'Will answer once the card run ends',
+      follow_up_flow_cancel: 'Stop',
+      follow_up_flow_cancel_title: 'Cancels the wait only. The card keeps running.',
       run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',

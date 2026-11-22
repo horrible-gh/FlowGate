@@ -105,7 +105,9 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         raise _http_error(404, "run_not_found", "Unknown or expired run id.")
     if run["status"] == "finished":
         return {"ok": True, "run_id": run_id, "status": "finished", "mode": run["mode"],
-                **_svc().finished_payload(run)}
+                **_svc().finished_payload(run),
+                "lease_scope": run.get("lease_scope", "group"),
+                "observed_during_card_run": bool(run.get("observed_during_card_run"))}
     # count run-attributed documents (the same oracle filter the
     # final judge uses) instead of the raw group max-seq delta, which inflated the
     # live counter with drafts (auto-created N/T) and documents outside this run.
@@ -127,6 +129,8 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "run_id": run_id,
         "status": status,
         **_execution_status(run),
+        "lease_scope": run.get("lease_scope", "group"),
+        "observed_during_card_run": bool(run.get("observed_during_card_run")),
         "mode": run["mode"],
         "group_id": run["group_id"],
         # the `ai_invoke_started` SSE frame already ships both of
@@ -226,6 +230,8 @@ def get_run_detail(run_id: str) -> dict:
     payload["succeeded"] = ai_run_succeeded(payload)
     payload["source_access"] = chat_source_access(token_id)
     payload["command_access"] = chat_command_access(token_id)
+    from modules.flow_gate.db import chat_ai_leases
+    payload["observed_during_card_run"] = chat_ai_leases.observation(run_id)
     payload["doc_title"] = None
     if payload.get("doc_ref"):
         try:

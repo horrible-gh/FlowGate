@@ -583,7 +583,9 @@ describe('0151 T-A2 follow-up question: cards stay where the server anchored the
     data.activities[A] = [change('R_old', after(11))]
     rOld = FINISHED
     await poll()
-    expect(session.state.runId).toBeNull()
+    // 0067 #46: #11 is stale since #10 (R_old never read it), so one follow-up call answers #10 after R_old.
+    expect(session.state.runId).toBe('run-1')
+    expect(source.startChatRun).toHaveBeenCalledTimes(2)
     expect(codes(session)).toEqual([])
     expect(placed(session)).toEqual(['turn:9', 'turn:10', 'turn:11', 'change:R_old'])
     expect(cards(session)[0].runId).toBe('R_old')
@@ -602,7 +604,9 @@ describe('0151 T-A2 follow-up question: cards stay where the server anchored the
     expect(session.state.runId).toBe('R_old')
     await poll()
     expect(source.fetchRun).toHaveBeenCalledWith('R_old')
-    expect(session.state.runId).toBeNull()
+    // 0067 #46: R_old answered before #10 (#9), so one follow-up call answers #10 after R_old.
+    expect(session.state.runId).toBe('run-1')
+    expect(source.startChatRun).toHaveBeenCalledTimes(2)
     expect(codes(session)).toEqual([])
     expect(placed(session)).toEqual(['turn:8', 'turn:9', 'change:R_old', 'turn:10'])
   })
