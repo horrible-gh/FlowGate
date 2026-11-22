@@ -1,73 +1,143 @@
 <template>
   <div class="gq" data-test="git-quick-actions">
-    <section class="gq-main">
-      <div class="gq-row">
-        <div class="gq-scopes" role="group" :aria-label="words.scope">
-          <button v-for="item in scopes" :key="item" :disabled="busy || paused" :aria-pressed="scope === item" @click="scope = item">{{ words[item + 'Scope'] }}</button>
+    <section class="one" :class="{ off: !!lockText && !plan }">
+      <div class="otop">
+        <div class="mseg" role="group" :aria-label="words.scope" data-test="git-scopes">
+          <button v-for="item in scopes" :key="item" type="button" :class="{ on: scope === item }" :disabled="busy || paused" :aria-pressed="scope === item" @click="scope = item">{{ words[item + 'Scope'] }}</button>
         </div>
-        <button class="gq-run" data-test="git-execute" :class="{ 'is-busy': busy }" :disabled="disabled || paused" @click="execute(false)"><span v-if="busy" class="gq-spin" aria-hidden="true" />{{ busy ? words.running : '▶ ' + words.execute }}</button>
+        <button type="button" class="big" data-test="git-execute" :disabled="disabled || paused" @click="execute(false)"><span v-if="busy && plan" class="spin"><GitIcon name="spin" :size="13" /></span>{{ busy && plan ? words.running : words.execute }}</button>
       </div>
-      <div class="gq-row">
-        <button class="gq-files" :disabled="busy" :aria-expanded="filesOpen" @click="filesOpen = !filesOpen">{{ words.files }} {{ selectedCount }}/<span data-test="git-worktree-summary-changed">{{ wt.state.status?.counts.changed ?? '—' }}</span></button>
-        <input :value="wt.state.message" :disabled="busy" :placeholder="words.message" :aria-label="words.message" @input="wt.setMessage(($event.target as HTMLInputElement).value)" />
-      </div>
-      <div v-if="filesOpen" class="gq-pick">
-        <input v-if="files.length > 8" v-model="search" :placeholder="words.search" :aria-label="words.search" />
-        <label><input type="checkbox" :checked="selectedCount === files.length" :disabled="busy" @change="toggleAll" />{{ words.all }}</label>
-        <div class="gq-list">
-          <label v-for="file in filteredFiles" :key="file.path" :title="file.path">
-            <input type="checkbox" :checked="!excluded.includes(file.path)" :disabled="busy" @change="toggle(file.path)" />
-            <span>{{ file.path }}</span>
-          </label>
+      <template v-if="plan && (busy || paused)">
+        <div class="chain" data-test="git-execution-steps">
+          <template v-for="(step, index) in plan.steps" :key="index">
+            <span v-if="index" class="ar">→</span>
+            <span class="st" :class="stepClass(index)"><span v-if="stepClass(index) === 'now'" class="spin"><GitIcon name="spin" :size="11" /></span><GitIcon v-else-if="stepClass(index) === 'done'" name="ok" :size="11" />{{ words[step] }}</span>
+          </template>
         </div>
-      </div>
-      <div v-if="scope !== 'commit'" class="gq-row">
-        <span>{{ words.target }}</span>
-        <input v-if="wt.state.mergeTargets.length > 8" v-model="targetSearch" :placeholder="words.targetSearch" :aria-label="words.targetSearch" :disabled="busy || paused" />
-        <select :value="wt.state.mergeTarget ?? ''" :disabled="busy || paused" :aria-label="words.target" @change="wt.setMergeTarget(($event.target as HTMLSelectElement).value)">
-          <option v-for="target in filteredTargets" :key="target.name" :value="target.name" :disabled="!target.eligible">{{ target.name }}</option>
-        </select>
-      </div>
-      <div class="gq-chain" data-test="git-execution-steps">
-        <span v-for="(step, index) in shownSteps" :key="index" :class="{ done: plan && index < plan.cursor, now: busy && index === plan?.cursor, failed: paused && index === plan?.cursor }">{{ stepMark(index) }}{{ words[step] }}</span>
-      </div>
-      <template v-if="plan">
+        <div v-if="paused" class="bar gq-stop" role="status" data-test="git-execution-result">
+          <span class="why" data-test="git-stop-reason" :title="plan.error ? words.code + ': ' + plan.error + (plan.detail ? ' · ' + plan.detail : '') : undefined">{{ resultTitle }} · {{ resultText }}</span>
+          <button v-for="fix in stopFixes" :key="fix" type="button" class="tb gq-ghost" :data-test="'git-fix-' + fix" @click="runFix(fix)">{{ words['fix_' + fix] }}</button>
+          <button v-if="plan.error === 'uncommitted_changes'" type="button" class="tb" :disabled="disabled" @click="commitRemaining">{{ words.commitContinue }}</button>
+          <button v-if="plan.error !== 'merge_conflict' || !conflict" type="button" class="tb" data-test="git-retry" :disabled="disabled" @click="execute(true)">{{ plan.error === 'push_rejected' ? words.syncPush : plan.error === 'merge_conflict' ? words.continue : words.retry }}</button>
+          <button type="button" class="ib sm gh2" data-test="git-cancel" :title="words.cancelRun" :aria-label="words.cancelRun" @click="wt.clearExecution()"><GitIcon name="x" :size="13" /></button>
+        </div>
         <GitConflictCard v-if="session.groupCard.value === 'conflict' || session.groupCard.value === 'unsupported'" :unsupported="session.groupCard.value === 'unsupported'" />
         <GitAiResolvingCard v-else-if="session.groupCard.value === 'ai'" />
         <GitReviewCard v-else-if="session.groupCard.value === 'review'" />
       </template>
-      <div v-if="plan && !busy" class="gq-result" :class="{ success: plan.status === 'complete', stopped: paused }" role="status" data-test="git-execution-result">
-        <div class="gq-result-text">
-          <b>{{ resultTitle }}</b>
-          <span v-if="paused" data-test="git-stop-reason">{{ resultText }}</span>
-          <small v-if="paused && plan.error" class="gq-code" data-test="git-stop-code">{{ words.code }}: {{ plan.error }}<template v-if="plan.detail"> · {{ plan.detail }}</template></small>
+      <div v-else-if="lockText" class="ad" role="status" data-test="git-lock-reason">{{ lockText }}</div>
+      <template v-else>
+        <div v-if="plan" class="res" :class="plan.status === 'complete' ? 'ok' : 'left'" role="status" data-test="git-execution-result"><GitIcon v-if="plan.status === 'complete'" name="ok" :size="13" />{{ resultTitle }}</div>
+        <div class="chain" data-test="git-execution-steps">
+          <template v-for="(step, index) in idleSteps" :key="step">
+            <span v-if="index" class="ar">→</span>
+            <span v-if="step === 'commit'" class="st gq-files" :class="{ skip: !selectedCount }" role="button" tabindex="0" :aria-expanded="filesOpen" @click="filesOpen = !filesOpen" @keydown.enter="filesOpen = !filesOpen"><span>{{ words.files }} <b>{{ selectedCount }}</b>/<span data-test="git-worktree-summary-changed">{{ wt.state.status?.counts.changed ?? '—' }}</span></span></span>
+            <span v-else-if="step === 'update'" class="st"><span>{{ words.update }}<template v-if="behind">{{ ' ' }}<b>{{ behind }}</b></template></span></span>
+            <span v-else-if="step === 'merge'" class="st" :class="{ skip: !mergeTodo }">{{ wt.state.mergeTarget ?? '—' }}</span>
+            <span v-else class="st" :class="{ skip: !pushTodo }">origin</span>
+          </template>
         </div>
-        <div v-if="paused" class="gq-fixes">
-          <button v-for="fix in stopFixes" :key="fix" class="gq-fix" :data-test="'git-fix-' + fix" @click="runFix(fix)">{{ words['fix_' + fix] }}</button>
-          <button v-if="plan.error === 'uncommitted_changes'" class="gq-fix gq-primary" :disabled="disabled" @click="commitRemaining">{{ words.commitContinue }}</button>
-          <button v-if="plan.error !== 'merge_conflict' || !conflict" class="gq-fix gq-primary" data-test="git-retry" :disabled="disabled" @click="execute(true)">{{ plan.error === 'push_rejected' ? words.syncPush : plan.error === 'merge_conflict' ? words.continue : words.retry }}</button>
-          <button class="gq-fix" data-test="git-cancel" @click="wt.clearExecution()">{{ words.cancelRun }}</button>
-        </div>
-        <button v-else class="gq-close" :title="words.close" :aria-label="words.close" @click="wt.clearExecution()">×</button>
-      </div>
+        <div v-if="files.length" class="bar"><input class="inp" data-test="git-message" :value="wt.state.message" :disabled="busy" :placeholder="words.message" :aria-label="words.message" @input="wt.setMessage(($event.target as HTMLInputElement).value)" /></div>
+        <template v-if="filesOpen && files.length">
+          <div v-if="files.length > 8" class="bar"><input v-model="search" class="inp" data-test="git-file-search" :placeholder="words.search" :aria-label="words.search" /><span class="cnt">{{ filteredFiles.length }}/{{ files.length }}</span></div>
+          <label class="li gq-all"><input type="checkbox" :checked="selectedCount === files.length" :disabled="busy" @change="toggleAll" /><span class="t">{{ words.all }}</span><span class="r">{{ selectedCount }}/{{ files.length }}</span></label>
+          <div class="list" data-test="git-file-list">
+            <label v-for="file in filteredFiles" :key="file.path" class="li" :title="file.path">
+              <input type="checkbox" :checked="!excluded.includes(file.path)" :disabled="busy" @change="toggle(file.path)" />
+              <span class="fl" :class="'l' + letter(file)">{{ letter(file) }}</span><span class="t">{{ file.path }}</span>
+            </label>
+          </div>
+        </template>
+      </template>
     </section>
-    <details class="gq-individual">
-      <summary>{{ words.individual }}</summary>
-      <div class="gq-action"><b>{{ words.commit }}</b><span>Stage <span data-test="git-worktree-summary-staged">{{ wt.state.status?.counts.staged ?? '—' }}</span></span><button class="gq-icon" data-test="git-worktree-entry" data-tab="files" :title="words.fileDetails" :aria-label="words.fileDetails" @click="emit('details', 'files')">◫</button><button class="gq-act" data-test="git-action-commit" :class="{ ready: !disabled && !!selectedCount, running: wt.state.busy === 'commit' }" :disabled="disabled || !selectedCount" :title="words.commit" :aria-label="words.commit" @click="wt.execute('commit', selection())"><span v-if="wt.state.busy === 'commit'" class="gq-spin" aria-hidden="true" />⊙ {{ words.commit }}</button></div>
-      <div class="gq-action"><b>{{ words.update }}</b><span>{{ dirty ? words.commitFirst : words.base }}</span><button class="gq-act" data-test="git-action-update" :class="{ ready: !disabled && !dirty, running: wt.state.busy === 'update' }" :disabled="disabled || dirty" :title="words.update" :aria-label="words.update" @click="wt.updateFromBase()"><span v-if="wt.state.busy === 'update'" class="gq-spin" aria-hidden="true" />{{ wt.state.busy === 'update' ? words.updating : '↓ ' + words.update }}</button></div>
-      <div class="gq-action"><b>{{ words.merge }}</b><button class="gq-icon" data-test="git-worktree-entry" data-tab="merge" :title="words.mergeDetails" :aria-label="words.mergeDetails" @click="emit('details', 'merge')">◫</button><span><span data-test="git-worktree-summary-merge">{{ wt.state.merge?.aheadOfTarget ?? '—' }}</span> → {{ wt.state.mergeTarget }}</span><button class="gq-act" data-test="git-action-merge" :class="{ ready: !disabled && !wt.reasons.value.merge.disabled, running: wt.state.busy === 'merge' }" :disabled="disabled || wt.reasons.value.merge.disabled" :title="words.merge" :aria-label="words.merge" @click="confirm = 'merge'"><span v-if="wt.state.busy === 'merge'" class="gq-spin" aria-hidden="true" />⑂ {{ words.merge }}</button></div>
-      <div class="gq-action"><b>{{ words.push }}</b><span>{{ pushCount }}</span><button class="gq-act" data-test="git-action-push" :class="{ ready: !disabled && !wt.reasons.value.push.disabled, running: wt.state.busy === 'push' }" :disabled="disabled || wt.reasons.value.push.disabled" :title="words.push" :aria-label="words.push" @click="confirm = 'push'"><span v-if="wt.state.busy === 'push'" class="gq-spin" aria-hidden="true" />↑ {{ words.push }}</button></div>
-      <div v-if="confirm" class="gq-row gq-confirm"><span>{{ words[confirm] }} → {{ confirm === 'merge' ? wt.state.mergeTarget : wt.pushRow.value?.target.targetBranch }}</span><button class="gq-fix gq-primary" :disabled="disabled" :title="words.execute" :aria-label="words.execute" @click="confirmAction">✓ {{ words.execute }}</button><button class="gq-fix" :title="words.close" :aria-label="words.close" @click="confirm = null">×</button></div>
-    </details>
-    <p v-for="line in noticeLines" :key="line.area" class="gq-notice" :class="'is-' + line.tone" role="status" :data-test="'git-quick-notice-' + line.area">
-      <span>{{ line.text }}</span>
-      <button class="gq-close" :title="words.close" :aria-label="words.close" @click="wt.dismissNotice(line.area)">×</button>
-    </p>
-    <p v-if="blocked" class="gq-muted" role="status">{{ words.blocked }}</p>
+
+    <div class="fold" role="button" tabindex="0" data-test="git-individual" :aria-expanded="each" @click="each = !each" @keydown.enter="each = !each"><GitIcon :name="each ? 'down' : 'next'" :size="13" />{{ words.individual }}</div>
+    <div v-show="each" class="acts" data-test="git-individual-rows">
+      <div class="act" :class="{ off: !commitOn && open !== 'commit' }">
+        <div class="atop">
+          <span class="aico"><GitIcon name="commit" :size="16" /></span><b>{{ words.commit }}</b>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="dirty">{{ words.changedFiles }} <em>{{ dirty }}</em></template><template v-else>{{ words.noCommit }}</template></span>
+          <span v-if="wt.state.busy === 'commit'" class="spin"><GitIcon name="spin" /></span>
+          <button v-else type="button" class="ib" :class="{ pri: open === 'commit' }" data-test="git-open-commit" :disabled="!commitOn" :title="words.commit" :aria-label="words.commit" @click="toggleOpen('commit')"><GitIcon name="commit" /></button>
+        </div>
+        <div v-if="open === 'commit' && commitOn" class="sub">
+          <div v-if="files.length > 8" class="bar"><input v-model="search" class="inp" :placeholder="words.search" :aria-label="words.search" /><span class="cnt">{{ filteredFiles.length }}/{{ files.length }}</span></div>
+          <label class="li gq-all"><input type="checkbox" :checked="selectedCount === files.length" @change="toggleAll" /><span class="t">{{ words.all }}</span><span class="r">{{ selectedCount }}/{{ files.length }}</span></label>
+          <div class="list">
+            <label v-for="file in filteredFiles" :key="file.path" class="li" :title="file.path">
+              <input type="checkbox" :checked="!excluded.includes(file.path)" @change="toggle(file.path)" />
+              <span class="fl" :class="'l' + letter(file)">{{ letter(file) }}</span><span class="t">{{ file.path }}</span>
+              <button type="button" class="gq-diff" data-test="git-worktree-entry" data-tab="files" :title="words.fileDetails" :aria-label="words.fileDetails" @click.prevent="emit('details', 'files')"><GitIcon name="diff" :size="12" /></button>
+            </label>
+          </div>
+          <div class="bar">
+            <input class="inp" :value="wt.state.message" :placeholder="words.commitMessage" :aria-label="words.commitMessage" @input="wt.setMessage(($event.target as HTMLInputElement).value)" />
+            <button type="button" class="ib pri" data-test="git-action-commit" :disabled="disabled || !selectedCount || !wt.state.message.trim()" :title="words.commit" :aria-label="words.commit" @click="commitNow"><GitIcon name="ok" /></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="act" :class="{ off: !updateOn || behind === 0 }">
+        <div class="atop">
+          <span class="aico"><GitIcon name="fetch" :size="16" /></span><b>{{ words.update }}</b>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="behind !== 0">{{ words.baseChanged }} <em>{{ behind ?? '—' }}</em><template v-if="dirty"> · <i>{{ words.commitFirst }}</i></template></template><template v-else>{{ words.noFetch }}</template></span>
+          <span v-if="wt.state.busy === 'update'" class="spin"><GitIcon name="spin" /></span>
+          <button v-else type="button" class="ib" data-test="git-action-update" :disabled="!updateOn" :title="words.update" :aria-label="words.update" @click="wt.updateFromBase()"><GitIcon name="fetch" /></button>
+        </div>
+      </div>
+
+      <div class="act" :class="{ off: !mergeOn && open !== 'merge' }">
+        <div class="atop">
+          <span class="aico"><GitIcon name="merge" :size="16" /></span><b>{{ words.merge }}</b>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="ahead !== 0">{{ words.commits }} <em data-test="git-worktree-summary-merge">{{ ahead ?? '—' }}</em> → {{ wt.state.mergeTarget ?? '—' }}<template v-if="dirty"> · <i>{{ words.dirtyExcluded.replace('{n}', String(dirty)) }}</i></template></template><template v-else><span data-test="git-worktree-summary-merge" hidden>0</span>{{ words.noMerge }}</template></span>
+          <span v-if="wt.state.busy === 'merge'" class="spin"><GitIcon name="spin" /></span>
+          <button v-else type="button" class="ib" :class="{ pri: open === 'merge' }" data-test="git-open-merge" :disabled="!mergeOn" :title="words.merge" :aria-label="words.merge" @click="toggleOpen('merge')"><GitIcon name="merge" /></button>
+        </div>
+        <div v-if="open === 'merge' && mergeOn" class="sub">
+          <div class="bar"><span class="cnt">{{ words.target }}</span><button type="button" class="pick" :aria-expanded="branchOpen" @click="branchOpen = !branchOpen"><span>{{ wt.state.mergeTarget ?? '—' }}</span><GitIcon name="down" :size="13" /></button></div>
+          <template v-if="branchOpen">
+            <div v-if="wt.state.mergeTargets.length > 8" class="bar"><input v-model="targetSearch" class="inp" :placeholder="words.targetSearch" :aria-label="words.targetSearch" /><span class="cnt">{{ filteredTargets.length }}/{{ wt.state.mergeTargets.length }}</span></div>
+            <div class="list">
+              <button v-for="target in filteredTargets" :key="target.name" type="button" class="li" :class="{ sel: target.name === wt.state.mergeTarget }" :disabled="!target.eligible" @click="pickTarget(target.name)"><span class="t">{{ target.name }}</span><span class="r">{{ target.isWorkBase ? words.baseTag : '' }}</span></button>
+            </div>
+          </template>
+          <div class="bar">
+            <span class="ad">{{ words.commits }} <em>{{ ahead ?? '—' }}</em> → {{ wt.state.mergeTarget ?? '—' }}</span>
+            <button type="button" class="ib" data-test="git-worktree-entry" data-tab="merge" :title="words.mergeDetails" :aria-label="words.mergeDetails" @click="emit('details', 'merge')"><GitIcon name="diff" /></button>
+            <button type="button" class="ib pri" data-test="git-action-merge" :disabled="disabled || wt.reasons.value.merge.disabled" :title="words.merge" :aria-label="words.merge" @click="mergeNow"><GitIcon name="ok" /></button>
+            <button type="button" class="ib gh2" :title="words.close" :aria-label="words.close" @click="open = null"><GitIcon name="x" /></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="act" :class="{ off: !pushOn && open !== 'push' }">
+        <div class="atop">
+          <span class="aico"><GitIcon name="push" :size="16" /></span><b>{{ words.push }}</b>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="unpushed">{{ words.toPush }} <em>{{ unpushed }}</em></template><template v-else>{{ words.noPush }}</template></span>
+          <span v-if="wt.state.busy === 'push'" class="spin"><GitIcon name="spin" /></span>
+          <button v-else type="button" class="ib" :class="{ pri: open === 'push' }" data-test="git-open-push" :disabled="!pushOn" :title="words.push" :aria-label="words.push" @click="toggleOpen('push')"><GitIcon name="push" /></button>
+        </div>
+        <div v-if="open === 'push' && pushOn" class="sub">
+          <div class="bar">
+            <span class="ad">{{ words.commits }} <em>{{ unpushed }}</em> → origin/{{ wt.pushRow.value?.target.targetBranch ?? '—' }}</span>
+            <button type="button" class="ib pri" data-test="git-action-push" :disabled="disabled || wt.reasons.value.push.disabled" :title="words.push" :aria-label="words.push" @click="pushNow"><GitIcon name="ok" /></button>
+            <button type="button" class="ib gh2" :title="words.close" :aria-label="words.close" @click="open = null"><GitIcon name="x" /></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gq-last">
+      <p v-for="line in noticeLines" :key="line.area" class="gq-notice" :class="'is-' + line.tone" role="status" :data-test="'git-quick-notice-' + line.area">{{ words.just }} · <b>{{ line.text }}</b></p>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+// flowgate.v02test.0068 — the Git tab's run box and individual actions, laid out as the approved
+// v16 mockup (mirageglass 9cn8mjxm/v16): scope + 실행, one step chain, the message field, a folded
+// 개별 실행 list whose rows are icon · name · state · one icon button, the whole row dimmed when it
+// has nothing to do. A blocked tab says why in that place instead of a bare 「작업 중」.
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGitWorktree } from './gitWorktreeSession'
@@ -75,16 +145,18 @@ import { useGitPanel } from './gitSession'
 import GitConflictCard from './GitConflictCard.vue'
 import GitAiResolvingCard from './GitAiResolvingCard.vue'
 import GitReviewCard from './GitReviewCard.vue'
+import GitIcon from './GitIcon.vue'
 import { executionSteps, type GitExecutionScope } from './gitExecution'
-import type { WorktreeSelection } from './types'
+import type { WorktreeFile, WorktreeSelection } from './types'
 type Fix = 'settings' | 'station' | 'status' | 'files' | 'merge'
+type Row = 'commit' | 'merge' | 'push'
 const emit = defineEmits<{ details: [tab: 'files' | 'merge' | 'status']; settings: []; station: [] }>()
 const { worktree: wt } = useGitWorktree()
 const { session } = useGitPanel()
 const { locale, t } = useI18n()
-const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중…', updating: '받아오는 중…', files: '파일', message: '커밋 메시지 (비우면 AI 작성)', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '취소', complete: '완료', remaining: '완료 · 남은 변경 있음', stoppedAt: '{step}에서 멈춤', stopped: '알 수 없는 이유 · 코드 확인', code: '코드', commitFirst: '커밋 먼저', commitContinue: '커밋하고 계속', base: '베이스 → 작업 브랜치', blocked: '작업 중', close: '닫기', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세' }
-const en: Record<string, string> = { targetSearch: 'Find branches', fileDetails: 'File details', mergeDetails: 'Merge details', syncPush: 'Sync remote and push', scope: 'Scope', commitScope: 'Commit', mergeScope: 'Through merge', pushScope: 'Through push', execute: 'Run', running: 'Running…', updating: 'Updating…', files: 'Files', message: 'Commit message (AI when blank)', target: 'Target', search: 'Find files', all: 'Select all', individual: 'Individual actions', commit: 'Commit', update: 'Update', merge: 'Merge', push: 'Push', continue: 'Continue', retry: 'Retry', cancelRun: 'Cancel', complete: 'Done', remaining: 'Done · changes remain', stoppedAt: 'Stopped at {step}', stopped: 'Unknown reason · check code', code: 'Code', commitFirst: 'Commit required', commitContinue: 'Commit and continue', base: 'Base → work branch', blocked: 'Work in progress', close: 'Close', fix_settings: 'Open Git settings', fix_station: 'Open Git station', fix_status: 'View status', fix_files: 'View files', fix_merge: 'Merge details' }
-const ja: Record<string, string> = { targetSearch: 'ブランチを検索', fileDetails: 'ファイル詳細', mergeDetails: 'マージ詳細', syncPush: 'リモートを反映してプッシュ', scope: '実行範囲', commitScope: 'コミットのみ', mergeScope: 'マージまで', pushScope: 'プッシュまで', execute: '実行', running: '実行中…', updating: '取り込み中…', files: 'ファイル', message: 'コミットメッセージ (空欄なら AI が作成)', target: '対象', search: 'ファイルを検索', all: 'すべて選択', individual: '個別実行', commit: 'コミット', update: '取り込み', merge: 'マージ', push: 'プッシュ', continue: '続行', retry: '再試行', cancelRun: 'キャンセル', complete: '完了', remaining: '完了 · 未反映の変更あり', stoppedAt: '{step}で停止', stopped: '原因不明 · コード確認', code: 'コード', commitFirst: '先にコミット', commitContinue: 'コミットして続行', base: 'ベース → 作業ブランチ', blocked: '作業中', close: '閉じる', fix_settings: 'Git 設定を開く', fix_station: 'Git ステーションを開く', fix_status: '状態を見る', fix_files: 'ファイルを見る', fix_merge: 'マージ詳細' }
+const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중', files: '파일', message: '커밋 메시지 · 비우면 AI 작성', commitMessage: '커밋 메시지', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '중단', complete: '완료', remaining: '완료 · 남은 변경 있음', stoppedAt: '{step}에서 멈춤', stopped: '알 수 없는 이유', code: '코드', commitFirst: '커밋 필요', commitContinue: '커밋하고 계속', close: '닫기', changedFiles: '변경 파일', noCommit: '커밋할 파일 없음', baseChanged: '베이스 변경', noFetch: '받을 커밋 없음', commits: '커밋', dirtyExcluded: '미커밋 파일 {n} 제외', noMerge: '병합할 커밋 없음', toPush: '푸시할 커밋', noPush: '푸시할 커밋 없음', baseTag: '베이스', just: '방금', lockBusy: '실행 중', lockConflict: '충돌 해결 중', lockUnknown: '지금 Git 작업 불가', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세' }
+const en: Record<string, string> = { targetSearch: 'Find branches', fileDetails: 'File details', mergeDetails: 'Merge details', syncPush: 'Sync remote and push', scope: 'Scope', commitScope: 'Commit', mergeScope: 'Through merge', pushScope: 'Through push', execute: 'Run', running: 'Running', files: 'Files', message: 'Commit message · AI writes if blank', commitMessage: 'Commit message', target: 'Target', search: 'Find files', all: 'Select all', individual: 'Individual actions', commit: 'Commit', update: 'Update', merge: 'Merge', push: 'Push', continue: 'Continue', retry: 'Retry', cancelRun: 'Stop', complete: 'Done', remaining: 'Done · changes remain', stoppedAt: 'Stopped at {step}', stopped: 'Unknown reason', code: 'Code', commitFirst: 'commit first', commitContinue: 'Commit and continue', close: 'Close', changedFiles: 'Changed files', noCommit: 'Nothing to commit', baseChanged: 'Base changes', noFetch: 'Nothing to update', commits: 'Commits', dirtyExcluded: '{n} uncommitted excluded', noMerge: 'Nothing to merge', toPush: 'To push', noPush: 'Nothing to push', baseTag: 'base', just: 'Just now', lockBusy: 'Running', lockConflict: 'Resolving conflict', lockUnknown: 'Git actions unavailable now', fix_settings: 'Open Git settings', fix_station: 'Open Git station', fix_status: 'View status', fix_files: 'View files', fix_merge: 'Merge details' }
+const ja: Record<string, string> = { targetSearch: 'ブランチを検索', fileDetails: 'ファイル詳細', mergeDetails: 'マージ詳細', syncPush: 'リモートを反映してプッシュ', scope: '実行範囲', commitScope: 'コミットのみ', mergeScope: 'マージまで', pushScope: 'プッシュまで', execute: '実行', running: '実行中', files: 'ファイル', message: 'コミットメッセージ · 空欄なら AI が作成', commitMessage: 'コミットメッセージ', target: '対象', search: 'ファイルを検索', all: 'すべて選択', individual: '個別実行', commit: 'コミット', update: '取り込み', merge: 'マージ', push: 'プッシュ', continue: '続行', retry: '再試行', cancelRun: '中断', complete: '完了', remaining: '完了 · 未反映の変更あり', stoppedAt: '{step}で停止', stopped: '原因不明', code: 'コード', commitFirst: 'コミット必要', commitContinue: 'コミットして続行', close: '閉じる', changedFiles: '変更ファイル', noCommit: 'コミットするファイルなし', baseChanged: 'ベース変更', noFetch: '取り込むコミットなし', commits: 'コミット', dirtyExcluded: '未コミット {n} 件を除外', noMerge: 'マージするコミットなし', toPush: 'プッシュするコミット', noPush: 'プッシュするコミットなし', baseTag: 'ベース', just: 'たった今', lockBusy: '実行中', lockConflict: '競合を解決中', lockUnknown: '今は Git 作業不可', fix_settings: 'Git 設定を開く', fix_station: 'Git ステーションを開く', fix_status: '状態を見る', fix_files: 'ファイルを見る', fix_merge: 'マージ詳細' }
 // Why a run stopped, in words, with what can be done about it on this screen.
 const REASONS: Record<string, { ko: string; en: string; ja: string; fixes?: Fix[] }> = {
   base_dirty: { ko: '베이스에 커밋 안 한 수정 파일 있음', en: 'Base has uncommitted edits', ja: 'ベースに未コミットの変更あり', fixes: ['status'] },
@@ -131,11 +203,13 @@ const words = computed(() => ({ ko, ja, en })[lang.value])
 const scopes: GitExecutionScope[] = ['commit', 'merge', 'push']
 const scope = ref<GitExecutionScope>('push')
 const filesOpen = ref(false)
+const each = ref(false)
+const open = ref<Row | null>(null)
+const branchOpen = ref(false)
 const excluded = ref<string[]>([])
 const search = ref('')
 const targetSearch = ref('')
-const filteredTargets = computed(() => wt.state.mergeTargets.filter(x => x.name === wt.state.mergeTarget || x.name.toLowerCase().includes(targetSearch.value.toLowerCase())).sort((a,b) => Number(b.name === wt.state.mergeTarget)-Number(a.name === wt.state.mergeTarget)))
-const confirm = ref<'merge' | 'push' | null>(null)
+const filteredTargets = computed(() => wt.state.mergeTargets.filter(x => x.name === wt.state.mergeTarget || x.name.toLowerCase().includes(targetSearch.value.toLowerCase())).sort((a, b) => Number(b.name === wt.state.mergeTarget) - Number(a.name === wt.state.mergeTarget) || Number(b.isWorkBase) - Number(a.isWorkBase)))
 const files = computed(() => wt.state.status?.files.filter(f => f.canStage || f.canUnstage) ?? [])
 const filteredFiles = computed(() => files.value.filter(f => f.path.toLowerCase().includes(search.value.toLowerCase())))
 const selectedCount = computed(() => files.value.filter(f => !excluded.value.includes(f.path)).length)
@@ -143,15 +217,34 @@ const plan = computed(() => wt.state.execution)
 const paused = computed(() => plan.value?.status === 'stopped')
 const busy = computed(() => !!wt.state.busy || !!session.state.busy)
 const conflict = computed(() => ['conflict', 'ai', 'review', 'unsupported'].includes(session.groupCard.value ?? ''))
-const blocked = computed(() => (wt.state.status?.blockers.length ?? 0) > 0 || !!wt.state.merge?.graph?.blocker)
-const disabled = computed(() => busy.value || conflict.value || blocked.value || session.state.readOnly || wt.state.forbidden || wt.state.statusLoad !== 'ready')
-const dirty = computed(() => (wt.state.status?.counts.changed ?? 1) > 0)
-const shownSteps = computed(() => paused.value || busy.value ? plan.value?.steps ?? executionSteps(scope.value) : executionSteps(scope.value))
-const pushCount = computed(() => wt.state.results?.results.find(r => r.target.targetBranch === wt.state.mergeTarget)?.remote.localAheadCount ?? '—')
+const blocker = computed(() => wt.state.status?.blockers[0]?.code ?? wt.state.merge?.graph?.blocker ?? null)
+const disabled = computed(() => busy.value || conflict.value || !!blocker.value || session.state.readOnly || wt.state.forbidden || wt.state.statusLoad !== 'ready')
+// The counts the mockup shows on each row; null = not read yet (the row then stays usable).
+const dirty = computed(() => wt.state.status?.counts.changed ?? 0)
+const behind = computed<number | null>(() => wt.state.merge?.workBaseBehind ?? null)
+const ahead = computed<number | null>(() => wt.state.merge?.aheadOfTarget ?? null)
+const unpushed = computed(() => wt.pushRow.value?.remote.localAheadCount ?? 0)
+const mergeTodo = computed(() => (ahead.value ?? 1) + (selectedCount.value ? 1 : 0) + (behind.value ? 1 : 0))
+const pushTodo = computed(() => unpushed.value + mergeTodo.value)
+const idleSteps = computed(() => executionSteps(scope.value))
 function reasonText(code: string | null | undefined): string | null {
   const r = code ? REASONS[code] : undefined
   return r ? r[lang.value] : null
 }
+// What stops the tab now, said in place of the box contents and each row's state (never a bare 「작업 중」).
+const lockText = computed(() => {
+  if (blocker.value) return reasonText(blocker.value) ?? `${words.value.lockUnknown} · ${blocker.value}`
+  if (conflict.value) return words.value.lockConflict
+  if (busy.value) return words.value.lockBusy
+  return ''
+})
+const rowLock = computed(() => lockText.value && !wt.state.busy ? lockText.value : '')
+const commitOn = computed(() => !disabled.value && dirty.value > 0)
+// The base count is local knowledge: only a fetch learns of new remote commits, so 받아오기 stays
+// usable at 0 (the row is dimmed, as the mockup's 「받을 커밋 없음」).
+const updateOn = computed(() => !disabled.value && !dirty.value)
+const mergeOn = computed(() => !disabled.value && !wt.reasons.value.merge.disabled)
+const pushOn = computed(() => !disabled.value && !wt.reasons.value.push.disabled)
 const resultTitle = computed(() => {
   const p = plan.value
   if (!p) return ''
@@ -159,9 +252,9 @@ const resultTitle = computed(() => {
   const step = p.steps[p.cursor]
   return words.value.stoppedAt.replace('{step}', step ? words.value[step] : '—')
 })
-const resultText = computed(() => reasonText(plan.value?.error) ?? words.value.stopped)
+const resultText = computed(() => reasonText(plan.value?.error) ?? (plan.value?.error ? `${words.value.stopped} · ${plan.value.error}` : words.value.stopped))
 const stopFixes = computed<Fix[]>(() => (plan.value?.error && REASONS[plan.value.error]?.fixes) || [])
-// The result of an individual update / merge / push, drawn here as well as in the Git window.
+// The result of an individual update / merge / push, as the mockup's 「방금 · …」 line.
 const noticeLines = computed(() => (['apply', 'push'] as const).flatMap(area => {
   const n = wt.state.notices[area]
   if (!n) return []
@@ -172,18 +265,23 @@ const noticeLines = computed(() => (['apply', 'push'] as const).flatMap(area => 
   const tone = n.tone === 'error' ? 'error' : ['merge_conflict', 'queued', 'judgment_changed'].includes(n.code) ? 'warn' : 'ok'
   return [{ area, text, tone }]
 }))
-function stepMark(index: number): string {
+function stepClass(index: number): string {
   const p = plan.value
   if (!p) return ''
-  if (index < p.cursor) return '✓ '
-  if (paused.value && index === p.cursor) return '! '
+  if (index < p.cursor) return 'done'
+  if (index === p.cursor) return paused.value ? 'bad' : busy.value ? 'now' : ''
   return ''
+}
+function letter(file: WorktreeFile): string {
+  return file.staged ?? file.unstaged ?? (file.untracked || !file.inHead ? 'A' : 'M')
 }
 function runFix(fix: Fix) {
   if (fix === 'settings') emit('settings')
   else if (fix === 'station') emit('station')
   else emit('details', fix)
 }
+function toggleOpen(row: Row) { open.value = open.value === row ? null : row; branchOpen.value = false }
+function pickTarget(name: string) { wt.setMergeTarget(name); branchOpen.value = false }
 function selection(): WorktreeSelection { return excluded.value.length ? { paths: files.value.filter(f => !excluded.value.includes(f.path)).map(f => f.path) } : { all: true } }
 function toggle(path: string) { excluded.value = excluded.value.includes(path) ? excluded.value.filter(p => p !== path) : [...excluded.value, path] }
 function toggleAll() { excluded.value = selectedCount.value === files.value.length ? files.value.map(f => f.path) : [] }
@@ -192,57 +290,94 @@ async function commitRemaining() {
   // Explicitly authorized additional commit; the interrupted plan is retained by the session.
   await wt.execute(scope.value, { all: true }, true, true)
 }
-function confirmAction() {
-  const action = confirm.value; confirm.value = null
-  if (action === 'merge') { wt.setPushAfterMerge(false); const s = wt.mergeSnapshot(); if (s) void wt.merge(s) }
-  if (action === 'push') { const s = wt.pushSnapshot(); if (s) void wt.pushResult(s) }
+function commitNow() { open.value = null; void wt.execute('commit', selection()) }
+function mergeNow() {
+  open.value = null
+  wt.setPushAfterMerge(false); const s = wt.mergeSnapshot(); if (s) void wt.merge(s)
 }
-watch(() => wt.ticket()?.groupId, () => { excluded.value = []; search.value = ''; filesOpen.value = false; confirm.value = null })
-watch(() => wt.state.mergeTarget, () => { confirm.value = null })
+function pushNow() {
+  open.value = null
+  const s = wt.pushSnapshot(); if (s) void wt.pushResult(s)
+}
+watch(() => wt.ticket()?.groupId, () => { excluded.value = []; search.value = ''; filesOpen.value = false; open.value = null; branchOpen.value = false })
+watch(() => wt.state.mergeTarget, () => { if (open.value === 'push') open.value = null })
 </script>
 
 <style scoped>
-.gq { display:flex; flex-direction:column; gap:10px; font-size:12px; min-width:0 }
-.gq-main { display:flex; flex-direction:column; gap:8px; padding:9px; border:1px solid #355c88; background:#10233a; border-radius:8px }
-.gq-row { display:flex; gap:6px; align-items:center; min-width:0; flex-wrap:wrap }
-.gq button, .gq input:not([type=checkbox]), .gq select { border:1px solid #30445f; border-radius:5px; background:#111e30; color:#dce8f5; font:inherit; min-height:28px }
-.gq button { cursor:pointer; padding:3px 8px; transition:background .12s, border-color .12s, color .12s }
-.gq button:not(:disabled):hover { border-color:#5b8fcf; background:#18304d }
-.gq button:disabled { opacity:.35; cursor:not-allowed; filter:grayscale(.6) }
-.gq input:not([type=checkbox]), .gq select { flex:1; min-width:80px; padding:4px 7px; max-width:100% }
-.gq-scopes { display:flex }.gq-scopes button { border-radius:0; font-size:11px; color:#9fb3cc }.gq-scopes button:first-child { border-radius:5px 0 0 5px }.gq-scopes button:last-child { border-radius:0 5px 5px 0 }
-.gq-scopes button[aria-pressed=true] { background:#2f80ed; border-color:#2f80ed; color:white; font-weight:700 }
-.gq .gq-run { margin-left:auto; display:inline-flex; align-items:center; gap:6px; background:#2f80ed; border-color:#2f80ed; color:white; font-weight:700; min-width:72px; box-shadow:0 1px 6px rgba(47,128,237,.35) }
-.gq .gq-run:not(:disabled):hover { background:#4a93f5; border-color:#4a93f5 }
-.gq .gq-run.is-busy { opacity:1; filter:none; background:#24466e; border-color:#2f80ed }
-.gq-chain { display:flex; flex-wrap:wrap; gap:5px; color:#8ea3bd; font-size:11px }.gq-chain span { padding:3px 7px; border-radius:4px; background:#15253b; border:1px solid transparent }
-.gq-chain .done { color:#66dfb0; border-color:#1f5a46 }.gq-chain .now { color:white; background:#24466e; border-color:#2f80ed }.gq-chain .failed { color:#ffd0d7; background:#4a1d27; border-color:#d9506a; font-weight:700 }
-.gq-pick { display:flex; flex-direction:column; gap:6px }.gq-list { max-height:192px; overflow:auto; border:1px solid #22344d; border-radius:5px; background:#0a1524 }.gq-pick label { display:flex; align-items:center; gap:6px; height:24px; padding:0 5px }.gq-pick label span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-.gq-result { display:flex; align-items:flex-start; flex-wrap:wrap; gap:8px; color:#ffc072; font-size:12px; padding:8px; border-radius:6px; border:1px solid #6b5426; background:#2a2312 }
-.gq-result.success { color:#66dfb0; border-color:#1f5a46; background:#0f2a22 }
-.gq-result.stopped { color:#ffd0d7; border-color:#d9506a; background:#2d141b }
-.gq-result-text { flex:1; display:flex; flex-direction:column; gap:3px; min-width:160px }.gq-result-text span { color:#f0dfe3; line-height:1.4 }
-.gq-code { color:#b99aa2; font-family:ui-monospace, monospace; font-size:10.5px; word-break:break-all }
-.gq-fixes { display:flex; flex-wrap:wrap; gap:6px; width:100%; justify-content:flex-end }
-.gq .gq-fix { font-size:11px; padding:3px 10px }
-.gq .gq-primary { background:#2f80ed; border-color:#2f80ed; color:white; font-weight:700 }
-.gq .gq-primary:not(:disabled):hover { background:#4a93f5; border-color:#4a93f5 }
-.gq .gq-close { min-height:22px; padding:0 7px; background:transparent; border-color:transparent; color:inherit }
-.gq-individual summary { cursor:pointer; color:#8ea3bd; padding:3px 0 }
-.gq-action { display:flex; align-items:center; gap:8px; padding:7px 8px; border:1px solid #22344d; border-radius:7px; margin-top:6px; min-width:0; background:#0d1a2b }
-.gq-action b { flex:0 0 60px }.gq-action > span { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:#8ea3bd; font-size:11px }
-.gq .gq-icon { width:28px; padding:0 }
-.gq .gq-act { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:84px; font-size:11px; font-weight:600; color:#9fb3cc }
-.gq .gq-act.ready { background:#163a63; border-color:#3f7fcc; color:#e6f1ff }
-.gq .gq-act.ready:hover { background:#1e4b80; border-color:#5b9be6 }
-.gq .gq-act.running { opacity:1; filter:none; background:#24466e; border-color:#2f80ed; color:white }
-.gq-spin { width:10px; height:10px; border:2px solid rgba(255,255,255,.35); border-top-color:white; border-radius:50%; animation:gq-spin .8s linear infinite; flex:none }
+/* Values taken from the approved v16 mockup stylesheet (9cn8mjxm/v16) so the tab matches it. */
+.gq { display:flex; flex-direction:column; gap:10px; font-size:12.5px; min-width:0; color:#eef5ff }
+.gq button { font:inherit }
+.one { border:1px solid rgba(75,163,255,.45); background:rgba(75,163,255,.12); border-radius:8px; padding:8px 9px; display:flex; flex-direction:column; gap:7px }
+.one.off { border-color:#16263b; background:transparent }
+.otop { display:flex; align-items:center; gap:8px }
+.mseg { display:flex; border:1px solid #2a3a52; border-radius:6px; overflow:hidden }
+.mseg button { border:0; border-right:1px solid #2a3a52; background:transparent; color:#8ea3bd; font-size:11.5px; padding:0 9px; height:26px; cursor:pointer }
+.mseg button:last-child { border-right:0 }
+.mseg button.on { background:#1d3a63; color:#fff; font-weight:700 }
+.mseg button:disabled { cursor:not-allowed }
+.big { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:64px; height:30px; border-radius:7px; border:1px solid #2f80ed; background:#2f80ed; color:#fff; cursor:pointer; margin-left:auto; padding:0 14px; font-size:12.5px; font-weight:700 }
+.big:disabled { opacity:.35; cursor:not-allowed }
+.chain { display:flex; align-items:center; gap:6px; font-size:11.5px; color:#b9c9db; flex-wrap:wrap }
+.chain .st { display:inline-flex; align-items:center; gap:3px; padding:2px 7px; border-radius:4px; background:#15253b }
+.chain .st b { color:#fff }
+.chain .st.done { color:#5fe3b3; background:rgba(34,201,140,.12) }
+.chain .st.now { color:#fff; background:rgba(75,163,255,.25) }
+.chain .st.bad { color:#ffb3bf; background:rgba(255,100,120,.16) }
+.chain .st.skip { color:#4a5d77; background:transparent }
+.chain .st.skip b { color:inherit }
+.chain .ar { color:#4a5d77 }
+.gq-files { cursor:pointer }
+.bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap }
+.inp { flex:1; height:26px; border:1px solid #2a3a52; border-radius:6px; background:#0d1726; color:#eef5ff; padding:0 8px; font:inherit; font-size:12px; min-width:0 }
+.inp::placeholder { color:#6f839d }
+.cnt { font-size:11px; color:#8ea3bd; white-space:nowrap }
+.list { max-height:192px; overflow:auto; border:1px solid #1b2b42; border-radius:6px; background:#08111d }
+.li { display:flex; align-items:center; gap:8px; width:100%; height:24px; padding:0 8px; font-size:11.5px; border:0; border-bottom:1px solid #121f31; background:transparent; cursor:pointer; color:#cfdced; text-align:left }
+.li:hover { background:#111f33 }
+.li.sel { background:rgba(75,163,255,.14); color:#fff }
+.li:disabled { opacity:.4; cursor:not-allowed }
+.li.gq-all { border:0 }
+.li .t { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.li .r { font-size:10.5px; color:#6f839d }
+.li input { margin:0; accent-color:#2f80ed }
+.fl { width:12px; font-weight:800; font-size:10.5px; text-align:center }
+.lM { color:#ffc072 } .lA { color:#22c98c } .lD { color:#ff96a6 }
+.gq-diff { display:inline-grid; place-items:center; border:0; background:transparent; color:#6f839d; padding:0; cursor:pointer }
+.gq-diff:hover { color:#fff }
+.pick { display:flex; align-items:center; gap:6px; height:26px; padding:0 8px; border:1px solid #2a3a52; border-radius:6px; background:#0d1726; color:#eef5ff; cursor:pointer; flex:1; min-width:0; font-size:12px; text-align:left }
+.pick span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.why { font-size:11.5px; color:#ffc072; padding:2px; flex:1; min-width:140px }
+.tb { height:24px; padding:0 9px; border-radius:6px; border:1px solid #2f80ed; background:#2f80ed; color:#fff; font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap; flex:none }
+.tb.gq-ghost { background:#15253b; border-color:#2a3a52; color:#d6e3f2; font-weight:600 }
+.tb:disabled { opacity:.35; cursor:not-allowed }
+.res { font-size:11.5px; display:flex; align-items:center; gap:5px }
+.res.ok { color:#5fe3b3 } .res.left { color:#ffc072 }
+.ad { flex:1; min-width:0; font-size:11.5px; color:#b9c9db; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+.ad em { font-style:normal; color:#fff; font-weight:700 }
+.ad i { font-style:normal; color:#ffc072 }
+.fold { display:flex; align-items:center; gap:6px; color:#8ea3bd; font-size:11.5px; cursor:pointer; padding:2px }
+.fold:hover { color:#fff }
+.acts { display:flex; flex-direction:column; gap:6px }
+.act { border:1px solid #22344d; border-radius:8px; background:#0a1422; padding:7px 9px }
+.act.off { background:transparent; border-color:#16263b }
+.atop { display:flex; align-items:center; gap:9px; min-height:28px }
+.aico { display:grid; place-items:center; width:22px; color:#7cc0ff; flex:none }
+.act.off .aico { color:#4a5d77 }
+.atop b { width:66px; flex:none; font-size:13px }
+.act.off .atop b { color:#5d708a }
+.act.off .ad { color:#5d708a }
+.ib { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:6px; border:1px solid #2a3a52; background:#15253b; color:#d6e3f2; cursor:pointer; flex:none; padding:0 }
+.ib:hover { border-color:#4ba3ff }
+.ib:disabled { opacity:.35; cursor:not-allowed; border-color:#2a3a52 }
+.ib.pri { background:#2f80ed; border-color:#2f80ed; color:#fff }
+.ib.gh2 { background:transparent }
+.ib.sm { width:24px; height:24px }
+.sub { margin-top:7px; display:flex; flex-direction:column; gap:6px }
+.spin { animation:gq-spin 1s linear infinite; display:inline-flex }
 @keyframes gq-spin { to { transform:rotate(360deg) } }
-.gq-confirm { margin-top:8px }.gq-confirm span { flex:1 }
-.gq-notice { display:flex; align-items:center; gap:6px; margin:0; padding:6px 8px; border-radius:6px; font-size:12px; border:1px solid }
-.gq-notice span { flex:1 }
-.gq-notice.is-ok { color:#66dfb0; border-color:#1f5a46; background:#0f2a22 }
-.gq-notice.is-warn { color:#ffc072; border-color:#6b5426; background:#2a2312 }
-.gq-notice.is-error { color:#ffb3bf; border-color:#d9506a; background:#2d141b }
-.gq-muted { color:#8ea3bd; margin:0 }
+.gq-last { min-height:16px; display:flex; flex-direction:column; gap:2px }
+.gq-notice { margin:0; font-size:11.5px; color:#6f839d; min-height:16px; padding:0 2px }
+.gq-notice b { color:#b9c9db; font-weight:600 }
+.gq-notice.is-warn b { color:#ffc072 }
+.gq-notice.is-error b { color:#ff96a6 }
 </style>

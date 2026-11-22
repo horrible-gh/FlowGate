@@ -24,7 +24,7 @@ describe('0068 quick execution feedback', () => {
     const result = w!.find('[data-test=git-execution-result]')
     expect(result.text()).toContain('받아오기에서 멈춤')
     expect(w!.find('[data-test=git-stop-reason]').text()).toContain('베이스에 커밋 안 한 수정 파일')
-    expect(w!.find('[data-test=git-stop-code]').text()).toContain('base_dirty')
+    expect(w!.find('[data-test=git-stop-reason]').attributes('title')).toContain('base_dirty')
     expect(w!.find('[data-test=git-fix-status]').exists()).toBe(true)
     update.mockImplementation(async () => ({ status: 'no_change', mergeId: null }) as never)
     await w!.find('[data-test=git-retry]').trigger('click'); await flushPromises()
@@ -52,3 +52,4 @@ describe('0068 quick execution feedback', () => {
     expect(line.classes()).toContain('is-error')
   })
 })
+

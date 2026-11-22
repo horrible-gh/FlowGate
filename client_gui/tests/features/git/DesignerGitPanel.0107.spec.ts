@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'
@@ -49,7 +50,11 @@ const shell = () => q('git-window')?.closest<HTMLElement>('.ui-modeless-panel') 
 const refresh = () => (wrapper!.vm as unknown as { refresh(): Promise<void> }).refresh()
 const reads = (t: Fixture) => t.wt.source.loadWorkBase.mock.calls.length
 function expectBase(value: string, label = '플로우 베이스') {
-  expect(text('git-base-branch')).toBe(`${label} · ${value}`)
+  // 0068 v16 mockup: with a Flow the header reads `flow/<no> ← <base>`; the 상태 pane keeps the label.
+  const flowLabels = ['플로우 베이스', 'Flow base', 'フローベース']
+  const header = text('git-base-branch')
+  if (flowLabels.includes(label)) expect(header).toMatch(/^flow\/\d+ ← /)
+  expect(flowLabels.includes(label) ? header.replace(/^flow\/\d+ ← /, '') : header).toBe(flowLabels.includes(label) ? value : `${label} · ${value}`)
   expect(text('git-status-base')).toBe(value)
   expect(q('git-status-base')!.previousElementSibling?.textContent).toBe(label)
 }
@@ -73,7 +78,7 @@ describe('D §6.1 — active Flow with effective base', () => {
     t.wt.db.merge = manualMergeView({ aheadOfTarget: 4 })
     await render(t)
     expect(text('git-work-branch')).toBe('flowgate_v02_0008')
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     expect(['git-status-worktree', 'git-status-target', 'git-status-state'].map(text)).toEqual(['worktree-A', 'v0.2 (기본)', '4개 커밋 미반영'])
     expect(['git-status-changed', 'git-status-staged', 'git-status-ahead'].map(text)).toEqual(['2', '1', '4'])
@@ -83,7 +88,7 @@ describe('D §6.1 — active Flow with effective base', () => {
     await click(tab('files'))
     await click(tab('status'))
     await click(shell()!.querySelector('[data-modeless-action="close"]'))
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     expect(reads(t)).toBe(1)
   })
@@ -93,7 +98,7 @@ describe('D §6.1 — active Flow with effective base', () => {
     t.wt.db.status = worktreeStatus({ worktreeAvailable: !unavailable, branch: null })
     t.wt.db.workBase = { workBaseRef: null, effectiveWorkBaseRef: BASE }
     await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     expect(text('git-status-worktree')).toBe('—')
     expect(t.wt.db.workBase.workBaseRef).toBeNull()
@@ -102,19 +107,19 @@ describe('D §6.1 — active Flow with effective base', () => {
   it('switches A → B → A with both displays agreeing, including a Flow base equal to the project base', async () => {
     const t = setup()
     const w = await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     t.wt.db.workBase = { effectiveWorkBaseRef: 'main' }
     await w.setProps({ flow: FLOW_B })
     await flushPromises()
     expect(q('git-window')).toBeNull()
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('main')
     t.wt.db.workBase = { effectiveWorkBaseRef: BASE }
     await w.setProps({ flow: FLOW })
     await flushPromises()
     expect(q('git-window')).toBeNull()
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     expect(t.fake.db.status?.baseBranch).toBe('main')
   })
@@ -124,7 +129,7 @@ describe('D §6.1 — active Flow with loading, failed or missing base', () => {
   it('loading clears both displays; header refresh and external refresh share the running request', async () => {
     const t = setup()
     await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     const pending = deferred<FlowWorkBase>()
     t.wt.source.loadWorkBase.mockImplementationOnce(() => pending.promise)
     await click(q('git-refresh'))
@@ -147,7 +152,7 @@ describe('D §6.1 — active Flow with loading, failed or missing base', () => {
   ])('%s failure shows — in both existing rows and short failure feedback; refresh recovers', async (_name, error) => {
     const t = setup()
     await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     t.wt.source.loadWorkBase.mockRejectedValueOnce(error())
     await refresh()
     await flushPromises()
@@ -165,7 +170,7 @@ describe('D §6.1 — active Flow with loading, failed or missing base', () => {
     const t = setup()
     t.wt.db.workBase = { workBaseRef: null, effectiveWorkBaseRef: value }
     await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('—')
     expect(q('git-status-failed')).toBeNull()
     expect(t.fake.db.status?.baseBranch).toBe('main')
@@ -179,7 +184,7 @@ describe('D §6.1 — active Flow with loading, failed or missing base', () => {
     t.wt.db.workBase = { effectiveWorkBaseRef: 'release/B' }
     await w.setProps({ flow: FLOW_B })
     await flushPromises()
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('release/B')
     slow.resolve(flowWorkBase(G, { effectiveWorkBaseRef: 'stale/A' }))
     await flushPromises()
@@ -193,10 +198,10 @@ describe('D §6.1 — no Flow, with configured or unset project base', () => {
   ] as const)('project base=%s, minimized=%s: discard window and status; no reads or opening without Flow; no automatic reopen', async (projectBase, minimized) => {
     const t = setup(projectBase)
     const w = await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     if (minimized) await click(shell()!.querySelector('[data-modeless-action="minimize"]'))
     // A queued click on an old entry must not reopen the closed gate.
-    const oldEntry = entry('status')!
+    const oldEntry = entry('diff')!
     await w.setProps({ flow: null })
     await flushPromises()
     expectDiscarded()
@@ -214,8 +219,8 @@ describe('D §6.1 — no Flow, with configured or unset project base', () => {
     await w.setProps({ flow: FLOW })
     await flushPromises()
     expect(q('git-window')).toBeNull()
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
-    await click(entry('status'))
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
+    await openGitWindowTab('status')
     expectBase('—')
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
     pending.resolve(flowWorkBase(G, { effectiveWorkBaseRef: BASE }))
@@ -228,14 +233,14 @@ describe('D §6.1 — Git unlinked or permission/status failure', () => {
   it.each(['off', '403', 'read error'] as const)('%s discards the open window and clears the Flow base; reopening the gate never reopens the window', async (reason) => {
     const t = setup()
     await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     await click(shell()!.querySelector('[data-modeless-action="minimize"]'))
     if (reason === 'off') t.fake.db.status = status({ enabled: false, baseBranch: 'main' })
     else t.fake.source.loadStatus.mockRejectedValueOnce(gitError(reason === '403' ? 403 : 500, 'git_error'))
     await refresh()
     await flushPromises()
     expectDiscarded()
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
     if (reason === 'off') {
       expect(q('git-unlinked')).not.toBeNull()
       expect(q('git-head')!.style.display).toBe('none')
@@ -246,7 +251,7 @@ describe('D §6.1 — Git unlinked or permission/status failure', () => {
     await flushPromises()
     expect(q('git-window')).toBeNull()
     expect(reads(t)).toBe(count + 1)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE)
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
   })
@@ -254,14 +259,14 @@ describe('D §6.1 — Git unlinked or permission/status failure', () => {
   it('project change discards an open minimized window and its values', async () => {
     const t = setup()
     const w = await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     await click(shell()!.querySelector('[data-modeless-action="minimize"]'))
     t.wt.db.workBase = { projectId: 'p2', effectiveWorkBaseRef: 'release/p2' }
     await w.setProps({ projectId: 'p2', flow: { groupId: 'p2.m.0001', name: 'P2' } })
     await flushPromises()
     expect(q('git-window')).toBeNull()
     expect(q('git-status')).toBeNull()
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('release/p2')
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
   })
@@ -276,7 +281,7 @@ describe('existing refresh and locale contracts', () => {
     await w.setProps({ active: true })
     await flushPromises()
     expect(reads(t)).toBe(2)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('saved/0104')
     await w.setProps({ readOnly: true })
     await click(tab('files'))
@@ -287,7 +292,7 @@ describe('existing refresh and locale contracts', () => {
     await render(t)
     expect(reads(t)).toBe(3)
     expect(q('git-window')).toBeNull()
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase('saved/0104')
   })
 
@@ -299,7 +304,7 @@ describe('existing refresh and locale contracts', () => {
     i18n.global.locale.value = locale
     const t = setup()
     const w = await render(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expectBase(BASE, flowLabel)
     await w.setProps({ flow: null })
     await flushPromises()

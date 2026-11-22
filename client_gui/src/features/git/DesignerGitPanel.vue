@@ -5,6 +5,7 @@
         :work-branch="session.workBranch.value"
         :base-branch="session.state.status?.baseBranch ?? null"
         :has-flow="!!session.state.flow?.groupId"
+        :flow-id="session.state.flow?.groupId ?? null"
         :flow-base="worktree.state.workBase"
         :status-known="session.state.statusLoad === 'ready'"
         :enabled="session.state.status?.enabled === true"

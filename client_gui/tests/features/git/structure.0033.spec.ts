@@ -65,6 +65,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitFileRow.vue',
         'GitHeader.vue',
         'GitHoldCard.vue',
+        'GitIcon.vue',
         'GitPushErrorWindow.vue',
         'GitPushFailureCard.vue',
         'GitReviewCard.vue',

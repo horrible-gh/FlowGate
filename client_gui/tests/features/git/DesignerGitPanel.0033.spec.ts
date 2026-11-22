@@ -57,14 +57,14 @@ describe('DesignerGitPanel — header and nothing to do', () => {
   it('shows work branch / Base and no card; badge stays null', async () => {
     const w = await mountPanel(createFakeGitSource())
     expect(text('git-work-branch')).toBe('flowgate_v02_0008')
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
     expect(q('git-exceptions')).toBeNull()
     expect(w.emitted('badge-change')).toBeUndefined()
   })
 
   it('an unknown Flow base reads —; Git off reads Git 미사용', async () => {
     await mountPanel(createFakeGitSource({ status: status({ baseBranch: null, enabled: false }) }))
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
     expect(text('git-header-line')).toBe('Git 미사용')
   })
 

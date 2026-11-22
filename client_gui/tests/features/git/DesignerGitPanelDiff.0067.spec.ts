@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -68,7 +69,7 @@ async function mountPanel(t: ReturnType<typeof setup>, entry: 'diff' | 'files' =
     global: { plugins: [i18n] },
   })
   await flushPromises()
-  await click(document.body.querySelector<HTMLElement>(`[data-test="git-worktree-entry"][data-tab="${entry}"]`))
+  await openGitWindowTab(entry)
   return wrapper
 }
 
@@ -298,7 +299,7 @@ describe('`Diff` tab — the file detail (R §6-2–§6-5)', () => {
     const shell = q('git-window')!.closest<HTMLElement>('.ui-modeless-panel')!
     await click(shell.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     expect(q('git-window')).toBeNull()
-    await click(document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="diff"]'))
+    await openGitWindowTab('diff')
     expect(q('git-center-diff')).toBeNull()
     expect(rows()).toEqual(['src/a.ts', 'src/b.ts', 'lib/c.ts'])
   })
@@ -362,7 +363,7 @@ describe('`Diff` tab — reads that answer late (R §6-1, §3-4)', () => {
     // The same project and Flow read again: the gate opens on the same context.
     await click('git-refresh')
     expect(q('git-worktree')).not.toBeNull()
-    await click(document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="diff"]'))
+    await openGitWindowTab('diff')
     expect(tab()).toBe('diff')
     expect(q('git-center-diff')).toBeNull()
     expect(rows()).toEqual(['src/a.ts', 'src/b.ts', 'lib/c.ts'])

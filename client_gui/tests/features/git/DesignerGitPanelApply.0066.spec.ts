@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'
@@ -113,7 +114,7 @@ async function openTab(tab: string) {
 }
 
 async function openApply() {
-  await click(entry('merge'))
+  await openGitWindowTab('merge')
 }
 
 describe('Base apply — first look, header word, controls (R §4, C5 d)', () => {
@@ -123,7 +124,7 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     // Not in the Git tab itself: the `Base 반영` entry opens the modeless on its tab (0067-R §2-4).
     expect(q('git-apply')).toBeNull()
     expect(text('git-worktree-summary-changed')).toBe('1')
-    await click(entry('merge'))
+    await openGitWindowTab('merge')
     const apply = q('git-apply')!
     expect(panel('merge')!.contains(apply)).toBe(true)
     expect(panel('files')!.contains(q('git-commit-bar'))).toBe(true)
@@ -131,7 +132,8 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     expect(q('git-apply-toggle')).toBeNull()
     expect(q('git-apply-status')).toBeNull()
     expect(text('git-apply-ahead')).toBe('3')
-    expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
+    // 0068: the window opens from the footer `Diff` entry, which reads the list once; `Base 반영` adds none.
+    expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
   })
 
   it('opened: target (E8-admitted targets, default marked), Fetch, 머지 후 Push, 머지 — no approval / commit button', async () => {
@@ -527,7 +529,7 @@ describe('Base apply — Fetch (C20), no workspace (C22), read-only / 403 (C25)'
     await mountPanel(t)
     expect(q('git-changes')).toBeNull()
     expect(q('git-commit-bar')).toBeNull()
-    await click(entry('merge'))
+    await openGitWindowTab('merge')
     expect(q('git-changes')).toBeNull()
     expect(q('git-commit-bar')).toBeNull()
     // one short line instead of the explanation, and no count without a workspace.
@@ -611,7 +613,7 @@ describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b i
     const paths = Array.from({ length: 23 }, (_, i) => [`f${String(i).padStart(2, '0')}.ts`, 'M'] as [string, string])
     const t = setup({ targetChanges: { 'v0.2': list('v0.2', paths) } })
     await mountPanel(t)
-    await click(entry('diff'))
+    await openGitWindowTab('diff')
     expect(qa('[data-test="git-apply-diff-row"]')).toHaveLength(16)
     expect(text('git-apply-diff-range')).toBe('1–16 / 23')
     expect([disabled('git-apply-diff-prev'), disabled('git-apply-diff-next')]).toEqual([true, false])
@@ -631,7 +633,7 @@ describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b i
   it('`상태`: the v27 numbers and rows from the values already read; a voided judgment never shows the old ones', async () => {
     const t = setup({ merge: manualMergeView({ aheadOfTarget: 2 }) })
     await mountPanel(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expect([text('git-status-changed'), text('git-status-staged'), text('git-status-ahead')]).toEqual(['1', '0', '2'])
     expect(text('git-status-worktree')).toBe('flowgate_v02_0008')
     expect(text('git-status-base')).toBe('v0.2')
@@ -657,7 +659,7 @@ describe('Base apply — the `Diff` / `상태` tabs of the Git modeless (C14 b i
     const t = setup()
     t.wt.source.loadManualMerge.mockRejectedValue(gitError(500, 'git_error'))
     await mountPanel(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expect(text('git-status-ahead')).toBe('—')
     expect(text('git-status-failed')).toBe('머지 판정을 읽지 못했습니다.')
   })
@@ -702,7 +704,7 @@ describe('Base apply — a Flow switch (C23 a for the apply part)', () => {
     expect(dialogOpen()).toBe(false)
     // another Flow is another worktree — the Git modeless closes too.
     expect(q('git-window')).toBeNull()
-    await click(entry('merge'))
+    await openGitWindowTab('merge')
     expect((q('git-apply-push-after') as HTMLInputElement).checked).toBe(false)
     expect(text('git-apply-merge')).toBe('머지')
     expect(t.wt.source.manualMerge).not.toHaveBeenCalled()
