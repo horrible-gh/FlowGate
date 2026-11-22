@@ -60,4 +60,25 @@ describe('scope execution', () => {
     expect(sync).toHaveBeenCalledTimes(1); expect(p.status).toBe('remaining')
     expect(p.completed).toEqual(['commit','update','merge','push'])
   })
+  it('passes over an update the server refuses for its own reasons and still merges', async()=>{
+    for (const code of ['git_error','base_dirty','group_lease_active','group_work_base_unverified']) {
+      const f=createFakeWorktreeSource({status:worktreeStatus({files:[]}),merge:manualMergeView({aheadOfTarget:0})},{updateFromBase:async()=>{throw gitError(409,code)}})
+      const p=newExecution('merge','v0.2'); await executeGit(p,f.source,input())
+      expect(p.status).toBe('complete'); expect(p.error).toBeNull()
+      expect(p.skipped).toEqual({update:code}); expect(p.completed).toEqual(['commit','update','merge'])
+    }
+  })
+  it('still stops on update failures that are not the server\'s own state', async()=>{
+    const f=createFakeWorktreeSource({status:worktreeStatus({files:[]})},{updateFromBase:async()=>{throw gitError(409,'group_untracked_conflict')}})
+    const p=newExecution('push','v0.2'); await executeGit(p,f.source,input())
+    expect(p.error).toBe('group_untracked_conflict'); expect(p.cursor).toBe(1); expect(f.source.manualMerge).not.toHaveBeenCalled()
+  })
+  it('clears an earlier skip when a resumed update succeeds', async()=>{
+    let fail=true
+    const f=createFakeWorktreeSource({status:worktreeStatus({files:[]}),merge:manualMergeView({aheadOfTarget:0})},{updateFromBase:async()=>{if(fail) throw gitError(500,'git_error'); return {status:'no_change',mergeId:null}}})
+    const p=newExecution('merge','v0.2'); await executeGit(p,f.source,input())
+    expect(p.skipped).toEqual({update:'git_error'})
+    fail=false; p.cursor=1; p.completed=['commit']; await executeGit(p,f.source,input())
+    expect(p.skipped).toEqual({})
+  })
 })

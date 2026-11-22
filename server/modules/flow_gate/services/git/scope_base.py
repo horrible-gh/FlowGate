@@ -517,12 +517,16 @@ def _recover_fork(cwd: Path, group_id: str, work_base_ref: str, rows: list[dict]
     """§7.2 4-3: fork from the parent of the first group commit, against W local/origin."""
     from modules.flow_gate.services import git_service as _gs
     head = rev_commit(cwd, "HEAD")
+    # The anchor sits below the EARLIEST group commit in the history, not the lowest
+    # ledger id: rows can be written out of commit order, and an anchor above an
+    # older group commit always yields a candidate that contains group work.
     first = None
     for sha in _ledger_shas(sorted(rows, key=lambda r: r.get("id") or 0)):
         full = rev_commit(cwd, sha)
-        if full and is_ancestor(cwd, full, head):
+        if not full or full == first or not is_ancestor(cwd, full, head):
+            continue
+        if first is None or is_ancestor(cwd, full, first):
             first = full
-            break
     anchor = rev_commit(cwd, f"{first}^1") if first else head
     if anchor is None:
         return None, REASON_FORK_CONTAINS_GROUP_WORK, {"first_group_commit": first}

@@ -14,14 +14,25 @@ export interface GitExecution {
   error: string | null
   // The server's detail reason of the stop, when it gave one (shown next to the code).
   detail?: string | null
+  // A step passed over without stopping the run (only 받아오기), with the server's code.
+  skipped?: Partial<Record<GitExecutionStep, string>>
 }
 export function executionSteps(scope: GitExecutionScope): GitExecutionStep[] {
   return scope === 'commit' ? ['commit'] : scope === 'merge'
     ? ['commit', 'update', 'merge'] : ['commit', 'update', 'merge', 'push']
 }
 export function newExecution(scope: GitExecutionScope, target: string | null): GitExecution {
-  return { scope, target, steps: executionSteps(scope), cursor: 0, completed: [], status: 'running', error: null, detail: null }
+  return { scope, target, steps: executionSteps(scope), cursor: 0, completed: [], status: 'running', error: null, detail: null, skipped: {} }
 }
+// 받아오기 is a convenience before the merge, not a precondition of it: a refusal caused by the
+// server's base checkout, its locks or the Flow's start-point record passes over the step and the
+// merge runs (it checks the target itself). Conflicts and the Flow's own files still stop the run.
+export const UPDATE_SKIP_CODES: readonly string[] = [
+  'git_error', 'base_dirty', 'base_diverged', 'git_busy', 'merge_conflict_open', 'group_lease_active',
+  'run_already_active', 'branch_merge_claim_active', 'update_unavailable',
+  'group_work_base_unverified', 'group_work_base_diverged', 'group_work_base_source_rewritten',
+  'group_work_base_record_failed',
+]
 class Stopped extends Error {}
 export interface ExecutionInput {
   projectId: string
@@ -76,10 +87,22 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
       } else if (step === 'update') {
         const state = await status()
         if (state.counts.changed === null || state.counts.changed > 0) throw new Stopped('uncommitted_changes')
-        if (!api.updateFromBase) throw new Stopped('update_unavailable')
-        const result = await request(() => api.updateFromBase!(input.groupId))
-        if (result.status === 'conflict') throw new Stopped('merge_conflict')
-        if (!['updated', 'no_change'].includes(result.status)) throw new Stopped('update_unconfirmed')
+        delete plan.skipped?.update
+        let code: string | null = null
+        if (!api.updateFromBase) code = 'update_unavailable'
+        else {
+          try {
+            const result = await request(() => api.updateFromBase!(input.groupId))
+            if (result.status === 'conflict') throw new Stopped('merge_conflict')
+            if (!['updated', 'no_change'].includes(result.status)) throw new Stopped('update_unconfirmed')
+          } catch (error) {
+            if (error instanceof Stopped) throw error
+            const failure = worktreeErrorOf(error)
+            if (!failure.code || !UPDATE_SKIP_CODES.includes(failure.code)) throw error
+            code = failure.code
+          }
+        }
+        if (code) plan.skipped = { ...plan.skipped, update: code }
       } else if (step === 'merge') {
         const view = await request(() => api.loadManualMerge(input.groupId, plan.target))
         if (!plan.target) plan.target = view.defaultTarget
@@ -115,7 +138,8 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
     let remains = final.counts.changed !== 0 || (final.counts.staged ?? 0) > 0 || (final.counts.hidden ?? 0) > 0 || (final.counts.managedDirty ?? 0) > 0
     if (plan.scope !== 'commit') {
       const view = await request(() => api.loadManualMerge(input.groupId, plan.target))
-      remains ||= view.aheadOfTarget !== 0 || view.workBaseBehind !== 0
+      // A passed-over 받아오기 leaves the Flow behind its base by design; that alone is not left work.
+      remains ||= view.aheadOfTarget !== 0 || (!plan.skipped?.update && view.workBaseBehind !== 0)
     }
     if (plan.scope === 'push') {
       await request(() => api.fetchRefs(input.projectId, input.groupId))

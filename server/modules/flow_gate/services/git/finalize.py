@@ -856,9 +856,29 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     # (a reset/rewritten work base would move the floor backwards).  The merge
     # then uses the exact SHA that gets recorded, not the moving ref name.
     from . import scope_base
-    pinned = scope_base.guard_update_source(
-        project_id, group_id, wt_path, source_ref=source_ref, config=cfg,
-    )
+    try:
+        pinned = scope_base.guard_update_source(
+            project_id, group_id, wt_path, source_ref=source_ref, config=cfg,
+        )
+    except GitServiceError as exc:
+        # Nothing to absorb is never an error: a Flow whose floor is not usable yet
+        # answers no_change when its HEAD already contains the source (no merge, no
+        # floor write), so a run's 받아오기 does not stop on a record it does not need.
+        if reconstruct or exc.code not in (scope_base.ERR_UNVERIFIED, scope_base.ERR_DIVERGED):
+            raise
+        source_sha = scope_base.rev_commit(wt_path, source_ref)
+        try:
+            contained = bool(source_sha) and scope_base.is_ancestor(wt_path, source_sha, "HEAD")
+        except scope_base.FloorCheckFailed:
+            contained = False
+        if not contained:
+            raise
+        return {"ok": True, "result": {
+            "status": "no_change", "branch": state.get("branch"),
+            "source_ref": source_ref, "source_sha": source_sha,
+            "result_head": scope_base.rev_commit(wt_path, "HEAD"),
+            "floor_unusable": exc.code,
+        }}
     source_sha = pinned["source_sha"]
     floor_before = pinned["floor_sha"]
     if reconstruct:
