@@ -1,35 +1,8 @@
-"""The common guard of a card step that goes on after its AI's questions are answered (the earlier change T3, NR
-B the earlier change).
+"""Automatic continuation of answered card questions (0071 T6).
 
-An answer alone never counts as the action it asked for. A question's option may say what has to happen before the card
-goes on (``requires``, ``q_service``: today only ``new_attempt`` — the card's work cannot go on in the attempt that asked,
-a person or the system must open a new one, e.g. on a newer base). When an answer selected such an option, the step
-the asking run left is taken only once that action happened: the node's active attempt is no longer the asker's.
-
-The three re-invocations the answers take (``question_wait._answered``) share this one judgement, so none of them goes
-around it:
-
-- ``instruction`` (``review_stage.continue_instruction_after_answers``: the instruction written again, or approved with
-  the result stage's start),
-- ``work`` (``review_stage._after_work``: the result's review start or its automatic approval),
-- ``no_result`` (``question_wait._retry_result``: the result writer run again),
-- ``loop_wait`` (the earlier change the earlier implementation, ``question_loop_wait.resume``: a review loop parked at its hop boundary for
-  its own questions goes on with its next hop).
-
-The run-end step of a run whose questions were answered before it ended (``_after_instruction`` / ``_after_work``) and the
-run read's reconciliation of a lost step (``review_stage.reconcile``) take the same guard. The existing duplicate and late
-answer guards (``*_continuation_due``, ``_answered_hold``, ``person_hold``) stay as they are; this one only comes first.
-
-A step the guard keeps from going on calls no AI and approves nothing. The card is ``needs_intervention`` with the reason
-``action_required:new_attempt`` (``node_reason``: read from the node's active attempt's latest execution and its answers,
-nothing stored for it, so a restart loses nothing), and one ``action_required`` run event records which run, attempt and
-phase it held. The next action: the person's explicit step / full command opens an open card again as a new attempt
-(``integration._needs_dispatch``: ``reopen_new_attempt``, the existing replacement path); a card in review (its result
-stays, it is never reopened) is moved by a Stop, after which the next command opens it with a new attempt. Once the node
-has a new attempt the old asker is no attempt's latest any more and nothing of it goes on.
-
-A failed read of the answers holds nothing (the step goes on as before) and is logged: the guard never stops a card on
-an unreadable record.
+A new_attempt answer requests a bounded, fenced attempt replacement. If replacement
+is unavailable or the restart budget is spent, ordinary review/approval continues.
+Paused/stopped runs remain untouched. The old action-required wait is removed.
 """
 from __future__ import annotations
 
@@ -79,9 +52,8 @@ def reason_for(run_id: Optional[str], node_key: Optional[str], asker_ai_run_id: 
 
 
 def blocks(flow_id: str, run: dict, node_key: Optional[str], phase: str) -> bool:
-    """The common guard: True when the step ``run`` left (``phase``: instruction / work / no_result) must not go on —
-    its answers require a new attempt and the node's active attempt is still the one ``run`` worked for. The caller then
-    calls no AI and approves nothing; the hold is recorded once (``action_required`` run event)."""
+    """True when replacement consumed this step or the run cannot resume.
+    False lets the existing stage continue when retry is unavailable/exhausted."""
     if phase not in PHASES or not node_key or requirement(run.get("run_id")) is None:
         return False                            # nothing required: no other read (the common case)
     run_id = legacy.active_run_id(flow_id)
@@ -89,24 +61,59 @@ def blocks(flow_id: str, run: dict, node_key: Optional[str], phase: str) -> bool
     reason = reason_for(run_id, node_key, run.get("run_id"), attempt_id)
     if reason is None:
         return False
-    _log.info("card step held flow=%s node=%s run=%s attempt=%s phase=%s: %s", flow_id, node_key, run.get("run_id"),
-              attempt_id, phase, reason)
-    legacy.record_action_required(flow_id, node_key, attempt_id, run.get("run_id"), phase, reason,
-                                  NEXT_ACTION["review" if phase in ("work", "loop_wait") else "open"])
-    return True
+    return _automatic_retry(flow_id, run, node_key, run_id, attempt_id)
+
+
+def _automatic_retry(flow_id, run, node_key, run_id, attempt_id):
+    """0071 T6: answers continue automatically. Reuse fenced replacement; when it
+    cannot replace (including a stored result), let the ordinary review/approval proceed.
+    Count durable invalidations, so duplicate delivery and process restarts share the budget.
+    """
+    from flowgate.card_settings import fields, repository
+    from flowgate.graph_run import execution, fencing
+    from modules.flow_gate.graph_workflow.services import run_apply
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    from modules.flow_gate.graph_workflow.store import run_store
+
+    if not legacy.wake_graph_run(flow_id):
+        return True                             # never advance a paused/stopped run
+    jobs = []
+
+    def replace():
+        active = run_store.active_run(flow_id)
+        if (active is None or active["run_id"] != run_id
+                or active["status"] not in ("running", "idle")
+                or active.get("idle_reason") == "stopped"):
+            return True
+        if run_store.active_attempt_id(run_id, node_key) != attempt_id:
+            return True                         # duplicate/late answer: old step is finished
+        stored = repository.values(flow_id, node_key)
+        budget = stored.get("restart", fields.DEFAULT_RESTART_COUNT)
+        used = run_store._one(
+            "SELECT COUNT(*) AS n FROM graph_node_attempts WHERE run_id = ? AND node_key = ? "
+            "AND invalidated_reason = 'answer_new_attempt'", [run_id, node_key])["n"]
+        if budget != -1 and int(used) >= int(budget):
+            return False
+        row = next((r for r in run_store.node_runs(run_id) if r["node_key"] == node_key), None)
+        if row is None or row["status"] != "open":
+            return False
+        ctx = run_apply.load_context(active, legacy.project_of(flow_id), run.get("issued_to"), jobs)
+        execution.reopen_attempt(ctx, row, automatic=True)
+        return run_store.active_attempt_id(run_id, node_key) != attempt_id
+
+    try:
+        # The gate supports replacement during this thread's own side effect.
+        # Wait for other readers; never silently skip retry under a shared hold.
+        with fencing.exclusive(flow_id, own_ok=True):
+            replaced = with_flow_guard(flow_id, replace)
+    except Exception:
+        _log.warning("automatic answer retry unavailable flow=%s node=%s", flow_id, node_key, exc_info=True)
+        return False
+    for job in jobs:                             # committed replacement; AI starts outside locks
+        job()
+    return replaced
 
 
 def node_reason(flow_id: str, row: dict) -> Optional[str]:
-    """For a run read, the node judgement and an explicit command: ``action_required:<requirement>`` of the node run
-    ``row`` (open or in review) whose active attempt's latest execution is a write that is not requested / running and
-    whose AI run's answers require a new attempt — the card the guard holds — else None (a failed read: None)."""
-    if row.get("status") not in ("open", "review") or not row.get("run_id") or not row.get("node_key"):
-        return None
-    try:
-        latest = legacy.latest_execution(row["run_id"], row["node_key"])
-    except Exception:  # noqa: BLE001 — the read goes on; nothing is held on an unreadable ledger
-        _log.warning("card action guard read failed flow=%s node=%s", flow_id, row.get("node_key"), exc_info=True)
-        return None
-    if not latest or latest.get("kind") != "write" or latest.get("status") in ("requested", "running"):
-        return None
-    return reason_for(row["run_id"], row["node_key"], latest.get("ai_run_id"), latest.get("attempt_id"))
+    """Read-only compatibility port: answers no longer require human intervention."""
+    return None  # 0071 T6: retry or ordinary continuation, never an action-required wait.
