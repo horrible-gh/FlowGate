@@ -283,6 +283,11 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                                flow_id, kind, type(exc).__name__)
         final = p.guard(flow_id, lambda: p.ledger.load(flow_id))
         states = {k: v["state"] for k, v in final["targets"].items()}
+        try:
+            from .first_names_triggers import notify
+            notify(flow_id)
+        except Exception as exc:
+            logger.warning("flow naming notification exception_type=%s", type(exc).__name__)
         return {"status": "pending" if "pending" in states.values() else "done", "targets": states}
     except Exception as exc:
         logger.warning("flow_auto_title flow=%s exception_type=%s", flow_id, type(exc).__name__)

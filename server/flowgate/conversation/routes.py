@@ -149,6 +149,7 @@ def create_conversation(body: Any = Body(default=None), user=Depends(get_current
 @router.post("/conversations/{doc_id}/auto-title")
 def auto_title_conversation(doc_id: str, body: Any = Body(default=None), user=Depends(get_current_user)):
     try:
-        return auto_title.generate(doc_id, user, body)
+        from .first_names_triggers import chat
+        return chat(doc_id, user, body)
     except c.ConversationError as exc:
         return _error(exc)
