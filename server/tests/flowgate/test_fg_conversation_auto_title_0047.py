@@ -79,6 +79,7 @@ def env(monkeypatch):
         _title_write(state["doc"], title)
         return dict(state["doc"])
 
+    monkeypatch.setattr(legacy_adapter, "has_graph_definition", lambda _: False)
     monkeypatch.setattr(legacy_adapter, "get_document", get_document)
     monkeypatch.setattr(legacy_adapter, "has_permission", lambda user, perm, project: perm in state["perms"])
     monkeypatch.setattr(legacy_adapter, "is_group_disposed", lambda group_id: state["disposed"])

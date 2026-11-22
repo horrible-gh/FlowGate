@@ -34,7 +34,14 @@ def post_flow_run(flow_id: str, request: Request, body: Any = Body(default=None)
             raise envelope.invalid(request, errors)
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "write")
-        return run_service.start_run(group, user_id, revision_no, mode, command_request_id)
+        result = run_service.start_run(group, user_id, revision_no, mode, command_request_id)
+        if (result.get("run") or {}).get("mode", mode or "full") == "full":
+            try:
+                from modules.flow_gate.graph_workflow.services import first_names_hooks
+                first_names_hooks.schedule(flow_id, user_id, result["run"]["revision_no"])
+            except Exception:
+                pass  # Optional naming cannot turn an accepted run into an error.
+        return result
 
     return envelope.run(request, handle, status=201)
 

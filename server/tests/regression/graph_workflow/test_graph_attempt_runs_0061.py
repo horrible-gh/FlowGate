@@ -298,6 +298,10 @@ def test_restart_replays_requested_once_through_acquire(db, monkeypatch):
 
 @pytest.mark.parametrize("ended", [False, True])
 def test_expired_recovery_requires_termination_then_invalidates_and_reschedules(db, monkeypatch, ended):
+    # This fixture owns only the Graph token map, not an HTTP token or result
+    # reservation. The synthetic token has no row to capture in the result slot.
+    from modules.flow_gate.db import tokens
+    monkeypatch.setattr(tokens, "get_by_id", lambda _token_id: None)
     eid = request(db)
     ledger.acquire(eid, "ai")
     db._execute("UPDATE graph_attempt_runs SET lease_expires_at=?", [PAST])

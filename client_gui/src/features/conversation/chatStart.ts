@@ -19,6 +19,7 @@
 // chat (same create intent) and sends the same key. Kept over F5: a first message whose chat was never confirmed made
 // comes back failed in its draft (the Flow reopens on that draft once) and is sent only when the user tries again.
 import { beginChatActivity } from './flowChatActivity'
+import { subscribeProjectEvents } from '../project/projectEvents'
 import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import { draftIntent, draftCreateIntent, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
 import { ConversationRequestError } from './api'
@@ -113,8 +114,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     if (marker && ['done', 'manual', 'failed'].includes(marker.state)) { owed.delete(key); ended.add(key); return }
     if (ended.has(key)) return
     let due = owed.get(key)
-    if (!due && marker?.state === 'owed' && state.scope) {
-      due = { title: marker.provisionalTitle, ...state.scope, userId: draftUserId(), accepted: false, status: 'owed' }
+    if (!due && chat && (marker?.state === 'owed' || (!marker && chat.title === defaultTitle())) && state.scope) {
+      due = { title: marker?.provisionalTitle ?? chat.title, ...state.scope, userId: draftUserId(), accepted: false, status: 'owed' }
       owed.set(key, due)
     }
     if (due && marker?.state === 'claimed') { due.status = 'claimed'; due.checkRevision = session.titleGuard.listRevision }
@@ -333,13 +334,14 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   const stopRecovery = watch(() => JSON.stringify([
     state.scope, draftUserId(), state.activeChatId, state.chatsStatus === 'ready', state.providersStatus, state.selectedProviderId,
     state.providers.map((p) => p.id), state.turnsStatus === 'ready' && state.turns.some((t) => t.speaker === 'user' && t.body.trim()),
+    state.turns.filter((t) => t.speaker === 'ai' && t.body.trim()).map((t) => t.seq),
     state.chats.map((chat) => [chat.id, chat.title, chat.autoTitle]),
   ]), (trigger) => {
     if (stopped || session.titleGuard.disposed || !state.scope || state.chatsStatus !== 'ready') return
     const active = state.activeChatId
     if (active) {
       const due = observe(active)
-      if (due && state.turnsStatus === 'ready' && state.turns.some((t) => t.speaker === 'user' && t.body.trim())) due.accepted = true
+      if (due && state.turnsStatus === 'ready' && state.turns.some((t) => t.speaker === 'ai' && t.body.trim())) due.accepted = true
     }
     for (const [key, due] of owed) {
       if (sameOwner(due)) {
@@ -350,9 +352,20 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
       }
     }
   }, { immediate: true, flush: 'post' })
+  let stopTitleEvents: (() => void) | undefined
+  const stopTitleScope = watch(() => state.scope?.projectId, (projectId) => {
+    stopTitleEvents?.()
+    stopTitleEvents = projectId ? subscribeProjectEvents(projectId, {
+      events: ['group_view_refresh'],
+      event: (frame) => {
+        if (frame.groupId === state.scope?.groupId && frame.payload.reason === 'first_names') void session.reloadChats()
+      },
+      resync: () => { void session.reloadChats() },
+    }) : undefined
+  }, { immediate: true })
   function cleanup(): void {
     stopped = true; lifetime++; owed.clear(); ended.clear()
-    stopRecovery(); stopLifetime()
+    stopRecovery(); stopLifetime(); stopTitleScope(); stopTitleEvents?.()
   }
   if (getCurrentScope()) onScopeDispose(cleanup)
 
