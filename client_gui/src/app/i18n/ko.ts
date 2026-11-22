@@ -1022,6 +1022,7 @@ export default {
         blocked_rejected: '반려로 멈춤',
         error: '오류로 멈춤',
         stopped: '중지됨',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '병합 충돌',
         hold: 'Hold로 대기',
         step_done: '다음 단계 완료',
@@ -1557,6 +1558,7 @@ export default {
       reason: {
         merge_conflict_open: '충돌 검토가 열려 있음',
         gate_conflict: '반영 중 충돌',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '반영 중 충돌',
         gate_decision_not_cancelable: '이전 승인을 취소할 수 없음',
         gate_job_active: 'Git 작업이 아직 진행 중',
@@ -1891,6 +1893,7 @@ export default {
         merged_pushed: '{target}에 머지하고 Push했습니다.',
         recovered: '앞서 머지된 결과를 기록했습니다({target}).',
         recovered_pushed: '앞서 머지된 결과를 기록하고 Push했습니다({target}).',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '충돌 — 위 카드에서 해결하세요.',
         judgment_changed: '판정이 바뀌었습니다. 다시 확인하세요.',
         merge_push_rejected: "원격 갱신 거절",

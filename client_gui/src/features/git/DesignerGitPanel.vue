@@ -17,7 +17,7 @@
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
-    <GitExceptionList v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
+    <GitExceptionList :execution-active="!!worktree.state.execution" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" />
     <template v-for="win in session.state.windows" :key="win.id">

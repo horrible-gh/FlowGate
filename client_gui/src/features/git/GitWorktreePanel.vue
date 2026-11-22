@@ -13,30 +13,11 @@
         {{ t('gui.git.worktree.read_forbidden') }}
       </p>
       <p v-if="areaState === 'unavailable'" class="gw-summary is-muted" data-test="git-worktree-unavailable">{{ t('gui.git.worktree.unavailable') }}</p>
-      <p v-else-if="status" class="gw-overview" data-test="git-worktree-summary">
-        <span>{{ t('gui.git.worktree.overview.changed') }} <strong data-test="git-worktree-summary-changed">{{ status.counts.changed ?? 0 }}</strong></span>
-        <i class="gw-overview-sep" aria-hidden="true" />
-        <span>{{ t('gui.git.worktree.overview.staged') }} <strong data-test="git-worktree-summary-staged">{{ status.counts.staged ?? 0 }}</strong></span>
-        <i class="gw-overview-sep" aria-hidden="true" />
-        <span :title="aheadTip">{{ t('gui.git.worktree.overview.ahead') }} <strong data-test="git-worktree-summary-merge">{{ ahead ?? '—' }}</strong></span>
-        <span v-if="stateChip" class="gw-chip" data-test="git-worktree-chip">{{ stateChip }}</span>
-      </p>
-      <nav class="gw-entries" data-test="git-worktree-entries" :aria-label="t('gui.git.worktree.nav.aria')">
-        <button
-          v-for="entry in entries"
-          :key="entry.tab"
-          type="button"
-          class="gw-entry"
-          data-test="git-worktree-entry"
-          :data-tab="entry.tab"
-          :aria-pressed="windowOpen && tab === entry.tab ? 'true' : 'false'"
-          @click="openWindow(entry.tab)"
-        >
-          <svg class="gw-entry-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS[entry.tab]" /></svg>
-          <span class="gw-entry-title">{{ t(`gui.git.worktree.nav.${entry.tab}`) }}</span>
-          <span class="gw-entry-count" data-test="git-worktree-entry-count">{{ entry.count }}</span>
-          <span class="gw-entry-arrow" aria-hidden="true">›</span>
-        </button>
+      <GitQuickActions v-if="areaState === 'ready'" @details="openWindow" />
+      <nav class="gq-footer">
+        <button v-if="areaState === 'unavailable'" data-test="git-worktree-entry" data-tab="merge" :title="t('gui.git.worktree.nav.merge')" :aria-label="t('gui.git.worktree.nav.merge')" @click="openWindow('merge')">⑂</button>
+        <button type="button" data-test="git-worktree-entry" data-tab="diff" :title="t('gui.git.worktree.nav.diff')" :aria-label="t('gui.git.worktree.nav.diff')" @click="openWindow('diff')">◫</button>
+        <button type="button" data-test="git-worktree-entry" data-tab="status" :title="t('gui.git.worktree.nav.status')" :aria-label="t('gui.git.worktree.nav.status')" @click="openWindow('status')">☷</button>
       </nav>
     </template>
     <GitWorktreeWindow
@@ -62,6 +43,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitWorktreeWindow from './GitWorktreeWindow.vue'
+import GitQuickActions from './GitQuickActions.vue'
 import { useGitWorktree } from './gitWorktreeSession'
 import type { GitWorktreeTab } from './types'
 
@@ -76,46 +58,6 @@ const areaState = computed(() => {
   if (!s) return wt.state.statusError ? 'failed' : 'loading'
   if (!s.worktreeAvailable) return 'unavailable'
   return 'ready'
-})
-
-// The E8 judgment of the chosen target (0066 D#2 §6-1): never a fixed "Base", never the
-// display-only committed range; unknown while it is void or being checked.
-const ahead = computed(() => {
-  if (wt.state.mergeLoad === 'loading') return null
-  const merge = wt.state.merge
-  if (!merge || !wt.state.mergeTarget) return null
-  return merge.aheadOfTarget
-})
-const aheadTip = computed(() => wt.state.mergeTarget ?? undefined)
-
-const stateChip = computed(() => {
-  const value = status.value?.gitState.status
-  if (value === 'merging') return t('gui.git.worktree.chip_merging')
-  if (value === 'conflict') return t('gui.git.worktree.chip_conflict')
-  return null
-})
-
-// v27 icons: folder, merge, two columns, three lines.
-const ICONS: Record<GitWorktreeTab, string> = {
-  files: 'M4 4h9l3 3h4v13H4zM8 12h9M8 16h6',
-  merge: 'M6 4v10a5 5 0 0 0 5 5h7M12 12l6 7-6 4M18 4v10',
-  diff: 'M7 3v18M17 3v18M3 8h8M13 15h8',
-  status: 'M5 6h14M5 12h14M5 18h14',
-}
-
-// `파일 관리` the changed files, `Base 반영` the commits not yet in the target; `Diff` and `상태`
-// carry no count (0067-R §2-2).
-const entries = computed(() => {
-  // Without a workspace (W2) there is nothing to count: no summary, no numbers.
-  const workspace = areaState.value === 'ready'
-  const changed = workspace ? status.value?.counts.changed ?? null : null
-  const pending = workspace ? ahead.value : null
-  return [
-    { tab: 'files' as const, count: changed === null ? '' : t('gui.git.worktree.nav.files_count', { n: changed }) },
-    { tab: 'merge' as const, count: pending === null ? '' : t('gui.git.worktree.nav.merge_count', { n: pending }) },
-    { tab: 'diff' as const, count: '' },
-    { tab: 'status' as const, count: '' },
-  ]
 })
 
 // One window for the four entries: an entry opens it on its tab, or brings it back there — restored
@@ -151,3 +93,8 @@ watch(context, (next, previous) => {
   if (next !== previous) closeWindow()
 }, { flush: 'sync' })
 </script>
+
+<style scoped>
+.gq-footer { display:flex; justify-content:flex-end; gap:6px; border-top:1px solid #22344d; padding-top:8px }
+.gq-footer button { width:28px; height:28px; border:1px solid #30445f; border-radius:5px; background:transparent; color:#adc1d9; cursor:pointer }
+</style>

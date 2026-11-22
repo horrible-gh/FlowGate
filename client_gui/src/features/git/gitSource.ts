@@ -62,6 +62,9 @@ import type {
  * actions, apart from the Base checkout ones of GitSource (baseCommit / baseRevert / …).
  */
 export interface GitWorktreeSource {
+  syncRemote?(groupId: string, target: string): Promise<{ status: string; mergeId: number | null }>
+  updateFromBase?(groupId: string): Promise<{ status: string; mergeId: number | null }>
+
   /** E1 — files split into Stage / working changes, tokens, floor, ownership and blockers. */
   loadStatus(groupId: string): Promise<WorktreeStatus>
   /** E2 / E3 — `worktreeToken` is the E1 token the screen showed (null = no check). */
@@ -184,6 +187,8 @@ export function createHttpGitSource(): GitSource {
     provisionGit: api.provisionGit,
     fetchGitProvision: api.fetchGitProvision,
     worktree: {
+      updateFromBase: api.updateWorktreeFromBase,
+      syncRemote: api.syncWorktreeRemote,
       loadStatus: api.fetchWorktreeStatus,
       stage: api.stageWorktree,
       unstage: api.unstageWorktree,

@@ -1011,6 +1011,7 @@ export default {
         blocked_rejected: 'Stopped by a rejection',
         error: 'Stopped by an error',
         stopped: 'Stopped',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
         step_done: 'Next step done',
@@ -1546,6 +1547,7 @@ export default {
       reason: {
         merge_conflict_open: 'the conflict review is open',
         gate_conflict: 'conflict while applying',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'conflict while applying',
         gate_decision_not_cancelable: 'the earlier approval cannot be cancelled',
         gate_job_active: 'Git work is still running',
@@ -1880,6 +1882,7 @@ export default {
         merged_pushed: 'Merged into {target} and pushed.',
         recovered: 'Recorded the earlier merge ({target}).',
         recovered_pushed: 'Recorded and pushed the earlier merge ({target}).',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'Conflict — resolve it in the card above.',
         judgment_changed: 'The judgment changed. Check again.',
         merge_push_rejected: "Remote update rejected",

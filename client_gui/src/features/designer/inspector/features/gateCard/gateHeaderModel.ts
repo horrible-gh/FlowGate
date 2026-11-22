@@ -13,7 +13,7 @@ export function gateHeaderState(gate: RunGateState | null | undefined, node?: { 
   const recovery = gate?.recovery
   const active = gate?.git_active === true
   const conflict = !active && (note === 'gate_conflict' || recovery?.status === 'conflict')
-  const failed = gate?.recovery_reset_required || !active && (note === 'gate_failed' || note === 'gate_recovery' || gate?.job?.status === 'failed'
+  const failed = (node?.status === 'open' && !!gate?.auto_approval_error) || gate?.recovery_reset_required || !active && (note === 'gate_failed' || note === 'gate_recovery' || gate?.job?.status === 'failed'
     || !!recovery && (['failed', 'recovery_required'].includes(recovery.status) || !!recovery.error_code && recovery.status !== 'accepted'))
   const publishing = gate?.decision_in_progress || active || gate?.job && ['pending', 'running', 'queued', 'retry_wait'].includes(gate.job.status) || recovery?.status === 'accepted'
   const decision = gate?.decision
@@ -24,5 +24,5 @@ export function gateHeaderState(gate: RunGateState | null | undefined, node?: { 
     : decision?.status === 'canceled' && node?.status === 'pending' && !node.attemptId ? 'canceled'
     : node?.status === 'open' && gate?.can_decide === true ? 'waiting_confirm' : 'pending'
   const tones = { pending: 'neutral', waiting_confirm: 'neutral', publishing: 'warning', conflict_review: 'warning', recovery_required: 'danger', confirmed: 'success', rejected: 'warning', canceled: 'neutral' } as const
-  return { key, tone: tones[key], labelKey: `gui.designer.center.card_states.${key}`, reason: recovery?.error_code ?? gate?.job?.last_error_code ?? decision?.last_error_code ?? null }
+  return { key, tone: tones[key], labelKey: `gui.designer.center.card_states.${key}`, reason: gate?.auto_approval_error ?? recovery?.error_code ?? gate?.job?.last_error_code ?? decision?.last_error_code ?? null }
 }

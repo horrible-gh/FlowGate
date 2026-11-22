@@ -1,3 +1,4 @@
+import checkMessages from '@/features/designer/inspector/features/checkSettings/messages'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'
@@ -8,6 +9,7 @@ import { G, P, conflicts, createFakeGitSource, gitError, resolvingRun, review, r
 // DesignerGitPanel mounted with an in-memory source: cards per state,
 // the public events / expose (0033-D §5.1) and the two modeless windows (§6.2, §6.3).
 registerAppMessages(i18n)
+for (const [locale, messages] of Object.entries(checkMessages)) i18n.global.mergeLocaleMessage(locale, { gui: { inspector: { checkSettings: messages } } })
 
 let wrapper: VueWrapper | null = null
 

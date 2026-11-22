@@ -122,7 +122,7 @@ describe('Base apply — first look, header word, controls (R §4, C5 d)', () =>
     await mountPanel(t)
     // Not in the Git tab itself: the `Base 반영` entry opens the modeless on its tab (0067-R §2-4).
     expect(q('git-apply')).toBeNull()
-    expect(text('git-worktree-entry-count')).toBe('1개')
+    expect(text('git-worktree-summary-changed')).toBe('1')
     await click(entry('merge'))
     const apply = q('git-apply')!
     expect(panel('merge')!.contains(apply)).toBe(true)
@@ -348,7 +348,7 @@ describe('Base apply — merge results (C18)', () => {
     const before = { git: t.fake.source.loadStatus.mock.calls.length, e1: t.wt.source.loadStatus.mock.calls.length }
     await click('git-apply-merge')
     await confirmDialog()
-    expect(text('git-apply-notice')).toContain('원격이 Push를 거절했습니다. 현재 상태를 다시 읽었습니다.')
+    expect(text('git-apply-notice')).toContain('원격 갱신 거절')
     expect(text('git-apply-reject-hint')).toBe('이번 머지는 v0.2에 남아 있지 않습니다. 원격 상태를 확인(Fetch)한 뒤 다시 시도하세요.')
     expect(document.body.textContent).not.toContain('되돌려졌')
     expect(t.fake.source.loadStatus.mock.calls.length).toBe(before.git + 1)
@@ -500,7 +500,7 @@ describe('Base apply — follow-up Push (C19)', () => {
     t.wt.source.pushMergeResult.mockRejectedValueOnce(gitError(500, 'push_rejected'))
     await click('git-result-push-button')
     await confirmDialog()
-    expect(text('git-result-push-notice')).toContain('머지 결과는 그대로 남아 있습니다.')
+    expect(text('git-result-push-notice')).toContain('로컬 반영 보존')
   })
 })
 

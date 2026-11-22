@@ -1011,6 +1011,7 @@ export default {
         blocked_rejected: '差し戻しで停止',
         error: 'エラーで停止',
         stopped: '停止済み',
+        updated: 'ベースブランチの変更を取り込みました。',
         merge_conflict: 'マージ競合',
         hold: 'Hold で待機',
         step_done: '次のステップ完了',
@@ -1546,6 +1547,7 @@ export default {
       reason: {
         merge_conflict_open: '競合レビューが開いている',
         gate_conflict: '反映中の競合',
+        updated: 'ベースブランチの変更を取り込みました。',
         merge_conflict: '反映中の競合',
         gate_decision_not_cancelable: '前回の承認を取り消せない',
         gate_job_active: 'Git 処理がまだ進行中',
@@ -1880,6 +1882,7 @@ export default {
         merged_pushed: '{target} にマージして Push しました。',
         recovered: '先にマージされた結果を記録しました({target})。',
         recovered_pushed: '先にマージされた結果を記録して Push しました({target})。',
+        updated: 'ベースブランチの変更を取り込みました。',
         merge_conflict: '競合 — 上のカードで解決してください。',
         judgment_changed: '判定が変わりました。もう一度確認してください。',
         merge_push_rejected: "リモート更新拒否",

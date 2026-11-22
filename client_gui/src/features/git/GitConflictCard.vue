@@ -49,16 +49,6 @@
       <p v-else-if="session.state.conflictLoad === 'loading'" class="gx-desc">{{ t('gui.git.conflict.loading') }}</p>
       <p v-if="outcome" class="gx-reason" data-test="git-conflict-ai-outcome">{{ outcomeText }}</p>
       <div class="gx-actions">
-        <button
-          v-if="outcome"
-          type="button"
-          class="gx-btn ai"
-          :disabled="!actionable"
-          data-test="git-conflict-ai-again"
-          @click="session.startAi('conflict', outcome.providerId)"
-        >
-          {{ t('gui.git.conflict.ai_again') }}
-        </button>
         <div class="gx-ai-pick">
           <button
             ref="pickButton"
@@ -67,15 +57,18 @@
             :disabled="!actionable"
             :aria-expanded="pickerOpen ? 'true' : 'false'"
             aria-haspopup="dialog"
+            :title="outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai')"
+            :aria-label="outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai')"
             data-test="git-conflict-ai"
             @click="togglePicker"
           >
-            {{ outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai') }} ▾
+            ✦ ▾
           </button>
           <div v-if="pickerOpen" ref="picker" class="gx-popover" :style="pickerShift" role="dialog" :aria-label="t('gui.git.conflict.ai_pick')" data-test="git-conflict-ai-picker">
             <div class="gx-kicker">{{ t('gui.git.conflict.ai_pick') }}</div>
-            <div v-if="providers.length" class="gx-pick-list">
-              <label v-for="provider in providers" :key="provider.id" class="gx-pick-item" :data-selected="picked === provider.id">
+            <input v-if="providers.length > 8" v-model="providerSearch" class="gx-input" type="search" :aria-label="t('gui.git.conflict.ai_pick')" :placeholder="t('gui.git.conflict.ai_pick')" />
+            <div v-if="providers.length" class="gx-pick-list" style="max-height:240px;overflow:auto">
+              <label v-for="provider in filteredProviders" :key="provider.id" class="gx-pick-item" :data-selected="picked === provider.id">
                 <input v-model="picked" type="radio" name="gx-conflict-ai" :value="provider.id" />
                 <span>{{ provider.name }}</span>
                 <small v-if="provider.id === session.defaultProviderId.value">{{ t('gui.git.conflict.ai_default') }}</small>
@@ -90,11 +83,11 @@
             </div>
           </div>
         </div>
-        <button type="button" class="gx-btn" :disabled="!actionable" data-test="git-conflict-manual" @click="openResolver(null)">
-          {{ t('gui.git.conflict.manual') }}
+        <button type="button" class="gx-btn" :disabled="!actionable" :title="t('gui.git.conflict.manual')" :aria-label="t('gui.git.conflict.manual')" data-test="git-conflict-manual" @click="openResolver(null)">
+          ◉
         </button>
-        <button type="button" class="gx-btn ghost" :disabled="!actionable" data-test="git-conflict-abort" @click="askAbort">
-          {{ t('gui.git.conflict.abort') }}
+        <button type="button" class="gx-btn ghost" :disabled="!actionable" :title="t('gui.git.conflict.abort')" :aria-label="t('gui.git.conflict.abort')" data-test="git-conflict-abort" @click="askAbort">
+          ↶
         </button>
         <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
         <button v-if="canForce" type="button" class="gx-btn danger" :disabled="!actionable" data-test="git-conflict-force" @click="askForceCleanup()">
@@ -120,7 +113,7 @@
 // unknown) conflict this screen does not process: title and one line, no buttons (§3.7).
 // the one place a conflict is worked on: file states, a file
 // opens the direct resolver, [AI 해결 ▾] picks the AI right under the button before it starts,
-// an AI run that ended with conflicts left offers [다시 실행] / [다른 AI로 ▾] / [직접 해결], and
+// an AI run that ended with conflicts left offers [다른 AI로 ▾] / [직접 해결], and
 // the §B re-approval path sits below when a held approval is parked on this conflict.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -190,6 +183,10 @@ const noticeText = computed(() => {
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
 })
 
+const providerSearch = ref('')
+const filteredProviders = computed(() => [...providers.value]
+  .sort((a, b) => Number(b.id === session.preferredProviderId.value) - Number(a.id === session.preferredProviderId.value))
+  .filter(p => p.name.toLowerCase().includes(providerSearch.value.toLowerCase())))
 const pickerOpen = ref(false)
 // Pulled left (arrow kept on the button) only when the panel edge would cut the popover.
 const pickerShift = ref<Record<string, string>>({})

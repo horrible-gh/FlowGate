@@ -37,6 +37,12 @@ SLOT = {"ok": True, "group_branch": "fg/flowgate.v02.0091", "group_head": "a" * 
 def product(env, monkeypatch):
     """The product policies, registered as startup does, in registries restored after the test; the history route
     mounted as ``routers/main.py`` does."""
+    # This suite exercises gates created before automatic approval was introduced.
+    from modules.flow_gate.graph_workflow.services import card_settings_ports
+    original_created = card_settings_ports.cards_created
+    monkeypatch.setattr(card_settings_ports, "cards_created",
+                        lambda group, user, nodes: original_created(
+                            group, user, [n for n in nodes if n.get("node_type") != "gate"]))
     from flowgate.gate_decisions import routes
     from flowgate.graph_policies import integration
     from modules.flow_gate.graph_workflow.domain import policies, run_policies, run_scope_ports
@@ -397,7 +403,7 @@ def test_an_accepted_confirm_keeps_the_run_working_then_pause_and_stop_follow_d7
     assert _states(product)[g] == "open" and _states(product)[t] == "pending" and _gate_events(product, g) == []
     current = _current(product)
     assert current["status"] == "running" and current["idle_reason"] is None
-    assert setting(product, FA, g, "archive", True, expect=409)["error"]["code"] == "gate_settings_locked"
+    assert setting(product, FA, g, "auto_approve", True, expect=409)["error"]["code"] == "gate_settings_locked"
     # Pause after the acceptance: the intent stays, no new decision on a paused run.
     paused = product["client"].post(f"/api/v1/runs/{run_id}/pause", json={}, headers=_h())
     assert paused.status_code == 200, paused.text
@@ -423,7 +429,7 @@ def test_an_idle_run_whose_command_did_not_wait_keeps_idle_with_the_publish_reas
     g, _t = _linear(product)
     run_id = _start(product)["run_id"]
     _set_run(product, "idle", "no_targets")                       # no command waits for this gate
-    setting(product, FA, g, "archive", True)
+    setting(product, FA, g, "merge_mode", "commit")
     _decide(product, run_id, g, {"decision": "confirm", "request_id": "i-1"}, 202)
     row = _run_row(product)
     assert (row["status"], row["idle_reason"]) == ("idle", "gate_publish")
@@ -485,7 +491,7 @@ def test_the_same_request_is_answered_from_its_stored_result_and_other_content_c
 def test_a_stale_screen_is_refused_before_anything_is_written(product):
     g, _t = _linear(product)
     run_id = _start(product)["run_id"]
-    setting(product, FA, g, "archive", None)
+    setting(product, FA, g, "auto_approve", None)
     setting(product, FA, g, "merge_mode", "hold")                           # version 1
     attempt = _attempt(product, run_id, g)["attempt_id"]
     before = _marks(product)
@@ -664,7 +670,7 @@ def test_the_history_pages_with_a_stable_cursor(product, slot):
 def test_an_old_clients_request_keeps_its_meaning_and_is_refused_on_a_held_gate(product, slot):
     g, t = _linear(product)
     run_id = _start(product)["run_id"]
-    setting(product, FA, g, "archive", True)
+    setting(product, FA, g, "merge_mode", "commit")
     accepted = _decide(product, run_id, g, {"decision": "confirm"}, 202)                # old shape, work needed
     assert accepted["decision"]["request_id"].startswith("legacy-")
     before = _marks(product)

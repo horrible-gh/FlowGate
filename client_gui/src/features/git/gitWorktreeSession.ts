@@ -32,6 +32,7 @@
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
+import { executeGit, newExecution, type GitExecution, type GitExecutionScope } from './gitExecution'
 import type { GitCenterDiffSession } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource, type GitWorktreeSource } from './gitSource'
 import type { GitConfirmRequest, GitSession } from './gitSession'
@@ -138,6 +139,7 @@ export interface WorktreeSuggestion {
 }
 
 export interface WorktreeState {
+  execution: GitExecution | null
   status: WorktreeStatus | null
   statusLoad: Load
   // Why the last E1 read failed: network keeps the last answer, forbidden / failed show a line.
@@ -267,6 +269,9 @@ export interface GitWorktreeSession {
   /** The 0033 session's git/status (Base remote state for the `상태` pane and the push dialog). */
   readonly projectGit: ComputedRef<DeepReadonly<ProjectGitStatus> | null>
 
+  clearExecution(): void
+  execute(scope: GitExecutionScope, selection?: WorktreeSelection, resume?: boolean, commitRemaining?: boolean): Promise<void>
+  updateFromBase(): Promise<void>
   refresh(): void
   /** The current context while the gate is open; null otherwise. */
   ticket(): WorktreeTicket | null
@@ -353,6 +358,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   const wsrc = (): GitWorktreeSource | null => src().worktree ?? null
 
   const state = reactive<WorktreeState>({
+    execution: null,
     status: null,
     statusLoad: 'idle',
     statusError: null,
@@ -564,6 +570,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     state.busy = null
     state.selected = []
     state.notices = {}
+    state.execution = null
   }
 
   // A project / Flow switch: every screen state goes back to its first look (§3-2-1).
@@ -801,6 +808,41 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   // An open `Diff` pane reads its list again with the rest.
+  async function execute(scope: GitExecutionScope, selection: WorktreeSelection = { all: true }, resume = false, commitRemaining = false): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    if (!held || !api || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+    if (SESSION_CARDS.includes(git.groupCard.value ?? '')) return
+    const plan = resume && state.execution?.status === 'stopped'
+      ? state.execution : newExecution(scope, state.mergeTarget)
+    if (resume && commitRemaining && plan.error === 'uncommitted_changes') plan.steps.splice(plan.cursor, 0, 'commit')
+    state.execution = plan
+    state.busy = 'execution'
+    ++e1Seq
+    try {
+      await executeGit(state.execution, api, { ...held, message: state.message,
+        providerId: state.providerId, selection, current: () => isCurrent(held) })
+    } finally {
+      if (isCurrent(held)) {
+        state.busy = null
+        afterRemote({ e1: true, e8: true, e10: true })
+      }
+    }
+  }
+
+  async function updateFromBase(): Promise<void> {
+    if (git.state.readOnly || state.forbidden || SESSION_CARDS.includes(git.groupCard.value ?? '')) return
+    if ((state.status?.counts.changed ?? 1) > 0) return
+    return write('apply', 'update', async (api, gid) => {
+      if (!api.updateFromBase) throw new Error('update_unavailable')
+      return api.updateFromBase(gid)
+    }, result => {
+      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : 'updated'
+      setNotice('apply', { code: noticeCode })
+      afterRemote({ e1: true, e8: true, e10: true })
+    })
+  }
+
   function refresh(): void {
     if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
@@ -1454,6 +1496,9 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     pushCandidates,
     pushRow,
     projectGit,
+    clearExecution: () => { if (!state.busy) state.execution = null },
+    execute,
+    updateFromBase,
     refresh,
     ticket,
     isCurrent,

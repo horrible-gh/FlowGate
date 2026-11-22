@@ -785,6 +785,16 @@ function statusAfter(raw: Record<string, unknown>, groupId: string): WorktreeSta
 }
 
 /** E1 — the worktree files split into Stage / working changes, tokens, floor and blockers. */
+export async function syncWorktreeRemote(groupId: string, target: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${groupGit(groupId)}/remote-sync`, { target_branch: target }))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
+export async function updateWorktreeFromBase(groupId: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${worktreePath(groupId)}/update-from-base`, {}))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
 export async function fetchWorktreeStatus(groupId: string): Promise<WorktreeStatus> {
   const raw = await resultOf(() => getRequest<ResultEnvelope>(`${worktreePath(groupId)}/status`))
   return toWorktreeStatus(raw, groupId)
@@ -952,6 +962,7 @@ export async function fetchManualMerge(groupId: string, target: string | null): 
     preview: toManualMergePreview(raw.preview),
     commitCount: num(raw.commit_count),
     floorError: bodyError(raw.floor_error),
+    ...('work_base_behind' in raw ? { workBaseBehind: num(raw.work_base_behind) } : {}),
     aheadOfTarget: num(raw.ahead_of_target),
     mergeNeeded: flag(raw.merge_needed),
     recovery: flag(raw.recovery),

@@ -159,6 +159,18 @@ def _initialize(flow_id, node_key, kind, creator_id, plan_roles, wp):
 
 
 def cards_created(group, user_id, nodes):
+    # Creation-only defaults: absent values on existing gates still mean manual approval.
+    if repository.available():
+        for node in nodes:
+            if fields.card_kind(node.get("node_type"), node.get("doc_type")) == fields.CHECK:
+                flow_id, key = group["group_id"], node["node_key"]
+                stored = repository.values(flow_id, key)
+                changed = False
+                for name, value in (("auto_approve", True), ("merge_mode", "commit")):
+                    if name not in stored:
+                        changed = repository.put(flow_id, key, name, value, user_id) or changed
+                if changed:
+                    repository.bump_version(flow_id, key)
     if not role_store.available():
         return
     for node in nodes:

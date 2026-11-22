@@ -49,6 +49,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitChangesAccordion.vue',
         'GitCommitBar.vue',
         'GitWorktreePanel.vue',
+        'GitQuickActions.vue',
+        'gitExecution.ts',
         // flowgate.v02.0067 T#1 — the Git modeless and its `상태` tab.
         'GitWorktreeStatus.vue',
         'GitWorktreeWindow.vue',
@@ -109,6 +111,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     const allowed = [
       /^vue$/,
       /^vue-i18n$/,
+      /^\.\.\/designer\/inspector\/features\/gateCard\/GateSettingsSummary\.vue$/,
+      /^\.\.\/designer\/resources\/useGateRecoveryRefresh$/,
       /^\.\/[A-Za-z]+(\.vue|\.css)?$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^@\/features\/project$/,

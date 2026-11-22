@@ -125,7 +125,7 @@ LOOP_FAILURE_RESTARTS = (-1, 0, 1, 2)
 MERGE_TARGET_REMOTES = ("origin",)
 # Stored values of a check card that are history only: no field reads or writes them. ``usage`` is the
 # removed mid / end switch; ``legacy_merge_target`` holds the old branch-name ``merge_target`` (migration 158).
-LEGACY_CHECK_FIELDS = ("usage", "legacy_merge_target")
+LEGACY_CHECK_FIELDS = ("usage", "legacy_merge_target", "archive")
 _ROOT_TYPES = frozenset({"R", "B"})
 _PLAN_TYPES = frozenset({"WP"})
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -173,7 +173,7 @@ _FIELDS = {
     # Historical delegation values stay stored, but are no longer writable settings.
     REQUIREMENT: (),
     CHECK: (
-        Field("archive", FLAG, False),
+        Field("auto_approve", FLAG, False),
         Field("merge_mode", CHOICE, None, ("merge", "commit", "hold")),
         Field("merge_target", CHOICE, None, MERGE_TARGET_REMOTES),
         MERGE_TARGET_BRANCH,

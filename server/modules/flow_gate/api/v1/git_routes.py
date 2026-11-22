@@ -721,6 +721,17 @@ def post_group_update_from_base(group_id: str, user=Depends(get_current_user)):
         return _guard(exc)
 
 
+@router.post("/groups/{group_id}/git/worktree/update-from-base")
+def post_worktree_update_from_base(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.update_from_base(group_id, require_clean=True)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
 class GroupUntrackedBody(BaseModel):
     files: list[str] = []
     message: str | None = None

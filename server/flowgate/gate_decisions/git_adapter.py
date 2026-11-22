@@ -667,7 +667,7 @@ def remote_tracking_head(slot: Slot, branch: str):
 
 
 def sync_merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, pre_head: str, remote_head: str,
-               on_started) -> dict:
+               on_started, *, lock_holder: Optional[str] = None) -> dict:
     """Merge the fetched remote tip ``remote_head`` (by SHA, ``--no-ff``, rerere off, the FlowGate identity) into the
     local target at ``pre_head`` (under its B / W and R, the caller's). The attempt is finalize's record like the
     decision's own merge (``open_attempt`` / ``record_merge_inputs`` before the merge, the landed-merge check of a
@@ -703,9 +703,10 @@ def sync_merge(slot: Slot, decision_id: str, job_id: str, target_branch: str, pr
                               details={"merge_id": target.merge_id, "changed": False})
     if target.is_project_base:
         gs.guard_base_free(slot.project_id)
-    attempt = mt.open_attempt(slot.group_id, target, ATTEMPT_ACTION, holder_of(job_id), uuid.uuid4().hex,
+    attempt = mt.open_attempt(slot.group_id, target, ATTEMPT_ACTION, lock_holder or holder_of(job_id), uuid.uuid4().hex,
                               origin=mt.ORIGIN_MANUAL_MERGE)
-    mt._update_context(attempt.merge_id, **{SYNC_CONTEXT_KEY: decision_id, "gate_remote_sync": True})
+    if decision_id:
+        mt._update_context(attempt.merge_id, **{SYNC_CONTEXT_KEY: decision_id, "gate_remote_sync": True})
     landed = False
     try:
         if not attempt.is_project_base:
