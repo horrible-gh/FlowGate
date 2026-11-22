@@ -13,6 +13,7 @@ GET                   /api/v1/jobs/{job_id}/status
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -427,6 +428,10 @@ def _message_to_view(row: dict) -> dict:
         "doc_type": row.get("doc_type"),
         "message": row.get("message"),
         "updated_at": row.get("updated_at"),
+        "usage": row.get("message_usage"),
+        "title": row.get("title"),
+        "kind": row.get("kind"),
+        "sort_order": row.get("sort_order"),
     }
 
 
@@ -434,6 +439,7 @@ def _message_to_view(row: dict) -> dict:
 def list_messages(
     project_id: str,
     doc_type: str | None = Query(None),
+    usage: Literal["document", "chat"] = Query("document"),
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
     """Management list (no doc_type) or mention-add dialog union (doc_type given).
@@ -441,7 +447,9 @@ def list_messages(
     With doc_type: returns the requested type + [All]('*') union (P0006 §4.5).
     Display order/priority/dedup is L0007's concern; this returns the wire set as-is.
     """
-    if doc_type is not None:
+    if usage == "chat":
+        rows = messages_db.list_by_project(project_id, "chat")
+    elif doc_type is not None:
         rows = messages_db.list_for_dialog(project_id, doc_type)
     else:
         rows = messages_db.list_by_project(project_id)
@@ -451,6 +459,19 @@ def list_messages(
 class MessageCreate(BaseModel):
     doc_type: str | None = None
     message: str | None = None
+    usage: Literal["document", "chat"] = "document"
+    title: str | None = None
+    kind: Literal["sticky", "once"] = "once"
+    sort_order: int = 0
+
+
+def _message_title(title: str | None, required: bool) -> str:
+    if title is None and not required:
+        return ""
+    title = (title or "").strip()
+    if not title or len(title) > 12:
+        raise HTTPException(status_code=422, detail="title must contain 1 to 12 characters")
+    return title
 
 
 @router.post("/projects/{project_id}/messages", status_code=201)
@@ -459,19 +480,24 @@ def create_message(
     body: MessageCreate,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    doc_type = (body.doc_type or "").strip()
+    doc_type = "*" if body.usage == "chat" else (body.doc_type or "").strip()
+    title = _message_title(body.title, body.usage == "chat")
     message = (body.message or "").strip()
     if not doc_type:
         raise HTTPException(status_code=422, detail="doc_type is required")
     if not message:
         raise HTTPException(status_code=422, detail="message is required")
-    row = messages_db.create(project_id, doc_type, message)
+    row = messages_db.create(project_id, doc_type, message, usage=body.usage,
+                             title=title, kind=body.kind, sort_order=body.sort_order)
     return _message_to_view(row)
 
 
 class MessagePatch(BaseModel):
     doc_type: str | None = None
     message: str | None = None
+    title: str | None = None
+    kind: Literal["sticky", "once"] | None = None
+    sort_order: int | None = None
 
 
 @router.patch("/projects/{project_id}/messages/{message_id}")
@@ -481,18 +507,29 @@ def update_message_endpoint(
     body: MessagePatch,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
+    current = messages_db.get_by_id(message_id)
+    if not current or current["project"] != project_id:
+        raise HTTPException(status_code=404, detail="Message not found")
     updates: dict = {}
+    provided = body.model_dump(exclude_unset=True)
+    if any(value is None for value in provided.values()):
+        raise HTTPException(status_code=422, detail="message fields must not be null")
+    if "title" in provided:
+        updates["title"] = _message_title(body.title, True)
+    for field in ("kind", "sort_order"):
+        if field in provided:
+            updates[field] = provided[field]
     if body.doc_type is not None:
         doc_type = body.doc_type.strip()
         if not doc_type:
             raise HTTPException(status_code=422, detail="doc_type must not be empty")
-        updates["doc_type"] = doc_type
+        updates["doc_type"] = "*" if current["message_usage"] == "chat" else doc_type
     if body.message is not None:
         message = body.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="message must not be empty")
         updates["message"] = message
-    row = messages_db.update(message_id, updates)
+    row = messages_db.update(message_id, updates, project=project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Message not found")
     return _message_to_view(row)
@@ -504,7 +541,7 @@ def delete_message_endpoint(
     message_id: int,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    if not messages_db.delete(message_id):
+    if not messages_db.delete(message_id, project=project_id):
         raise HTTPException(status_code=404, detail="Message not found")
     return {"detail": "deleted"}
 
