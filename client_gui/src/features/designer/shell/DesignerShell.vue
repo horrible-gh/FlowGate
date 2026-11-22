@@ -108,6 +108,7 @@
           :unselected="!hasWorkTarget"
           :selected-palette-id="selectedPalette?.itemId ?? null"
           :source-locked="sourceLocked"
+          :flow-running="flowRunning"
           @update:tool="layout.activeRightTool = $event"
           @palette-select="selectedPalette = $event"
           @palette-drag-start="selectedPalette = null"
@@ -609,6 +610,8 @@ const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeR
 // WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — the earlier implementation: and while
 // its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
 const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
+// Archive and unknown locks restrict editing but do not indicate an active Flow run.
+const flowRunning = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock === 'run')
 
 // a toast keeps what it says as meaning — the refusal, the notice, the menu's own words —
 // and its sentence is built in the current language each time it renders, so a toast still on screen (a refused

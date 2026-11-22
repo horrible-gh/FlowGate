@@ -22,7 +22,7 @@
       :read-only="readOnly"
       :draft="start.isDraft.value"
       :title="headerTitle"
-      :flow-running="sourceLocked || session.flowRunning.value"
+      :flow-running="flowRunning || session.flowRunning.value"
       :chat-running="session.running.value"
       @select="session.selectChat"
       @rename="start.rename"
@@ -156,6 +156,8 @@ const props = withDefaults(
     readOnly?: boolean
     /** the Flow's Graph run locks the AI source access mode. */
     sourceLocked?: boolean
+    /** Confirmed Flow run activity, separate from archive / unknown edit locks. */
+    flowRunning?: boolean
     /** the project event stream; without it the chat hears no server event. */
     subscribeEvents?: SubscribeChatEvents
     /** the AI attachment request row the container draws requests with. */
@@ -165,7 +167,7 @@ const props = withDefaults(
     /** the container shows this part (false while another Dock tab is shown). */
     active?: boolean
   }>(),
-  { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
+  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
 )
 
 const emit = defineEmits<{

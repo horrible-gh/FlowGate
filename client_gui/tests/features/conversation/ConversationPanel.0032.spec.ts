@@ -74,6 +74,24 @@ const findAll = (sel: string) => wrapper!.findAll(`[data-test="${sel}"]`)
 const windowFind = (sel: string) => new DOMWrapper(document.body).find(`[data-test="${sel}"]`)
 const card = (id: string) => findAll('tl-command').find((c) => c.text().includes(`npm ${id}`))!
 
+describe('Flow run badge', () => {
+  it('keeps archive / unknown source locks from showing a running badge', async () => {
+    await mountPanel({}, { sourceLocked: true })
+    expect(find('conv-flow-running').exists()).toBe(false)
+    expect(wrapper!.findComponent({ name: 'ConversationComposer' }).props('sourceLocked')).toBe(true)
+
+    // A confirmed run shows the badge; returning to an archive / unknown lock hides it.
+    await wrapper!.setProps({ flowRunning: true })
+    expect(find('conv-flow-running').exists()).toBe(true)
+    await wrapper!.setProps({ flowRunning: false })
+    expect(find('conv-flow-running').exists()).toBe(false)
+    expect(wrapper!.findComponent({ name: 'ConversationComposer' }).props('sourceLocked')).toBe(true)
+
+    await wrapper!.setProps({ sourceLocked: false })
+    expect(find('conv-flow-running').exists()).toBe(false)
+  })
+})
+
 describe('command card (D0006 §6.1)', () => {
   it('words each card from the server state and reason, and offers a decision only while pending', async () => {
     await mountPanel({

@@ -77,6 +77,7 @@
           :project-id="partProjectId"
           :group-id="partFlow?.groupId ?? null"
           :source-locked="sourceLocked"
+          :flow-running="flowRunning"
           :subscribe-events="subscribeChatEvents"
           :attachment-request-row="AttachmentRequestItem"
           :attachment-request-bulk="AttachmentRequestBulkBar"
@@ -119,8 +120,10 @@ const props = withDefaults(
     unselected?: boolean
     /** the open Flow's Graph run locks the Conversation's source access mode. */
     sourceLocked?: boolean
+    /** Confirmed Flow run activity, separate from archive / unknown edit locks. */
+    flowRunning?: boolean
   }>(),
-  { unselected: false, selectedPaletteId: null, sourceLocked: false },
+  { unselected: false, selectedPaletteId: null, sourceLocked: false, flowRunning: false },
 )
 
 const emit = defineEmits<{
