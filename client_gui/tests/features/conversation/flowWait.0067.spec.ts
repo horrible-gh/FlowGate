@@ -16,9 +16,9 @@ import { createFakeSource, turn } from './fakeConversationSource'
 
 // flowgate.v02test.0067 card 5 (#2, screen side): while a card of the Flow runs, an edit / edit-once / execute chat is
 // refused by the server (409 graph_run_locked, or 409 run_in_progress of a run that is not the chat's). The screen
-// no longer ends that call with an error: the message waits for the Flow («카드 실행이 끝나면 이어서 답합니다»), a
+// no longer ends that call with an error: the message waits for the Flow («카드 종료 후 답변»), a
 // paused run is waited through, and ONE call answers once the Flow's run is over. [중지] gives up the wait only.
-// A read chat's answer written during a card run carries «카드 실행 중에 본 내용»; the header tells «플로우 실행 중»
+// A read chat's answer written during a card run carries «카드 실행 중 조회»; the header tells «플로우 실행 중»
 // and «채팅 호출 중» apart.
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
 const A = 'p.m.0001.0002-CH'
@@ -75,7 +75,7 @@ afterEach(() => {
 })
 
 describe('0067 #2: an edit chat while a card runs waits and answers by itself', () => {
-  it('409 graph_run_locked: no error, «카드 실행이 끝나면 이어서 답합니다», then one call once the Flow run is over', async () => {
+  it('409 graph_run_locked: no error, «카드 종료 후 답변», then one call once the Flow run is over', async () => {
     const { session, source, clock: c, flowStatus } = setup()
     await session.setScope(SCOPE)
     await flushPromises()
@@ -387,7 +387,7 @@ describe('0067 #2: followUps helpers for the Flow wait', () => {
   })
 })
 
-describe('0067 #2: «카드 실행 중에 본 내용», the wait line and the header', () => {
+describe('0067 #2: «카드 실행 중 조회», the wait line and the header', () => {
   registerAppMessages(i18nPlugin)
   const i18n = () => {
     i18nPlugin.global.locale.value = 'ko'
@@ -407,7 +407,7 @@ describe('0067 #2: «카드 실행 중에 본 내용», the wait line and the he
     })
     const badge = marked.find('[data-test="tl-seen-during-run"]')
     expect(badge.exists()).toBe(true)
-    expect(badge.text()).toBe('카드 실행 중에 본 내용')
+    expect(badge.text()).toBe('카드 실행 중 조회')
     expect(badge.attributes('title')).toContain('카드가 고치는 중인 파일')
     const plain = mount(TimelineMessage, {
       props: { turn: turn(6, 'ai', 'answer', '2026-11-22T01:42:00Z') },
@@ -421,14 +421,14 @@ describe('0067 #2: «카드 실행 중에 본 내용», the wait line and the he
     expect(user.find('[data-test="tl-seen-during-run"]').exists()).toBe(false)
   })
 
-  it('the wait line says «카드 실행이 끝나면 이어서 답합니다» with its count and a [중지] that emits cancel-wait', async () => {
+  it('the wait line says «카드 종료 후 답변» with its count and a [중지] that emits cancel-wait', async () => {
     const wrapper = mount(TimelineActivity, {
       props: { activity: { kind: 'status', id: 'local-status-follow-up', chatId: A, createdAt: null, tone: 'info', code: 'follow_up_flow_waiting', text: '2' } as never },
       global: { plugins: [i18n()] },
     })
-    expect(wrapper.text()).toContain('카드 실행이 끝나면 이어서 답합니다 · 기다리는 메시지 2개')
+    expect(wrapper.text()).toContain('카드 종료 후 답변 · 2개')
     expect(wrapper.find('[data-test="tl-flow-wait"]').exists()).toBe(true)
-    // no copy button: it is no error line; no [지금 멈추고 다시 답하기]: there is no answer to stop.
+    // no copy button: it is no error line; no [멈추고 재답변]: there is no answer to stop.
     expect(wrapper.find('[data-test="tl-status-copy"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="tl-reply-now"]').exists()).toBe(false)
     await wrapper.find('[data-test="tl-flow-wait-cancel"]').trigger('click')
@@ -440,7 +440,7 @@ describe('0067 #2: «카드 실행 중에 본 내용», the wait line and the he
       props: { readOnly: true, activity: { kind: 'status', id: 'x', chatId: A, createdAt: null, tone: 'info', code: 'follow_up_flow_waiting', text: null } as never },
       global: { plugins: [i18n()] },
     })
-    expect(wrapper.text()).toContain('카드 실행이 끝나면 이어서 답합니다')
+    expect(wrapper.text()).toContain('카드 종료 후 답변')
     expect(wrapper.find('[data-test="tl-flow-wait-cancel"]').exists()).toBe(false)
   })
 

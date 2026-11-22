@@ -7,7 +7,7 @@ import TimelineActivity from '@/features/conversation/TimelineActivity.vue'
 import type { StatusActivity } from '@/features/conversation/types'
 import type { TimelineItem } from '@/features/conversation/timeline'
 
-// flowgate.v02test.0067 card 3: [지금 멈추고 다시 답하기] sits on the follow-up line ("앞 답변이 끝나면 이어서 답합니다"),
+// flowgate.v02test.0067 card 3: [멈추고 재답변] sits on the follow-up line ("이어 답변 대기"),
 // only while a message waits; in edit mode it warns that a stop can leave an edit half done.
 registerAppMessages(i18n)
 
@@ -27,12 +27,12 @@ const line = (code = 'follow_up_waiting'): StatusActivity => ({
 const find = (sel: string) => wrapper!.find(`[data-test="${sel}"]`)
 
 describe('0067 card 3: the follow-up line\'s button', () => {
-  it('shows the waiting line with [지금 멈추고 다시 답하기] and emits reply-now when pressed', async () => {
+  it('shows the waiting line with [멈추고 재답변] and emits reply-now when pressed', async () => {
     wrapper = mount(TimelineActivity, { props: { activity: line(), replyNow: { stopping: false, editsFiles: false } }, global: { plugins: [i18n] } })
-    expect(wrapper.text()).toContain('앞 답변이 끝나면 이어서 답합니다')
+    expect(wrapper.text()).toContain('이어 답변 대기')
     const button = find('tl-reply-now')
     expect(button.exists()).toBe(true)
-    expect(button.text()).toBe('지금 멈추고 다시 답하기')
+    expect(button.text()).toBe('멈추고 재답변')
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click')
     expect(wrapper.emitted('reply-now')).toHaveLength(1)
