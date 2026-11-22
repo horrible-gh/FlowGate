@@ -160,6 +160,8 @@
   >
     <!-- flowgate.v02gui.0026: the run in progress looks like the question policy conversation's "AI가 답하는 중…". -->
     <span v-if="running" class="tl-dots" data-test="tl-running-dots" aria-hidden="true"><i /><i /><i /></span>
+    <!-- flowgate.v02test.0067 #46: messages wait for the answer after the current one. -->
+    <span v-if="activity.code === 'follow_up_waiting'" data-test="tl-follow-up" aria-hidden="true">⏳</span>
     <span class="tl-status-text">{{ statusText }}</span>
     <template v-if="activity.code === 'run_history_unconfirmed'">
       <button type="button" class="tl-act-btn" data-test="tl-history-retry" @click="emit('retry-history')">{{ t('gui.common.retry') }}</button>
@@ -295,6 +297,12 @@ const statusText = computed(() => {
       : a.run?.access === 'execute' ? t('gui.conversation.composer.source.execute')
       : a.run?.access === 'read' ? t('gui.conversation.composer.source.read_only') : ''
     return [t('gui.conversation.status.run_running'), a.run?.providerName, access].filter(Boolean).join(' · ')
+  }
+  // flowgate.v02test.0067 #46: the follow-up line, with how many messages wait (text: the count, none when no waiting message is on screen).
+  if (a.code === 'follow_up_waiting') {
+    const count = Number(a.text ?? 0)
+    const head = t('gui.conversation.status.follow_up_waiting')
+    return count > 0 ? `${head} · ${t('gui.conversation.status.follow_up_waiting_count', { n: count })}` : head
   }
   // B: a recorded chat error keeps the wording its notice had.
   const key = a.code ? `gui.conversation.status.${a.code}` : ''

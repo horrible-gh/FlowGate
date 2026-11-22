@@ -1301,6 +1301,9 @@ export default {
     },
     status: {
       run_running: 'AIが回答中…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: '前の回答が終わると続けて回答します',
+      follow_up_waiting_count: '待機中のメッセージ {n}件',
       run_timeout: '設定した制限時間に達したためAI呼び出しを終了しました。',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
