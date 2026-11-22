@@ -257,6 +257,11 @@ export interface FlowAiActivity {
   runId: string | null
   status: string | null
   actionScope: string | null
+  /**
+   * flowgate.v02test.0066 (#36-1): a running conflict resolver's progress — session files with no conflict marker left
+   * over all session files, counted by the server. Only asked with `conflictProgress: true`; null / absent = not known.
+   */
+  conflictProgress?: { done: number; total: number } | null
 }
 
 /**

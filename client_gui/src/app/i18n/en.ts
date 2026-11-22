@@ -357,6 +357,8 @@ export default {
       // a tab's run mark (its accessible name).
       tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       tab_chat: 'Chat AI responding',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AI resolving', resolving_progress: 'AI resolving · {done}/{total}' },
       // an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: 'Archived',
       tab_run_end: { completed: 'Run completed', ended: 'Run ended' },

@@ -704,8 +704,8 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowFileDiff(projectId, groupId, path, options)
   }
 
-  function loadFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
-    return fetchFlowAiActivity(groupId)
+  function loadFlowAiActivity(groupId: string, options?: { conflictProgress?: boolean }): Promise<FlowAiActivity> {
+    return fetchFlowAiActivity(groupId, options)
   }
 
   // the Designer Git part's file reads. A conflict / uncommitted file is a

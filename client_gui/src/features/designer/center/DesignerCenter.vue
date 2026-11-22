@@ -33,7 +33,7 @@
       :archived="tabArchived"
       :run-ends="tabRunEnds"
       :chat-ends="tabChatEnds"
-      :conflicts="tabConflicts"
+      :conflicts="tabConflictMarks"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -123,6 +123,7 @@ import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSes
 import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
+import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
@@ -196,6 +197,16 @@ const tabConflicts = computed(() => {
     })
   }
   return conflicts
+})
+/**
+ * flowgate.v02test.0066 #36-1: what the tabs show — 병합 충돌 or AI 해결 중 · n/m — from the Git panel's own answers
+ * (the Project's git/status rows, and the AI run of the tabs that have a conflict), for every open tab. The Graph's
+ * answer above still decides a tab Git has no conflict row for.
+ */
+const tabConflictMarks = useFlowTabConflicts({
+  projectId: () => props.center.state.projectId,
+  flows: () => props.center.state.tabs.map((tab) => tab.flowId),
+  graphConflicts: () => tabConflicts.value,
 })
 const tabRunStates = computed(() => {
   const states: Record<string, FlowTabRunState> = {}
