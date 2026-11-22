@@ -287,6 +287,12 @@ export interface ConversationSession {
    * online again, the tab is shown again. Any other list state is left alone, so these signals cost nothing.
    */
   recoverChatList(): Promise<void>
+  /**
+   * 0060: sends again, one by one, the open chat's messages whose last try got no answer or a 5xx (a dropped
+   * connection, a server or DB restart) — under their own idempotency key, so one the server did store is not stored
+   * twice. Refused messages (4xx) stay with their reason and retry. Called when the connection is back.
+   */
+  resendInterrupted(): Promise<void>
   selectChat(chatId: string, trace?: SubmissionTrace): Promise<void>
   renameActiveChat(title: string): Promise<boolean>
   createChat(title: string, options?: CreateChatOptions): Promise<boolean>
@@ -581,6 +587,11 @@ export function sweepStoredSends(now = Date.now()): void {
 /** the server refused this message for good; resending it (now or after F5) cannot help. */
 function isTerminalSendFailure(failure: SendFailure): boolean {
   return failure.status != null && [400, 404, 409, 422].includes(failure.status)
+}
+
+/** 0060: the try got no answer or the server was failing — the same message may simply be sent again. */
+export function isInterruptedSendFailure(failure: SendFailure | null | undefined): boolean {
+  return !!failure && !isTerminalSendFailure(failure) && (failure.status == null || failure.status >= 500)
 }
 
 /**
@@ -1463,6 +1474,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   let pendingChatRecovery = false
+  // 0060: the Flow's chat list failed while the Flow was opening, so its newest chat (or the one to resume) was never
+  // opened. The first list read that succeeds later — by itself, on a signal or on [다시 시도] — opens it then.
+  let openAfterList: { gen: number; resumeChatId: string | null; restoredDraft: boolean } | null = null
 
   async function reloadChats(trace?: SubmissionTrace): Promise<void> {
     const scope = state.scope
@@ -1493,6 +1507,15 @@ export function createConversationSession(options: ConversationSessionOptions = 
       titleGuard.listRevision++
       state.chatsStatus = 'ready'
       pendingChatRecovery = false
+      const reopen = openAfterList
+      if (reopen && reopen.gen === gen) {
+        openAfterList = null
+        // Nothing the user started meanwhile is replaced: an open chat, a chat being made, a message held for a draft.
+        if (state.activeChatId === null && !state.creatingChat && state.pending.length === 0) {
+          const first = (reopen.resumeChatId !== null ? state.chats.find((c) => c.id === reopen.resumeChatId) : undefined) ?? state.chats[0]
+          if (first && !reopen.restoredDraft) void selectChat(first.id)
+        }
+      }
     } catch (error) {
       trace?.mark('list_end', { result: 'error' })
       if (disposed || gen !== scopeGen || request !== chatsRequest || userId !== draftUserId()) return
@@ -1550,8 +1573,14 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.pending = visiblePending()
     void loadProviders(scope.projectId)
     const gen = scopeGen
+    openAfterList = null
     await reloadChats()
     if (disposed || gen !== scopeGen) return
+    // reloadChats set the status; TypeScript still holds the 'idle' assigned above.
+    if ((state.chatsStatus as LoadStatus) === 'error') {
+      openAfterList = { gen, resumeChatId, restoredDraft: restoredDraft && state.pending.some((p) => p.failed) }
+      return
+    }
     // The newest conversation of the Flow opens first — the earlier change: unless an earlier page (F5, a closed
     // panel) left the first message of the draft shown unconfirmed: that draft stays open with the message and its
     // retry, so it is not hidden behind another chat. Within one session the Flow opens as before.
@@ -2470,6 +2499,25 @@ export function createConversationSession(options: ConversationSessionOptions = 
     return ok
   }
 
+  let resending = false
+
+  async function resendInterrupted(): Promise<void> {
+    if (disposed || resending) return
+    const chatId = state.activeChatId
+    if (!chatId || state.turnsStatus !== 'ready') return
+    resending = true
+    try {
+      const due = state.pending.filter((p) => p.failed && isInterruptedSendFailure(p.failure)).map((p) => p.localId)
+      for (const localId of due) {
+        if (disposed || state.activeChatId !== chatId) return
+        // Stops at the first that fails again: the connection is not back after all, the next signal tries again.
+        if (!(await retry(localId))) return
+      }
+    } finally {
+      resending = false
+    }
+  }
+
   async function reportRead(seq: number): Promise<void> {
     const chatId = state.activeChatId
     if (!chatId || seq <= 0 || seq <= state.readSeq || seq <= reportedRead) return
@@ -3234,6 +3282,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providersLoaded,
     reloadChats,
     recoverChatList,
+    resendInterrupted,
     selectChat,
     renameActiveChat,
     createChat,

@@ -53,10 +53,12 @@
     </label>
 
     <div class="project-explorer-body">
+      <!-- 0060: while the server is unreachable (the App Shell's banner is up) a tree that never loaded says it is
+           reconnecting instead of failing; it reads again by itself (useSelfHeal). -->
       <LoadingState
-        v-if="projectId && loading"
+        v-if="projectId && (loading || (error !== null && offline))"
         size="sm"
-        :label="t(reconnecting ? 'gui.designer.project_explorer.reconnecting' : 'gui.designer.project_explorer.loading')"
+        :label="t(reconnecting || offline ? 'gui.designer.project_explorer.reconnecting' : 'gui.designer.project_explorer.loading')"
         data-test="project-explorer-loading"
       />
       <ErrorState
@@ -76,7 +78,7 @@
         <!-- Same contract as the Dashboard explorer: a failed refresh
              rides ABOVE the tree it could not replace; the last good tree stays usable. -->
         <Alert
-          v-if="shownRefreshError !== null"
+          v-if="shownRefreshError !== null && !offline"
           class="project-explorer-refresh-error"
           tone="warning"
           :title="t('gui.designer.project_explorer.refresh_failed')"
@@ -127,6 +129,8 @@
 import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRequestRecovery } from '@shared/requestRecovery'
+import { useSelfHeal } from '@shared/selfHeal'
+import { connectionLost } from '@shared/connectionStatus'
 import Alert from '../../../components/ui/Alert.vue'
 import Button from '../../../components/ui/Button.vue'
 import EmptyState from '../../../components/ui/EmptyState.vue'
@@ -219,6 +223,8 @@ const refreshing = ref(false)
 const error = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
 const shownRefreshError = computed(() => refreshError.value ?? props.restoreError)
+// 0060: the App Shell shows one banner while the server is unreachable; this part keeps its last tree quietly.
+const offline = computed(() => connectionLost.value)
 
 // While the tree's GET is being re-sent (shared/api.ts GET retry) the first load and a
 // refresh say "다시 연결하는 중…" instead of only spinning, like the File tab. Cleared when the read ends or the
@@ -468,6 +474,14 @@ function refresh() {
 function failed(): boolean {
   return error.value !== null || refreshError.value !== null
 }
+
+// 0060: a failed tree reads again by itself (5 s, 10 s, 20 s, then every 30 s) instead of waiting for a recovery
+// signal that may never come. The Designer's own failed restore read counts too: its retry is this refresh.
+useSelfHeal({
+  failed: () => !!projectId.value && (failed() || props.restoreError !== null),
+  busy: () => loading.value || refreshing.value,
+  reload: refresh,
+})
 
 /**
  * The project event hub's resync (the stream reopened, or a connection signal of the

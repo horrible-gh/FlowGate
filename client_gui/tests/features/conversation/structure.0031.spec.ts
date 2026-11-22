@@ -112,6 +112,11 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
       /^\.\.\/\.\.\/core\/markdown\/markdownRenderer$/,
       /^@shared\/api$/,
       /^@shared\/utils\/uuid$/,
+      // The shared connection helpers of the transport: the "reconnecting…" signal of a re-sent GET, 0060's self-healing
+      // re-read of a failed panel and the app-wide "server unreachable" state.
+      /^@shared\/requestRecovery$/,
+      /^@shared\/selfHeal$/,
+      /^@shared\/connectionStatus$/,
     ]
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) expect(allowed.some((re) => re.test(spec)), `${rel(file)}: ${spec}`).toBe(true)

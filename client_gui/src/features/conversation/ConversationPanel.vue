@@ -14,7 +14,7 @@
     <ConversationHeader
       :chats="state.chats"
       :chats-status="state.chatsStatus"
-      :reconnecting="listReconnecting"
+      :reconnecting="listReconnecting || offline"
       :active-chat="activeChat"
       :has-scope="state.scope !== null"
       :creating="state.creatingChat"
@@ -43,7 +43,7 @@
     </Alert>
     <ConversationTimeline
       :items="session.timeline.value"
-      :status="state.turnsStatus"
+      :status="state.turnsStatus === 'error' && offline ? 'loading' : state.turnsStatus"
       :has-more-before="state.hasMoreBefore"
       :loading-older="state.loadingOlder"
       :deciding="state.deciding"
@@ -123,6 +123,8 @@
 
 <script setup lang="ts">
 import { useRequestRecovery } from '@shared/requestRecovery'
+import { useSelfHeal } from '@shared/selfHeal'
+import { connectionLost } from '@shared/connectionStatus'
 // The panel is handed its scope (the current Project and the active Flow's v0.1 group id)
 // and creates one Conversation session for its own lifetime. A container that already has a
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
@@ -261,9 +263,35 @@ const listReconnecting = useRequestRecovery(
     notice.groupId === props.groupId && notice.typeCode === 'CH',
 )
 
+// 0060: while the server is unreachable the App Shell shows one banner; this part says it is reconnecting instead of
+// showing its own failures, and reads again by itself.
+const offline = computed(() => connectionLost.value)
+
+// 0060: a failed chat list and a chat whose read failed read again by themselves (5 s, 10 s, 20 s, then every 30 s)
+// instead of waiting for the event stream's resync, which may never come.
+useSelfHeal({
+  failed: () => state.scope !== null && state.chatsStatus === 'error',
+  busy: () => state.chatsStatus === 'loading',
+  reload: () => void session.recoverChatList(),
+})
+useSelfHeal({
+  failed: () => state.activeChatId !== null && state.turnsStatus === 'error',
+  busy: () => state.turnsStatus === 'loading',
+  reload: () => void session.recover(),
+})
+
+// 0060: a message whose send was cut off (no answer, 5xx) goes out again by itself once the server answers: when the
+// connection is back and whenever the open chat has been read again. Same idempotency key — never stored twice.
+function resendInterrupted(): void {
+  void session.resendInterrupted()
+}
+watch(() => state.turnsStatus, (status, before) => {
+  if (status === 'ready' && before !== 'ready') resendInterrupted()
+})
+
 const emptyText = computed(() => {
   if (!state.scope) return t('gui.conversation.timeline.no_flow')
-  if (state.chatsStatus === 'loading') return t(listReconnecting.value ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading')
+  if (state.chatsStatus === 'loading' || (state.chatsStatus === 'error' && offline.value)) return t(listReconnecting.value || offline.value ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading')
   if (state.chatsStatus === 'error') return t('gui.conversation.header.list_failed')
   return t('gui.conversation.timeline.empty')
 })
@@ -377,11 +405,15 @@ function onVisibilityChange(): void {
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('focus', onRevisit)
+  window.addEventListener('fg:connection_recovered', resendInterrupted)
+  window.addEventListener('online', resendInterrupted)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('focus', onRevisit)
+  window.removeEventListener('fg:connection_recovered', resendInterrupted)
+  window.removeEventListener('online', resendInterrupted)
 })
 
 onBeforeUnmount(() => session.dispose())

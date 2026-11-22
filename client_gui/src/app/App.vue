@@ -13,6 +13,7 @@
   <ProjectDialog @opened="openDesigner" />
   <DocumentWindows />
     <MergeWindows />
+  <ConnectionBanner />
 </template>
 
 <script setup lang="ts">
@@ -39,10 +40,13 @@
 // the single mount of the document windows (features/documentWindow). They are
 // teleported modeless panels over whatever screen is shown; openers reach them through the feature's
 // public surface only.
+//
+// 0060: one connection banner for the whole app (ConnectionBanner) while the server cannot be reached.
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { MergeWindows } from '@/features/designer'
 import { DocumentWindows } from '@/features/documentWindow'
 import { ProjectDialog, useProjectStore } from '@/features/project'
+import ConnectionBanner from './components/ConnectionBanner.vue'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
 
