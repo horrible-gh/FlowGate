@@ -161,12 +161,16 @@ describe('0060 connection recovery', () => {
     await request
     expect(probe).toHaveBeenCalledTimes(1)
   })
-  it.each(['post', 'patch', 'delete'] as const)('never starts for %s', async method => {
-    const probe = vi.spyOn(axios, 'get')
+  it.each(['post', 'patch', 'delete'] as const)('probes after %s fails without replaying the write', async method => {
+    const probe = vi.spyOn(axios, 'get').mockResolvedValue({ data: {} })
     fail(503)
+    const adapter = vi.fn(api.defaults.adapter as any)
+    api.defaults.adapter = adapter
     await api.request({ method, url: '/write' }).catch(() => {})
-    await vi.advanceTimersByTimeAsync(100000)
-    expect(probe).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(adapter).toHaveBeenCalledTimes(1)
+    expect(probe.mock.calls[0][0]).toMatch(/auth\/connection-check$/)
   })
   it('uses 5,10,20,30,30 second delays and ignores a late completion after stop', async () => {
     const probe = vi.fn().mockRejectedValue(new Error('down'))

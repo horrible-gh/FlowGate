@@ -136,6 +136,68 @@ describe('timeline', () => {
 })
 
 describe('send', () => {
+  it('repairs an explicitly rejected future basis from a fresh read, preserving the request key', async () => {
+    const { session, source, data } = setup()
+    await session.setScope(SCOPE)
+    data.turns[A] = [turn(1, 'user', 'restored database')]
+    source.postTurn.mockRejectedValueOnce(httpError(422, 'based_on_seq 2 is ahead of head_seq 1.'))
+    expect(await session.send('after restore')).toBe(true)
+    const calls = source.postTurn.mock.calls
+    expect(calls).toHaveLength(2)
+    expect(calls[0][1].basedOnSeq).toBe(2)
+    expect(calls[1][1]).toMatchObject({ body: 'after restore', basedOnSeq: 1, idempotencyKey: calls[0][1].idempotencyKey })
+    expect(source.fetchTurns).toHaveBeenCalledWith(A, { limit: 1 })
+    expect(session.state.pending).toHaveLength(0)
+    session.dispose()
+  })
+
+  it('leaves a rejected request retryable if the repair read fails, then recovers without F5', async () => {
+    const { session, source, data } = setup()
+    await session.setScope(SCOPE)
+    data.turns[A] = []
+    source.postTurn.mockRejectedValueOnce(httpError(422, 'based_on_seq 2 is ahead of head_seq 0.'))
+    source.fetchTurns.mockRejectedValueOnce(httpError(503, 'database unavailable'))
+    expect(await session.send('retry after database returns')).toBe(false)
+    const failed = session.state.pending[0]
+    expect(failed.failure?.detail).toContain('based_on_seq')
+    source.postTurn.mockRejectedValueOnce(httpError(422, 'based_on_seq 2 is ahead of head_seq 0.'))
+    expect(await session.retry(failed.localId)).toBe(true)
+    expect(source.postTurn.mock.calls.map((call: any[]) => call[1].idempotencyKey)).toEqual([
+      failed.idempotencyKey, failed.idempotencyKey, failed.idempotencyKey,
+    ])
+    expect(source.postTurn.mock.calls.at(-1)[1].basedOnSeq).toBe(0)
+    session.dispose()
+  })
+
+  it('never changes the basis or key after an ambiguous stored response is lost', async () => {
+    const { session, source, data } = setup()
+    await session.setScope(SCOPE)
+    const saved = turn(3, 'user', 'store once')
+    source.postTurn.mockImplementationOnce(async () => {
+      data.turns[A].push(saved)
+      throw new Error('response lost')
+    }).mockResolvedValueOnce({ turn: saved, headSeq: 3 })
+    expect(await session.send('store once')).toBe(true)
+    const calls = source.postTurn.mock.calls
+    expect(calls).toHaveLength(2)
+    expect(calls[1][1]).toEqual(calls[0][1])
+    expect(data.turns[A].filter(t => t.body === 'store once')).toHaveLength(1)
+    expect(session.state.turns.filter(t => t.body === 'store once')).toHaveLength(1)
+    session.dispose()
+  })
+
+  it.each([401, 403, 409, 422])('does not blindly replay a status %s rejection or discard its diagnostic', async status => {
+    const { session, source } = setup()
+    await session.setScope(SCOPE)
+    const reads = source.fetchTurns.mock.calls.length
+    source.postTurn.mockRejectedValueOnce(httpError(status, 'specific refusal', 'refused'))
+    expect(await session.send('keep this draft')).toBe(false)
+    expect(source.postTurn).toHaveBeenCalledTimes(1)
+    expect(source.fetchTurns.mock.calls.length).toBe(reads)
+    expect(session.state.pending[0].failure).toMatchObject({ status, detail: 'specific refusal', code: 'refused' })
+    session.dispose()
+  })
+
   it('shows the message at once and replaces it with the numbered turn', async () => {
     const { session, source } = setup()
     await session.setScope(SCOPE)

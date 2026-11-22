@@ -137,7 +137,8 @@ const failureText = computed(() => {
   const failure = props.failed ? props.failure : null
   if (!failure) return ''
   const reason = t(`gui.conversation.message.failure.${failure.reason}`)
-  return failure.status == null ? reason : `${reason} (HTTP ${failure.status})`
+  const summary = failure.status == null ? reason : `${reason} (HTTP ${failure.status})`
+  return failure.detail ? `${summary}: ${failure.detail}` : summary
 })
 // FlowGate's own turn (the chat commit result) -- shown as Markdown like an AI message, but
 // labelled FlowGate so it is never taken for the AI's reply.
