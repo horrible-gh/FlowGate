@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
 os.environ.setdefault("CONTEXT", "/flowgate")
 os.environ.setdefault("DB_TYPE", "sqlite")
@@ -18,6 +20,7 @@ import config  # noqa: E402,F401 — its import-time env export happens at colle
 
 from test_root_conversion_number_swap_0064 import (  # noqa: E402,F401 — fixtures (env) and helpers
     FLOW, ROOT, ROOT_B, USER, _sql, convert, env, make_doc,
+    dedicated_document_write_ports_0127,
 )
 from test_root_conversion_succession_0064 import with_children  # noqa: E402
 
@@ -100,3 +103,43 @@ def test_a_succession_keeps_every_title_state(env):
     assert _sql(env["db"], "SELECT superseded_by FROM documents WHERE doc_id = ?", (ROOT,))[0]["superseded_by"] == \
         ROOT_B
     _check_kept(env, before)
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_default_start_kind_round_trip_preserves_body_intent(env, locale):
+    """0071: body says R even after an explicit R->B swap; stored type owns the label."""
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from modules.flow_gate.graph_workflow.services.flow_default_names import default_title
+    from modules.flow_gate.graph_workflow.store import definition_store
+
+    body = "---\ntype: R\ndoc_number: 0001-R\n---\n종류: 요구사항 (R)\n".encode("utf-8")
+    make_doc(env, body=body)
+    with get_store().transaction():
+        definition_store.create_draft(FLOW, None, USER)
+        definition_store.replace_draft_content(FLOW, [{
+            "node_key": "start", "node_type": "document", "doc_type": "R",
+            "palette_item_id": "requirement", "label": default_title("root", locale, doc_type="R"),
+        }], [])
+    card_document_ports.register(card_document_ports.ON_ROOT_CONVERTED, lambda *args: ["start"])
+
+    def assert_saved(doc_type, palette):
+        [node] = definition_store.draft(FLOW)["nodes"]
+        assert (node["doc_type"], node["palette_item_id"], node["label"]) == (
+            doc_type, palette, default_title("root", locale, doc_type=doc_type))
+        [document] = _sql(env["db"], "SELECT * FROM documents WHERE group_id = ?", (FLOW,))
+        assert document["type_code"] == doc_type
+        assert document["doc_id"] == (ROOT if doc_type == "R" else ROOT_B)
+        assert "종류: 요구사항 (R)" in (env["storage"] / document["file_path"]).read_text(encoding="utf-8")
+
+    assert_saved("R", "requirement")
+    result = convert(ROOT, "B")
+    assert result["conversion"]["draft_node_keys"] == ["start"]
+    assert_saved("B", "bug")
+    # A no-op must not flip the kind again or change the saved draft version.
+    version = definition_store.draft(FLOW)["draft_version"]
+    convert(ROOT_B, "B")
+    assert_saved("B", "bug")
+    assert definition_store.draft(FLOW)["draft_version"] == version
+    convert(ROOT_B, "R")
+    assert_saved("R", "requirement")

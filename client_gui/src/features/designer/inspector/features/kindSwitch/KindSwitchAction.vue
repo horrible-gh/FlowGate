@@ -21,7 +21,7 @@
     data-test="inspector-kind-switch"
     :data-busy="busy ? 'true' : 'false'"
   >
-    <Dropdown>
+    <Dropdown :key="menuContext">
       <template #trigger="{ toggle, triggerAttrs }">
         <button
           type="button"
@@ -84,6 +84,13 @@ const k = (key: string) => `gui.inspector.kindSwitch.${key}`
 const KINDS: readonly KindSwitchKind[] = ['R', 'B']
 
 const { availability, to, busy, failureKey, done, run, clearFailure } = useKindSwitch(() => props.target)
+
+/** An open menu belongs to the target and permissions it was opened for.
+ * Recreate the menu when that context changes so an old choice cannot mutate a new document. */
+const menuContext = computed(() => JSON.stringify([
+  props.target.flowId, props.target.nodeId, props.target.docId, props.target.docType,
+  props.target.ownership, props.target.readOnly, availability.value.switch.enabled,
+]))
 
 /** The current kind: the one the switch leaves; the document type when there is no switch. */
 const from = computed<KindSwitchKind | null>(() => {

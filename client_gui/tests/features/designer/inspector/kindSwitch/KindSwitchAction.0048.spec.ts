@@ -186,6 +186,39 @@ async function switchKind() {
 }
 
 describe('the switch button and its menu', () => {
+
+  it('closes an open kind menu when another R document becomes the target (0071)', async () => {
+    const otherId = 'flowgate.v02.9999.0001-R'
+    docs.set(otherId, { typeCode: 'R', disposed: false })
+    await mountSwitch(TARGET_R)
+    await openButton().trigger('click')
+    await flushPromises()
+    expect(menuItem('B')).not.toBeNull()
+    await wrapper!.setProps({ target: { ...TARGET_R, flowId: 'flowgate.v02.9999', nodeId: `doc:${otherId}`, docId: otherId } })
+    await flushPromises()
+    // A menu opened for the previous document must not offer a mutation of this one.
+    expect(menuItem('B')).toBeNull()
+    expect(openButton().attributes('aria-expanded')).toBe('false')
+    expect(convertCall).not.toHaveBeenCalled()
+    expect(docs.get(otherId)?.typeCode).toBe('R')
+    // A fresh, explicit choice on the new document still switches immediately.
+    await pickOther()
+    expect(convertCall).toHaveBeenCalledTimes(1)
+    expect(convertCall).toHaveBeenCalledWith(otherId, 'B', SWITCH_ID)
+  })
+
+  it('closes an open menu when its target becomes read-only (0071)', async () => {
+    await mountSwitch(TARGET_R)
+    await openButton().trigger('click')
+    await flushPromises()
+    expect(menuItem('B')).not.toBeNull()
+    await wrapper!.setProps({ target: { ...TARGET_R, viewMode: 'revision', readOnly: 'revision' } })
+    await flushPromises()
+    expect(menuItem('B')).toBeNull()
+    expect(openButton().attributes('disabled')).toBeDefined()
+    expect(convertCall).not.toHaveBeenCalled()
+  })
+
   it('an unassigned R root shows the 요구사항 ▾ badge whose menu offers 버그, and reads its guards', async () => {
     await mountSwitch(TARGET_R)
     expect(openButton().text()).toBe('요구사항 ▾')
