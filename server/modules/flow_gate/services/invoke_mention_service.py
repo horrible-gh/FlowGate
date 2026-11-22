@@ -229,6 +229,18 @@ def _command_section(*, base: str, raw_token: str) -> str:
     return "\n".join(lines)
 
 
+def _conversation_reread_lines(locale: Optional[str]) -> list[str]:
+    if _locale(locale) == "ko":
+        return [
+            "제출 직전에 같은 대화 읽기 주소를 마지막으로 읽은 seq 이후(after_seq)로 다시 조회하되, 최초 범위의 through_seq·limit은 빼고 next_after_seq가 null일 때까지 읽으십시오. 새 사용자 메시지를 답에 반영하고 그때 받은 head_seq를 based_on_seq로 보내십시오.",
+            "작업이 길면 큰 단계를 마칠 때마다 같은 방법으로 새 메시지를 확인하고, 방향이 바뀌면 이후 작업에 반영하십시오.",
+        ]
+    return [
+        "Immediately before submitting, reread the same conversation endpoint after your last read seq (after_seq), without the initial through_seq or limit, following next_after_seq until null. Incorporate new user messages and send the head_seq from that read as based_on_seq.",
+        "For long tasks, check for new messages the same way after each major stage; if they change direction, follow that direction in subsequent work.",
+    ]
+
+
 def _start_paragraph(folded: int) -> list[str]:
     """Explain the invocation-local meaning of ``after_seq``."""
     del folded
@@ -363,6 +375,7 @@ def build_conversation_mention(
         f"Authorization: Bearer {raw_token}",
         "",
         *_start_paragraph(folded),
+        *_conversation_reread_lines(locale),
         "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
     # Right behind the paragraph that named the starting point, and ahead of the reply

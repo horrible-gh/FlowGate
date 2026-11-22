@@ -109,6 +109,26 @@ class TestConversationMention:
         # body_sha256 / body_chars (optional fingerprint) are explained behind the encoding leaf.
         assert "GET http://h:1/api/v1/help/items/conversation/encoding" in text
 
+    @pytest.mark.parametrize("locale", ["ko", "en"])
+    def test_reread_before_submit_and_between_stages(self, locale):
+        text = self._build(locale=locale)
+        if locale == "ko":
+            assert "제출 직전에 같은 대화 읽기 주소" in text
+            assert "최초 범위의 through_seq·limit은 빼고 next_after_seq가 null일 때까지" in text
+            assert "새 사용자 메시지를 답에 반영하고 그때 받은 head_seq를 based_on_seq로" in text
+            assert "큰 단계를 마칠 때마다" in text
+            assert "방향이 바뀌면 이후 작업에 반영" in text
+        else:
+            assert "Immediately before submitting, reread the same conversation endpoint" in text
+            assert "after your last read seq (after_seq)" in text
+            assert "without the initial through_seq or limit, following next_after_seq until null" in text
+            assert "Incorporate new user messages and send the head_seq from that read as based_on_seq" in text
+            assert "after each major stage" in text
+            assert "follow that direction in subsequent work" in text
+        # Initial bounded context paging and fresh-message reads have different bounds.
+        assert "When paging this selected context, keep through_seq and limit" in text
+        assert text.index(ims._conversation_reread_lines(locale)[0]) < text.index("Submit: POST")
+
     def test_old_full_body_contract_is_absent(self):
         text = self._build()
         assert "/document?doc_id=" not in text
