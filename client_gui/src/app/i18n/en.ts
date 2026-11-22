@@ -1,5 +1,5 @@
 export default {
-  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "agents_window": "My settings · Agents"},
+  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
@@ -896,6 +896,8 @@ export default {
           unknown: 'Unknown mode',
         },
         truncated: 'Showing {shown} of {total} items. Additional items are not displayed.',
+        show_more: 'Show {count} more',
+        show_less: 'Show less',
         unknown_time: 'Unknown time',
       },
       search: {
@@ -3300,14 +3302,6 @@ export default {
         readonly_hint: 'Sign-in details cannot be changed on this screen.',
         language: 'Display language',
         language_hint: 'The screen language of this browser. Later server requests carry the same language.',
-        retention: 'Finished card retention',
-        retention_label: 'Keep for',
-        retention_hint: 'How long the AI run monitor in the header keeps showing a finished run card.',
-        never: 'Until cleared manually',
-        immediate: 'Do not show',
-        minutes: '{minutes} minutes',
-        hour: '{hours} hour',
-        hours: '{hours} hours',
       },
       security: {
         sessions: 'Sign-in sessions',

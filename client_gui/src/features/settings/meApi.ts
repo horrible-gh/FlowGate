@@ -8,12 +8,7 @@
 // gui.settings.self.errors.<code>; anything else falls back to the caller's message.
 
 import { deleteRequest, getRequest, patchRequest, postRequest } from '@shared/api'
-import {
-  RETENTION_DOMAIN_MINUTES,
-  RETENTION_FIELD,
-  UI_SETTINGS_PATH,
-  type UiSettingsResponse,
-} from '@shared/aiFinishedCardRetention'
+import { UI_SETTINGS_PATH, type UiSettingsResponse } from '@shared/aiFinishedCardRetention'
 import i18n from '@shared/i18n'
 import { TASKBAR_STYLE_FIELD, type TaskbarStyle } from '@/core/overlay/modelessRegistry'
 
@@ -72,35 +67,13 @@ async function call<T>(request: () => Promise<{ data: T }>, fallbackKey: string)
   }
 }
 
-// ── Account and display: completed card retention time ─────────────────────────────────────────────
+// ── Display settings (GET/PATCH /me/ui-settings) ───────────────────────────────────────────────────
 
 export const getUiSettings = () => call(() => getRequest<UiSettingsResponse>(UI_SETTINGS_PATH), 'load_failed')
 
-/** Theme writes carry only their own field; dock sizes and retention remain untouched. */
+/** Theme writes carry only their own field; the other stored fields remain untouched. */
 export const saveTaskbarStyle = (style: TaskbarStyle) =>
   call(() => patchRequest<UiSettingsResponse>(UI_SETTINGS_PATH, { [TASKBAR_STYLE_FIELD]: style }), 'save_failed')
-
-/** PATCH only the retention field; nothing else rides along. */
-export const saveRetention = (minutes: number) =>
-  call(() => patchRequest<UiSettingsResponse>(UI_SETTINGS_PATH, { [RETENTION_FIELD]: minutes }), 'save_failed')
-
-/**
- * The choices to draw: the order the server ships (as AiRunMonitorSettingsView does), kept to
- * the members of the shared domain (-1, 0, 30 … 1440) so no other value — e.g. v7's 5 minutes —
- * can become a choice on this screen.
- */
-export function retentionChoices(body: UiSettingsResponse | null | undefined): number[] {
-  const allowed = RETENTION_DOMAIN_MINUTES as readonly number[]
-  const shipped = body?.domain?.[RETENTION_FIELD]
-  const usable = Array.isArray(shipped) ? shipped.filter((v): v is number => typeof v === 'number' && allowed.includes(v)) : []
-  return usable.length > 0 ? usable : [...allowed]
-}
-
-/** The saved value in a GET/PATCH envelope, or null when the envelope does not carry a valid one. */
-export function retentionIn(body: UiSettingsResponse | null | undefined): number | null {
-  const value = body?.settings?.[RETENTION_FIELD]
-  return typeof value === 'number' && (RETENTION_DOMAIN_MINUTES as readonly number[]).includes(value) ? value : null
-}
 
 // ── "보안" · "세션" ───────────────────────────────────────────────────────────────
 

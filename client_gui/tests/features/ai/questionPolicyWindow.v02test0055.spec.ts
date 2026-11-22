@@ -34,7 +34,7 @@ describe('v02test.0055 질의 방침 window', () => {
   it('puts the card next to 내 AI in the AI group, ahead of the settings group', async () => {
     const { wrapper } = bar(); await flushPromises()
     await openMenu(wrapper)
-    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents'])
+    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account'])
     const rows = wrapper.findAll('.menu-group-row')
     expect(rows[0].findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy'])
     expect(wrapper.get('[data-card="question-policy"]').text()).toContain(i18n.global.t('gui.taskbar.question_policy'))

@@ -7,7 +7,6 @@ import { RouterView } from 'vue-router'
 import type { InternalAxiosRequestConfig } from 'axios'
 import api from '@shared/api'
 import i18n from '@shared/i18n'
-import { RETENTION_FIELD, RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
 import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
 import { setCurrentUser, useCurrentUser } from '@/core/auth/currentUser'
@@ -183,10 +182,9 @@ describe('V07 개인 정보 / 언어', () => {
     expect(w.get('[data-testid="me-username"]').text()).toBe('member')
     expect(w.get('[data-testid="me-email"]').text()).toBe('member@flowgate.local')
     expect(profile.findAll('input, select, textarea, [contenteditable], button').length).toBe(0)
-    // The account screen only reads display preferences; AI defaults belong elsewhere.
-    expect(net.requests).toEqual(['GET /api/v1/me/ui-settings'])
+    // The account screen shows what bootstrap already read; AI defaults belong elsewhere.
+    expect(net.requests).toEqual([])
     expect(w.text()).not.toContain('AI 역할 기본값')
-    expect(net.requests.filter(call => call === 'GET /api/v1/me/ui-settings')).toHaveLength(1)
     expect(writes()).toEqual([])
   })
 
@@ -225,96 +223,14 @@ describe('V07 개인 정보 / 언어', () => {
   })
 })
 
-describe('V08 완료 카드 유지 시간', () => {
-  const options = (w: VueWrapper) => w.findAll('[data-testid="me-retention"] option').map((o) => Number(o.attributes('value')))
-
-  it('lists exactly the server domain -1, 0, 30 … 1440 (no 5 minutes), labelled', async () => {
+describe('V08 the finished-card retention row is gone (v02test.0055)', () => {
+  it('the account screen has no retention control and reads or writes nothing for it', async () => {
     const w = await open('/settings/me/account')
-    expect(options(w)).toEqual(DOMAIN)
-    expect(options(w)).not.toContain(5)
-    const labels = w.findAll('[data-testid="me-retention"] option').map((o) => o.text())
-    expect(labels[0]).toBe('직접 정리할 때까지 유지')
-    expect(labels[1]).toBe('표시 안 함')
-    expect(labels).toEqual(['직접 정리할 때까지 유지', '표시 안 함', '30분', '1시간', '2시간', '3시간', '6시간', '12시간', '24시간'])
-  })
-
-  it('a value outside the shared domain shipped by a server never becomes a choice', async () => {
-    net.ui.domain = [5, ...DOMAIN]
-    const w = await open('/settings/me/account')
-    expect(options(w)).toEqual(DOMAIN)
-  })
-
-  it('30→60 saves (PATCH carries only the field), re-entry reads 60; then a failed 120 puts 60 back with an error', async () => {
-    const w = await open('/settings/me/account')
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
-
-    await w.get('[data-testid="me-retention"]').setValue('60')
-    await flushPromises()
-    expect(net.bodies).toEqual([{ call: 'PATCH /api/v1/me/ui-settings', body: { [RETENTION_FIELD]: 60 } }])
-    expect(net.ui.value).toBe(60)
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('60')
-    expect(w.find('[data-testid="me-retention-saved"]').exists()).toBe(true)
-    expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('60')
-
-    // Re-entry: a new GET answers the stored 60.
-    await go('/settings/me/security')
-    await go('/settings/me/account')
-    expect(net.requests.filter((r) => r === 'GET /api/v1/me/ui-settings')).toHaveLength(2)
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('60')
-
-    net.ui.failPatch = 500
-    await w.get('[data-testid="me-retention"]').setValue('120')
-    await flushPromises()
-    expect(net.bodies.at(-1)).toEqual({ call: 'PATCH /api/v1/me/ui-settings', body: { [RETENTION_FIELD]: 120 } })
-    expect(net.ui.value).toBe(60)
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('60')
-    expect(w.get('[data-testid="me-retention-error"]').attributes('role')).toBe('alert')
-    expect(w.get('[data-testid="me-retention-error"]').text()).toBe('저장하지 못했습니다. 이전 값으로 되돌렸습니다.')
-    expect(w.find('[data-testid="me-retention-saved"]').exists()).toBe(false)
-    expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('60') // the mirror only follows confirmed values
-    // A PATCH never carries anything but the retention field.
-    for (const { body } of net.bodies) expect(Object.keys(body as object)).toEqual([RETENTION_FIELD])
-  })
-
-  it.each([401, 403, 500])('a GET answered %s is an error with a retry — not a default value, no select, no save', async (status) => {
-    net.ui.failGet = status
-    const w = await open('/settings/me/account')
-    expect(w.find('[data-testid="me-retention-load-error"]').exists()).toBe(true)
+    expect(w.find('[data-card="retention"]').exists()).toBe(false)
     expect(w.find('[data-testid="me-retention"]').exists()).toBe(false)
-    expect(writes()).toEqual([])
-    net.ui.failGet = 0
-    await w.get('[data-testid="me-retention-load-error"] button').trigger('click')
-    await flushPromises()
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
-  })
-
-  // the errors kept on screen are kept as their key, so the language buttons right above change
-  // them without a new request; the failed save still returns to the confirmed value, and the load error title is not
-  // repeated as its own message.
-  it('a save error and a load error on screen follow the language buttons', async () => {
-    const w = await open('/settings/me/account')
-    net.ui.failPatch = 500
-    await w.get('[data-testid="me-retention"]').setValue('120')
-    await flushPromises()
-    const patches = net.bodies.length
-    expect(w.get('[data-testid="me-retention-error"]').text()).toBe('저장하지 못했습니다. 이전 값으로 되돌렸습니다.')
-    await w.get('[data-locale="ja"]').trigger('click')
-    await flushPromises()
-    expect(w.get('[data-testid="me-retention-error"]').text()).toBe(i18n.global.t('gui.settings.self.errors.save_failed'))
-    expect(w.get('[data-testid="me-retention-error"]').text()).not.toBe('저장하지 못했습니다. 이전 값으로 되돌렸습니다.')
-    expect((w.get('[data-testid="me-retention"]').element as HTMLSelectElement).value).toBe('30')
-    expect(net.bodies).toHaveLength(patches)
-
-    net.ui.failGet = 500
-    await go('/settings/me/security')
-    await go('/settings/me/account')
-    const loadError = () => w.get('[data-testid="me-retention-load-error"]')
-    expect(loadError().find('.ui-error-state-title').text()).toBe(i18n.global.t('gui.settings.self.errors.load_failed'))
-    expect(loadError().find('.ui-error-state-message').exists()).toBe(false)
-    await w.get('[data-locale="en"]').trigger('click')
-    await flushPromises()
-    expect(loadError().find('.ui-error-state-title').text()).toBe(i18n.global.t('gui.settings.self.errors.load_failed'))
-    expect(i18n.global.locale.value).toBe('en')
+    expect(w.text()).not.toContain('완료 카드 유지 시간')
+    expect(w.findAll('[data-card]').map((c) => c.attributes('data-card'))).toEqual(['profile', 'language'])
+    expect(net.requests).toEqual([])
   })
 })
 
