@@ -176,12 +176,12 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
       [...[0, 1, 2, 3, 4].map((i): [string, string] => ['R', `B${i}`]), ...[0, 1, 2, 3, 4].map((i): [string, string] => [`B${i}`, 'Z'])],
     )
 
-  it('L8: five branches and their merge — the farthest branch faces the direction too', () => {
+  it('L8: five branches keep their layout while outer branches use top and bottom ports', () => {
     const h = lay(fiveBranches(), 'horizontal')
     expect(h.at).toEqual({ R: [0, 280], B0: [284, 0], B1: [284, 140], B2: [284, 280], B3: [284, 420], B4: [284, 560], Z: [568, 280] })
     const v = lay(fiveBranches(), 'vertical')
     expect(v.at).toEqual({ R: [0, 0], B0: [0, 900], B1: [224, 900], B2: [448, 900], B3: [672, 900], B4: [896, 900], Z: [0, 1800] })
-    expect(sidesOf(applied(fiveBranches(), h.at)).every((side) => side === 'right')).toBe(true)
+    expect(new Set(sidesOf(applied(fiveBranches(), h.at)))).toEqual(new Set(['right', 'top', 'bottom']))
     expect(sidesOf(applied(fiveBranches(), v.at)).every((side) => side === 'bottom')).toBe(true)
     expect([h.refusal, v.refusal]).toEqual([null, null])
   })
@@ -306,9 +306,10 @@ describe('0004-D §7 B — 자동정렬 cases (flowgate.v02.0068 T#2)', () => {
     }
   })
 
-  it('a forced candidate with a line on the wrong sides is refused (V4 direction)', () => {
+  it('allows side-facing connections but refuses reversed stages (V4 direction)', () => {
     const run = lay(graph([R(), card('A', 'A')], [['R', 'A']]), 'vertical')
-    expect(checkDirectionalLayout(run.plan, [{ nodeId: 'R', x: 0, y: 0 }, { nodeId: 'A', x: 400, y: 100 }])).toBe('direction')
+    expect(checkDirectionalLayout(run.plan, [{ nodeId: 'R', x: 0, y: 0 }, { nodeId: 'A', x: 400, y: 100 }])).toBeNull()
+    expect(checkDirectionalLayout(run.plan, [{ nodeId: 'R', x: 0, y: 200 }, { nodeId: 'A', x: 400, y: 0 }])).toBe('direction')
   })
 
   it('V1 / V2: a missing, duplicated, unknown or invalid position is refused', () => {

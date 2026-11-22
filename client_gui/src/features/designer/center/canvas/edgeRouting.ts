@@ -26,7 +26,10 @@ function routeFromAnchors(anchors: EdgeAnchors, offset = 32): EdgeRoute {
   const end = { x: anchors.targetX, y: anchors.targetY }
   const direction = outward[anchors.targetPosition]
   const horizontal = direction.x !== 0
-  const trunk = horizontal ? end.x + direction.x * offset : end.y + direction.y * offset
+  // A fixed trunk offset can put the first bend behind the source on a narrow gap.
+  const gap = (start.x - end.x) * direction.x + (start.y - end.y) * direction.y
+  const clearance = gap > 0 ? Math.min(offset, gap / 2) : offset
+  const trunk = horizontal ? end.x + direction.x * clearance : end.y + direction.y * clearance
   return { anchors, points: [start,
     horizontal ? { x: trunk, y: start.y } : { x: start.x, y: trunk },
     horizontal ? { x: trunk, y: end.y } : { x: end.x, y: trunk }, end] }
@@ -59,8 +62,19 @@ export function routeEdges(
       trunks.set(key, 32 + index * 12)
       used.set(column, index + 1)
     }
-    result.set(edge.id, { ...routeFromAnchors(anchors, trunks.get(key)), drawArrow: !arrows.has(key) })
+    // Reserve enough room for every source sharing this target side, independent of order.
+    const direction = outward[anchors.targetPosition]
+    const gap = (anchors.sourceX - anchors.targetX) * direction.x
+      + (anchors.sourceY - anchors.targetY) * direction.y
+    if (gap > 0) trunks.set(key, Math.min(trunks.get(key)!, gap / 2))
+    result.set(edge.id, { anchors, points: [], drawArrow: !arrows.has(key) })
     arrows.add(key)
+  }
+  for (const edge of edges) {
+    const route = result.get(edge.id)
+    if (!route) continue
+    const key = `${edge.target}:${route.anchors.targetPosition}`
+    route.points = routeFromAnchors(route.anchors, trunks.get(key)).points
   }
   return result
 }

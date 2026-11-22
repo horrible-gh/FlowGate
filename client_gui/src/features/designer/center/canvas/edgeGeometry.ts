@@ -1,8 +1,8 @@
 // where an Edge leaves its source card and enters its target card
 // (rejection item 3, after the `edgeGeometry` rule of 04-designer-flow-rules.html): never a fixed
-// side, but the side that faces the other card. The two card centres decide — when the cards lie
-// further apart sideways than up / down, the Edge runs right or left (it leaves the facing side
-// and enters the opposite one); otherwise it runs down or up. A card dragged around another one
+// side, but the side that faces the other card. Centre distances are normalized by the
+// cards' combined half sizes, so wide cards also connect naturally through top / bottom.
+// The edge enters the opposite facing side. A card dragged around another one
 // changes the sides as it moves. Pure over two rectangles; FlowEdgePath feeds it the live Vue Flow
 // node positions, so nothing here knows the Graph or the screen.
 import { Position } from '@vue-flow/core'
@@ -50,11 +50,13 @@ export function sideMiddle(rect: NodeRect, side: Position): { x: number; y: numb
   }
 }
 
-/** The side of `source` that faces `target`: sideways when the centres differ more in x than in y. */
+/** Choose a facing side using rectangle proportions, not a square around each centre. */
 export function facingSide(source: NodeRect, target: NodeRect): Position {
   const dx = target.x + target.width / 2 - (source.x + source.width / 2)
   const dy = target.y + target.height / 2 - (source.y + source.height / 2)
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? Position.Right : Position.Left
+  const halfWidth = Math.max(1, (source.width + target.width) / 2)
+  const halfHeight = Math.max(1, (source.height + target.height) / 2)
+  if (Math.abs(dx) / halfWidth >= Math.abs(dy) / halfHeight) return dx >= 0 ? Position.Right : Position.Left
   return dy >= 0 ? Position.Bottom : Position.Top
 }
 

@@ -44,6 +44,34 @@ describe('target state controls incoming line colours, independent of deletion p
 })
 
 describe('direct orthogonal routes under cards', () => {
+  it.each([[180, 150, 'bottom', 'top'], [-180, -150, 'top', 'bottom'],
+    [300, 40, 'right', 'left'], [-300, -40, 'left', 'right']])(
+    'chooses facing sides for offset %s,%s without crossing either endpoint card', (x, y, from, to) => {
+      const source = rect(0, 0), target = rect(Number(x), Number(y))
+      const route = routeEdge(source, target)
+      expect(route.anchors.sourcePosition).toBe(from)
+      expect(route.anchors.targetPosition).toBe(to)
+      for (let i = 1; i < route.points.length; i++) {
+        expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, source)).toBe(false)
+        expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, target)).toBe(false)
+      }
+    })
+  it('keeps a shared trunk inside a narrow gap regardless of input order', () => {
+    const nodes = new Map([['far', rect(0, 0)], ['near', rect(400, 40)], ['t', rect(600, 60)]])
+    const edges = ['far', 'near'].map(source => ({ id: source, source, target: 't' }))
+    for (const ordered of [edges, [...edges].reverse()]) {
+      const routes = routeEdges(ordered, nodes)
+      expect(new Set([...routes.values()].map(r => r.points[1]!.x))).toEqual(new Set([588]))
+      expect([...routes.values()].filter(r => r.drawArrow)).toHaveLength(1)
+      for (const edge of ordered) {
+        const route = routes.get(edge.id)!
+        for (let i = 1; i < route.points.length; i++) {
+          expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, nodes.get(edge.source)!)).toBe(false)
+          expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, nodes.get('t')!)).toBe(false)
+        }
+      }
+    }
+  })
   it('passes through a card instead of detouring; keeps endpoints and the label on the route', () => {
     const route = routeEdge(rect(0, 0), rect(1000, 100))
     const obstacle = rect(400, 0)

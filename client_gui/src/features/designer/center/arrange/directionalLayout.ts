@@ -3,12 +3,12 @@
 // unconnected areas (layoutBands.ts) give a candidate — the new position of every card that moves (shown and
 // movable). The candidate is checked whole before anything moves; one failed check refuses all of it:
 // V1 the cards that move, once each — V2 valid positions — V3 no overlap with another card (a card that does not
-// move counts where it really is, a collapsed card too) — V4 every target edge, judged by the unchanged facingSide
-// at the real sizes, faces the direction (Right → Left / Bottom → Top) — V5 no pierce the repair did not try.
+// move counts where it really is, a collapsed card too) — V4 forward stages stay separated along
+// the layout axis; connection sides remain free — V5 no pierce the repair did not try.
 // Same Graph, same direction, same sizes: the same result, whatever the moving cards' positions and node ids.
 // The former auto-layout (autoLayout.ts layout / autoLayoutPlacements, the server's rules) stays for the server
 // match tests. Pure: no Vue, no Vue Flow.
-import { facingSide, type NodeRect } from '../canvas/edgeGeometry'
+import type { NodeRect } from '../canvas/edgeGeometry'
 import type { NodePlacement } from '../edit/editHistory'
 import type { FlowGraph } from '../graph/flowGraph'
 import type { FlowLayoutBasis } from './autoLayout'
@@ -83,10 +83,9 @@ export function checkDirectionalLayout(plan: DirectionalLayoutPlan, candidate: r
     if (active.some((other) => (other.moved || box.moved) && overlaps(other.rect, box.rect))) return 'overlap'
     active.push(box)
   }
-  // V4: every target edge faces the direction.
+  // V4: forward stages must not reverse or overlap along the layout axis.
   const groupOf = new Map<string, LayoutComponent>()
   for (const comp of plan.bands.keys()) for (const v of comp.nodes) groupOf.set(v.id, comp)
-  const expected = dir === 'horizontal' ? 'right' : 'bottom'
   for (const edge of plan.graph.edges) {
     if (edge.edgeClass !== 'execution') continue
     const u = input.byId.get(edge.source)
@@ -94,7 +93,7 @@ export function checkDirectionalLayout(plan: DirectionalLayoutPlan, candidate: r
     const comp = groupOf.get(edge.source)
     if (!u || !v || !comp || groupOf.get(edge.target) !== comp || !placeable(u) || !placeable(v)) continue
     if (comp.stage.get(v.id)! <= comp.stage.get(u.id)!) continue
-    if (`${facingSide(rectOf(u), rectOf(v))}` !== expected) return 'direction'
+    if (fstart(dir, rectOf(v)) < fend(dir, rectOf(u))) return 'direction'
   }
   // V5: a pierce left on the candidate is one the repair tried.
   for (const [comp, band] of plan.bands) {

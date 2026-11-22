@@ -286,8 +286,9 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
     expect(facingSide(rect(300, 40), rect(0, 0))).toBe(Position.Left)
     expect(facingSide(rect(0, 0), rect(40, 300))).toBe(Position.Bottom)
     expect(facingSide(rect(40, 300), rect(0, 0))).toBe(Position.Top)
-    // A tie goes sideways; the same spot too.
-    expect(facingSide(rect(0, 0), rect(100, 100))).toBe(Position.Right)
+    // Wide cards choose top/bottom on equal centre distances; a proportional tie goes sideways.
+    expect(facingSide(rect(0, 0), rect(100, 100))).toBe(Position.Bottom)
+    expect(facingSide(rect(0, 0), rect(176, 108))).toBe(Position.Right)
     expect(facingSide(rect(0, 0), rect(0, 0))).toBe(Position.Right)
   })
 
