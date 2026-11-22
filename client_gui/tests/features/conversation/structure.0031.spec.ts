@@ -64,6 +64,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'voice/voiceStore.ts',
         // flowgate.v02test.0072: the quick message row above the input and its module (API, composable, strings).
         'ComposerQuickMessages.vue',
+        // card 3: the add / edit window of a quick message.
+        'QuickMessageDialog.vue',
         'quickMessages/api.ts',
         'quickMessages/messages.ts',
         'quickMessages/useQuickMessages.ts',
