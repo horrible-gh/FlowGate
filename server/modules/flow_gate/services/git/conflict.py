@@ -1572,7 +1572,8 @@ def _apply_conflict_resolution_locked(
             recorded = _record_group_update_resolution(
                 group_id, merge_id, root, update_context, cfg,
             )
-            _gs.db_git.close_session(merge_id, "done")
+            if not update_context.get("reconstruct_head"):
+                _gs.db_git.close_session(merge_id, "done")
             result = {
                 "ok": True,
                 "result": {
@@ -1674,13 +1675,22 @@ def _record_group_update_resolution(
         return {}
     project_id = _gs._project_of_group(group_id)
     try:
-        return scope_base.record_update(
-            project_id, group_id, root, source_ref=context.get("source_ref") or source_sha,
-            source_sha=source_sha, floor_before=context.get("floor_before") or "",
-            path="conflict", merge_id=merge_id, config=cfg,
-        )
+        from modules.flow_gate.db.connection import get_store
+        with get_store().transaction():
+            recorded = scope_base.record_update(
+                project_id, group_id, root, source_ref=context.get("source_ref") or source_sha,
+                source_sha=source_sha, floor_before=context.get("floor_before") or "",
+                path="conflict", merge_id=merge_id, config=cfg,
+            )
+            if context.get("reconstruct_head"):
+                _gs.db_git.close_session(merge_id, "done")
+        return recorded
     except Exception:
-        _gs._run_git(["reset", "--hard", "HEAD^1"], cwd=root)
+        if context.get("reconstruct_head"):
+            from .reconstruct import restore
+            restore(root, context)
+        else:
+            _gs._run_git(["reset", "--hard", "HEAD^1"], cwd=root)
         _gs.db_git.close_session(merge_id, "aborted")
         raise
 
@@ -2212,6 +2222,8 @@ def _abort_merge_locked(group_id: Optional[str], merge_id: int, *, project_id: O
                 _gs._record_abort_failure(merge_id, "user_abort", proc)
                 raise _abort_failed_error(proc, merge_id)
     if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
+        from .reconstruct import restore
+        restore(root, _gs.db_git.session_context(session))
         _gs.db_git.close_session(merge_id, "aborted")
         return {"ok": True, "result": {
             "status": "aborted", "branch_preserved": True,

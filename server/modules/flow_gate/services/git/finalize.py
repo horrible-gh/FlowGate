@@ -760,7 +760,7 @@ def _domains_release(ctx, held: list) -> None:
             locks.release(ctx, key)
 
 
-def update_from_base(group_id: str) -> dict:
+def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct: bool = False) -> dict:
     """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
     _gs.guard_group_branch_merge_free(group_id)
@@ -798,7 +798,7 @@ def update_from_base(group_id: str) -> dict:
             if ai_invoke_service.has_active_run(group_id):
                 raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
             return _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                                            lock_ctx=lock_ctx)
+                                            lock_ctx=lock_ctx, require_clean=require_clean, reconstruct=reconstruct)
         finally:
             group_ai_leases.release(group_id, lease_run_id, reason="group_update_finished")
     finally:
@@ -806,7 +806,7 @@ def update_from_base(group_id: str) -> dict:
 
 
 def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                             *, lock_ctx=None) -> dict:
+                             *, lock_ctx=None, require_clean=False, reconstruct=False) -> dict:
     """Run the existing update while the Group's G and group lease are held. The base
     checkout's part (gate, dirty check, fetch, fast-forward, start point) runs under B
     and R on ``lock_ctx`` (0669 unit 9a), released before the Group merge."""
@@ -814,6 +814,8 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     from . import lock_manager as locks
     if lock_ctx is None:
         lock_ctx = locks.current_context() or locks.new_context("req")
+    if require_clean and _gs._dirty(wt_path, include_untracked=True):
+        raise GitServiceError(409, "uncommitted_changes", "commit changes before updating the worktree")
     base_held = _domains_held(lock_ctx, project_id, ("B", "R"))
     try:
         _gs.guard_base_free(project_id)
@@ -859,10 +861,14 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     )
     source_sha = pinned["source_sha"]
     floor_before = pinned["floor_sha"]
-    _absorb_worker_edits(
-        wt_path, f"chore: preserve {group_id} work before base update",
-        _author_env_from_cfg(cfg),
-    )
+    if reconstruct:
+        from . import reconstruct as rebuild
+        return rebuild.apply(group_id, project_id, wt_path, cfg, state, pinned)
+    if not require_clean:
+        _absorb_worker_edits(
+            wt_path, f"chore: preserve {group_id} work before base update",
+            _author_env_from_cfg(cfg),
+        )
     before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
     proc = _gs._run_git(
         [*_gs._GIT_IDENT,

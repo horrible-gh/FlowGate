@@ -149,6 +149,9 @@ def decide(group: dict, run_id: str, node_key: str, decision: str, comment: Opti
                         "run_id": run_id, "node_key": node_key, "request_id": request_id,
                         "decision_id": found["decision_id"]})
                 return _answer(run_id, found)
+        if intent.get("automatic") and (run.get("idle_reason") == "stopped"
+                or preflight.settings_of(flow_id, node_key)[0].get("auto_approve") is not True):
+            raise legacy.GraphApiError(409, "gate_auto_approval_disabled", {"node_key": node_key})
         if run["status"] not in DECIDABLE_RUN_STATUSES:                                 # 1
             raise legacy.GraphApiError(409, "run_not_running", {"run_id": run_id, "status": run["status"]})
         own = legacy.read_ownership(flow_id)                                            # 2
@@ -305,7 +308,9 @@ def run_wire(run: dict, rows: list[dict]) -> dict:
         lock = settings_lock.lock_reason(flow_id, key)
         reset = repo.reset_required(flow_id, key) is not None
         job = legacy.get_job(held.get("job_id")) if held else None
+        from flowgate.gate_decisions import automatic
         out[key] = {
+            "auto_approval_error": automatic.failure(run["run_id"], key),
             "decision": _summary(latest), "decision_in_progress": held is not None,
             "job": _job_wire(job), "git_active": activity.get(key) == LIVE,
             "parked": activity.get(key) == PARKED,

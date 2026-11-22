@@ -95,7 +95,7 @@ describe('the merge-abort dialog on both cards', () => {
     const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
     wrapper = mount(DesignerGitPanel, { props: { projectId: P, flow: { groupId: G, name: 'x' }, source: fake.source }, attachTo: document.body, global: { plugins: [i18n] } })
     await flushPromises()
-    expect(q('git-conflict-abort')!.textContent!.trim()).toBe(EXPECTED[locale].right)
+    expect(q('git-conflict-abort')!.getAttribute('aria-label')).toBe(EXPECTED[locale].right)
     q('git-conflict-abort')!.click()
     await flushPromises()
     const buttons = [...document.body.querySelectorAll('.ui-confirm-actions button')].map((button) => button.textContent!.trim())

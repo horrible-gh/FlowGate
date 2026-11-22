@@ -13,17 +13,19 @@
         :refreshing="session.state.statusLoad === 'loading'"
         :notice="headerNotice"
         @refresh="refreshAll()"
+        @station="openStation"
       />
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
-    <GitExceptionList v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
+    <GitExceptionList :execution-active="!!worktree.state.execution" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
       <GitPushErrorWindow v-else :win="win" :operation="win.id.startsWith('gate-job:') ? gateOperations.selected.value : null" />
     </template>
+    <GitStationWindow ref="stationRef" :open="stationOpen" :project-id="projectId" :read-only="readOnly" @close="stationOpen = false" @changed="refreshAll()" />
     <GitConnectWindow
       v-model:minimized="connectMinimized"
       :open="connectOpen"
@@ -89,6 +91,7 @@ import GitConflictWindow from './GitConflictWindow.vue'
 import GitConnectWindow from './GitConnectWindow.vue'
 import GitExceptionList from './GitExceptionList.vue'
 import GitHeader from './GitHeader.vue'
+import GitStationWindow from './GitStationWindow.vue'
 import GitPushErrorWindow from './GitPushErrorWindow.vue'
 import GitStatusErrorCard from './GitStatusErrorCard.vue'
 import GitUnlinkedCard from './GitUnlinkedCard.vue'
@@ -381,6 +384,10 @@ const statusReadReason = computed(() => (staleUnlinked.value ? 'network' : sessi
 const unlinked = computed(
   () => !staleUnlinked.value && session.state.statusLoad === 'ready' && session.state.status?.enabled === false,
 )
+const stationOpen = ref(false)
+const stationRef = ref<InstanceType<typeof GitStationWindow> | null>(null)
+function openStation(): void { stationOpen.value = true; stationRef.value?.restore() }
+watch(() => props.projectId, () => { stationOpen.value = false })
 const connectOpen = ref(false)
 const connectMinimized = ref(false)
 const connectInitial = shallowRef<GitConnectInitial | null>(null)

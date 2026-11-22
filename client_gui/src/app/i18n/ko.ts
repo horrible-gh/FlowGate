@@ -1026,6 +1026,7 @@ export default {
         blocked_rejected: '반려로 멈춤',
         error: '오류로 멈춤',
         stopped: '중지됨',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '병합 충돌',
         hold: 'Hold로 대기',
         step_done: '다음 단계 완료',
@@ -1484,6 +1485,9 @@ export default {
   git: {
     gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기", "retry_same": "재시도는 수락됐지만 같은 이유로 다시 실패했습니다", "retry_changed": "재시도는 수락됐지만 다른 이유로 실패했습니다", "retry_blocked": "반영 작업 상태를 확인하고 있습니다. [!] 상세에서 현재 단계를 확인하세요.", "retry_blocked_conflict": "충돌 해결 검토 완료 대기 · 완료되면 자동으로 이어집니다. 상태는 5초마다 확인합니다.", "retry_blocked_cancel": "지금은 재시도할 수 없음 · [!] 상세에서 취소 가능", "cancel_approval": "이 승인 취소", "closed_note": "이 승인은 다시 반영할 수 없습니다. 병합 세션이 이미 닫혔습니다.", "closed_next": "[이 승인 취소] 뒤 확인 카드에서 [승인] → 현재 커밋으로 반영", "retry_blocked_closed": "재시도가 꺼진 이유: 닫힌 병합 세션을 다시 읽기만 해서 항상 같은 결과가 나옵니다.", "goto_gate": "확인 카드로 이동", "retry_same_next": "원인이 그대로라 다시 눌러도 같습니다. [!] 상세에서 원인을 확인하거나, [취소] 뒤 확인 카드에서 다시 승인하세요.", "retry_changed_next": "이번에는 다른 이유로 막혔습니다. [!] 상세에서 새 원인을 확인하세요.", "retry_closed_next": "병합 세션이 닫혀 있어 다시 해도 같습니다. [이 승인 취소] 뒤 확인 카드에서 [승인]을 눌러 현재 커밋으로 다시 반영하세요."},
     header: {
+      station: 'Git 스테이션',
+      reconstruct: '최신 베이스로 재구성',
+      reconstruct_message: '현재 충돌 해결을 취소하고, 작업 커밋을 최신 베이스에 다시 반영합니다.',
       base: '프로젝트 베이스',
       flow_base: '플로우 베이스',
       none: '—',
@@ -1584,6 +1588,7 @@ export default {
       reason: {
         merge_conflict_open: '충돌 검토가 열려 있음',
         gate_conflict: '반영 중 충돌',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '반영 중 충돌',
         gate_decision_not_cancelable: '이전 승인을 취소할 수 없음',
         gate_job_active: 'Git 작업이 아직 진행 중',
@@ -1918,6 +1923,7 @@ export default {
         merged_pushed: '{target}에 머지하고 Push했습니다.',
         recovered: '앞서 머지된 결과를 기록했습니다({target}).',
         recovered_pushed: '앞서 머지된 결과를 기록하고 Push했습니다({target}).',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '충돌 — 위 카드에서 해결하세요.',
         judgment_changed: '판정이 바뀌었습니다. 다시 확인하세요.',
         merge_push_rejected: "원격 갱신 거절",

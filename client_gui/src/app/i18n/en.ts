@@ -1015,6 +1015,7 @@ export default {
         blocked_rejected: 'Stopped by a rejection',
         error: 'Stopped by an error',
         stopped: 'Stopped',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
         step_done: 'Next step done',
@@ -1473,6 +1474,9 @@ export default {
   git: {
     gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery", "retry_same": "Retry was accepted but failed again for the same reason", "retry_changed": "Retry was accepted but failed for a different reason", "retry_blocked": "Checking the apply job status. Open [!] details to see the current phase.", "retry_blocked_conflict": "Waiting for conflict resolution review to finish. The job then resumes automatically; status is checked every 5 seconds.", "retry_blocked_cancel": "Cannot retry now · cancel from the [!] details", "cancel_approval": "Cancel this approval", "closed_note": "This approval cannot be applied again. Its merge session is already closed.", "closed_next": "After [Cancel this approval], press [Approve] on the check card → applies the current commit", "retry_blocked_closed": "Why retry is off: it only re-reads the closed merge session, so the result is always the same.", "goto_gate": "Go to the check card", "retry_same_next": "The cause is unchanged, so pressing it again gives the same result. Check the cause in the [!] details, or [Cancel] and approve again on the check card.", "retry_changed_next": "It is blocked for another reason this time. Check the new cause in the [!] details.", "retry_closed_next": "The merge session is closed, so trying again gives the same result. After [Cancel this approval], press [Approve] on the check card to apply the current commit."},
     header: {
+      station: 'Git station',
+      reconstruct: 'Reconstruct on latest base',
+      reconstruct_message: 'Cancel this resolution and reapply the work commits on the latest base.',
       base: 'Project base',
       flow_base: 'Flow base',
       none: '—',
@@ -1573,6 +1577,7 @@ export default {
       reason: {
         merge_conflict_open: 'the conflict review is open',
         gate_conflict: 'conflict while applying',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'conflict while applying',
         gate_decision_not_cancelable: 'the earlier approval cannot be cancelled',
         gate_job_active: 'Git work is still running',
@@ -1907,6 +1912,7 @@ export default {
         merged_pushed: 'Merged into {target} and pushed.',
         recovered: 'Recorded the earlier merge ({target}).',
         recovered_pushed: 'Recorded and pushed the earlier merge ({target}).',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'Conflict — resolve it in the card above.',
         judgment_changed: 'The judgment changed. Check again.',
         merge_push_rejected: "Remote update rejected",

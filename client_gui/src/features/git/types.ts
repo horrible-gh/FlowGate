@@ -595,6 +595,7 @@ export interface ManualMergeApproval {
 
 /** GET /groups/{gid}/git/manual-merge[?target=] (E8). */
 export interface ManualMergeView {
+  workBaseBehind?: number | null
   canMerge: boolean
   blocked: ManualMergeBlock[]
   // wf_done / no_wf_done, information only.

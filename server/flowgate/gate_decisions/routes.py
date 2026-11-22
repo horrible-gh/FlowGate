@@ -37,6 +37,24 @@ from flowgate.gate_decisions import legacy_adapter as legacy
 from flowgate.gate_decisions import recovery, repository
 
 router = APIRouter(prefix="/api/v1", tags=["GateDecisions"])
+
+
+@router.post("/groups/{group_id}/git/remote-sync")
+def post_manual_remote_sync(group_id: str, request: Request, body: Any = Body(default=None)):
+    def handle():
+        from flowgate.gate_decisions import manual_sync, git_adapter
+        actor = legacy.authenticate(request)
+        group = legacy.load_flow(group_id)
+        legacy.authorize(actor, group, "write")
+        target = body.get("target_branch") if isinstance(body, dict) else None
+        if not isinstance(target, str) or not target.strip():
+            raise legacy.invalid(request, [{"field": "target_branch", "reason": "required"}])
+        try:
+            return {"result": manual_sync.sync(group_id, target)}
+        except git_adapter.git_error_type() as exc:
+            raise legacy.GraphApiError(exc.status, exc.code, exc.details or {}) from exc
+    return legacy.run(request, handle)
+
 # ASCII digits only, at most as long as the largest limit: ``str.isdigit`` takes ``²`` and other digits ``int`` refuses,
 # and an unbounded run of digits is no limit either - both are 422, never a 500.
 LIMIT_TEXT = re.compile(r"[0-9]{1,%d}" % len(str(history.MAX_LIMIT)))

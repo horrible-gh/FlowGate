@@ -107,29 +107,26 @@ async function typeMessage(value: string) {
 const staged = (path: string) => worktreeFile(path, { staged: 'M', unstaged: null, canStage: false, canUnstage: true })
 
 describe('Git tab home (0067-R §2)', () => {
-  it('a summary of real counts and four entries — 파일 관리 / Base 반영 / Diff / 상태 — nothing else of the worktree', async () => {
+  it('scope execution, collapsed individual actions and detailed windows with real counts', async () => {
     const files = [worktreeFile('src/a.ts'), worktreeFile('src/b.ts'), staged('src/c.ts')]
     const t = setup({ status: worktreeStatus({ files }), merge: manualMergeView({ aheadOfTarget: 4 }) })
     await mountPanel(t)
     expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['3', '1', '4'])
     expect(entries().map((e) => e.dataset.tab)).toEqual(['files', 'merge', 'diff', 'status'])
-    expect(entries().map((e) => e.querySelector('.gw-entry-title')?.textContent)).toEqual(['파일 관리', 'Base 반영', 'Diff', '상태'])
-    // 파일 관리: changed files; Base 반영: commits not in the target; Diff / 상태: no count.
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['3개', '4개 대기', '', ''])
-    // Every entry has the same columns: icon, label, count, arrow.
-    for (const e of entries()) {
-      expect([...e.children].map((c) => c.getAttribute('class'))).toEqual(['gw-entry-icon', 'gw-entry-title', 'gw-entry-count', 'gw-entry-arrow'])
-    }
+    expect(q('git-quick-actions')).not.toBeNull()
+    expect(text('git-execute')).toBe('실행')
+    expect(q('git-worktree')!.querySelector('details')!.open).toBe(false)
+    for (const e of entries()) expect(e.getAttribute('aria-label')).toBeTruthy()
     // No list, commit line, merge target, Diff body or detailed state in the tab.
     for (const sel of ['git-changes', 'git-commit-bar', 'git-apply', 'git-apply-info', 'git-status', 'git-window']) expect(q(sel), sel).toBeNull()
-    expect(q('git-worktree')!.querySelector('input, select')).toBeNull()
+    expect(q('git-worktree')!.querySelector('input, select')).not.toBeNull()
   })
 
   it('0 everywhere: numbers only, no repeated "nothing" lines, Diff still without a count', async () => {
     const t = setup({ status: worktreeStatus({ files: [] }), merge: manualMergeView({ aheadOfTarget: 0, mergeNeeded: false }) })
     await mountPanel(t)
     expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['0', '0', '0'])
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['0개', '0개 대기', '', ''])
+    expect(text('git-worktree-summary-changed')).toBe('0')
     expect(text('git-worktree')).not.toMatch(/Stage된 파일 없음|반영할 커밋 없음|변경 없음|0개$/)
   })
 
@@ -147,9 +144,10 @@ describe('Git tab home (0067-R §2)', () => {
     const t = setup({ status: worktreeStatus({ worktreeAvailable: false, files: [], worktreeToken: null, indexToken: null }) })
     await mountPanel(t)
     expect(text('git-worktree-unavailable')).toBe('작업 공간 없음(정리된 그룹)')
-    expect(entries()).toHaveLength(4)
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['', '', '', ''])
-    await click(entry('files'))
+    expect(entries()).toHaveLength(3)
+    expect(q('git-quick-actions')).toBeNull()
+    await click(entry('merge'))
+    await click(windowTab('files'))
     expect(panel('files')!.querySelector('[data-test="git-window-unavailable"]')).not.toBeNull()
     expect(q('git-commit-bar')).toBeNull()
     await click(windowTab('merge'))
@@ -179,7 +177,7 @@ describe('Git modeless (0067-R §3)', () => {
       ['diff', 'false', false],
       ['status', 'false', false],
     ])
-    expect(entry('merge')!.getAttribute('aria-pressed')).toBe('true')
+    expect(windowTab('merge')!.getAttribute('aria-selected')).toBe('true')
     // Never the Center canvas: opening and switching raise no open-diff intent.
     expect(w.emitted('open-diff')).toBeUndefined()
   })
@@ -287,7 +285,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     await click(entry('files'))
     reads(t).forEach((n, i) => expect(n).toBeGreaterThan(before[i]))
     expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['2', '1', '2'])
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['2개', '2개 대기', '', ''])
+    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-merge')]).toEqual(['2', '2'])
     expect(qa('[data-test="git-row"]').map((r) => r.dataset.path).sort()).toEqual(['src/a.ts', 'src/b.ts'])
     await click(windowTab('merge'))
     // The merge is blocked now and a merge result waits for its Push.

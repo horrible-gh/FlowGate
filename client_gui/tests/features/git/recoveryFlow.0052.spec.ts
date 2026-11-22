@@ -86,7 +86,7 @@ describe('(1) [병합 중단] closes the conflict review and cancels the approva
   it('asks with what is undone and what stays; its two buttons are [돌아가기] and [병합 중단]', async () => {
     const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
     await mountPanel(fake)
-    expect(text('git-conflict-abort')).toBe('병합 중단')
+    expect(q('git-conflict-abort')!.getAttribute('aria-label')).toBe('병합 중단')
     await click('git-conflict-abort')
     expect(dialogButtons()).toEqual(['돌아가기', '병합 중단'])
     const message = document.body.querySelector('.ui-confirm-message')!.textContent!

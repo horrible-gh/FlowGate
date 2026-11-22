@@ -132,6 +132,7 @@ export interface RunGateResult {
   readonly effects: readonly Record<string, unknown>[] | null
 }
 export interface RunGateState {
+  readonly auto_approval_error?: string | null
   readonly decision: RunGateResult | null
   readonly decision_in_progress: boolean
   readonly can_decide: boolean
@@ -156,6 +157,7 @@ export function toRunGateState(raw: unknown): RunGateState | null {
   const row = raw as Raw
   // The server owns these versioned read contracts, including phase evidence and receipt ids.
   return {
+    ...(typeof row.auto_approval_error === 'string' ? { auto_approval_error: row.auto_approval_error } : {}),
     decision: (row.decision ?? null) as RunGateResult | null,
     decision_in_progress: row.decision_in_progress === true,
     can_decide: row.can_decide === true,

@@ -13,9 +13,9 @@
     @close="session.closeWindow(win.id)"
   >
     <div class="gx-window gx-resolver" data-test="git-conflict-window">
-      <div v-if="conflict && conflict.files.length" class="gx-resolver-files" role="tablist" data-test="git-resolver-files">
+      <aside v-if="conflict && conflict.files.length" class="gx-resolver-sidebar"><input v-model="search" class="gx-input" type="search" :aria-label="searchLabel" :placeholder="searchLabel" /><div class="gx-resolver-files" role="tablist" aria-orientation="vertical" data-test="git-resolver-files">
         <button
-          v-for="item in conflict.files"
+          v-for="item in filteredFiles"
           :key="item.path"
           type="button"
           role="tab"
@@ -28,8 +28,9 @@
           <span class="gx-file-st" :class="item.conflictCount > 0 ? 'st-c' : 'st-m'">{{ item.conflictCount > 0 ? 'C' : 'M' }}</span>
           <span class="gx-file-nm">{{ item.path }}</span>
         </button>
-      </div>
-      <p v-else-if="session.state.conflictLoad === 'loading'" class="gx-desc">{{ t('gui.git.conflict.loading') }}</p>
+      </div></aside>
+      <main class="gx-resolver-main">
+      <p v-if="session.state.conflictLoad === 'loading'" class="gx-desc">{{ t('gui.git.conflict.loading') }}</p>
       <p v-else-if="!conflict" class="gx-desc" data-test="git-resolver-gone">{{ t('gui.git.resolver.gone') }}</p>
 
       <p v-if="allDone" class="gx-resolver-done" data-test="git-resolver-all-done">{{ t('gui.git.resolver.all_done') }}</p>
@@ -83,6 +84,7 @@
         <p v-if="lockedText" class="gx-reason" data-test="git-resolver-locked">{{ lockedText }}</p>
       </template>
       <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
+      </main>
     </div>
   </ModelessShell>
 </template>
@@ -106,7 +108,10 @@ import { useGitPanel } from './gitSession'
 import type { GitWindowDescriptor } from './types'
 
 const props = defineProps<{ win: GitWindowDescriptor }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const search = ref('')
+const searchLabel = computed(() => locale.value.startsWith('ko') ? '파일 검색' : 'Search files')
+const filteredFiles = computed(() => (conflict.value?.files ?? []).filter(f => f.path.toLowerCase().includes(search.value.toLowerCase())))
 const ctx = useGitPanel()
 const session = ctx.session
 
@@ -237,3 +242,11 @@ async function save(): Promise<void> {
   if (next) selected.value = next.path
 }
 </script>
+<style scoped>
+.gx-resolver { display:flex; gap:12px; height:100%; min-height:0; overflow:hidden; }
+.gx-resolver-sidebar { flex:0 0 190px; display:flex; flex-direction:column; min-height:0; gap:8px; overflow:hidden; }
+.gx-resolver-sidebar .gx-resolver-files { display:flex; flex-direction:column; flex-wrap:nowrap; overflow:auto; min-height:0; max-height:none; align-items:stretch; }
+.gx-resolver-file { flex:none; text-align:left; min-height:32px; }
+.gx-resolver-file .gx-file-nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gx-resolver-main { flex:1; min-width:0; overflow:auto; }
+</style>

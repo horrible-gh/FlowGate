@@ -19,6 +19,7 @@ export interface CheckSettingsView {
   /** The card's usage, or null when not set. */
   readonly usage: CheckUsage | null
   readonly archive?: boolean
+  readonly autoApprove?: boolean
   readonly scope: CheckScope | null
   /** Merge target branch, or null. */
   readonly target: string | null
@@ -52,7 +53,7 @@ export type FieldSaveState = 'saving' | 'saved' | 'failed'
 // Server contract: flowgate/gate_decisions/repository.py DONE (effect success, not node done).
 export const GATE_EFFECT_SUCCEEDED = 'succeeded'
 
-export const CHECK_SCOPES: readonly CheckScope[] = ['merge', 'commit', 'hold']
+export const CHECK_SCOPES: readonly CheckScope[] = ['commit', 'merge', 'hold']
 
 /** The card settings read (the `@/features/document` SettingsNode). */
 export interface CheckNodeFacts {
@@ -191,6 +192,7 @@ export function checkSettingsView(input: CheckSettingsInput): CheckSettingsView 
     pushCheckRequired: input.node?.pushRemoteCheckRequired === true,
     targetOptions,
     archive: valueOf('archive') === true,
+    autoApprove: valueOf('auto_approve') === true,
     push: flag(valueOf('push')),
     keepBranch: flag(valueOf('keep_branch')),
     connected: input.card,
