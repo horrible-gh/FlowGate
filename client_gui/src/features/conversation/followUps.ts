@@ -28,9 +28,16 @@ export interface FollowUpMark {
    * tab between the press and the confirmed stop still ends in the call — and so a plain [중지] (which clears it) does not.
    */
   replyNow?: boolean
+  /**
+   * 0067 card 5 (#2): the chat's call was refused because a card holds the Flow — its Graph run is running, paused or
+   * stopping (409 `graph_run_locked`), or another run holds the group's AI slot (409 `run_in_progress` of a run that is
+   * not this chat's). It waits for the Flow, not for an answer of the chat: once the run is over (or the slot is free)
+   * ONE call answers every waiting message. Kept with the mark so F5 / another chat / another tab keep waiting.
+   */
+  flow?: boolean
 }
 
-/** Why the follow-up waits: the chat's own answer (`run`). Card 4 adds a Flow run (`flow_run`). */
+/** Why the follow-up waits: the chat's own answer (`run`), or a card's run of the Flow (`flow_run`, card 5). */
 export type FollowUpReason = 'run' | 'flow_run'
 
 /** The waiting line the screen shows and the other cards use (card 3's button, card 4's wait). */
@@ -79,7 +86,7 @@ export function writeFollowUps(userId: string, chatId: string, marks: readonly F
     else localStorage.setItem(key, JSON.stringify(marks.slice(-STORAGE_LIMIT).map((m) => ({
       seq: m.seq, providerId: m.providerId, at: m.at,
       ...(m.providerOrigin ? { providerOrigin: m.providerOrigin } : {}), ...(m.auto ? { auto: true } : {}),
-      ...(m.replyNow ? { replyNow: true } : {}),
+      ...(m.replyNow ? { replyNow: true } : {}), ...(m.flow ? { flow: true } : {}),
     }))))
     return true
   } catch {
@@ -127,6 +134,42 @@ export function withoutReplyNow(marks: readonly FollowUpMark[]): FollowUpMark[] 
     delete rest.replyNow
     return rest
   })
+}
+
+/** 0067 card 5: the waiting marks that wait for the Flow (a card's run, or the group's AI slot), oldest first. */
+export function flowWaitingFollowUps(turns: readonly ConversationTurn[], marks: readonly FollowUpMark[]): FollowUpMark[] {
+  return waitingFollowUps(turns, marks).filter((m) => m.flow)
+}
+
+/**
+ * 0067 card 5: the chat's call met the Flow (409 `graph_run_locked`, or a `run_in_progress` held by a card). The marks
+ * this call answered (a follow-up: `auto`, not answered yet) wait again, every waiting mark now waits for the Flow, and
+ * `mark` (the message this call was for, or the chat's latest turn for a bare [AI 호출]) joins them.
+ */
+export function withFlowWait(turns: readonly ConversationTurn[], marks: readonly FollowUpMark[], mark: FollowUpMark | null): FollowUpMark[] {
+  const back = marks.map((m) => {
+    if (!m.auto || followUpAnswered(turns, m.seq)) return m
+    const rest = { ...m }
+    delete rest.auto
+    return rest
+  })
+  const next = mark ? withFollowUp(back, mark) : back
+  return next.map((m) => (m.auto || followUpAnswered(turns, m.seq) ? m : { ...m, flow: true }))
+}
+
+/** 0067 card 5: the Flow let the call through — its flow marks are now called for (`auto`, answered at most once). */
+export function flowCalled(marks: readonly FollowUpMark[]): FollowUpMark[] {
+  return marks.map((m) => {
+    if (!m.flow) return m
+    const rest = { ...m, auto: true }
+    delete rest.flow
+    return rest
+  })
+}
+
+/** 0067 card 5: the wait for the Flow is given up ([중지] on the waiting line, or a call that failed otherwise). */
+export function withoutFlowWait(marks: readonly FollowUpMark[]): FollowUpMark[] {
+  return marks.filter((m) => !m.flow)
 }
 
 /** The person's messages among the waiting marks (seqs, oldest first). */

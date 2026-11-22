@@ -153,7 +153,7 @@
     v-else
     ref="rootEl"
     class="tl-status"
-    :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running }]"
+    :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running, 'tl-status--flow-wait': activity.code === 'follow_up_flow_waiting' }]"
     data-test="tl-status"
     :data-code="activity.code ?? undefined"
     role="status"
@@ -162,7 +162,18 @@
     <span v-if="running" class="tl-dots" data-test="tl-running-dots" aria-hidden="true"><i /><i /><i /></span>
     <!-- flowgate.v02test.0067 #46: messages wait for the answer after the current one. -->
     <span v-if="activity.code === 'follow_up_waiting'" data-test="tl-follow-up" aria-hidden="true">⏳</span>
+    <!-- flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card's run of the Flow. -->
+    <span v-if="activity.code === 'follow_up_flow_waiting'" data-test="tl-flow-wait" aria-hidden="true">⏳</span>
     <span class="tl-status-text">{{ statusText }}</span>
+    <!-- flowgate.v02test.0067 #2: [중지] gives up the wait only; the card's run goes on. -->
+    <button
+      v-if="activity.code === 'follow_up_flow_waiting' && !readOnly"
+      type="button"
+      class="tl-act-btn tl-act-btn--cancel-wait"
+      data-test="tl-flow-wait-cancel"
+      :title="t('gui.conversation.status.follow_up_flow_cancel_title')"
+      @click="emit('cancel-wait')"
+    >{{ t('gui.conversation.status.follow_up_flow_cancel') }}</button>
     <!-- flowgate.v02test.0067 card 3: drop the running answer now and answer again with the waiting messages. -->
     <template v-if="activity.code === 'follow_up_waiting' && replyNow">
       <button
@@ -219,6 +230,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'reply-now': []
+  'cancel-wait': []
   decide: [decision: CommandDecision]
   'retry-history': []
   'dismiss-history': []
@@ -323,6 +335,12 @@ const statusText = computed(() => {
   if (a.code === 'follow_up_waiting') {
     const count = Number(a.text ?? 0)
     const head = t('gui.conversation.status.follow_up_waiting')
+    return count > 0 ? `${head} · ${t('gui.conversation.status.follow_up_waiting_count', { n: count })}` : head
+  }
+  // flowgate.v02test.0067 #2: the same line while the call waits for the Flow's card run.
+  if (a.code === 'follow_up_flow_waiting') {
+    const count = Number(a.text ?? 0)
+    const head = t('gui.conversation.status.follow_up_flow_waiting')
     return count > 0 ? `${head} · ${t('gui.conversation.status.follow_up_waiting_count', { n: count })}` : head
   }
   // B: a recorded chat error keeps the wording its notice had.
@@ -710,6 +728,11 @@ async function copyError(): Promise<void> {
   border-color: var(--fg2-status-success-border);
 }
 
+.tl-status--flow-wait {
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
 .tl-status--warning {
   color: var(--fg2-status-warning-fg);
   border-color: var(--fg2-status-warning-border);

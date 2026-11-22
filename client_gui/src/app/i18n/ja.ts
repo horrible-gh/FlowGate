@@ -1172,6 +1172,9 @@ export default {
       list_loading: 'チャット一覧を読み込み中...',
       list_failed: 'チャット一覧を読み込めませんでした。',
       list_empty: 'このフローにはチャットがありません。',
+      // flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart.
+      flow_running: 'フロー実行中',
+      chat_running: 'チャット呼び出し中',
     },
     timeline: {
       loading: '会話を読み込み中...',
@@ -1217,6 +1220,9 @@ export default {
       // a message sent while the AI answered.
       waiting: '待機',
       waiting_title: '現在の回答が終わると、AI がこのメッセージまで読んで続けて回答します。',
+      // flowgate.v02test.0067 #2: a read chat's answer written while a card of the flow ran.
+      seen_during_card_run: 'カード実行中に見た内容',
+      seen_during_card_run_title: 'カードの実行中に読んだ内容です。カードが修正中のファイルは変わっている可能性があります。',
       copy: '原文をコピー',
       copied: 'コピーしました',
       copy_failed: 'コピーできませんでした',
@@ -1308,6 +1314,10 @@ export default {
       follow_up_reply_now: '今すぐ止めてもう一度回答',
       follow_up_reply_now_stopping: '停止中…',
       follow_up_reply_now_edit_warning: '作業中の修正が途中まで残る場合があります',
+      // flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card run of the flow; [중지] cancels the wait only.
+      follow_up_flow_waiting: 'カードの実行が終わったら続けて回答します',
+      follow_up_flow_cancel: '中止',
+      follow_up_flow_cancel_title: '待機だけを取り消します。カードの実行は続きます。',
       run_timeout: '設定した制限時間に達したためAI呼び出しを終了しました。',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
