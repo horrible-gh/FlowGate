@@ -48,12 +48,9 @@ still its attempt's latest (``legacy.result_continuation_due``, judged here and 
 answers told again after its review was requested (a person's and the responder's, or late after that review ended
 without passing) request no second review.
 
-(NR the earlier change): an answer is never the action it asked for. Before an
-instruction / work / no_result step goes on, ``action_guard.blocks`` judges whether the answers selected an option that
-requires a new attempt while the node's active attempt is still the asker's: then the run is not woken, no AI is called
-and nothing is approved — the card is ``needs_intervention`` (``action_required:new_attempt``) until a new attempt is opened
-(an explicit command reopens an open card; a card in review is moved by a Stop). The chat AI's outlook tells it
-(``action_required``).
+0071 T6: a new_attempt answer automatically tries the existing fenced replacement,
+bounded by the card's restart setting. If unavailable or exhausted, the normal
+review/approval path continues; paused/stopped runs stay paused/stopped.
 
 a loop that ended without passing (``review_count_exhausted``, …) while its questions were open
 had ``assigned_review.consume_loop_verdict`` hold the verdict for the answers. Such a loop is a waiting ``review`` step
@@ -66,7 +63,7 @@ the hop boundary before its next hop (``question_loop_wait.park``) and returns i
 ``loop_wait`` phase here (``_waiting``: the parked wait, even though the loop row stays unstopped and the card locked),
 its questions go to the card's responder through the same ``_dispatch``, and once all are answered — a person's, the
 responder's or a chat AI's answer, or the run read's ``reconcile`` after a lost event / restart — ``_answered`` wakes
-the run (never a paused, stopping or stopped one; never when an answer requires a new attempt, ``action_guard``) and
+the run (never a paused, stopping or stopped one; a new-attempt answer may replace the attempt instead, ``action_guard``) and
 ``question_loop_wait.resume`` requests the loop's next execution exactly once. That middle-of-the-loop resume never
 consumes the loop's verdict (the ``review`` phase is not taken for a parked run). An answer that comes between the
 park and the run's own end (its execution not ended yet) never cancels the wait: ``resume`` leaves it ``waiting`` and
@@ -330,8 +327,7 @@ def _answered(flow_id: str, asker_run_id: str) -> None:
             _dispatch(flow_id, node, run, items, phase == "instruction")
         return
     if action_guard.blocks(flow_id, run, node["node_key"], phase):
-        # v02gui.0015 T3: the answers require a new attempt that was not opened — not woken, nothing called; the run's
-        # idle reason follows the card (``needs_intervention``)
+        # 0071 T6: replacement consumed the old step, or the run is not resumable.
         legacy.settle_graph_run(flow_id)
         return
     if not legacy.wake_graph_run(flow_id):
@@ -461,9 +457,8 @@ def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> 
     ``state``: ``resumes_after_chat_run`` (all its questions answered, the run may go on), ``waiting_other_questions``
     (``open_questions`` left), ``run_not_resumable`` (the Flow's run is paused / stopping / stopped or absent: the card
     waits for a person), ``not_waiting`` (no card step waits on it: a person's question, a run still working, a step
-    gone on), ``not_graph`` (not a Graph Flow) or ``unknown`` (unreadable). v02gui.0015 T3: ``action_required`` (all
-    answered, but an answer requires a new attempt that was not opened: the card does not go on — ``reason`` and
-    ``next_action`` tell what a person must do)."""
+    gone on), ``not_graph`` (not a Graph Flow) or ``unknown`` (unreadable).
+    A new-attempt answer follows the same automatic continuation at chat end."""
     if not flow_id or not asker_run_id:
         return {"state": OUTLOOK_NOT_WAITING}
     try:
@@ -478,14 +473,6 @@ def chat_answer_outlook(flow_id: Optional[str], asker_run_id: Optional[str]) -> 
             return {"state": OUTLOOK_UNKNOWN}
         if items:
             return {"state": OUTLOOK_OTHER_QUESTIONS, "open_questions": len(items)}
-        phase, node = waiting[0], waiting[1]
-        reason = None
-        if phase in action_guard.PHASES and action_guard.requirement(asker_run_id) is not None:
-            reason = action_guard.reason_for(legacy.active_run_id(flow_id), node.get("node_key"), asker_run_id,
-                                             legacy.attempt_of_ai_run(run))
-        if reason is not None:
-            return {"state": OUTLOOK_ACTION_REQUIRED, "reason": reason,
-                    "next_action": action_guard.NEXT_ACTION["review" if phase in ("work", LOOP_WAIT) else "open"]}
         found = legacy.graph_run_state(flow_id)
         if found is None:
             return {"state": OUTLOOK_RUN_NOT_RESUMABLE, "run_status": None}

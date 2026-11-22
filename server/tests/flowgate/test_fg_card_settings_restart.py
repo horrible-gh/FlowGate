@@ -81,6 +81,10 @@ def engine(env, run_identity_db, monkeypatch):
         (p for p in env["chain"]["providers"] if p["id"] == pid), None))
     monkeypatch.setattr(git_service, "get_branch_merge_group_claim", lambda group_id: None)
     monkeypatch.setattr(db_jobs, "get_group_freeze_claim", lambda group_id: None)
+    # This suite exercises the real identity claim; override the no-DB harness
+    # allocator stub with the committed allocator backed by run_identity_db.
+    from modules.flow_gate.db import ai_run_identity
+    monkeypatch.setattr(svc, "_next_run_id", ai_run_identity.allocate)
     return env
 
 
