@@ -12,13 +12,15 @@ export interface GitExecution {
   completed: GitExecutionStep[]
   status: 'running' | 'stopped' | 'remaining' | 'complete'
   error: string | null
+  // The server's detail reason of the stop, when it gave one (shown next to the code).
+  detail?: string | null
 }
 export function executionSteps(scope: GitExecutionScope): GitExecutionStep[] {
   return scope === 'commit' ? ['commit'] : scope === 'merge'
     ? ['commit', 'update', 'merge'] : ['commit', 'update', 'merge', 'push']
 }
 export function newExecution(scope: GitExecutionScope, target: string | null): GitExecution {
-  return { scope, target, steps: executionSteps(scope), cursor: 0, completed: [], status: 'running', error: null }
+  return { scope, target, steps: executionSteps(scope), cursor: 0, completed: [], status: 'running', error: null, detail: null }
 }
 class Stopped extends Error {}
 export interface ExecutionInput {
@@ -42,7 +44,7 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
   const status = () => request(() => api.loadStatus(input.groupId))
   const after = async (result: { status: WorktreeStatus | null }) => result.status ?? await status()
   const retryPush = plan.status === 'stopped' && plan.steps[plan.cursor] === 'push' && plan.error === 'push_rejected'
-  plan.status = 'running'; plan.error = null
+  plan.status = 'running'; plan.error = null; plan.detail = null
   try {
     while (plan.cursor < plan.steps.length) {
       guard()
@@ -125,6 +127,9 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
   } catch (error) {
     if (!input.current()) return
     plan.status = 'stopped'
-    plan.error = error instanceof Stopped ? error.message : worktreeErrorOf(error).code ?? 'request_failed'
+    if (error instanceof Stopped) { plan.error = error.message; return }
+    const failure = worktreeErrorOf(error)
+    plan.error = failure.network ? 'network' : failure.httpStatus === 403 && !failure.code ? 'forbidden' : failure.code ?? 'request_failed'
+    plan.detail = failure.details.reason
   }
 }

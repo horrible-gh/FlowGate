@@ -1913,6 +1913,7 @@ export default {
         recovered: 'Recorded the earlier merge ({target}).',
         recovered_pushed: 'Recorded and pushed the earlier merge ({target}).',
         updated: 'Updated from the base branch.',
+        update_no_change: 'Already up to date — no base changes to bring in.',
         merge_conflict: 'Conflict — resolve it in the card above.',
         judgment_changed: 'The judgment changed. Check again.',
         merge_push_rejected: "Remote update rejected",

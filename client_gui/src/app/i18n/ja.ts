@@ -1913,6 +1913,7 @@ export default {
         recovered: '先にマージされた結果を記録しました({target})。',
         recovered_pushed: '先にマージされた結果を記録して Push しました({target})。',
         updated: 'ベースブランチの変更を取り込みました。',
+        update_no_change: 'すでに最新です — 取り込むベースの変更はありません。',
         merge_conflict: '競合 — 上のカードで解決してください。',
         judgment_changed: '判定が変わりました。もう一度確認してください。',
         merge_push_rejected: "リモート更新拒否",

@@ -20,7 +20,7 @@
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
     <GitExceptionList :execution-active="!!worktree.state.execution" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
-    <GitWorktreePanel v-if="worktree.gateOpen.value" />
+    <GitWorktreePanel v-if="worktree.gateOpen.value" @settings="openConnect" @station="openStation" />
     <template v-for="win in session.state.windows" :key="win.id">
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
       <GitPushErrorWindow v-else :win="win" :operation="win.id.startsWith('gate-job:') ? gateOperations.selected.value : null" />

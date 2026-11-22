@@ -1924,6 +1924,7 @@ export default {
         recovered: '앞서 머지된 결과를 기록했습니다({target}).',
         recovered_pushed: '앞서 머지된 결과를 기록하고 Push했습니다({target}).',
         updated: '베이스 변경을 받아왔습니다.',
+        update_no_change: '이미 최신입니다 — 받아올 베이스 변경이 없습니다.',
         merge_conflict: '충돌 — 위 카드에서 해결하세요.',
         judgment_changed: '판정이 바뀌었습니다. 다시 확인하세요.',
         merge_push_rejected: "원격 갱신 거절",
