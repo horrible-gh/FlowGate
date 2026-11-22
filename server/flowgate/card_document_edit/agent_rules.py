@@ -37,6 +37,16 @@ class AgentRule:
         from modules.flow_gate.api import inbox_routes as inbox
         from modules.flow_gate.services import work_plan_service as wp, tr_scope_service
         req, submitted = self.req, self.req.transport_extras["submission"]
+        commit_message = None
+        if doc["type_code"] == "TR":
+            from modules.flow_gate.services import tr_commit_message
+            from .errors import GraphApiError
+            try:
+                commit_message = tr_commit_message.validate(
+                    submitted["commit_message"] if "commit_message" in submitted else doc.get("commit_message"))
+            except ValueError:
+                raise GraphApiError(422, tr_commit_message.ERROR_CODE,
+                    tr_commit_message.ERROR_DETAILS, tr_commit_message.ERROR_MESSAGE) from None
         def reject(result):
             reject_response(result, doc, legacy=bool(req.transport_extras.get("legacy")))
         if req.linked_doc_id:
@@ -111,6 +121,8 @@ class AgentRule:
             if submitted.get("force_encoding_reason"):
                 meta["force_encoding_reason"] = submitted["force_encoding_reason"]
             built = Built(text.encode("utf-8"), row_updates={"meta": json.dumps(meta) if meta else None})
+        if commit_message is not None:
+            built.row_updates["commit_message"] = commit_message
         if doc["type_code"] == "WP":
             meta = json.loads(built.row_updates.get("meta") or "{}")
             meta.pop("content_sha256", None)

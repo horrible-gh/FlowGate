@@ -187,7 +187,7 @@ def _commit_revision(ctx, inp):
         raise internal_error()
     updates = dict(built.row_updates)
     extras = req.transport_extras.get("row_updates", {})
-    if set(updates) - ({"title", "meta", "filename", "rejection_history"} if req.actor.kind == "worker" else {"title", "meta", "filename"}) or set(extras) - {"rejection_history"}:
+    if set(updates) - ({"title", "meta", "filename", "rejection_history", "commit_message"} if req.actor.kind == "worker" else {"title", "meta", "filename"}) or set(extras) - {"rejection_history"}:
         raise internal_error()
     if extras and req.actor.kind != "worker":
         raise internal_error()

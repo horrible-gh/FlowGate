@@ -4580,12 +4580,13 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     content: Optional[str] = body.get("content")
     related_doc_ids = body.get("related_doc_ids")
     title_override: Optional[str] = body.get("title")
-    # Commit-message draft: only meaningful for TR;
-    # ignored for other doc types (forward-compat with old instructions). Normalized
-    # here; length is validated in Step 5 (before the dry-run short-circuit).
+    # Only TR uses this draft. Keep the raw text for validation before
+    # normalization can hide line breaks or non-ASCII whitespace.
+    commit_message_raw = ""
     commit_message_draft: Optional[str] = None
     if doc_type.upper() == "TR":
-        commit_message_draft = re.sub(r"\s+", " ", str(body.get("commit_message") or "")).strip() or None
+        commit_message_raw = str(body.get("commit_message") or "")
+        commit_message_draft = re.sub(r"\s+", " ", commit_message_raw).strip() or None
 
     # NOTE: the Q document path is retired. Q is an inactive doc type
     # (migration 040) so _is_valid_doc_type blocks new Q docs at Step 5; AI queries are now
@@ -4826,11 +4827,15 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real submission
         fingerprints = {}  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
 
-    # Commit-message draft length guard: a
-    # validation failure, so it returns before the dry-run short-circuit and before
-    # any side effect (no document, no token consumed) — exactly like the checks above.
-    if commit_message_draft is not None and len(commit_message_draft) > 200:
-        return _fail(422, "commit_message must be a single line of at most 200 characters.")
+    # TR validation precedes dry-run and all registration side effects.
+    # Conventional-commit syntax is guidance, not a submission restriction.
+    if doc_type.upper() == "TR":
+        from modules.flow_gate.services import tr_commit_message
+        try:
+            commit_message_draft = tr_commit_message.validate(commit_message_raw)
+        except ValueError:
+            return _fail(422, tr_commit_message.ERROR_MESSAGE,
+                error={"code": tr_commit_message.ERROR_CODE, "details": tr_commit_message.ERROR_DETAILS})
 
     # ── Step 5.7: TR scope validation ─────────────────────────────
     # TR-only. Cross-checks the body's Changed Files reported-list

@@ -1094,7 +1094,7 @@ def test_new_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, lo
     monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
     response = post_inbox(
-        _new_body(content=CLEAN_KO, doc_type="TR"),
+        _new_body(content=CLEAN_KO, doc_type="TR", commit_message="test(inbox): verify TR scope locale"),
         headers={"x-locale": locale},
     )
     payload = response.json()
@@ -1114,7 +1114,7 @@ def test_new_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkeyp
     )
     monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
-    response = post_inbox(_new_body(content=CLEAN_KO, doc_type="TR"))
+    response = post_inbox(_new_body(content=CLEAN_KO, doc_type="TR", commit_message="test(inbox): verify TR scope locale"))
     payload = response.json()
     assert response.status_code == 422
     assert "TR" in payload["error_message"]
@@ -1142,7 +1142,7 @@ def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, l
     )
     monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
-    response = post_inbox(_edit_body(content=CLEAN_KO), headers={"x-locale": locale})
+    response = post_inbox(_edit_body(content=CLEAN_KO, commit_message="test(inbox): verify TR edit scope locale"), headers={"x-locale": locale})
     payload = response.json()
     assert response.status_code == 422
     _assert_no_korean(payload)
@@ -1174,7 +1174,7 @@ def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
     )
     monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
-    response = post_inbox(_edit_body(content=CLEAN_KO), headers={"x-locale": "en"})
+    response = post_inbox(_edit_body(content=CLEAN_KO, commit_message="test(inbox): verify TR edit scope locale"), headers={"x-locale": "en"})
     payload = response.json()
     assert response.status_code == 422
     assert payload["error_message"] == "service-provided notice"
@@ -1200,7 +1200,7 @@ def test_edit_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkey
     )
     monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
-    response = post_inbox(_edit_body(content=CLEAN_KO))
+    response = post_inbox(_edit_body(content=CLEAN_KO, commit_message="test(inbox): verify TR edit scope locale"))
     payload = response.json()
     assert response.status_code == 422
     assert payload["error_message"] == "TR 작업범위 검증 반려"

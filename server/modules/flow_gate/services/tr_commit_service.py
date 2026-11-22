@@ -63,59 +63,51 @@ def doc_code(doc: Optional[dict]) -> str:
     return f"{int(seq):04d}-{type_code}"
 
 
+def _tr_commit_type(group_id: Optional[str]) -> str:
+    """TR source changes use fix/feat even when an R group has no design doc."""
+    if not group_id:
+        return "chore"
+    try:
+        # The query returns creation order, as in derive_commit_type(). Only the
+        # first B/R root matters here; finalize's design-document rule does not.
+        for root in db_docs.get_documents_by_group_id(group_id):
+            root_type = (root.get("type_code") or root.get("type") or "").upper()
+            if root_type in ("B", "R"):
+                return "fix" if root_type == "B" else "feat"
+    except Exception:
+        # Metadata failure must never fail an approval.
+        pass
+    return "chore"
+
+
 def commit_subject(doc: dict) -> str:
-    """(supersedes the earlier implementation's ``the earlier implementation: title`` rule)
-    — a conventional, ASCII-only commit subject for a TR approval.
+    """Use an ASCII draft, or a typed fallback identifying the TR and group.
 
-    Still NOT translated: no HTTP call, no 3s timeout, the the earlier implementation cost argument
-    stands. English instead comes from the TR's own ``commit_message`` draft (the
-    worker is asked for it in English, ``help_catalog.py``'s TR submit item) — the same
-    kind of draft ``git_service.resolve_commit_message()`` already prefers for the
-    finalize commit. Decision order, first match wins:
-
-    1. The draft, if it is non-empty, ASCII and within ``COMMIT_SUBJECT_MAX``: used as
-       the subject verbatim when it is already ``type(scope): summary``, otherwise
-       wrapped as ``{type}: {draft}`` with the type guessed from the group root doc.
-    2. Otherwise a fixed ASCII fallback, ``chore: approve {doc_code}`` — the document
-       stays identifiable without ever emitting non-ASCII text.
-
-    The document code no longer prefixes the subject when a draft is used (only the
-    fallback still carries it) — screens and the ledger read ``doc_code`` from the
-    document itself (:func:`doc_code`), never parsed back out of the commit message, so
-    dropping the prefix here changes nothing they show.
+    Conventional drafts are preserved. Other valid drafts receive the TR-only
+    root type. Missing, non-ASCII and oversized drafts use a deterministic
+    fallback without translation; finalize and chat type rules are unchanged.
     """
-    code = doc_code(doc)
     draft = git_service.normalize_subject(doc.get("commit_message"))
-    # stdlib str.isascii(), not git_service._is_ascii(): the two check the same
-    # thing, but _is_ascii is private to git_service and this would be its only
-    # caller outside that module — not worth crossing the module
-    # boundary for one already-duplicated one-liner.
     if draft and draft.isascii() and len(draft) <= git_service.COMMIT_SUBJECT_MAX:
         if git_service.is_conventional_subject(draft):
             subject = draft
         else:
-            try:
-                commit_type = git_service.derive_commit_type(doc.get("group_id")) or "chore"
-            except Exception:
-                # commit_subject() must never break an approval (module rule 1) —
-                # a type-guess failure just falls back to the generic type.
-                commit_type = "chore"
-            subject = git_service.conventional_subject(commit_type, draft)
-    elif code:
-        # Empty, non-ASCII and oversized drafts all fall through to here. The
-        # oversized case is the same treatment resolve_commit_message() already
-        # gives an oversized stored draft — "abnormal stored value (empty /
-        # oversized) → silently fall through" (git_service.py, resolve_commit_message)
-        # — so a draft that breaks the length rule is dropped, not truncated.
-        subject = git_service.TR_FALLBACK_SUBJECT.format(doc_code=code)
+            subject = git_service.conventional_subject(
+                _tr_commit_type(doc.get("group_id")), draft,
+            )
     else:
-        try:
-            commit_type = git_service.derive_commit_type(doc.get("group_id")) or "chore"
-        except Exception:
-            commit_type = "chore"
-        subject = git_service.FIXED_FALLBACK_SUBJECT.format(commit_type=commit_type)
-    subject = git_service.normalize_subject(subject)
-    return subject[:git_service.COMMIT_SUBJECT_MAX]
+        code = git_service.normalize_subject(doc_code(doc))
+        group_code = git_service.normalize_subject(
+            str(doc.get("group_id") or "").rsplit(".", 1)[-1]
+        )
+        # Malformed legacy metadata must not leak non-ASCII text into Git.
+        code = code if code and code.isascii() else "unknown-TR"
+        group_code = group_code if group_code and group_code.isascii() else "unknown"
+        subject = git_service.TR_FALLBACK_SUBJECT.format(
+            commit_type=_tr_commit_type(doc.get("group_id")),
+            doc_code=code, group_code=group_code,
+        )
+    return git_service.normalize_subject(subject)[:git_service.COMMIT_SUBJECT_MAX]
 
 
 def _parse_reported(doc: dict) -> Optional[Any]:

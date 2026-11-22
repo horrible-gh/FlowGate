@@ -16,7 +16,7 @@
            unchanged. -->
       <InspectorBlock :title="t(k('git.title'))" class="inspector-check-settings-git" data-test="check-settings-git">
         <InspectorControlRow :label="t(k('git.scope'))" :hint="reasonText">
-          <Select
+          <InspectorSegment
             class="inspector-check-settings-scope"
             :model-value="shown.scope ?? ''"
             :options="CHECK_SCOPES.map((scope) => ({ value: scope, label: scopeLabel(scope), title: reasonText }))"
@@ -94,6 +94,7 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import FieldSaveMark from './FieldSaveMark.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
+import InspectorSegment from '../../parts/InspectorSegment.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
 import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
 import {

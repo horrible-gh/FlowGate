@@ -102,7 +102,7 @@ describe('(a)+(d) the merge contract and the opt-in', () => {
     // push, keep branch and Git scope take the same road
     await toggle(w, 'push').trigger('click'); await flushPromises()
     await toggle(w, 'keep-branch').trigger('click'); await flushPromises()
-    await w.get('[data-test="check-settings-scope"]').setValue('commit'); await flushPromises()
+    await w.get('[data-test="check-settings-scope"] [data-value="commit"]').trigger('click'); await flushPromises()
     expect(patchBodies().map(b => b.field)).toEqual(['auto_approve', 'push', 'keep_branch', 'merge_mode'])
     expect(patchUrls().every(url => url.includes('keep_merge_targets=true'))).toBe(true)
     expect(view().options).toEqual(LIST)
