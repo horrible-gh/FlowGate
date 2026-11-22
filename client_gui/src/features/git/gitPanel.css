@@ -14,7 +14,8 @@
 .gx-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 2px;
 }
 
 .gx-header-icon {
@@ -34,7 +35,7 @@
 }
 
 .gx-header-branch {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -43,7 +44,7 @@
 
 .gx-header-base {
   margin-top: 2px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--fg2-muted);
 }
 
@@ -55,6 +56,26 @@
 
 .gx-header-line.is-error {
   color: var(--fg2-status-danger-fg);
+}
+
+/* 0068 v16 mockup: the git mark on #15253b and a small outlined refresh button. */
+.gx-header .gx-header-icon {
+  border-radius: 6px;
+  background: #15253b;
+  color: #9fb3c8;
+}
+
+.gx-header .gx-header-refresh.ui-icon-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #2a3a52;
+  border-radius: 6px;
+  background: transparent;
+  color: #d6e3f2;
+}
+
+.gx-header .gx-header-refresh.ui-icon-btn:not(:disabled):hover {
+  border-color: #4ba3ff;
 }
 
 .gx-exceptions {

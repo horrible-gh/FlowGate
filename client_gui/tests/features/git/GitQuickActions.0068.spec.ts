@@ -18,23 +18,23 @@ async function setup(readOnly=false){
 describe('0068 quick execution UI',()=>{
   it('starts collapsed and filters a hundred files without any network fetch',async()=>{
     const wt=await setup()
-    expect(w!.find('details').element.open).toBe(false)
+    expect((w!.find('[data-test=git-individual-rows]').element as HTMLElement).style.display).toBe('none')
     await w!.find('.gq-files').trigger('click')
-    expect(w!.findAll('.gq-list label')).toHaveLength(100)
-    await w!.find('.gq-pick input:not([type=checkbox])').setValue('file-99')
-    expect(w!.findAll('.gq-list label')).toHaveLength(1)
-    expect(w!.find('.gq-list').text()).toContain('src/file-99.ts')
+    expect(w!.findAll('[data-test=git-file-list] label')).toHaveLength(100)
+    await w!.find('[data-test=git-file-search]').setValue('file-99')
+    expect(w!.findAll('[data-test=git-file-list] label')).toHaveLength(1)
+    expect(w!.find('[data-test=git-file-list]').text()).toContain('src/file-99.ts')
     expect(wt.source.fetchRefs).not.toHaveBeenCalled()
   })
   it('runs commit scope from the panel and leaves merge and push untouched',async()=>{
     const wt=await setup()
-    await w!.find('.gq-scopes button').trigger('click')
-    await w!.find('.gq-row input').setValue('commit selected files')
+    await w!.find('[data-test=git-scopes] button').trigger('click')
+    await w!.find('[data-test=git-message]').setValue('commit selected files')
     await w!.find('[data-test=git-execute]').trigger('click');await flushPromises()
     expect(wt.source.commit).toHaveBeenCalledTimes(1)
     expect(wt.source.manualMerge).not.toHaveBeenCalled()
     expect(wt.source.pushMergeResult).not.toHaveBeenCalled()
-    expect(w!.find('.gq-result').text()).toContain('완료')
+    expect(w!.find('[data-test=git-execution-result]').text()).toContain('완료')
   })
   it('offers no writable execution on a read-only Flow',async()=>{
     const wt=await setup(true)
@@ -42,3 +42,4 @@ describe('0068 quick execution UI',()=>{
     expect(wt.source.stage).not.toHaveBeenCalled()
   })
 })
+

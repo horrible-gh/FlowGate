@@ -60,8 +60,13 @@ def test_SB2_SB3_update_history_is_unverified_and_a_manual_same_subject_merge_ca
     result = svc.collect_scope_changes(proj.pid, gid)
     assert result["reason"] == "group_work_base_unverified"
     assert result["work_base_error"]["details"]["candidates"]
+    # Nothing to absorb (HEAD contains v0.2): no_change without touching the record.
+    noop = svc.update_from_base(gid)["result"]
+    assert noop["status"] == "no_change" and noop["floor_unusable"] == "group_work_base_unverified"
+    assert _state(gid)["work_base_state"] == "unverified"
+    proj.origin_commit("v0.2", "later.txt", "l\n")
     with pytest.raises(GitServiceError) as upd:
-        svc.update_from_base(gid)                      # refused before confirmation
+        svc.update_from_base(gid)                      # something to absorb: refused before confirmation
     assert upd.value.code == "group_work_base_unverified"
 
     # SB-3: the feature tip is not v0.2 history -> rule 7 refuses it.

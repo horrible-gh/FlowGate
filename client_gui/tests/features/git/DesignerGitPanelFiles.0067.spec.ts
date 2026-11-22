@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -43,8 +44,7 @@ async function openFilesTab(t: ReturnType<typeof setup>, props: Record<string, u
     global: { plugins: [i18n] },
   })
   await flushPromises()
-  document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="files"]')!.click()
-  await flushPromises()
+  await openGitWindowTab('files')
   return wrapper
 }
 

@@ -15,9 +15,9 @@
       <p v-if="areaState === 'unavailable'" class="gw-summary is-muted" data-test="git-worktree-unavailable">{{ t('gui.git.worktree.unavailable') }}</p>
       <GitQuickActions v-if="areaState === 'ready'" @details="openWindow" @settings="emit('settings')" @station="emit('station')" />
       <nav class="gq-footer">
-        <button v-if="areaState === 'unavailable'" data-test="git-worktree-entry" data-tab="merge" :title="t('gui.git.worktree.nav.merge')" :aria-label="t('gui.git.worktree.nav.merge')" @click="openWindow('merge')">⑂</button>
-        <button type="button" data-test="git-worktree-entry" data-tab="diff" :title="t('gui.git.worktree.nav.diff')" :aria-label="t('gui.git.worktree.nav.diff')" @click="openWindow('diff')">◫</button>
-        <button type="button" data-test="git-worktree-entry" data-tab="status" :title="t('gui.git.worktree.nav.status')" :aria-label="t('gui.git.worktree.nav.status')" @click="openWindow('status')">☷</button>
+        <button v-if="areaState === 'unavailable'" type="button" data-test="git-worktree-entry" data-tab="merge" :title="t('gui.git.worktree.nav.merge')" :aria-label="t('gui.git.worktree.nav.merge')" @click="openWindow('merge')"><GitIcon name="merge" /></button>
+        <button type="button" data-test="git-open-station" :title="t('gui.git.header.station')" :aria-label="t('gui.git.header.station')" @click="emit('station')"><GitIcon name="git" /></button>
+        <button type="button" data-test="git-worktree-entry" data-tab="diff" :title="t('gui.git.worktree.nav.diff')" :aria-label="t('gui.git.worktree.nav.diff')" @click="openWindow('diff')"><GitIcon name="diff" /></button>
       </nav>
     </template>
     <GitWorktreeWindow
@@ -44,6 +44,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitWorktreeWindow from './GitWorktreeWindow.vue'
 import GitQuickActions from './GitQuickActions.vue'
+import GitIcon from './GitIcon.vue'
 import { useGitWorktree } from './gitWorktreeSession'
 import type { GitWorktreeTab } from './types'
 
@@ -97,6 +98,9 @@ watch(context, (next, previous) => {
 </script>
 
 <style scoped>
-.gq-footer { display:flex; justify-content:flex-end; gap:6px; border-top:1px solid #22344d; padding-top:8px }
-.gq-footer button { width:28px; height:28px; border:1px solid #30445f; border-radius:5px; background:transparent; color:#adc1d9; cursor:pointer }
+/* v16 mockup footer: a rule, then the Git station and Diff icon buttons (status stays a tab of the Git window). */
+.gq-footer { display:flex; justify-content:flex-end; gap:6px; border-top:1px solid #1b2b42; padding-top:8px; margin-top:10px }
+.gq-footer button { display:inline-grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid #2a3a52; border-radius:6px; background:transparent; color:#d6e3f2; cursor:pointer }
+.gq-footer button:hover { border-color:#4ba3ff }
 </style>
+
