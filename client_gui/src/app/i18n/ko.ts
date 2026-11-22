@@ -360,6 +360,8 @@ export default {
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       tab_chat: '채팅 AI 응답 중',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AI 해결 중', resolving_progress: 'AI 해결 중 · {done}/{total}' },
       // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: '아카이브됨',
       tab_run_end: { completed: '실행 완료', ended: '실행 끝남' },

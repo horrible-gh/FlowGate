@@ -582,22 +582,30 @@ export async function fetchFlowFileDiff(
 }
 
 /** GET /api/v1/ai-invoke/active?group_id= — whether an AI run currently owns the group. */
-export async function fetchFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
+export async function fetchFlowAiActivity(groupId: string, options: { conflictProgress?: boolean } = {}): Promise<FlowAiActivity> {
   try {
     const response = await getRequest<{
       active?: boolean
       status?: string | null
       run_id?: string | null
       action_scope?: string | null
-    }>('/api/v1/ai-invoke/active', { group_id: groupId })
+      conflict_progress?: { done?: unknown; total?: unknown } | null
+    }>('/api/v1/ai-invoke/active', options.conflictProgress ? { group_id: groupId, conflict_progress: 1 } : { group_id: groupId })
     const data = response.data ?? {}
     const active = data.active === true && data.status !== 'finished'
-    return {
+    const activity: FlowAiActivity = {
       active,
       runId: active ? data.run_id || null : null,
       status: active ? data.status || null : null,
       actionScope: active ? data.action_scope || null : null,
     }
+    // flowgate.v02test.0066 (#36-1): only when asked, so every other reader keeps the same answer shape.
+    if (options.conflictProgress) {
+      const p = data.conflict_progress
+      activity.conflictProgress = active && p && typeof p.done === 'number' && typeof p.total === 'number'
+        ? { done: p.done, total: p.total } : null
+    }
+    return activity
   } catch (error) {
     throw loadError(error, 'Failed to load the Flow AI activity.')
   }

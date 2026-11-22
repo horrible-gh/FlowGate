@@ -17,7 +17,9 @@
        archive icon before its name. A run that ended while its tab was not active leaves its result mark where the run
        mark was (the run band's tone: success ✓ / warning ! / danger ! / neutral ✓); a chat answer that ended so keeps the
        bubble with a blue dot (orange: failed). The parent clears those marks when the tab is activated; a tab hidden by
-       the overflow that holds one puts a dot on the list button. -->
+       the overflow that holds one puts a dot on the list button. flowgate.v02test.0066 #36-1: a tab with a merge conflict
+       shows the conflict glyph (병합 충돌), turning inside a ring while an AI resolves it (AI 해결 중 · n/m); a hidden tab
+       in either state puts the dot on the list button too, and the list shows the same mark. -->
   <div ref="barRef" class="flow-tab-bar" data-test="designer-flow-tab-bar">
   <div
     ref="stripRef"
@@ -88,8 +90,9 @@
           data-test="designer-flow-tab-run-end"
           :data-tone="runEndOf(tab.flowId)!.tone"
         ><svg v-if="isCheckTone(runEndOf(tab.flowId)!.tone)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M3.6 6.2l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg><svg v-else viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.6" fill="currentColor" /><path d="M6 3.2v3.4" stroke="var(--fg2-panel, #0d1a28)" stroke-width="1.5" stroke-linecap="round" /><circle cx="6" cy="8.7" r="0.85" fill="var(--fg2-panel, #0d1a28)" /></svg></span>
-        <span v-if="conflicts?.[tab.flowId]" class="flow-tab-conflict" role="img"
-          :aria-label="t('gui.designer.center.integration.conflict')" :title="t('gui.designer.center.integration.conflict')"
+        <!-- flowgate.v02test.0066 #36-1: 병합 충돌, or AI 해결 중 (the same glyph inside a turning ring, same 14px box). -->
+        <span v-if="conflictOf(tab.flowId)" class="flow-tab-conflict" :class="{ 'is-resolving': conflictOf(tab.flowId)!.state === 'resolving' }" role="img"
+          :aria-label="conflictLabel(tab.flowId)" :title="conflictLabel(tab.flowId)" :data-conflict-state="conflictOf(tab.flowId)!.state"
           data-test="designer-flow-tab-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
         <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
         <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
@@ -173,8 +176,8 @@
               <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
                 :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" data-test="designer-flow-tab-list-chat-end"
                 :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>
-              <span v-if="conflicts?.[tab.flowId]" class="flow-tab-conflict" role="img"
-          :aria-label="t('gui.designer.center.integration.conflict')" :title="t('gui.designer.center.integration.conflict')"
+              <span v-if="conflictOf(tab.flowId)" class="flow-tab-conflict" :class="{ 'is-resolving': conflictOf(tab.flowId)!.state === 'resolving' }" role="img"
+          :aria-label="conflictLabel(tab.flowId)" :title="conflictLabel(tab.flowId)" :data-conflict-state="conflictOf(tab.flowId)!.state"
           data-test="designer-flow-tab-list-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
         <span class="flow-tab-list-name">{{ tab.name }}</span>
             </button>
@@ -195,6 +198,7 @@ import Dropdown from '../../../components/ui/Dropdown.vue'
 import LineIcon from '../../../components/ui/LineIcon.vue'
 import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
+import type { FlowTabConflict } from './flowTabConflicts'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -208,9 +212,13 @@ const props = withDefaults(
   defineProps<{
     tabs: readonly FlowTabStripItem[]
     activeFlowId: string | null
-    /** a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
-    conflicts?: Readonly<Record<string, boolean | undefined>>
+    /**
+     * a tab's merge conflict by flow id: `true` / `{ state: 'conflict' }` = 병합 충돌, `{ state: 'resolving', done, total }` =
+     * AI 해결 중 (flowgate.v02test.0066 #36-1); absent / false = no mark.
+     */
+    conflicts?: Readonly<Record<string, boolean | FlowTabConflict | undefined>>
     chatStates?: Readonly<Record<string, boolean>>
+    /** a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
     /** Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
     archived?: Readonly<Record<string, boolean | undefined>>
@@ -253,6 +261,22 @@ function setTabRef(flowId: string, el: unknown) {
 
 function runStateOf(flowId: string): FlowTabRunState | null {
   return props.runStates[flowId] ?? null
+}
+
+/** flowgate.v02test.0066 #36-1: the tab's conflict mark (a plain `true` reads as 병합 충돌), or null. */
+function conflictOf(flowId: string): FlowTabConflict | null {
+  const mark = props.conflicts?.[flowId]
+  if (!mark) return null
+  return mark === true ? { state: 'conflict' } : mark
+}
+
+/** 병합 충돌, or AI 해결 중 with the counted progress when the server gave one (AI 해결 중 · 1/46). */
+function conflictLabel(flowId: string): string {
+  const mark = conflictOf(flowId)
+  if (mark?.state !== 'resolving') return t('gui.designer.center.integration.conflict')
+  return mark.done !== null && mark.total !== null && mark.total > 0
+    ? t('gui.designer.center.tab_conflict.resolving_progress', { done: mark.done, total: mark.total })
+    : t('gui.designer.center.tab_conflict.resolving')
 }
 
 /* ───────────── the earlier change: archived tabs, ended run / chat marks ───────────── */
@@ -500,7 +524,8 @@ const listItemsRef = ref<HTMLElement | null>(null)
 /** The tabs do not fit: the list button shows. Measured against the whole bar (not the strip, which the button itself
  *  narrows), so the button never keeps itself shown once the tabs would fit without it. */
 const overflowing = ref(false)
-/** a tab scrolled out of the strip's view holds an ended run / chat mark. */
+/** a tab scrolled out of the strip's view holds something to look at: an ended run / chat mark, a merge conflict
+ *  (병합 충돌) or a conflict an AI is resolving (AI 해결 중) — flowgate.v02test.0066 #36-1. */
 const hiddenMark = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
@@ -520,7 +545,7 @@ function updateHiddenMark() {
   }
   const view = strip.getBoundingClientRect()
   hiddenMark.value = props.tabs.some((tab) => {
-    if (!props.conflicts?.[tab.flowId] && !hasEndMark(tab.flowId)) return false
+    if (!conflictOf(tab.flowId) && !hasEndMark(tab.flowId)) return false
     const rect = tabRefs.get(tab.flowId)?.getBoundingClientRect()
     return !!rect && (rect.left < view.left - 1 || rect.right > view.right + 1)
   })
@@ -894,6 +919,7 @@ function pickFromList(flowId: string, close: () => void) {
 }
 
 .flow-tab-conflict {
+  position: relative;
   display: inline-flex;
   flex: none;
   width: 14px;
@@ -903,6 +929,21 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-status-warning-fg, #ffc072);
 }
 .flow-tab-conflict svg { width: 14px; height: 14px; }
+
+/* flowgate.v02test.0066 #36-1 — AI 해결 중: the same glyph, smaller, inside a ring that turns like the run mark (same
+   keyframes and speed). The box stays 14px, so the tab name does not move when the state changes; the ring keeps the
+   conflict's orange so it is not taken for the blue run mark beside it. */
+.flow-tab-conflict.is-resolving svg { transform: scale(0.62); }
+.flow-tab-conflict.is-resolving::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1.6px solid rgba(255, 192, 114, 0.28);
+  border-top-color: var(--fg2-status-warning-fg, #ffc072);
+  border-radius: 50%;
+  animation: flow-tab-spin 0.8s linear infinite;
+}
 
 .flow-tab-archive {
   display: inline-flex;
@@ -978,7 +1019,8 @@ function pickFromList(flowId: string, close: () => void) {
 
 @media (prefers-reduced-motion: reduce) {
   .flow-tab-run.is-running,
-  .flow-tab-run.is-stopping {
+  .flow-tab-run.is-stopping,
+  .flow-tab-conflict.is-resolving::after {
     animation: none;
   }
 }

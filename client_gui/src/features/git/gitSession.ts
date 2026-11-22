@@ -227,7 +227,8 @@ export interface GitSessionOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
+/** A conflict resolver run owns the group. Exported: the Flow tabs judge 「AI 해결 중」 by this same rule (v02test.0066 #36-1). */
+export const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
 
 // the AI last pinned for a conflict in a project, kept in this browser so
 // the picker starts on it next time. Storage failures (private mode, quota) only lose the hint.
