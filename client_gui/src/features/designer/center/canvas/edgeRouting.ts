@@ -21,14 +21,15 @@ export function routeEdge(source: NodeRect, target: NodeRect): EdgeRoute {
   return routeFromAnchors(edgeAnchors(source, target))
 }
 
-function routeFromAnchors(anchors: EdgeAnchors, offset = 32): EdgeRoute {
+function routeFromAnchors(anchors: EdgeAnchors, offset?: number): EdgeRoute {
   const start = { x: anchors.sourceX, y: anchors.sourceY }
   const end = { x: anchors.targetX, y: anchors.targetY }
   const direction = outward[anchors.targetPosition]
   const horizontal = direction.x !== 0
-  // A fixed trunk offset can put the first bend behind the source on a narrow gap.
+  // Single connections bend halfway between ports; only merged inputs use a fixed trunk.
+  // Clamp shared trunks to keep the first bend ahead of every source in a narrow gap.
   const gap = (start.x - end.x) * direction.x + (start.y - end.y) * direction.y
-  const clearance = gap > 0 ? Math.min(offset, gap / 2) : offset
+  const clearance = offset === undefined ? gap / 2 : gap > 0 ? Math.min(offset, gap / 2) : offset
   const trunk = horizontal ? end.x + direction.x * clearance : end.y + direction.y * clearance
   return { anchors, points: [start,
     horizontal ? { x: trunk, y: start.y } : { x: start.x, y: trunk },
@@ -49,11 +50,13 @@ export function routeEdges(
   const trunks = new Map<string, number>()
   const used = new Map<string, number>()
   const arrows = new Set<string>()
+  const inputCounts = new Map<string, number>()
   for (const edge of edges) {
     const source = nodes.get(edge.source), target = nodes.get(edge.target)
     if (!source || !target || edge.source === edge.target) continue
     const anchors = edgeAnchors(source, target)
     const key = `${edge.target}:${anchors.targetPosition}`
+    inputCounts.set(key, (inputCounts.get(key) ?? 0) + 1)
     if (!trunks.has(key)) {
       const axis = anchors.targetPosition === Position.Left || anchors.targetPosition === Position.Right
         ? anchors.targetX : anchors.targetY
@@ -74,7 +77,7 @@ export function routeEdges(
     const route = result.get(edge.id)
     if (!route) continue
     const key = `${edge.target}:${route.anchors.targetPosition}`
-    route.points = routeFromAnchors(route.anchors, trunks.get(key)).points
+    route.points = routeFromAnchors(route.anchors, inputCounts.get(key)! > 1 ? trunks.get(key) : undefined).points
   }
   return result
 }

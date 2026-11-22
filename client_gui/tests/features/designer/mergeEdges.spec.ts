@@ -44,6 +44,29 @@ describe('target state controls incoming line colours, independent of deletion p
 })
 
 describe('direct orthogonal routes under cards', () => {
+  it.each([[600, 100], [-600, -100], [100, 600], [-100, -600]])(
+    'centres a single connection between ports for offset %s,%s', (x, y) => {
+      const source = rect(0, 0), target = rect(x, y)
+      const nodes = new Map([['s', source], ['t', target]])
+      const edge = { id: 'st', source: 's', target: 't' }
+      for (const route of [routeEdge(source, target), routeEdges([edge], nodes).get('st')!]) {
+        const a = route.anchors
+        if (a.sourcePosition === 'left' || a.sourcePosition === 'right') {
+          expect(route.points.slice(1, 3).map(p => p.x)).toEqual([
+            (a.sourceX + a.targetX) / 2, (a.sourceX + a.targetX) / 2,
+          ])
+        } else {
+          expect(route.points.slice(1, 3).map(p => p.y)).toEqual([
+            (a.sourceY + a.targetY) / 2, (a.sourceY + a.targetY) / 2,
+          ])
+        }
+      }
+      nodes.set('s2', rect(-100, 20))
+      const merged = routeEdges([edge, { id: 's2t', source: 's2', target: 't' }], nodes)
+      expect([...merged.values()].filter(r => r.drawArrow)).toHaveLength(1)
+      expect(routeEdges([edge], nodes).get('st')!.points).toEqual(routeEdge(source, target).points)
+    })
+
   it.each([[180, 150, 'bottom', 'top'], [-180, -150, 'top', 'bottom'],
     [300, 40, 'right', 'left'], [-300, -40, 'left', 'right']])(
     'chooses facing sides for offset %s,%s without crossing either endpoint card', (x, y, from, to) => {
@@ -79,7 +102,7 @@ describe('direct orthogonal routes under cards', () => {
     expect(route.points).toHaveLength(4)
     expect(route.points[0]).toEqual({ x: 176, y: 54 })
     expect(route.points.at(-1)).toEqual({ x: 1000, y: 154 })
-    expect(routeDrawing(route)).toEqual({ path: 'M176,54 L968,54 L968,154 L991,154', middle: { x: 633.5, y: 54 } })
+    expect(routeDrawing(route)).toEqual({ path: 'M176,54 L588,54 L588,154 L991,154', middle: { x: 588, y: 99.5 } })
   })
   it.each([3, 8, 20])('%i inputs share one side-centre port and one arrow', count => {
     const nodes = new Map([['T', rect(5000, 200)]])
@@ -91,9 +114,10 @@ describe('direct orthogonal routes under cards', () => {
     expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
     expect(new Set(routes.map(r => JSON.stringify(r.points.slice(-2)))).size).toBe(1)
   })
-  it('unrelated targets on one column have distinct vertical trunks', () => {
+  it('unrelated merged targets on one column have distinct vertical trunks', () => {
     const nodes = new Map([['a', rect(0, 0)], ['b', rect(0, 200)], ['c', rect(600, 200)], ['d', rect(600, 0)]])
-    const routes = routeEdges([{ id: 'ac', source: 'a', target: 'c' }, { id: 'bd', source: 'b', target: 'd' }], nodes)
+    const routes = routeEdges([{ id: 'ac', source: 'a', target: 'c' }, { id: 'bc', source: 'b', target: 'c' },
+      { id: 'bd', source: 'b', target: 'd' }, { id: 'ad', source: 'a', target: 'd' }], nodes)
     expect(routes.get('ac')!.points[1]!.x).not.toBe(routes.get('bd')!.points[1]!.x)
   })
   it('follows endpoint movement and size; hides duplicate arrows while keeping selection and removal', async () => {
