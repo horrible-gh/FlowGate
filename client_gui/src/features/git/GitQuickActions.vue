@@ -82,48 +82,48 @@ const emit = defineEmits<{ details: [tab: 'files' | 'merge' | 'status']; setting
 const { worktree: wt } = useGitWorktree()
 const { session } = useGitPanel()
 const { locale, t } = useI18n()
-const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중…', updating: '받아오는 중…', files: '파일', message: '커밋 메시지 (비우면 AI 작성)', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '취소', complete: '완료 — 선택한 범위를 모두 반영했습니다.', remaining: '실행은 끝났지만 남은 변경이 있습니다.', stoppedAt: '{step} 단계에서 멈춤', stopped: '이 단계에서 멈췄습니다. 아래 코드를 확인하세요.', code: '코드', commitFirst: '커밋 필요', commitContinue: '모두 커밋하고 계속', base: '베이스 → 작업 브랜치', blocked: '작업 중', close: '닫기', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세' }
+const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중…', updating: '받아오는 중…', files: '파일', message: '커밋 메시지 (비우면 AI 작성)', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '취소', complete: '완료', remaining: '완료 · 남은 변경 있음', stoppedAt: '{step}에서 멈춤', stopped: '알 수 없는 이유 · 코드 확인', code: '코드', commitFirst: '커밋 먼저', commitContinue: '커밋하고 계속', base: '베이스 → 작업 브랜치', blocked: '작업 중', close: '닫기', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세' }
 const en: Record<string, string> = { targetSearch: 'Find branches', fileDetails: 'File details', mergeDetails: 'Merge details', syncPush: 'Sync remote and push', scope: 'Scope', commitScope: 'Commit', mergeScope: 'Through merge', pushScope: 'Through push', execute: 'Run', running: 'Running…', updating: 'Updating…', files: 'Files', message: 'Commit message (AI when blank)', target: 'Target', search: 'Find files', all: 'Select all', individual: 'Individual actions', commit: 'Commit', update: 'Update', merge: 'Merge', push: 'Push', continue: 'Continue', retry: 'Retry', cancelRun: 'Cancel', complete: 'Complete — the selected scope is fully applied.', remaining: 'Finished, but changes remain.', stoppedAt: 'Stopped at {step}', stopped: 'Stopped at this step. Check the code below.', code: 'Code', commitFirst: 'Commit required', commitContinue: 'Commit all and continue', base: 'Base → work branch', blocked: 'Work in progress', close: 'Close', fix_settings: 'Open Git settings', fix_station: 'Open Git station', fix_status: 'View status', fix_files: 'View files', fix_merge: 'Merge details' }
 // Why a run stopped, in words, with what can be done about it on this screen.
 const REASONS: Record<string, { ko: string; en: string; fixes?: Fix[] }> = {
-  base_dirty: { ko: '베이스 체크아웃에 커밋되지 않은 수정 파일이 남아 있어 받아올 수 없습니다. 베이스 변경을 정리한 뒤 다시 시도하세요.', en: 'The base checkout has uncommitted edits, so the update cannot run. Clean up the base changes, then retry.', fixes: ['status'] },
-  git_error: { ko: '원격 저장소에서 받아오지 못했습니다. 인증 정보나 네트워크를 확인한 뒤 다시 시도하세요.', en: 'Could not fetch from the remote repository. Check the credentials or the network, then retry.', fixes: ['settings'] },
-  base_diverged: { ko: '베이스 브랜치에 원격에 없는 커밋이 있어 원격 위치로 당길 수 없습니다. Git 스테이션에서 베이스 상태를 확인하세요.', en: 'The base branch has commits the remote does not, so it cannot fast-forward. Check the base in the Git station.', fixes: ['station'] },
-  group_work_base_unverified: { ko: '작업 베이스가 아직 확인되지 않았습니다. 관리자가 Git 스테이션에서 확인한 뒤 다시 시도하세요.', en: 'The work base is not confirmed yet. An administrator confirms it in the Git station, then retry.', fixes: ['station'] },
-  group_work_base_diverged: { ko: '작업 베이스 기록이 현재 이력과 맞지 않습니다(초기화 또는 기록 변경). Git 스테이션에서 확인하세요.', en: 'The recorded work base no longer matches the history (reset or rewritten). Check it in the Git station.', fixes: ['station'] },
-  group_work_base_source_rewritten: { ko: '작업 베이스가 초기화되었거나 기록이 바뀌어 받아올 수 없습니다. Git 스테이션에서 확인하세요.', en: 'The work base was reset or rewritten, so the update was refused. Check it in the Git station.', fixes: ['station'] },
-  group_work_base_record_failed: { ko: '작업 베이스 기록을 저장하지 못했습니다. 다시 시도하세요.', en: 'The work base record could not be saved. Retry.' },
-  merge_conflict_open: { ko: '다른 Flow의 충돌이 베이스를 점유하고 있습니다. 그 충돌을 먼저 해결하거나 취소하세요.', en: 'Another Flow\'s conflict holds the base. Resolve or abort it first.', fixes: ['station'] },
-  git_busy: { ko: '다른 Git 작업이 진행 중입니다. 잠시 후 다시 시도하세요.', en: 'Another Git operation is running. Retry in a moment.' },
-  group_lease_active: { ko: 'AI 작업이 이 Flow를 점유하고 있습니다. 끝난 뒤 다시 시도하세요.', en: 'An AI task holds this Flow. Retry when it ends.' },
-  run_already_active: { ko: 'AI 실행 중이라 Git 변경이 잠겨 있습니다. 끝난 뒤 다시 시도하세요.', en: 'An AI run is active, so Git changes are locked. Retry when it ends.' },
-  branch_merge_claim_active: { ko: '브랜치 병합이 진행 중입니다. 끝난 뒤 다시 시도하세요.', en: 'A branch merge is in progress. Retry when it ends.' },
-  invalid_state: { ko: '진행 중인 갱신이 남아 있습니다. 상태를 확인해 먼저 마치거나 취소하세요.', en: 'An update is still open. Check the status and finish or abort it first.', fixes: ['status'] },
-  git_unavailable: { ko: '서버에서 Git을 사용할 수 없습니다. 관리자에게 문의하세요.', en: 'Git is not available on the server. Contact an administrator.' },
-  group_untracked_conflict: { ko: '작업 공간의 파일이 받아오기를 막고 있습니다. 해당 파일을 커밋하거나 정리한 뒤 다시 시도하세요.', en: 'Files in the workspace block the update. Commit or clean them up, then retry.', fixes: ['files'] },
-  network: { ko: '서버에 연결하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.', en: 'Could not reach the server. Check the network and retry.' },
-  forbidden: { ko: '이 작업을 할 권한이 없습니다.', en: 'You do not have permission for this action.' },
-  update_unconfirmed: { ko: '받아오기 결과를 확인하지 못했습니다. 상태를 확인하고 다시 시도하세요.', en: 'The update result could not be confirmed. Check the status and retry.', fixes: ['status'] },
-  update_unavailable: { ko: '이 서버는 받아오기를 지원하지 않습니다.', en: 'This server does not support update.' },
-  status_unavailable: { ko: 'Git 상태를 읽지 못했습니다. 상태를 확인하고 다시 시도하세요.', en: 'Could not read the Git status. Check it and retry.', fixes: ['status'] },
-  nothing_selected: { ko: '선택한 파일이 없습니다. 커밋할 파일을 고르세요.', en: 'No files are selected. Pick files to commit.', fixes: ['files'] },
-  nothing_staged: { ko: 'Stage된 파일이 없습니다.', en: 'Nothing is staged.', fixes: ['files'] },
-  commit_unconfirmed: { ko: '커밋 결과를 확인하지 못했습니다. 상태를 확인하세요.', en: 'The commit could not be confirmed. Check the status.', fixes: ['status'] },
-  merge_unconfirmed: { ko: '병합 결과를 확인하지 못했습니다. 병합 상세를 확인하세요.', en: 'The merge could not be confirmed. Check the merge details.', fixes: ['merge'] },
-  push_unconfirmed: { ko: '푸시 결과를 확인하지 못했습니다. 병합 상세를 확인하세요.', en: 'The push could not be confirmed. Check the merge details.', fixes: ['merge'] },
-  merge_blocked: { ko: '지금은 병합할 수 없습니다. 병합 상세에서 이유를 확인하세요.', en: 'The merge is blocked now. See why in the merge details.', fixes: ['merge'] },
-  push_blocked: { ko: '지금은 푸시할 수 없습니다. 병합 상세에서 이유를 확인하세요.', en: 'The push is blocked now. See why in the merge details.', fixes: ['merge'] },
-  remote_sync_required: { ko: '원격과 먼저 맞춰야 합니다. 다시 시도하세요.', en: 'The remote must be synced first. Retry.' },
-  worktree_changed: { ko: '실행 중 파일 상태가 바뀌었습니다. 파일을 확인한 뒤 다시 시도하세요.', en: 'The files changed during the run. Check them, then retry.', fixes: ['files'] },
-  context_changed: { ko: 'Flow가 바뀌어 실행을 멈췄습니다.', en: 'The Flow changed, so the run stopped.' },
-  request_failed: { ko: '요청이 실패했습니다. 다시 시도하세요.', en: 'The request failed. Retry.' },
-  push_authentication_required: { ko: '푸시 권한이 없습니다. Git 설정의 인증 정보를 확인하세요.', en: 'Push permission denied. Check the credentials in Git settings.', fixes: ['settings'] },
-  push_protected_branch: { ko: '보호된 브랜치라 푸시할 수 없습니다. 저장소 규칙을 확인하세요.', en: 'The branch is protected. Check the repository rules.' },
-  push_rejected: { ko: '원격이 푸시를 거절했습니다. 원격 변경을 반영한 뒤 다시 푸시하세요.', en: 'The remote rejected the push. Sync the remote changes and push again.' },
-  merge_conflict: { ko: '충돌이 생겼습니다. 위 카드에서 해결한 뒤 계속하세요.', en: 'There is a conflict. Resolve it in the card above, then continue.' },
-  uncommitted_changes: { ko: '커밋하지 않은 변경이 있어 받아올 수 없습니다. 모두 커밋하고 계속하세요.', en: 'Uncommitted changes block the update. Commit all and continue.', fixes: ['files'] },
-  commit_message_required: { ko: '커밋 메시지를 입력하세요(AI 작성이 꺼져 있음).', en: 'Enter a commit message (AI writing is off).' },
-  queued: { ko: '다른 Git 작업 뒤에 실행됩니다. 잠시 후 다시 시도하세요.', en: 'Queued behind another Git operation. Retry in a moment.' },
+  base_dirty: { ko: '베이스에 커밋 안 한 수정 파일 있음', en: 'The base checkout has uncommitted edits, so the update cannot run. Clean up the base changes, then retry.', fixes: ['status'] },
+  git_error: { ko: '원격에서 받지 못함 · 인증 정보나 네트워크 확인', en: 'Could not fetch from the remote repository. Check the credentials or the network, then retry.', fixes: ['settings'] },
+  base_diverged: { ko: '베이스에 원격에 없는 커밋 있음', en: 'The base branch has commits the remote does not, so it cannot fast-forward. Check the base in the Git station.', fixes: ['station'] },
+  group_work_base_unverified: { ko: '작업 베이스 미확인 · 관리자 확인 필요', en: 'The work base is not confirmed yet. An administrator confirms it in the Git station, then retry.', fixes: ['station'] },
+  group_work_base_diverged: { ko: '작업 베이스 이력 불일치', en: 'The recorded work base no longer matches the history (reset or rewritten). Check it in the Git station.', fixes: ['station'] },
+  group_work_base_source_rewritten: { ko: '작업 베이스가 초기화되거나 이력이 바뀜', en: 'The work base was reset or rewritten, so the update was refused. Check it in the Git station.', fixes: ['station'] },
+  group_work_base_record_failed: { ko: '작업 베이스 기록 실패', en: 'The work base record could not be saved. Retry.' },
+  merge_conflict_open: { ko: '다른 Flow 충돌이 베이스 사용 중', en: 'Another Flow\'s conflict holds the base. Resolve or abort it first.', fixes: ['station'] },
+  git_busy: { ko: '다른 Git 작업 중', en: 'Another Git operation is running. Retry in a moment.' },
+  group_lease_active: { ko: 'AI 작업 중', en: 'An AI task holds this Flow. Retry when it ends.' },
+  run_already_active: { ko: 'AI 실행 중 · Git 잠김', en: 'An AI run is active, so Git changes are locked. Retry when it ends.' },
+  branch_merge_claim_active: { ko: '브랜치 병합 중', en: 'A branch merge is in progress. Retry when it ends.' },
+  invalid_state: { ko: '끝나지 않은 받아오기 있음', en: 'An update is still open. Check the status and finish or abort it first.', fixes: ['status'] },
+  git_unavailable: { ko: '서버 Git 사용 불가 · 관리자 문의', en: 'Git is not available on the server. Contact an administrator.' },
+  group_untracked_conflict: { ko: '작업 파일이 받아오기를 막음', en: 'Files in the workspace block the update. Commit or clean them up, then retry.', fixes: ['files'] },
+  network: { ko: '서버 연결 실패', en: 'Could not reach the server. Check the network and retry.' },
+  forbidden: { ko: '권한 없음', en: 'You do not have permission for this action.' },
+  update_unconfirmed: { ko: '받아오기 결과 확인 안 됨', en: 'The update result could not be confirmed. Check the status and retry.', fixes: ['status'] },
+  update_unavailable: { ko: '받아오기 미지원 서버', en: 'This server does not support update.' },
+  status_unavailable: { ko: 'Git 상태 읽기 실패', en: 'Could not read the Git status. Check it and retry.', fixes: ['status'] },
+  nothing_selected: { ko: '선택한 파일 없음', en: 'No files are selected. Pick files to commit.', fixes: ['files'] },
+  nothing_staged: { ko: 'Stage된 파일 없음', en: 'Nothing is staged.', fixes: ['files'] },
+  commit_unconfirmed: { ko: '커밋 결과 확인 안 됨', en: 'The commit could not be confirmed. Check the status.', fixes: ['status'] },
+  merge_unconfirmed: { ko: '병합 결과 확인 안 됨', en: 'The merge could not be confirmed. Check the merge details.', fixes: ['merge'] },
+  push_unconfirmed: { ko: '푸시 결과 확인 안 됨', en: 'The push could not be confirmed. Check the merge details.', fixes: ['merge'] },
+  merge_blocked: { ko: '지금 병합 불가', en: 'The merge is blocked now. See why in the merge details.', fixes: ['merge'] },
+  push_blocked: { ko: '지금 푸시 불가', en: 'The push is blocked now. See why in the merge details.', fixes: ['merge'] },
+  remote_sync_required: { ko: '원격 반영 필요', en: 'The remote must be synced first. Retry.' },
+  worktree_changed: { ko: '실행 중 파일이 바뀜', en: 'The files changed during the run. Check them, then retry.', fixes: ['files'] },
+  context_changed: { ko: 'Flow가 바뀜', en: 'The Flow changed, so the run stopped.' },
+  request_failed: { ko: '요청 실패', en: 'The request failed. Retry.' },
+  push_authentication_required: { ko: '푸시 권한 없음 · 인증 정보 확인', en: 'Push permission denied. Check the credentials in Git settings.', fixes: ['settings'] },
+  push_protected_branch: { ko: '보호 브랜치 · 푸시 불가', en: 'The branch is protected. Check the repository rules.' },
+  push_rejected: { ko: '푸시 거절됨 · 원격에 새 커밋', en: 'The remote rejected the push. Sync the remote changes and push again.' },
+  merge_conflict: { ko: '충돌 · 위에서 해결 후 계속', en: 'There is a conflict. Resolve it in the card above, then continue.' },
+  uncommitted_changes: { ko: '커밋 안 한 파일 있음', en: 'Uncommitted changes block the update. Commit all and continue.', fixes: ['files'] },
+  commit_message_required: { ko: '커밋 메시지 필요 (AI 작성 꺼짐)', en: 'Enter a commit message (AI writing is off).' },
+  queued: { ko: '다른 Git 작업 대기 중', en: 'Queued behind another Git operation. Retry in a moment.' },
 }
 const words = computed(() => locale.value.startsWith('ko') ? ko : en)
 const scopes: GitExecutionScope[] = ['commit', 'merge', 'push']
@@ -166,7 +166,7 @@ const noticeLines = computed(() => (['apply', 'push'] as const).flatMap(area => 
   const params = n.params ?? {}
   const failedCode = n.code === 'failed' ? String(params.code ?? '') : ''
   const known = reasonText(failedCode) ?? (n.tone === 'error' ? reasonText(n.code) : null)
-  const text = known ? (failedCode ? `${known} (${failedCode})` : known) : t(`gui.git.worktree.notice.${n.code}`, { ...params })
+  const text = known ? (failedCode ? `${known} · ${failedCode}` : known) : t(`gui.git.worktree.notice.${n.code}`, { ...params })
   const tone = n.tone === 'error' ? 'error' : ['merge_conflict', 'queued', 'judgment_changed'].includes(n.code) ? 'warn' : 'ok'
   return [{ area, text, tone }]
 }))
