@@ -6,7 +6,7 @@ import { registerAppMessages } from '@/app/i18n'
 import DesignerTaskbar from '@/features/designer/shell/DesignerTaskbar.vue'
 import * as policyApi from '@/features/ai/policy/api'
 
-// The Designer's "질의 방침" window: the [메뉴] card opens the same policy box the AI 관리 screen shows,
+// The Designer's question policy window: the menu card opens the same policy box the AI management screen shows,
 // over the Designer, and brings that one window back instead of opening a second.
 vi.mock('@shared/api', async (original) => ({ ...await original<typeof import('@shared/api')>(), getRequest: vi.fn(async () => ({ data: { settings: {} } })), patchRequest: vi.fn(async () => ({ data: { settings: {} } })) }))
 vi.mock('@/features/ai/policy/api')
@@ -34,7 +34,7 @@ describe('v02test.0055 질의 방침 window', () => {
   it('puts the card next to 내 AI in the AI group, ahead of the settings group', async () => {
     const { wrapper } = bar(); await flushPromises()
     await openMenu(wrapper)
-    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme'])
+    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
     const rows = wrapper.findAll('.menu-group-row')
     expect(rows[0].findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy'])
     expect(wrapper.get('[data-card="question-policy"]').text()).toContain(i18n.global.t('gui.taskbar.question_policy'))

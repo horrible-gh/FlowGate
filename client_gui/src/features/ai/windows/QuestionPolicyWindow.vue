@@ -9,7 +9,7 @@
 </template>
 <script setup lang="ts">
 // "AI 관리 · 질의 방침" as a Designer window, opened from the taskbar menu card. Only the frame is
-// here; the policy box is QuestionPolicyPanel, the same component the AI 관리 screen shows.
+// here; the policy box is QuestionPolicyPanel, the same component the AI management screen shows.
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
@@ -20,7 +20,7 @@ const { t } = useI18n()
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const initialWidth = Math.min(560, Math.max(340, window.innerWidth - 120))
 const initialHeight = Math.min(440, Math.max(260, window.innerHeight - 200))
-// Opens above the taskbar, a step right of and above the 내 AI window so both title bars stay in reach.
+// Opens above the taskbar, a step right of and above the my AI window so both title bars stay in reach.
 const initialY = Math.max(70, window.innerHeight - initialHeight - 114)
 defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 </script>

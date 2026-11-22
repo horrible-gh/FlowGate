@@ -1,5 +1,5 @@
 export default {
-  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針"},
+  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "security_window": "自分の設定 · セキュリティ"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
@@ -896,6 +896,8 @@ export default {
           unknown: 'モード不明',
         },
         truncated: '全{total}件のうち{shown}件を表示しています。表示されていない項目があります。',
+        show_more: 'あと{count}件を表示',
+        show_less: '折りたたむ',
         unknown_time: '時刻不明',
       },
       search: {
@@ -3301,14 +3303,6 @@ export default {
         readonly_hint: 'ログイン情報はこの画面では変更できません。',
         language: '表示言語',
         language_hint: 'このブラウザーの画面言語です。以降のサーバー要求にも同じ言語が渡されます。',
-        retention: '完了カードの保持時間',
-        retention_label: '保持時間',
-        retention_hint: 'ヘッダーの AI 実行モニターで、終了した実行カードを表示しておく時間です。',
-        never: '手動で整理するまで保持',
-        immediate: '表示しない',
-        minutes: '{minutes}分',
-        hour: '{hours}時間',
-        hours: '{hours}時間',
       },
       security: {
         sessions: 'ログインセッション',

@@ -127,13 +127,14 @@ out after the MirageGlass deck `1jnmunhp` screen ⑩ "Environment Settings" by f
   Screen (flowgate.v02.0077): sections of setting rows; Security / Sessions lists the sessions as a table and
   opens the three password inputs with Change (Cancel closes them and forgets the input).
   - Account / Display (`MeAccountSettingsView`): `/auth/me` username/email read-only, Display language ko/ja/en
-    (`preferred_locale`; `@shared/api` sends it as X-Locale), Completed-card retention time on
-    GET/PATCH `/api/v1/me/ui-settings` (shared domain -1, 0, 30 … 1440; a failed save restores the
-    last confirmed value).
+    (`preferred_locale`; `@shared/api` sends it as X-Locale). No request of its own. The completed-card
+    retention row was removed in v02test.0055 (no v0.2 screen reads the value); `embedded` draws the panel
+    without the page frame for the Designer window (`windows/MeAccountWindow.vue`).
   - Security / Sessions (`MeSecuritySettingsView`): GET `/auth/sessions`, DELETE `/auth/sessions/{sid}` for
     other sessions, POST `/auth/sessions/revoke-others` after a confirmation, the current session via
     POST `/auth/logout` (`core/auth/logout.ts`), POST `/auth/password/change`. No TOTP control: no
     self-service API reports the person's TOTP state and `/auth/totp/setup` would replace a secret.
+    `embedded` draws the panel without the page frame for the Designer window (`windows/MeSecurityWindow.vue`).
 - Overview › Needs attention (flowgate.v02.0077, mockup ⑩): for a system administrator the overview reads
   GET `/api/v1/system/agents` once and lists the Agents that need a look, each with Inspect (→ System
   Agent with that Agent open). A non-administrator's overview sends nothing, and an answer that

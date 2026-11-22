@@ -130,11 +130,23 @@ describe('Designer notifications', () => {
     } }))
     const w = await open()
     await w.get('#notification-tab-' + tab).trigger('click')
+    // The tab opens short (the newest 6); "show more" opens the rest of what was loaded, "show less" folds it back.
+    expect(w.findAll('[data-test="notification-ai"]')).toHaveLength(6)
+    expect(w.get('[data-test="notification-truncated"]').text()).toContain('전체 51개 중 6개')
+    expect(w.get('[data-test="notification-ai-more"]').text()).toBe('44개 더 보기')
+    await w.get('[data-test="notification-ai-more"]').trigger('click')
+    expect(w.findAll('[data-test="notification-ai"]')).toHaveLength(50)
     expect(w.get('[data-test="notification-truncated"]').text()).toContain('전체 51개 중 50개')
+    expect(w.get('[data-test="notification-ai-more"]').text()).toBe('접기')
+    expect(w.get('[data-test="notification-ai-more"]').attributes('aria-expanded')).toBe('true')
+    await w.get('[data-test="notification-ai-more"]').trigger('click')
+    expect(w.findAll('[data-test="notification-ai"]')).toHaveLength(6)
+    await w.get('[data-test="notification-ai-more"]').trigger('click')
     mocks.get.mockImplementation(async (url: string) => ({ data: url.endsWith('active-all') ? active : feed }))
     mocks.subscribe.mock.calls[0]![1].event()
     await flushPromises()
     expect(w.find('[data-test="notification-truncated"]').exists()).toBe(false)
+    expect(w.find('[data-test="notification-ai-more"]').exists()).toBe(false)
   })
   it.each(['ko', 'en', 'ja'] as const)('localizes timestamps, document types and unknown run values in %s', async (locale) => {
     i18n.global.locale.value = locale

@@ -1,5 +1,5 @@
 <template>
-  <SettingsShell scope="me">
+  <component :is="embedded ? 'div' : SettingsShell" :scope="embedded ? undefined : 'me'" :class="{ 'me-account-embedded': embedded }">
     <template #nav>
       <SettingsSubnav :items="meNav" active="account" />
     </template>
@@ -57,64 +57,32 @@
                 </div>
               </div>
             </div>
-
-            <!-- Completed card retention time: GET/PATCH /me/ui-settings -->
-            <div class="fgs-row" data-card="retention">
-              <div class="fgs-row-label">
-                <label for="me-retention">{{ t('gui.settings.self.account.retention') }}</label>
-                <small>{{ t('gui.settings.self.account.retention_hint') }}</small>
-              </div>
-              <div class="fgs-row-ctrl">
-                <LoadingState v-if="loading" inline size="sm" :label="t('gui.common.loading')" />
-                <ErrorState v-else-if="loadError" compact :title="t(LOAD_FAILED)" :message="loadErrorDetail" data-testid="me-retention-load-error">
-                  <template #action>
-                    <Button variant="secondary" @click="load">{{ t('gui.common.retry') }}</Button>
-                  </template>
-                </ErrorState>
-                <template v-else>
-                  <span v-if="saving" class="fgs-muted">{{ t('gui.settings.saving') }}</span>
-                  <span v-else-if="saved" class="fgs-muted" data-testid="me-retention-saved">{{ t('gui.settings.saved') }}</span>
-                  <select id="me-retention" v-model.number="selected" class="fgs-input retention" :disabled="saving" data-testid="me-retention" @change="save">
-                    <option v-for="minutes in choices" :key="minutes" :value="minutes">{{ optionLabel(minutes) }}</option>
-                  </select>
-                </template>
-              </div>
-            </div>
-            <div v-if="saveError" class="fgs-row sub">
-              <span class="fgs-error" role="alert" data-testid="me-retention-error">{{ saveErrorText }}</span>
-            </div>
           </div>
         </div>
       </div>
     </section>
-  </SettingsShell>
+  </component>
 </template>
 
 <script setup lang="ts">
-// 내 설정 › Account · 화면 (flowgate.v02.0076 T#2, D §2.1).
+// My settings > Account / display (flowgate.v02.0076 T#2, D 2.1).
 //
-// - 로그인 정보: the username/email of GET /auth/me, which bootstrap already asked (core/auth/
-//   currentUser). Read-only: there is no input for them and no profile PATCH exists.
-// - 표시 언어: the shared i18n's ko/ja/en, stored as `preferred_locale` the way the v0.1 UserMenu
-//   and the Designer header do. @shared/api sends the rendered locale as X-Locale, so the next
-//   request follows the switch. No server locale field and no document/message language setting.
-// - 완료 카드 유지 시간: AiRunMonitorSettingsView's flow on GET/PATCH /me/ui-settings — the server
-//   envelope's choices (kept to the shared domain -1, 0, 30 … 1440), save on change, the value
-//   the server answered becomes the confirmed one, a failed save puts the last confirmed value
-//   back and says so. A failed GET is an error with a retry, not a default value.
-import { computed, onMounted, ref } from 'vue'
+// - Sign-in information: the username/email of GET /auth/me, which bootstrap already asked
+//   (core/auth/currentUser). Read-only: there is no input for them and no profile PATCH exists.
+// - Display language: the shared i18n's ko/ja/en, stored as `preferred_locale` the way the v0.1
+//   UserMenu and the Designer header do. @shared/api sends the rendered locale as X-Locale, so the
+//   next request follows the switch. No server locale field and no document/message language setting.
+// - The finished-card retention row was removed in v02test.0055: no v0.2 screen reads that value.
+//   This screen therefore sends no request of its own.
+// - `embedded` draws the same panel without the settings page frame, for the Designer window.
 import { useI18n } from 'vue-i18n'
-import Button from '@/components/ui/Button.vue'
-import ErrorState from '@/components/ui/ErrorState.vue'
-import LoadingState from '@/components/ui/LoadingState.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
-import { renderUiText, uiKey, uiRaw, type UiText } from '@/core/i18n/uiText'
-import { RETENTION_IMMEDIATE, RETENTION_NEVER, writeRetentionMirror } from '@shared/aiFinishedCardRetention'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useMeNav } from '../components/meNav'
-import { getUiSettings, MeRequestError, retentionChoices, retentionIn, saveRetention } from '../meApi'
+
+defineProps<{ embedded?: boolean }>()
 
 const LOCALES = ['ko', 'ja', 'en'] as const
 type Locale = (typeof LOCALES)[number]
@@ -129,104 +97,4 @@ function setLocale(code: Locale) {
   locale.value = code
   localStorage.setItem('preferred_locale', code)
 }
-
-const choices = ref<number[]>([])
-const selected = ref<number | null>(null)
-// The last value the server confirmed (GET or a successful PATCH); a failed save returns here.
-const confirmed = ref<number | null>(null)
-const loading = ref(true)
-// the errors this screen keeps on display are kept as their key (or, for an unexpected
-// error, its own words) and translated when they render, so the language buttons right above change them too.
-const LOAD_FAILED = 'gui.settings.self.errors.load_failed'
-const loadError = ref<UiText | null>(null)
-// The title already says load_failed; a more specific reason is added under it, never the same sentence twice.
-const loadErrorDetail = computed(() => {
-  const error = loadError.value
-  return error && !('key' in error && error.key === LOAD_FAILED) ? renderUiText(t, error) : undefined
-})
-const saving = ref(false)
-const saveError = ref<UiText | null>(null)
-const saveErrorText = computed(() => renderUiText(t, saveError.value))
-
-function errorText(err: unknown): UiText {
-  if (err instanceof MeRequestError && err.messageKey) return uiKey(err.messageKey)
-  return uiRaw(err instanceof Error ? err.message : String(err))
-}
-const saved = ref(false)
-
-function optionLabel(minutes: number): string {
-  if (minutes === RETENTION_NEVER) return t('gui.settings.self.account.never')
-  if (minutes === RETENTION_IMMEDIATE) return t('gui.settings.self.account.immediate')
-  if (minutes % 60 !== 0) return t('gui.settings.self.account.minutes', { minutes })
-  const hours = minutes / 60
-  return hours === 1 ? t('gui.settings.self.account.hour', { hours }) : t('gui.settings.self.account.hours', { hours })
-}
-
-async function load() {
-  loading.value = true
-  loadError.value = null
-  try {
-    const body = await getUiSettings()
-    const value = retentionIn(body)
-    if (value === null) throw new MeRequestError(t(LOAD_FAILED), null, null, [], LOAD_FAILED)
-    choices.value = retentionChoices(body)
-    confirmed.value = value
-    selected.value = value
-  } catch (err) {
-    loadError.value = errorText(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-/** Re-read after a save whose answer could not be read; the stored value is what is shown. */
-async function reread() {
-  try {
-    const body = await getUiSettings()
-    const value = retentionIn(body)
-    if (value !== null) {
-      confirmed.value = value
-      selected.value = value
-    }
-  } catch {
-    // The save error is already on screen; the last confirmed value stays selected.
-  }
-}
-
-async function save() {
-  const requested = selected.value
-  if (requested === null || requested === confirmed.value || saving.value) return
-  saving.value = true
-  saveError.value = null
-  saved.value = false
-  try {
-    const body = await saveRetention(requested)
-    const value = retentionIn(body)
-    if (value === null) {
-      selected.value = confirmed.value
-      saveError.value = uiKey('gui.settings.self.errors.save_unconfirmed')
-      await reread()
-      return
-    }
-    // The value the server answered with, not the one that was sent.
-    choices.value = retentionChoices(body)
-    confirmed.value = value
-    selected.value = value
-    writeRetentionMirror(value)
-    saved.value = true
-  } catch (err) {
-    selected.value = confirmed.value
-    saveError.value = errorText(err)
-  } finally {
-    saving.value = false
-  }
-}
-
-onMounted(load)
 </script>
-
-<style scoped>
-.retention {
-  width: 200px;
-}
-</style>

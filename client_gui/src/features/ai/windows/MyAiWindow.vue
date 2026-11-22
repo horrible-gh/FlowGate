@@ -9,7 +9,7 @@
 </template>
 <script setup lang="ts">
 // "AI 관리 · 내 AI" as a Designer window, opened from the taskbar menu card. Only the frame is
-// here; the list is AiProvidersPanel, the component the AI 관리 screen shows, limited to my own AI.
+// here; the list is AiProvidersPanel, the component the AI management screen shows, limited to my own AI.
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
@@ -27,7 +27,7 @@ defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 <style scoped>
 /* Slot content keeps this component's scope when the shell teleports it; the panel's own parts are reached with :deep(). */
 .ai-my-window { height: 100%; min-height: 0; }
-/* The window title already names the list, and system-wide settings stay on the AI 관리 screen. */
+/* The window title already names the list, and system-wide settings stay on the AI management screen. */
 .ai-my-window :deep(.ai-providers-panel .page-title), .ai-my-window :deep(.ai-providers-panel .repeat-card) { display: none; }
 .ai-my-window :deep(.ai-providers-panel .detail-head) { margin-bottom: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-panel) { margin-bottom: 0; }
