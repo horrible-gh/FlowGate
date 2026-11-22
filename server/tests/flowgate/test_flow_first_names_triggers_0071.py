@@ -142,3 +142,25 @@ def test_composition_registers_and_removes_full_run_port(monkeypatch):
     assert first_names_hooks._handler is t.schedule_run
     integration.unregister()
     assert first_names_hooks._handler is None
+
+
+@pytest.mark.parametrize("role_state, expected", [("assigned", "role-provider"), ("not_used", None), ("unavailable", None)])
+def test_run_context_uses_current_execution_role(naming, monkeypatch, role_state, expected):
+    from flowgate.ai_roles import resolve, availability, account, role_store
+    from flowgate.card_settings import stage_assignment as sa
+    from modules.flow_gate.graph_workflow.store import definition_store, assignment_store
+    from modules.flow_gate.graph_workflow.services import card_settings_ports
+    from types import SimpleNamespace
+    node = {"node_key": "role-card", "node_type": "document", "doc_type": "T",
+            "assignee_provider_id": "stale-legacy"}
+    monkeypatch.setattr(definition_store, "revision", lambda *args: {"nodes": [node]})
+    monkeypatch.setattr(assignment_store, "root_binding", lambda _: {})
+    monkeypatch.setattr(sa, "enabled", lambda: True)
+    monkeypatch.setattr(card_settings_ports, "uses_ai", lambda *args: True)
+    monkeypatch.setattr(card_settings_ports, "run_settings", lambda *args: {"provider_id": "stale-legacy"})
+    value = role_store.RoleValue("not_used") if role_state == "not_used" else role_store.RoleValue("assigned", "role-provider")
+    inputs = resolve.CardRoleInputs(slots={"execution": SimpleNamespace(value=value, source="card_explicit")},
+                                    init=SimpleNamespace(state="initialized"), node=node)
+    monkeypatch.setattr(resolve, "read_card_role_inputs", lambda *args: inputs)
+    monkeypatch.setattr(availability, "check_availability", lambda *args, **kwargs: "disabled" if role_state == "unavailable" else None)
+    assert t.run_context(FA, 1)[0] == expected

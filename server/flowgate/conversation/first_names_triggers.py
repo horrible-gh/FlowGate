@@ -45,14 +45,22 @@ def run_context(flow_id, revision_no):
     from modules.flow_gate.db import documents
     from modules.flow_gate.graph_workflow.store import definition_store, assignment_store
     from modules.flow_gate.graph_workflow.services import card_settings_ports
+    from flowgate.card_settings import stage_assignment
+    from flowgate.ai_roles import resolve
     definition = definition_store.revision(flow_id, revision_no) or {}
+    group = legacy_adapter.get_group(flow_id) or {}
     provider = None
     for node in definition.get("nodes", []):
-        if card_settings_ports.uses_ai(flow_id, node):
+        if stage_assignment.enabled() and stage_assignment.role_card(node):
+            # Current Designer roles live in role slots, not legacy run_ai settings.
+            # A person/unavailable role must never fall back to a stale legacy AI.
+            role = resolve.resolve_role(flow_id, node, "execution", project_id=group.get("project_id"))
+            provider = role.provider_id if role.outcome == "ai" else None
+        elif card_settings_ports.uses_ai(flow_id, node):
             plan = card_settings_ports.run_settings(flow_id, node)
             provider = plan.get("provider_id") or node.get("assignee_provider_id")
-            if provider:
-                break
+        if provider:
+            break
     binding = assignment_store.root_binding(flow_id) or {}
     root = documents.get_by_id(binding.get("doc_id")) if binding.get("doc_id") else None
     text = ""
