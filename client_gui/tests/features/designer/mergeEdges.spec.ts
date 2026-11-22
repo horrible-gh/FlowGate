@@ -79,6 +79,34 @@ describe('direct orthogonal routes under cards', () => {
         expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, target)).toBe(false)
       }
     })
+  it.each(['right', 'left', 'down', 'up'])('centres merged inputs heading %s in either input order', direction => {
+    const nodes = new Map(direction === 'right'
+      ? [['a', rect(0, 0)], ['b', rect(0, 200)], ['t', rect(600, 100)]]
+      : direction === 'left'
+        ? [['a', rect(600, 0)], ['b', rect(600, 200)], ['t', rect(0, 100)]]
+        : direction === 'down'
+          ? [['a', rect(0, 0)], ['b', rect(200, 0)], ['t', rect(100, 600)]]
+          : [['a', rect(0, 600)], ['b', rect(200, 600)], ['t', rect(100, 0)]])
+    const edges = ['a', 'b'].map(source => ({ id: source, source, target: 't' }))
+    const horizontal = direction === 'right' || direction === 'left'
+    for (const ordered of [edges, [...edges].reverse()]) {
+      const routes = [...routeEdges(ordered, nodes).values()]
+      expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
+      for (const route of routes) {
+        const a = route.anchors
+        const midpoint = horizontal ? (a.sourceX + a.targetX) / 2 : (a.sourceY + a.targetY) / 2
+        expect(route.points.slice(1, 3).map(p => horizontal ? p.x : p.y)).toEqual([midpoint, midpoint])
+      }
+      expect(routes[0]!.points.slice(-2)).toEqual(routes[1]!.points.slice(-2))
+    }
+  })
+  it('centres a wide shared gap against the nearest input with different source columns', () => {
+    const nodes = new Map([['far', rect(0, 0)], ['near', rect(200, 100)], ['t', rect(800, 50)]])
+    const edges = ['far', 'near'].map(source => ({ id: source, source, target: 't' }))
+    for (const ordered of [edges, [...edges].reverse()]) {
+      expect([...routeEdges(ordered, nodes).values()].map(r => r.points[1]!.x)).toEqual([588, 588])
+    }
+  })
   it('keeps a shared trunk inside a narrow gap regardless of input order', () => {
     const nodes = new Map([['far', rect(0, 0)], ['near', rect(400, 40)], ['t', rect(600, 60)]])
     const edges = ['far', 'near'].map(source => ({ id: source, source, target: 't' }))
@@ -114,11 +142,12 @@ describe('direct orthogonal routes under cards', () => {
     expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
     expect(new Set(routes.map(r => JSON.stringify(r.points.slice(-2)))).size).toBe(1)
   })
-  it('unrelated merged targets on one column have distinct vertical trunks', () => {
+  it('centres merged targets on the same column without shifting their trunks', () => {
     const nodes = new Map([['a', rect(0, 0)], ['b', rect(0, 200)], ['c', rect(600, 200)], ['d', rect(600, 0)]])
     const routes = routeEdges([{ id: 'ac', source: 'a', target: 'c' }, { id: 'bc', source: 'b', target: 'c' },
       { id: 'bd', source: 'b', target: 'd' }, { id: 'ad', source: 'a', target: 'd' }], nodes)
-    expect(routes.get('ac')!.points[1]!.x).not.toBe(routes.get('bd')!.points[1]!.x)
+    expect([...routes.values()].map(r => r.points[1]!.x)).toEqual([388, 388, 388, 388])
+    expect([...routes.values()].filter(r => r.drawArrow)).toHaveLength(2)
   })
   it('follows endpoint movement and size; hides duplicate arrows while keeping selection and removal', async () => {
     const source = node('s', 0, 0), target = node('t', 1000, 100)

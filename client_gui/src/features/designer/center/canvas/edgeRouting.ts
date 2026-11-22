@@ -26,8 +26,8 @@ function routeFromAnchors(anchors: EdgeAnchors, offset?: number): EdgeRoute {
   const end = { x: anchors.targetX, y: anchors.targetY }
   const direction = outward[anchors.targetPosition]
   const horizontal = direction.x !== 0
-  // Single connections bend halfway between ports; only merged inputs use a fixed trunk.
-  // Clamp shared trunks to keep the first bend ahead of every source in a narrow gap.
+  // Shared inputs bend halfway across the nearest source-to-target gap.
+  // A single connection uses its own port midpoint.
   const gap = (start.x - end.x) * direction.x + (start.y - end.y) * direction.y
   const clearance = offset === undefined ? gap / 2 : gap > 0 ? Math.min(offset, gap / 2) : offset
   const trunk = horizontal ? end.x + direction.x * clearance : end.y + direction.y * clearance
@@ -39,7 +39,7 @@ function routeFromAnchors(anchors: EdgeAnchors, offset?: number): EdgeRoute {
 export interface RoutedEdge extends EdgeRoute { drawArrow: boolean }
 
 /** Compute the whole canvas together. Inputs of a card share a trunk and one arrow.
- * Different targets on the same column receive different trunks. Paths remain individually
+ * Paths remain individually
  * selectable on their branches; sharing never changes execution or deletion permissions.
  */
 export function routeEdges(
@@ -48,28 +48,17 @@ export function routeEdges(
 ): Map<string, RoutedEdge> {
   const result = new Map<string, RoutedEdge>()
   const trunks = new Map<string, number>()
-  const used = new Map<string, number>()
   const arrows = new Set<string>()
-  const inputCounts = new Map<string, number>()
   for (const edge of edges) {
     const source = nodes.get(edge.source), target = nodes.get(edge.target)
     if (!source || !target || edge.source === edge.target) continue
     const anchors = edgeAnchors(source, target)
     const key = `${edge.target}:${anchors.targetPosition}`
-    inputCounts.set(key, (inputCounts.get(key) ?? 0) + 1)
-    if (!trunks.has(key)) {
-      const axis = anchors.targetPosition === Position.Left || anchors.targetPosition === Position.Right
-        ? anchors.targetX : anchors.targetY
-      const column = `${anchors.targetPosition}:${axis}`
-      const index = used.get(column) ?? 0
-      trunks.set(key, 32 + index * 12)
-      used.set(column, index + 1)
-    }
-    // Reserve enough room for every source sharing this target side, independent of order.
+    // Use the closest source so the shared bend stays between every input and target.
     const direction = outward[anchors.targetPosition]
     const gap = (anchors.sourceX - anchors.targetX) * direction.x
       + (anchors.sourceY - anchors.targetY) * direction.y
-    if (gap > 0) trunks.set(key, Math.min(trunks.get(key)!, gap / 2))
+    trunks.set(key, Math.min(trunks.get(key) ?? Infinity, gap / 2))
     result.set(edge.id, { anchors, points: [], drawArrow: !arrows.has(key) })
     arrows.add(key)
   }
@@ -77,7 +66,7 @@ export function routeEdges(
     const route = result.get(edge.id)
     if (!route) continue
     const key = `${edge.target}:${route.anchors.targetPosition}`
-    route.points = routeFromAnchors(route.anchors, inputCounts.get(key)! > 1 ? trunks.get(key) : undefined).points
+    route.points = routeFromAnchors(route.anchors, trunks.get(key)).points
   }
   return result
 }
