@@ -227,7 +227,8 @@ export interface GitSessionOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
+/** A conflict resolver run owns the group. Exported: the Flow tabs judge 「AI 해결 중」 by this same rule (v02test.0066 #36-1). */
+export const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
 
 // the AI last pinned for a conflict in a project, kept in this browser so
 // the picker starts on it next time. Storage failures (private mode, quota) only lose the hint.
@@ -311,7 +312,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     const row = pendingRow.value
     if (!row || state.statusLoad === 'error') return null
     if (row.status === 'waiting') return 'hold'
-    if (row.status !== 'conflict' || row.mergeId === null) return null
+    if (row.status !== 'conflict') return null
+    if (row.mergeId === null) return 'conflict'
     // a Graph card result's merge is handled in its card — the conflict card only points there.
     if (state.conflict?.mergeId === row.mergeId && state.conflict.graphMerge) return 'unsupported'
     // A running resolver wins over any review state (§3.3).

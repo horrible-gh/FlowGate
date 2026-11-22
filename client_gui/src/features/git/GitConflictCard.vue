@@ -46,7 +46,6 @@
           {{ t('gui.git.files_more', { n: files.length - preview.length }) }}
         </button>
       </div>
-      <p v-else-if="session.state.conflictLoad === 'loading'" class="gx-desc">{{ t('gui.git.conflict.loading') }}</p>
       <p v-if="outcome" class="gx-reason" data-test="git-conflict-ai-outcome">{{ outcomeText }}</p>
       <div class="gx-actions">
         <button
@@ -93,7 +92,7 @@
         <button type="button" class="gx-btn" :disabled="!actionable" data-test="git-conflict-manual" @click="openResolver(null)">
           {{ t('gui.git.conflict.manual') }}
         </button>
-        <button type="button" class="gx-btn ghost" :disabled="!actionable" data-test="git-conflict-abort" @click="askAbort">
+        <button type="button" class="gx-btn ghost" :disabled="!actionable" :title="t('gui.git.conflict.abort_hint')" data-test="git-conflict-abort" @click="askAbort">
           {{ t('gui.git.conflict.abort') }}
         </button>
         <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
@@ -109,9 +108,9 @@
         <span data-test="git-conflict-abort-next">{{ t(isAdmin ? 'gui.git.conflict.abort_failure_admin' : 'gui.git.conflict.abort_failure_user') }}</span>
       </div>
       <p v-if="blockedText" class="gx-reason" data-test="git-conflict-blocked">{{ blockedText }}</p>
-      <GitReapproveBlock />
+      <GitReapproveBlock :blocked-text="blockedText" />
     </template>
-    <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
+    <p v-if="noticeText && noticeText !== blockedText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
   </section>
 </template>
 
@@ -168,7 +167,10 @@ const blockedText = computed(() => {
   if (session.state.readOnly) return t('gui.git.conflict.blocked.read_only')
   if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
   if (session.state.busy) return t('gui.git.conflict.blocked.busy')
-  return t('gui.git.conflict.loading')
+  if (session.pendingRow.value?.mergeId == null) return t('gui.git.conflict.blocked.missing_merge')
+  if (session.state.conflictLoad === 'loading') return t('gui.git.conflict.loading')
+  if (session.state.conflictLoad === 'error') return t('gui.git.conflict.blocked.load_failed')
+  return t('gui.git.conflict.blocked.unavailable')
 })
 
 // A source that only sends ids still offers them (the id is the name then).

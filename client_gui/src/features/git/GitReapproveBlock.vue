@@ -1,20 +1,15 @@
 <template>
   <div v-if="operation" class="gx-reapprove" data-test="git-reapprove">
-    <p class="gx-desc" data-test="git-reapprove-pin">
-      <template v-if="frozen">{{ t('gui.git.reapprove.pinned', { sha: short(frozen) }) }}</template>
-      <template v-else>{{ t('gui.git.reapprove.pinned_unknown') }}</template>
-      <template v-if="head">
-        · {{ t('gui.git.reapprove.head', { sha: short(head) }) }}
-        <strong v-if="moved" class="gx-reapprove-moved" data-test="git-reapprove-moved">{{ t('gui.git.reapprove.moved') }}</strong>
-      </template>
+    <p v-if="moved" class="gx-desc" data-test="git-reapprove-pin">
+      {{ t('gui.git.reapprove.new_commit', { from: short(frozen!), to: short(head!) }) }}
     </p>
-    <p class="gx-reason" data-test="git-reapprove-blocked">{{ t('gui.git.reapprove.blocked', { reason: reasonText }) }}</p>
+    <p v-if="!conflictReason" class="gx-reason" data-test="git-reapprove-blocked">{{ t('gui.git.reapprove.blocked', { reason: reasonText }) }}</p>
     <div class="gx-actions">
-      <button type="button" class="gx-btn" :disabled="locked" data-test="git-reapprove-start" @click="ask">
-        {{ t('gui.git.reapprove.action') }}
+      <button type="button" class="gx-btn" :disabled="locked" :title="t('gui.git.reapprove.confirm_message')" data-test="git-reapprove-start" @click="ask">
+        {{ actionText }}
       </button>
     </div>
-    <p v-if="locked && lockedText" class="gx-reason" data-test="git-reapprove-locked">{{ lockedText }}</p>
+    <p v-if="locked && lockedText && lockedText !== blockedText" class="gx-reason" data-test="git-reapprove-locked">{{ lockedText }}</p>
   </div>
 </template>
 
@@ -31,6 +26,8 @@ import { abortAndCancelApproval, frozenShaOf, useGitGateOperations } from './gat
 import { useGitPanel } from './gitSession'
 import { GIT_WORKTREE_CONTEXT } from './gitWorktreeSession'
 
+defineProps<{ blockedText?: string | null }>()
+
 const { t, te } = useI18n()
 const ctx = useGitPanel()
 const session = ctx.session
@@ -42,22 +39,29 @@ const operation = computed(() => gateJobs?.conflictOperation.value ?? null)
 const frozen = computed(() => frozenShaOf(operation.value?.gate))
 const head = computed(() => worktree?.state.status?.head ?? null)
 const short = (sha: string) => sha.slice(0, 8)
-const moved = computed(() => !!frozen.value && !!head.value && !head.value.startsWith(frozen.value.slice(0, 7)) && !frozen.value.startsWith(head.value.slice(0, 7)))
+const moved = computed(() => !!frozen.value && !!head.value && !head.value.startsWith(frozen.value) && !frozen.value.startsWith(head.value))
+const actionText = computed(() => t(moved.value ? 'gui.git.reapprove.action' : frozen.value && head.value ? 'gui.git.reapprove.restart' : 'gui.git.reapprove.title'))
+const reasonCode = computed(() => operation.value?.gate.recovery?.error_code ?? operation.value?.gate.job?.last_error_code ?? 'merge_conflict_open')
+const conflictReason = computed(() => ['merge_conflict_open', 'gate_conflict', 'merge_conflict'].includes(reasonCode.value))
 const reasonText = computed(() => {
-  const code = operation.value?.gate.recovery?.error_code ?? operation.value?.gate.job?.last_error_code ?? 'merge_conflict_open'
+  const code = reasonCode.value
   const key = `gui.git.reapprove.reason.${code}`
   return te(key) ? t(key) : code
 })
 const locked = computed(() => !session.canAct.value || !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)
-const lockedText = computed(() => (session.state.readOnly || gateJobs?.readOnly() ? t('gui.git.conflict.blocked.read_only') : t('gui.git.conflict.blocked.busy')))
+const lockedText = computed(() => {
+  if (session.state.readOnly || gateJobs?.readOnly()) return t('gui.git.conflict.blocked.read_only')
+  if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
+  return t('gui.git.conflict.blocked.busy')
+})
 
 function ask(): void {
   const current = operation.value
   if (!current || locked.value) return
   ctx.confirm({
-    title: t('gui.git.reapprove.confirm_title'),
+    title: actionText.value,
     message: t('gui.git.reapprove.confirm_message'),
-    confirmLabel: t('gui.git.reapprove.action'),
+    confirmLabel: actionText.value,
     run: () => void run(),
   })
 }

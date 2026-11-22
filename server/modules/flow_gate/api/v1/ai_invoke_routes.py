@@ -1277,8 +1277,12 @@ def get_ai_invoke_providers(project: str, request: Request):
 
 
 @router.get("/active")
-def get_active_ai_invoke(group_id: str, request: Request):
-    """Restore the group-scoped progress indicator after navigation or reload."""
+def get_active_ai_invoke(group_id: str, request: Request, conflict_progress: bool = False):
+    """Restore the group-scoped progress indicator after navigation or reload.
+
+    flowgate.v02test.0066 (#36-1): ``conflict_progress=1`` adds ``conflict_progress``
+    (``{"done", "total"}`` or null) for a live conflict resolver. Opt-in, because counting reads the
+    session's files; every other caller gets the answer unchanged."""
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -1294,7 +1298,11 @@ def get_active_ai_invoke(group_id: str, request: Request):
     if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
-    return JSONResponse(status_code=200, content=ai_invoke_service.get_active_status(group_id))
+    content = ai_invoke_service.get_active_status(group_id)
+    if conflict_progress:
+        from modules.flow_gate.services.ai_invoke import diagnostics as _diagnostics
+        content = {**content, "conflict_progress": _diagnostics.conflict_progress(content)}
+    return JSONResponse(status_code=200, content=content)
 
 
 @router.get("/active-all")

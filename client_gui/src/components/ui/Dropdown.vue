@@ -46,6 +46,8 @@ function positionMenu() {
 
 function open() {
   isOpen.value = true
+  document.addEventListener('pointerdown', onDocPointerdown, true)
+  document.addEventListener('keydown', onDocKeydown)
   positionMenu()
   nextTick(() => {
     const first = menuRef.value?.querySelector<HTMLElement>('[role="menuitem"], button, a, [tabindex]')
@@ -56,6 +58,7 @@ function open() {
 function close() {
   if (!isOpen.value) return
   isOpen.value = false
+  removeDocumentListeners()
   const trigger = triggerWrapRef.value?.querySelector<HTMLElement>('button, a, [tabindex]')
   trigger?.focus()
 }
@@ -65,7 +68,7 @@ function toggle() {
   else open()
 }
 
-function onDocMousedown(event: MouseEvent) {
+function onDocPointerdown(event: PointerEvent) {
   if (!isOpen.value) return
   const target = event.target as Node
   if (triggerWrapRef.value?.contains(target)) return
@@ -77,13 +80,12 @@ function onDocKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') close()
 }
 
-document.addEventListener('mousedown', onDocMousedown)
-document.addEventListener('keydown', onDocKeydown)
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocMousedown)
+function removeDocumentListeners() {
+  document.removeEventListener('pointerdown', onDocPointerdown, true)
   document.removeEventListener('keydown', onDocKeydown)
-})
+}
+
+onBeforeUnmount(removeDocumentListeners)
 
 defineExpose({ close, isOpen })
 </script>

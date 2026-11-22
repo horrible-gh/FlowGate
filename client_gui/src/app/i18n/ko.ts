@@ -360,6 +360,8 @@ export default {
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       tab_chat: '채팅 AI 응답 중',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AI 해결 중', resolving_progress: 'AI 해결 중 · {done}/{total}' },
       // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: '아카이브됨',
       tab_run_end: { completed: '실행 완료', ended: '실행 끝남' },
@@ -1480,7 +1482,7 @@ export default {
     files_more: '외 {n}개 보기',
     files_count: '{n}개 파일',
     conflict: {
-      title_target: '충돌 · {target} 반영 중단',
+      title_target: '{target} 반영 멈춤 · 충돌 해결 필요',
       count: '해결 {done} · 남음 {open} (서버 기록 기준)',
       ai_again: '다시 실행',
       ai_other: '다른 AI로',
@@ -1493,6 +1495,9 @@ export default {
       ai_server_default: '서버 기본 AI',
       ai_ended: 'AI 해결 종료({status}) · {name} · 남은 충돌 {n}개',
       blocked: {
+        missing_merge: '충돌 번호 없음 · Git 상태를 새로고침하세요',
+        load_failed: '충돌 파일을 불러오지 못해 해결할 수 없음 · 아래 오류를 확인하세요',
+        unavailable: '충돌 정보를 확인할 수 없음 · Git 상태를 새로고침하세요',
         read_only: '읽기 전용이라 조작할 수 없음',
         forbidden: '권한 없음',
         busy: '다른 Git 작업 처리 중',
@@ -1501,6 +1506,7 @@ export default {
       ai: 'AI 해결',
       manual: '직접 해결',
       abort: '병합 중단',
+      abort_hint: '병합을 닫고 연결된 승인도 취소합니다. 기록은 남습니다.',
       abort_title: '병합 중단',
       abort_message: '작업공간을 병합 전으로 되돌립니다. 그룹 브랜치는 그대로 남습니다.',
       abort_cancel_approval: '이 승인({sha} 기준)도 취소합니다. 기록은 남습니다.',
@@ -1541,6 +1547,8 @@ export default {
       lines_hidden: '{n}줄 생략',
     },
     reapprove: {
+      restart: '처음부터 다시 승인',
+      new_commit: '승인한 뒤 새 커밋 있음 · {from} → {to}',
       pinned: '승인한 커밋 {sha}',
       pinned_unknown: '승인한 커밋 확인 불가',
       head: '현재 HEAD {sha}',
