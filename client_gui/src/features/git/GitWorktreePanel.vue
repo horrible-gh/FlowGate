@@ -13,7 +13,7 @@
         {{ t('gui.git.worktree.read_forbidden') }}
       </p>
       <p v-if="areaState === 'unavailable'" class="gw-summary is-muted" data-test="git-worktree-unavailable">{{ t('gui.git.worktree.unavailable') }}</p>
-      <GitQuickActions v-if="areaState === 'ready'" @details="openWindow" />
+      <GitQuickActions v-if="areaState === 'ready'" @details="openWindow" @settings="emit('settings')" @station="emit('station')" />
       <nav class="gq-footer">
         <button v-if="areaState === 'unavailable'" data-test="git-worktree-entry" data-tab="merge" :title="t('gui.git.worktree.nav.merge')" :aria-label="t('gui.git.worktree.nav.merge')" @click="openWindow('merge')">⑂</button>
         <button type="button" data-test="git-worktree-entry" data-tab="diff" :title="t('gui.git.worktree.nav.diff')" :aria-label="t('gui.git.worktree.nav.diff')" @click="openWindow('diff')">◫</button>
@@ -49,6 +49,8 @@ import type { GitWorktreeTab } from './types'
 
 const { t } = useI18n()
 const { worktree: wt } = useGitWorktree()
+// A stopped run's fix may open the Git settings or the Git station, which the Git tab owns.
+const emit = defineEmits<{ settings: []; station: [] }>()
 
 const status = computed(() => wt.state.status)
 

@@ -882,7 +882,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       if (!api.updateFromBase) throw new Error('update_unavailable')
       return api.updateFromBase(gid)
     }, result => {
-      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : 'updated'
+      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : result.status === 'no_change' ? 'update_no_change' : 'updated'
       setNotice('apply', { code: noticeCode })
       afterRemote({ e1: true, e8: true, e10: true })
     })
