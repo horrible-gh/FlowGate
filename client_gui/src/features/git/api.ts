@@ -110,6 +110,26 @@ export function gitErrorOf(error: unknown): NormalizedGitError {
   return normalizeGitError(cause ?? error)
 }
 
+export interface StationBranch {
+  name: string
+  kind: string
+  canBeSource: boolean
+  ahead: number | null
+  behind: number | null
+}
+export async function fetchStationBranches(projectId: string): Promise<StationBranch[]> {
+  const data = await call<Envelope & { branches?: Array<Record<string, unknown>> }>(() => getRequest(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`))
+  if (!Array.isArray(data.branches) || data.branches.some(row => typeof row.name !== 'string' || typeof row.kind !== 'string')) throw new Error('invalid_branch_response')
+  return data.branches.map(row => ({ name: row.name as string, kind: row.kind as string, canBeSource: row.can_be_create_source === true,
+    ahead: typeof row.ahead_of_base === 'number' ? row.ahead_of_base : null, behind: typeof row.behind_base === 'number' ? row.behind_base : null }))
+}
+export async function createStationBranch(projectId: string, name: string, sourceBranch: string): Promise<void> {
+  await call(() => postRequest<Envelope>(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`, { name, source_branch: sourceBranch }))
+}
+export async function importStationBranch(projectId: string, name: string): Promise<void> {
+  await call(() => postRequest<Envelope>(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches/import`, { name }))
+}
+
 interface Envelope {
   ok?: boolean
   error?: unknown
@@ -792,6 +812,11 @@ export async function syncWorktreeRemote(groupId: string, target: string): Promi
 
 export async function updateWorktreeFromBase(groupId: string): Promise<{ status: string; mergeId: number | null }> {
   const raw = await resultOf(() => postRequest<ResultEnvelope>(`${worktreePath(groupId)}/update-from-base`, {}))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
+export async function reconstructWorktree(groupId: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${worktreePath(groupId)}/reconstruct`, {}))
   return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
 }
 

@@ -89,6 +89,7 @@
         <button type="button" class="gx-btn ghost" :disabled="!actionable" :title="t('gui.git.conflict.abort')" :aria-label="t('gui.git.conflict.abort')" data-test="git-conflict-abort" @click="askAbort">
           ↶
         </button>
+        <button v-if="canRebuild" type="button" class="gx-btn" :disabled="!actionable || !!worktree?.state.busy" :title="rebuildLabel" :aria-label="rebuildLabel" data-test="git-conflict-reconstruct" @click="rebuild">⟳</button>
         <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
         <button v-if="canForce" type="button" class="gx-btn danger" :disabled="!actionable" data-test="git-conflict-force" @click="askForceCleanup()">
           {{ t('gui.git.conflict.force_cleanup') }}
@@ -115,7 +116,8 @@
 // opens the direct resolver, [AI 해결 ▾] picks the AI right under the button before it starts,
 // an AI run that ended with conflicts left offers [다른 AI로 ▾] / [직접 해결], and
 // the §B re-approval path sits below when a held approval is parked on this conflict.
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { GIT_WORKTREE_CONTEXT } from './gitWorktreeSession'
 import { useI18n } from 'vue-i18n'
 import GitFileRow from './GitFileRow.vue'
 import GitReapproveBlock from './GitReapproveBlock.vue'
@@ -126,6 +128,21 @@ defineProps<{ unsupported?: boolean }>()
 const { t } = useI18n()
 const ctx = useGitPanel()
 const session = ctx.session
+const worktree = inject(GIT_WORKTREE_CONTEXT, null)?.worktree
+const rebuildLabel = computed(() => t('gui.git.header.reconstruct'))
+const canRebuild = computed(() => !!worktree && !session.pendingRow.value?.finalApprovalBound && !graphMerge.value)
+function rebuild(): void {
+  const held = worktree?.ticket()
+  const mergeId = session.pendingRow.value?.mergeId
+  ctx.confirm({
+    title: rebuildLabel.value,
+    message: t('gui.git.header.reconstruct_message'),
+    confirmLabel: t('gui.git.header.reconstruct'),
+    run: () => {
+      if (held && worktree?.isCurrent(held) && session.pendingRow.value?.mergeId === mergeId) void worktree.reconstruct()
+    },
+  })
+}
 
 const files = computed(() => session.state.conflict?.files ?? null)
 // the conflicts answer of this row's merge says it is a Graph card result's merge.
@@ -155,7 +172,7 @@ const target = computed(() => {
 })
 // No action before the conflicts answer says this is an ordinary merge, not a TR conflict;
 // readOnly / 403 / busy turn all three off, `직접 해결` included (0033-D §5.1).
-const actionable = computed(() => session.canAct.value && session.conflictActionable.value)
+const actionable = computed(() => session.canAct.value && session.conflictActionable.value && !worktree?.state.busy)
 const blockedText = computed(() => {
   if (actionable.value) return null
   if (session.state.readOnly) return t('gui.git.conflict.blocked.read_only')

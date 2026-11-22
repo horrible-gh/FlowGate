@@ -760,7 +760,7 @@ def _domains_release(ctx, held: list) -> None:
             locks.release(ctx, key)
 
 
-def update_from_base(group_id: str, *, require_clean: bool = False) -> dict:
+def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct: bool = False) -> dict:
     """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
     _gs.guard_group_branch_merge_free(group_id)
@@ -798,7 +798,7 @@ def update_from_base(group_id: str, *, require_clean: bool = False) -> dict:
             if ai_invoke_service.has_active_run(group_id):
                 raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
             return _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                                            lock_ctx=lock_ctx, require_clean=require_clean)
+                                            lock_ctx=lock_ctx, require_clean=require_clean, reconstruct=reconstruct)
         finally:
             group_ai_leases.release(group_id, lease_run_id, reason="group_update_finished")
     finally:
@@ -806,7 +806,7 @@ def update_from_base(group_id: str, *, require_clean: bool = False) -> dict:
 
 
 def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                             *, lock_ctx=None, require_clean=False) -> dict:
+                             *, lock_ctx=None, require_clean=False, reconstruct=False) -> dict:
     """Run the existing update while the Group's G and group lease are held. The base
     checkout's part (gate, dirty check, fetch, fast-forward, start point) runs under B
     and R on ``lock_ctx`` (0669 unit 9a), released before the Group merge."""
@@ -861,6 +861,9 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     )
     source_sha = pinned["source_sha"]
     floor_before = pinned["floor_sha"]
+    if reconstruct:
+        from . import reconstruct as rebuild
+        return rebuild.apply(group_id, project_id, wt_path, cfg, state, pinned)
     if not require_clean:
         _absorb_worker_edits(
             wt_path, f"chore: preserve {group_id} work before base update",

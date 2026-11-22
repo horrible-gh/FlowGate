@@ -7,6 +7,7 @@
         {{ t(hasFlow ? 'gui.git.header.flow_base' : 'gui.git.header.base') }} · {{ baseLabel }}
       </div>
     </div>
+    <IconButton :label="t('gui.git.header.station')" :title="t('gui.git.header.station')" size="sm" data-test="git-open-station" @click="emit('station')"><span aria-hidden="true">⑂</span></IconButton>
     <IconButton
       class="gx-header-refresh"
       :label="t('gui.git.header.refresh')"
@@ -42,7 +43,7 @@ const props = defineProps<{
   refreshing: boolean
   notice: string | null
 }>()
-const emit = defineEmits<{ refresh: [] }>()
+const emit = defineEmits<{ refresh: []; station: [] }>()
 const { t } = useI18n()
 
 const baseLabel = computed(() => {

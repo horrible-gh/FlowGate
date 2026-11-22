@@ -62,6 +62,7 @@ import type {
  * actions, apart from the Base checkout ones of GitSource (baseCommit / baseRevert / …).
  */
 export interface GitWorktreeSource {
+  reconstruct?(groupId: string): Promise<{ status: string; mergeId: number | null }>
   syncRemote?(groupId: string, target: string): Promise<{ status: string; mergeId: number | null }>
   updateFromBase?(groupId: string): Promise<{ status: string; mergeId: number | null }>
 
@@ -188,6 +189,7 @@ export function createHttpGitSource(): GitSource {
     fetchGitProvision: api.fetchGitProvision,
     worktree: {
       updateFromBase: api.updateWorktreeFromBase,
+      reconstruct: api.reconstructWorktree,
       syncRemote: api.syncWorktreeRemote,
       loadStatus: api.fetchWorktreeStatus,
       stage: api.stageWorktree,

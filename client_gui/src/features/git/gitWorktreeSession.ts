@@ -272,6 +272,7 @@ export interface GitWorktreeSession {
   clearExecution(): void
   execute(scope: GitExecutionScope, selection?: WorktreeSelection, resume?: boolean, commitRemaining?: boolean): Promise<void>
   updateFromBase(): Promise<void>
+  reconstruct(): Promise<void>
   refresh(): void
   /** The current context while the gate is open; null otherwise. */
   ticket(): WorktreeTicket | null
@@ -828,6 +829,50 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
         afterRemote({ e1: true, e8: true, e10: true })
       }
     }
+  }
+
+  async function reconstruct(): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    const row = git.pendingRow.value
+    if (!held || !api?.reconstruct || !row || typeof row.mergeId !== 'number' || row.finalApprovalBound || git.state.conflict?.graphMerge
+      || !git.conflictActionable.value || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+    state.busy = 'execution'
+    ++e1Seq
+    let resume = false
+    try {
+      await src().abortMerge(held.groupId, row.mergeId)
+      if (!isCurrent(held)) return
+      const result = await api.reconstruct(held.groupId)
+      if (!isCurrent(held)) return
+      if (state.execution) {
+        // Reconstruction changes the work HEAD, so its merge must be checked again.
+        // The original commit step remains complete.
+        const plan = state.execution
+        const update = plan.steps.indexOf('update')
+        if (update >= 0) {
+          plan.cursor = update
+          plan.completed = plan.steps.slice(0, update)
+        }
+        plan.status = 'stopped'
+        plan.error = result.status === 'conflict' ? 'merge_conflict' : null
+        resume = result.status === 'updated'
+      }
+      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : 'updated'
+      setNotice('apply', { code: noticeCode })
+    } catch (error) {
+      if (!isCurrent(held)) return
+      const code = worktreeErrorOf(error).code ?? 'request_failed'
+      if (state.execution) { state.execution.status = 'stopped'; state.execution.error = code }
+      setNotice('apply', { code: WORKTREE_NOTICE_CODES.includes(code) ? code : 'failed' })
+    } finally {
+      if (isCurrent(held)) {
+        state.busy = null
+        await git.refresh()
+        afterRemote({ e1: true, e8: true, e10: true })
+      }
+    }
+    if (resume && isCurrent(held) && state.execution) await execute(state.execution.scope, { all: true }, true)
   }
 
   async function updateFromBase(): Promise<void> {
@@ -1499,6 +1544,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     clearExecution: () => { if (!state.busy) state.execution = null },
     execute,
     updateFromBase,
+    reconstruct,
     refresh,
     ticket,
     isCurrent,

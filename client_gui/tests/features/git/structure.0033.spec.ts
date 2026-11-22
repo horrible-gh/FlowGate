@@ -57,6 +57,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitConflictCard.vue',
         'GitConflictWindow.vue',
         'GitConnectWindow.vue',
+        'GitStationWindow.vue',
         'GitStatusErrorCard.vue',
         'GitUnlinkedCard.vue',
         'GitDirtyCard.vue',
