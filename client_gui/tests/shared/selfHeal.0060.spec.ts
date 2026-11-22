@@ -179,7 +179,11 @@ describe('0060 connection state for the one banner', () => {
       await failing
       expect(connectionLost.value).toBe(true)
       api.defaults.adapter = async (config) => ({ data: {}, status: 200, statusText: 'OK', headers: {}, config })
-      await api.get('/list')
+      // While lost, GETs wait in shared/connectionGate; one goes out 30 s after the loss (connectionGate.0060.spec).
+      await vi.advanceTimersByTimeAsync(21_000)
+      const next = api.get('/list')
+      await vi.advanceTimersByTimeAsync(10_000)
+      await next
       expect(connectionLost.value).toBe(false)
     } finally {
       api.defaults.adapter = original
