@@ -1,5 +1,5 @@
 import { Position } from '@vue-flow/core'
-import { edgeAnchors, sideMiddle, type EdgeAnchors, type NodeRect } from './edgeGeometry'
+import { edgeAnchors, type EdgeAnchors, type NodeRect } from './edgeGeometry'
 
 export interface RoutePoint { x: number; y: number }
 export interface EdgeRoute { anchors: EdgeAnchors; points: RoutePoint[] }
@@ -7,11 +7,6 @@ const outward: Record<Position, RoutePoint> = {
   [Position.Left]: { x: -1, y: 0 }, [Position.Right]: { x: 1, y: 0 },
   [Position.Top]: { x: 0, y: -1 }, [Position.Bottom]: { x: 0, y: 1 },
 }
-const inflate = (r: NodeRect, gap: number): NodeRect =>
-  ({ x: r.x - gap, y: r.y - gap, width: r.width + 2 * gap, height: r.height + 2 * gap })
-const inside = (p: RoutePoint, r: NodeRect) =>
-  p.x > r.x && p.x < r.x + r.width && p.y > r.y && p.y < r.y + r.height
-
 /** Strict interior intersection: travelling along the clearance boundary is safe. */
 export function segmentCrossesRect(a: RoutePoint, b: RoutePoint, r: NodeRect): boolean {
   if (a.x === b.x) return a.x > r.x && a.x < r.x + r.width
@@ -21,67 +16,59 @@ export function segmentCrossesRect(a: RoutePoint, b: RoutePoint, r: NodeRect): b
   return true // router only emits orthogonal segments
 }
 
-/** A rectilinear visibility grid, including endpoint cards as obstacles.
- * BFS visits each grid point once. Coordinates come from clearance boundaries, so routes
- * cannot cut a corner. Null means overlapping cards have made the endpoint inaccessible;
- * callers must not claim that a collision-free route exists in that case.
- */
-export function routeEdge(source: NodeRect, target: NodeRect, others: readonly NodeRect[], gap = 16): EdgeRoute | null {
-  gap = Math.max(10, gap)
-  const preferred = edgeAnchors(source, target)
-  const candidates = [preferred]
-  // A nearby obstacle may block a facing port while another side remains accessible.
-  for (const from of Object.values(Position)) for (const to of Object.values(Position)) {
-    if (from === preferred.sourcePosition && to === preferred.targetPosition) continue
-    const a = sideMiddle(source, from), b = sideMiddle(target, to)
-    candidates.push({ sourceX: a.x, sourceY: a.y, sourcePosition: from,
-      targetX: b.x, targetY: b.y, targetPosition: to })
-  }
-  for (const anchors of candidates) {
-    const route = routeFromAnchors(source, target, others, gap, anchors)
-    if (route) return route
-  }
-  return null
+/** A direct orthogonal route. Other cards deliberately do not divert the line. */
+export function routeEdge(source: NodeRect, target: NodeRect): EdgeRoute {
+  return routeFromAnchors(edgeAnchors(source, target))
 }
 
-function routeFromAnchors(source: NodeRect, target: NodeRect, others: readonly NodeRect[], gap: number, anchors: EdgeAnchors): EdgeRoute | null {
+function routeFromAnchors(anchors: EdgeAnchors, offset?: number): EdgeRoute {
   const start = { x: anchors.sourceX, y: anchors.sourceY }
   const end = { x: anchors.targetX, y: anchors.targetY }
-  const from = outward[anchors.sourcePosition], to = outward[anchors.targetPosition]
-  const a = { x: start.x + from.x * gap, y: start.y + from.y * gap }
-  const b = { x: end.x + to.x * gap, y: end.y + to.y * gap }
-  const obstacles = [source, target, ...others].map(r => inflate(r, gap))
-  // Only the owning card is exempt from its short anchor connector.
-  if (obstacles.slice(1).some(r => segmentCrossesRect(start, a, r))
-    || obstacles.filter((_, i) => i !== 1).some(r => segmentCrossesRect(b, end, r))) return null
-  const xs = [...new Set([a.x, b.x, ...obstacles.flatMap(r => [r.x, r.x + r.width])])].sort((x, y) => x - y)
-  const ys = [...new Set([a.y, b.y, ...obstacles.flatMap(r => [r.y, r.y + r.height])])].sort((x, y) => x - y)
-  const width = xs.length
-  const point = (id: number): RoutePoint => ({ x: xs[id % width]!, y: ys[Math.floor(id / width)]! })
-  const first = ys.indexOf(a.y) * width + xs.indexOf(a.x)
-  const last = ys.indexOf(b.y) * width + xs.indexOf(b.x)
-  const parents = new Map<number, number>([[first, first]])
-  const queue = [first]
-  for (let head = 0; head < queue.length && !parents.has(last); head++) {
-    const id = queue[head]!, x = id % width, y = Math.floor(id / width)
-    const candidates = [x > 0 ? id - 1 : -1, x + 1 < width ? id + 1 : -1,
-      y > 0 ? id - width : -1, y + 1 < ys.length ? id + width : -1]
-    for (const next of candidates) {
-      if (next < 0 || parents.has(next)) continue
-      const p = point(next)
-      if (obstacles.some(r => inside(p, r) || segmentCrossesRect(point(id), p, r))) continue
-      parents.set(next, id)
-      queue.push(next)
-    }
+  const direction = outward[anchors.targetPosition]
+  const horizontal = direction.x !== 0
+  // Shared inputs bend halfway across the nearest source-to-target gap.
+  // A single connection uses its own port midpoint.
+  const gap = (start.x - end.x) * direction.x + (start.y - end.y) * direction.y
+  const clearance = offset === undefined ? gap / 2 : gap > 0 ? Math.min(offset, gap / 2) : offset
+  const trunk = horizontal ? end.x + direction.x * clearance : end.y + direction.y * clearance
+  return { anchors, points: [start,
+    horizontal ? { x: trunk, y: start.y } : { x: start.x, y: trunk },
+    horizontal ? { x: trunk, y: end.y } : { x: end.x, y: trunk }, end] }
+}
+
+export interface RoutedEdge extends EdgeRoute { drawArrow: boolean }
+
+/** Compute the whole canvas together. Inputs of a card share a trunk and one arrow.
+ * Paths remain individually
+ * selectable on their branches; sharing never changes execution or deletion permissions.
+ */
+export function routeEdges(
+  edges: readonly { id: string; source: string; target: string }[],
+  nodes: ReadonlyMap<string, NodeRect>,
+): Map<string, RoutedEdge> {
+  const result = new Map<string, RoutedEdge>()
+  const trunks = new Map<string, number>()
+  const arrows = new Set<string>()
+  for (const edge of edges) {
+    const source = nodes.get(edge.source), target = nodes.get(edge.target)
+    if (!source || !target || edge.source === edge.target) continue
+    const anchors = edgeAnchors(source, target)
+    const key = `${edge.target}:${anchors.targetPosition}`
+    // Use the closest source so the shared bend stays between every input and target.
+    const direction = outward[anchors.targetPosition]
+    const gap = (anchors.sourceX - anchors.targetX) * direction.x
+      + (anchors.sourceY - anchors.targetY) * direction.y
+    trunks.set(key, Math.min(trunks.get(key) ?? Infinity, gap / 2))
+    result.set(edge.id, { anchors, points: [], drawArrow: !arrows.has(key) })
+    arrows.add(key)
   }
-  if (!parents.has(last)) return null
-  const middle: RoutePoint[] = []
-  for (let id = last; ; id = parents.get(id)!) {
-    middle.push(point(id))
-    if (id === first) break
+  for (const edge of edges) {
+    const route = result.get(edge.id)
+    if (!route) continue
+    const key = `${edge.target}:${route.anchors.targetPosition}`
+    route.points = routeFromAnchors(route.anchors, trunks.get(key)).points
   }
-  // Preserve the terminal stubs, including the arrow's final approach direction.
-  return { anchors, points: [start, ...middle.reverse(), end] }
+  return result
 }
 
 /** The path stops at the arrow base; its label is at half the travelled length. */

@@ -56,6 +56,31 @@ function localGeometry(input: LayoutInput, comp: LayoutComponent, lane: Readonly
   const laneOff = [0]
   for (let k = 0; k < lanes; k += 1) laneOff.push(laneOff[k] + (laneSize[k] > 0 ? laneSize[k] + G_LANE : 0))
   const cs0 = new Map(comp.nodes.map((v) => [v.id, laneOff[lane.get(v.id)!]] as const))
+  // Center joins on all predecessors, then forks on their children. Keep the
+  // stable lane order and resolve card overlaps within each stage after each sweep.
+  if (input.direction === 'horizontal') {
+    const children = new Map<string, string[]>()
+    for (const [u, v] of comp.forward) children.set(u, [...(children.get(u) ?? []), v])
+    const center = (id: string) => cs0.get(id)! + node(id).crossSize / 2
+    const placeStage = (st: number, backward: boolean) => {
+      const group = stageNodes(comp, st).slice().sort((a, b) => lane.get(a.id)! - lane.get(b.id)!)
+      const desired = group.map(v => {
+        const peers = backward ? children.get(v.id) ?? [] : comp.preds.get(v.id) ?? []
+        return peers.length > 1
+          ? peers.reduce((sum, id) => sum + center(id), 0) / peers.length - v.crossSize / 2
+          : cs0.get(v.id)!
+      })
+      let bottom = 0
+      for (let i = 0; i < group.length; i++) {
+        const v = group[i]!
+        const y = Math.max(bottom, desired[i]!)
+        cs0.set(v.id, y)
+        bottom = y + v.crossSize + G_LANE
+      }
+    }
+    for (let st = comp.maxStage; st >= 0; st--) placeStage(st, true)
+    for (let st = 0; st <= comp.maxStage; st++) placeStage(st, false)
+  }
   const cc = (id: string) => cs0.get(id)! + node(id).crossSize / 2
   const defaultFlow = input.direction === 'horizontal' ? NODE_CARD_WIDTH : NODE_CARD_HEIGHT
   const thickness = (st: number) => {
@@ -164,6 +189,8 @@ export function repairBand(ctx: BandContext): RepairedBand {
   let floors = new Map<string, number>()
   let extra = new Map<number, number>()
   let band = placeBand(ctx, floors, extra)
+  // Horizontal routes may pass under cards; do not move cards to avoid a line.
+  if (input.direction === 'horizontal') return { ...band, pierces: [], tried: new Set() }
   let pierces = piercesOf(input, comp, rectsWith(band.placed))
   const tried = new Set<string>()
   for (let steps = 0; steps < REPAIR_MAX_STEPS; ) {

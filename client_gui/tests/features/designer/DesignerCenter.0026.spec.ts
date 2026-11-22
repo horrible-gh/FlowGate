@@ -329,7 +329,7 @@ describe('DesignerCenter — Canvas', () => {
 })
 
 describe('FlowEdgePath', () => {
-  it('draws a curve and an arrow head that ends at the target anchor', () => {
+  it('draws an orthogonal path and an arrow head that ends at the target anchor', () => {
     const w = mount(
       { components: { FlowEdgePath }, template: '<svg><FlowEdgePath id="e1" :source-x="0" :source-y="0" :target-x="200" :target-y="100" /></svg>' },
       { global: { plugins: [i18n] } },
@@ -337,7 +337,7 @@ describe('FlowEdgePath', () => {
     const edge = w.get('[data-test="designer-canvas-edge"]')
     expect(edge.attributes('data-edge-id')).toBe('e1')
     const path = edge.get('[data-test="designer-canvas-edge-path"]').attributes('d')
-    expect(path).toMatch(/^M0,0 C/)
+    expect(path).toBe('M0,0 L100,0 L100,100 L191,100')
     const arrow = edge.get('[data-test="designer-canvas-edge-arrow"]').attributes('d')
     // Tip on the target anchor; the base sits left of it (target handle on the left side).
     expect(arrow).toMatch(/^M200,100 L191,/)
