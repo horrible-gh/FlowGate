@@ -309,7 +309,7 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
     assert payload["commit"] == "a1b2c3d"
     # replaces the earlier implementation: without a draft (this seeded document's
     # commit_message is NULL), use the ASCII fallback; still perform no translation.
-    assert payload["subject"] == "chore: approve 0009-TR"
+    assert payload["subject"] == "chore: approve 0009-TR (group 0332)"
     rows = db_ledger.list_by_group(_GROUP)
     assert [r["state"] for r in rows] == ["live"]
     assert rows[0]["commit_sha"] == "a1b2c3d" + "0" * 33
@@ -675,7 +675,7 @@ def test_a_conventional_ascii_draft_is_used_verbatim():
 
 
 def test_a_non_conventional_ascii_draft_gets_the_derived_type_prefixed(real_store):
-    """Use the type actually read and returned from the DB by `derive_commit_type()`, without a substitute."""
+    """Use the type actually read and returned from the DB by the TR-only root lookup, without a substitute."""
     real_store._execute(
         "INSERT INTO documents(doc_id, project_id, module, group_id, type_code, seq, "
         "title, status, created_at, updated_at) VALUES (?, ?, 'default', ?, 'B', 1, "
@@ -689,18 +689,18 @@ def test_a_non_conventional_ascii_draft_gets_the_derived_type_prefixed(real_stor
 def test_a_korean_draft_is_ignored_and_the_ascii_fallback_is_used():
     doc = _draft_doc(commit_message="복구 API 오류 코드 정리")
     subject = trc.commit_subject(doc)
-    assert subject == "chore: approve 0009-TR"
+    assert subject == "chore: approve 0009-TR (group 0332)"
     assert subject.isascii()
 
 
 def test_no_draft_falls_back_to_the_ascii_chore_subject():
     doc = _draft_doc(commit_message=None)
-    assert trc.commit_subject(doc) == "chore: approve 0009-TR"
+    assert trc.commit_subject(doc) == "chore: approve 0009-TR (group 0332)"
 
 
 def test_an_oversized_draft_falls_back_instead_of_being_clipped():
     doc = _draft_doc(commit_message="x" * (svc.COMMIT_SUBJECT_MAX + 1))
-    assert trc.commit_subject(doc) == "chore: approve 0009-TR"
+    assert trc.commit_subject(doc) == "chore: approve 0009-TR (group 0332)"
 
 
 def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
@@ -748,7 +748,7 @@ def test_a_commit_message_key_present_as_none_skips_the_refetch(real_store, monk
     payload = trc.on_document_approved(_TR_DOC, partial)
 
     # Even if the DB has an English draft, trust the supplied dict's present key with value None.
-    assert payload["subject"] == "chore: approve 0009-TR"
+    assert payload["subject"] == "chore: approve 0009-TR (group 0332)"
 
 
 def test_cancel_and_reapply_subjects_quote_the_new_style_subject():
@@ -1008,10 +1008,24 @@ def test_the_approval_hook_produces_a_conventional_english_commit_in_real_git(
 
 
 @needs_git
-def test_the_approval_hook_falls_back_to_ascii_chore_when_no_draft(
-    real_store, git_active, repo,
+@pytest.mark.parametrize("root_type, expected_type", [("B", "fix"), ("R", "feat"), (None, "chore")])
+def test_the_approval_hook_falls_back_to_root_type_when_no_draft(
+    real_store, git_active, repo, root_type, expected_type,
 ):
     """The second measurement for acceptance criterion 3: no draft exists."""
+    # This focused integration case supplies the current store interface. The
+    # older suite fixture predates the graph-attempt lookup.
+    real_store.table_exists = lambda name: real_store._fetch_one(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [name],
+    ) is not None
+    real_store._execute("DELETE FROM documents WHERE doc_id = ?", [_D_DOC])
+    if root_type:
+        real_store._execute(
+            "INSERT INTO documents(doc_id, project_id, module, group_id, type_code, seq, "
+            "title, status, created_at, updated_at) VALUES (?, ?, 'default', ?, ?, 1, "
+            "'root', 'open', datetime('now'), datetime('now'))",
+            [f"{_GROUP}.0001-{root_type}", _PROJECT, _GROUP, root_type],
+        )
     (repo / "server").mkdir()
     (repo / "server" / "real.py").write_text("y = 3\n", encoding="utf-8")
 
@@ -1019,7 +1033,7 @@ def test_the_approval_hook_falls_back_to_ascii_chore_when_no_draft(
 
     assert payload["committed"] is True
     subject = _git(["log", "-1", "--pretty=%s"], repo).strip()
-    assert subject == "chore: approve 0009-TR"
+    assert subject == f"{expected_type}: approve 0009-TR (group 0332)"
     assert subject.isascii()
 
 
@@ -1038,3 +1052,38 @@ def test_the_finalize_absorb_still_behaves_exactly_as_before(repo):
     assert "server/real.py" in tracked
     assert not [p for p in tracked if ".test-tmp-0332" in p]
     assert excluded == ["server/.test-tmp-0332/junk.txt"]
+
+
+@pytest.mark.parametrize("root_type, expected_type", [("B", "fix"), ("R", "feat"), ("NR", "chore"), (None, "chore")])
+@pytest.mark.parametrize("draft", [None, "", "   ", "한글 메시지", "x" * (svc.COMMIT_SUBJECT_MAX + 1), "plain summary", "fix(git): exact summary"])
+def test_tr_subject_root_and_draft_matrix(monkeypatch, root_type, expected_type, draft):
+    roots = [{"type_code": root_type}] if root_type else []
+    monkeypatch.setattr(trc.db_docs, "get_documents_by_group_id", lambda group_id: roots)
+    def forbidden(*args):
+        raise AssertionError("TR must not use finalize's design-document type rule")
+    monkeypatch.setattr(svc, "derive_commit_type", forbidden)
+    if draft == "fix(git): exact summary":
+        expected = draft
+    elif draft == "plain summary":
+        expected = f"{expected_type}: plain summary"
+    else:
+        expected = f"{expected_type}: approve 0009-TR (group 0332)"
+    subject = trc.commit_subject(_draft_doc(commit_message=draft))
+    assert subject == expected
+    assert subject.isascii()
+    assert len(subject) <= svc.COMMIT_SUBJECT_MAX
+
+
+def test_tr_subject_metadata_failure_is_safe(monkeypatch):
+    def unavailable(*args):
+        raise RuntimeError("database unavailable")
+    monkeypatch.setattr(trc.db_docs, "get_documents_by_group_id", unavailable)
+    assert trc.commit_subject(_draft_doc()) == "chore: approve 0009-TR (group 0332)"
+    assert trc.commit_subject(_draft_doc("plain summary")) == "chore: plain summary"
+    assert trc.commit_subject({}) == "chore: approve unknown-TR (group unknown)"
+
+
+def test_tr_subject_prefixed_draft_keeps_length_limit(monkeypatch):
+    monkeypatch.setattr(trc.db_docs, "get_documents_by_group_id", lambda group_id: [{"type_code": "R"}])
+    subject = trc.commit_subject(_draft_doc("x" * svc.COMMIT_SUBJECT_MAX))
+    assert subject == ("feat: " + "x" * svc.COMMIT_SUBJECT_MAX)[:svc.COMMIT_SUBJECT_MAX]
