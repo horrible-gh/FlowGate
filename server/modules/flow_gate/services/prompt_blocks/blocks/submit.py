@@ -12,6 +12,8 @@ from ..registry import Block, register
 REMOTE_CLI_TRANSPORT: dict[str, str] = {
     "ko": (
         "## 원격 CLI 실행 규약\n---\n"
+        "TR을 edit로 제출할 때도 commit_message를 영어(ASCII) 한 줄, 200자 이내로 넣으십시오. "
+        "권장 형식은 type(scope): summary이며 유효한 저장 메시지가 있을 때만 생략할 수 있습니다.\n"
         "이 작업은 원격 Agent에서 실행됩니다. FLOWGATE_TOKEN·FLOWGATE_SCRATCH·FLOWGATE_API_BASE "
         "환경 변수는 없으므로 이 프롬프트에 적힌 토큰과 주소를 쓰십시오. `{SCRATCH}`와 scratch "
         "디렉터리는 현재 작업 디렉터리를 뜻합니다. 제출할 본문(리뷰 JSON 포함)은 현재 작업 "
@@ -21,6 +23,8 @@ REMOTE_CLI_TRANSPORT: dict[str, str] = {
     ),
     "ja": (
         "## リモートCLI実行規約\n---\n"
+        "TRのedit提出にもcommit_messageを英語(ASCII)1行、200文字以内で指定してください。 "
+        "推奨形式はtype(scope): summaryです。有効な保存済み値がある場合のみ省略できます。\n"
         "この作業はリモートAgentで実行されます。FLOWGATE_TOKEN・FLOWGATE_SCRATCH・FLOWGATE_API_BASE "
         "環境変数はないため、このプロンプトに記載されたトークンとアドレスを使ってください。"
         "`{SCRATCH}`とscratchディレクトリは現在の作業ディレクトリを指します。提出する本文"
@@ -31,6 +35,8 @@ REMOTE_CLI_TRANSPORT: dict[str, str] = {
     ),
     "en": (
         "## Remote CLI execution contract\n---\n"
+        "TR edit submissions also need commit_message: one English (ASCII) line, max 200 characters; "
+        "recommended type(scope): summary. Omit only to retain a valid saved message.\n"
         "This work runs on a remote Agent. There are no FLOWGATE_TOKEN, FLOWGATE_SCRATCH or "
         "FLOWGATE_API_BASE variables; use the token and address written in this prompt. "
         "`{SCRATCH}` and the scratch directory mean the current working directory. Write every "

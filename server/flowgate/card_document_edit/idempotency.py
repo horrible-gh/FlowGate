@@ -30,6 +30,10 @@ def make_binding(req, current, *, node_key=None, slot=None):
             "slot": getattr(req, "slot", slot), "doc_id": current["doc_id"],
             "base_revision_no": req.expected_revision,
             "content_sha256": fingerprint(req.content), "fp_alg": FINGERPRINT_ALG}
+    submitted = req.transport_extras.get("submission", {})
+    if req.origin.kind == "agent" and current.get("type_code") == "TR":
+        binding["commit_message_input"] = {"present": "commit_message" in submitted,
+                                          "value": submitted.get("commit_message")}
     if structured is not None:  # identity is the command, never the rendered body
         binding.update(binding_fields(structured))
     return binding
@@ -79,7 +83,7 @@ def judge(records, binding, current):
     record = records[0]
     m = record["parsed"]
     fields = ("actor_kind", "origin", "flow_id", "node_key", "slot", "doc_id",
-              "base_revision_no", "content_sha256", "fp_alg", "input_kind")
+              "base_revision_no", "content_sha256", "fp_alg", "input_kind", "commit_message_input")
     if (m.get("schema") != EVENT_SCHEMA or record.get("actor_user_id") != binding["actor_user_id"]
             or any(m.get(k) != binding.get(k) for k in fields)
             or type(m.get("base_revision_no")) is not int or type(m.get("revision_no")) is not int

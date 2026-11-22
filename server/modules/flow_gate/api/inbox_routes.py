@@ -4829,19 +4829,13 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     # TR validation precedes dry-run and all registration side effects.
     # Conventional-commit syntax is guidance, not a submission restriction.
-    if doc_type.upper() == "TR" and (
-        not commit_message_draft
-        or not commit_message_raw.isascii()
-        or any(ch in commit_message_raw for ch in "\r\n\v\f\x1c\x1d\x1e")
-        or len(commit_message_draft) > 200
-    ):
-        return _fail(
-            422,
-            "TR commit_message is required: use one line of English (ASCII), "
-            "at most 200 characters. Recommended format: type(scope): summary; "
-            "e.g. fix(git): use fix/feat for TR approve subject.",
-            error={"code": "invalid_commit_message", "details": {"reason": "tr_commit_message_invalid"}},
-        )
+    if doc_type.upper() == "TR":
+        from modules.flow_gate.services import tr_commit_message
+        try:
+            commit_message_draft = tr_commit_message.validate(commit_message_raw)
+        except ValueError:
+            return _fail(422, tr_commit_message.ERROR_MESSAGE,
+                error={"code": tr_commit_message.ERROR_CODE, "details": tr_commit_message.ERROR_DETAILS})
 
     # ── Step 5.7: TR scope validation ─────────────────────────────
     # TR-only. Cross-checks the body's Changed Files reported-list

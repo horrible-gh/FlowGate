@@ -10,6 +10,9 @@ HELP = "/flowgate/api/v1/help"
 
 
 def failure(exc):
+    if exc.code == "invalid_commit_message":
+        return normalize(exc.status, {"error_message": exc.message,
+            "error": {"code": exc.code, "details": exc.params}})[1]
     return normalize(exc.status, {"error": {"code": exc.code, "message": exc.message or exc.code,
                                                "params": exc.params}})[1]
 
