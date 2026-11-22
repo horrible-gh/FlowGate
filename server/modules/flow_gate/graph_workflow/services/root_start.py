@@ -32,6 +32,7 @@ from modules.flow_gate.graph_workflow.store import assignment_store, definition_
 
 from .engine_router import read_ownership
 from .root_conversion_cards import ROOT_NAMES, ROOT_PALETTE_IDS
+from .flow_default_names import default_title
 
 log = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def ensure_start_card(group: dict, user_id: Optional[str], locale: Optional[str]
     nodes = [_node_input(i, n) for i, n in enumerate(record["nodes"])]
     nodes.append(dr.NodeInput(index=len(nodes), node_key=None, client_key=CLIENT_START, node_type="document",
                               doc_type=root["doc_type"], palette_item_id=ROOT_PALETTE_IDS[root["doc_type"]],
-                              label=ROOT_NAMES[root["doc_type"]][_locale(locale)]))
+                              label=default_title("root", _locale(locale), doc_type=root["doc_type"])))
     edges = [dr.EdgeInput(index=i, edge_id=e["edge_id"], client_key=None, source=e["source"], target=e["target"],
                           condition=e.get("condition")) for i, e in enumerate(record["edges"])]
     request = dr.DraftRequest(draft_version=int(draft["draft_version"]) if draft else 0, nodes=nodes, edges=edges)
