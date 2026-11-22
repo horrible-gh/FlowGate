@@ -12,6 +12,7 @@ import {
   stickyStorageKey,
   useQuickMessages,
 } from '@/features/conversation/quickMessages/useQuickMessages'
+import { quickBlock as block } from '@/features/conversation/quickMessages/quickMarkup'
 
 const net = vi.hoisted(() => ({ list: vi.fn(), canEdit: vi.fn() }))
 vi.mock('@/features/conversation/quickMessages/api', async (original) => ({
@@ -81,10 +82,13 @@ afterEach(() => {
 })
 
 describe('outgoing text and list rows', () => {
-  it('appends each quick message on its own line after the typed text, and alone when nothing is typed', () => {
-    expect(buildOutgoingText('안녕', ['A', 'B'])).toBe('안녕\nA\nB')
-    expect(buildOutgoingText('   ', ['A'])).toBe('A')
+  it('wraps each quick message in its marker block after the typed text (card 4), and alone when nothing is typed', () => {
+    const a = qm(1, 'A', '문구 A', 'sticky')
+    const b = qm(2, 'B', '문구 B', 'once')
+    expect(buildOutgoingText('안녕', [a, b])).toBe(`안녕\n\n${block(a)}\n\n${block(b)}`)
+    expect(buildOutgoingText('   ', [a])).toBe(block(a))
     expect(buildOutgoingText('안녕', [])).toBe('안녕')
+    expect(block(a)).toBe('<!--fg-quick kind="sticky" title="A"-->\n문구 A\n<!--/fg-quick-->')
   })
 
   it('normalizes a server row and drops rows without an id or text', () => {
@@ -182,7 +186,7 @@ describe('the row in the composer', () => {
     await w.get('[data-test="conv-composer"]').trigger('submit')
     await flushPromises()
     expect(onSend).toHaveBeenCalledTimes(1)
-    expect(onSend.mock.calls[0][0]).toBe('요약해 줘\n근거를 붙여 주세요.\n표로 정리해 주세요.')
+    expect(onSend.mock.calls[0][0]).toBe(`요약해 줘\n\n${block(LIST[0])}\n\n${block(LIST[2])}`)
     expect((w.get('[data-test="conv-input"]').element as HTMLTextAreaElement).value).toBe('')
     expect(buttons(w)[0].attributes('data-state')).toBe('on')
     expect(buttons(w)[2].attributes('data-state')).toBe('off')
@@ -197,7 +201,7 @@ describe('the row in the composer', () => {
     expect(send(w).attributes('disabled')).toBeUndefined()
     await w.get('[data-test="conv-input"]').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(onSend.mock.calls[0][0]).toBe('짧게 답해 주세요.')
+    expect(onSend.mock.calls[0][0]).toBe(block(LIST[1]))
     expect(buttons(w)[1].attributes('data-state')).toBe('off')
   })
 
@@ -209,7 +213,7 @@ describe('the row in the composer', () => {
     await type(w, '질문')
     await w.get('[data-test="conv-composer"]').trigger('submit')
     await flushPromises()
-    expect(onSend.mock.calls[0][0]).toBe('질문\n짧게 답해 주세요.')
+    expect(onSend.mock.calls[0][0]).toBe(`질문\n\n${block(LIST[1])}`)
     expect(buttons(w)[1].attributes('data-state')).toBe('on')
     expect((w.get('[data-test="conv-input"]').element as HTMLTextAreaElement).value).toBe('질문')
   })
