@@ -88,6 +88,7 @@ def test_edit_accepts_ordinary_markdown_when_section_is_absent_or_legacy(submiss
     response = client.post("/api/v1/inbox", headers={"Authorization": "Bearer test"}, json={
         "action": "edit", "project": PROJECT, "module": MODULE, "group_name": GROUP,
         "doc_id": doc_id, "edit_reason": "worker_self", "content": content, "dry_run": dry_run,
+        "commit_message": "test(inbox): verify legacy TR edit markdown",
     })
     assert response.status_code == 200, response.text
     payload = response.json()

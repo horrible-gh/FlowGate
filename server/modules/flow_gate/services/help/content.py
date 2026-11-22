@@ -507,6 +507,8 @@ def _content_submit(ctx: dict) -> dict:
             "body_chars": "<optional: character count of content>",
             "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
+        if str(doc_type).upper() == "TR":
+            body["commit_message"] = "<TR edit: English (ASCII) single line, max 200 characters; type(scope): summary recommended. Omit only to retain a valid saved message; otherwise 422 invalid_commit_message.>"
     else:
         body = {
             "action": "new",

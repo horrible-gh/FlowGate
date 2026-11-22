@@ -15,7 +15,7 @@ from .revise import revise
 
 _log = logging.getLogger(__name__)
 MODEL_FIELDS = ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
-                "rejection_review_id", "node_title")
+                "rejection_review_id", "node_title", "commit_message")
 CLI_FIELDS = frozenset(MODEL_FIELDS) | {"action", "project", "module", "group_name", "group", "doc_id",
     "doc_path", "linked_doc_id", "body_sha256", "body_chars", "force_encoding_reason", "dry_run", "review_id"}
 
@@ -161,6 +161,8 @@ def prepare(raw, body, *, model_input=_CLI, run=None):
     if not isinstance(source, dict):
         raise invalid("invalid_request", "body", "invalid_format")
     unknown = sorted(set(source) - (set(MODEL_FIELDS) if model_input is not _CLI else CLI_FIELDS)) if kind == target.CARD else (["expected_revision"] if "expected_revision" in source else [])
+    if "commit_message" in source and doc.get("type_code") != "TR":
+        unknown = sorted(set(unknown) | {"commit_message"})
     if unknown:
         raise GraphApiError(422, "invalid_request", {"errors": [{"field": k, "reason": "unknown_field"} for k in unknown]})
     binding = agent_binding.bind(token, doc) if kind == target.CARD else None
