@@ -23,7 +23,8 @@ interface RefreshResponse {
 
 import { notifyGetRetry } from './requestRecovery'
 import { createConnectionRecovery } from './connectionRecovery'
-import { setConnectionLost } from './connectionStatus'
+import { connectionLost, setConnectionLost } from './connectionStatus'
+import { createConnectionGate } from './connectionGate'
 
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
@@ -347,7 +348,32 @@ export const flushPendingTreeReports = () => {
   const owner = reportOwner()
   return flushTreeReports(owner, sendTreeReportFor(owner))
 }
+// 0060 (22:09): while the connection is lost, GETs wait for it in shared/connectionGate instead of going out.
+const connectionGate = createConnectionGate(() => connectionLost.value)
+
+// Failed without being sent: the same error a dropped connection gives, which every caller already handles.
+const heldGetError = (config: InternalAxiosRequestConfig) =>
+  new AxiosError('Network Error', AxiosError.ERR_NETWORK, config)
+
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  if (config.method?.toLowerCase() === 'get') {
+    // A re-send (B4) of a GET that already failed, reaching here after another GET found the connection lost:
+    // the probe checks the connection now, so it fails at once instead of waiting.
+    if ((config as RetryableRequestConfig)._getRetryCount && connectionLost.value) {
+      return Promise.reject(heldGetError(config))
+    }
+    const verdict = connectionGate.admit(config.signal as Parameters<typeof connectionGate.admit>[0])
+    if (verdict !== 'send') {
+      return verdict.then((v) => {
+        if (v === 'fail') throw heldGetError(config)
+        return prepareRequest(config)
+      })
+    }
+  }
+  return prepareRequest(config)
+})
+
+function prepareRequest(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   const match = /^\/api\/v1\/projects\/([^/?]+)\/(groups\/tree|git\/groups\/[^/?]+\/tree)$/.exec((config.url || '').split('?')[0]!)
   try {
   if (config.method?.toLowerCase() === 'get' && match) {
@@ -377,7 +403,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   // normalizes stored/browser values and also changes immediately on a runtime switch.
   config.headers['X-Locale'] = String(i18n.global.locale.value)
   return config
-})
+}
 
 // A single in-flight rotation shared by every caller (concurrent reactive 401 retries AND
 // the proactive timer). Coalescing onto one promise guarantees we never POST the refresh
@@ -729,6 +755,8 @@ export const shouldRetryGet = (error: AxiosError): boolean => {
   const config = error.config as RetryableRequestConfig | undefined
   if (!config || config.method?.toLowerCase() !== 'get') return false
   if (error.code === 'ERR_CANCELED' || config.signal?.aborted) return false
+  // 0060: while the connection is lost the recovery probe checks it; a GET is not re-sent on top of it.
+  if (connectionLost.value) return false
   const count = config._getRetryCount ?? 0
   if (error.response) {
     return GET_RETRY_STATUSES.has(error.response.status) && count < GET_RETRY_MAX
@@ -770,7 +798,11 @@ const connectionRecovery = createConnectionRecovery(
     }
   },
   () => window.dispatchEvent(new Event('fg:connection_recovered')),
-  setConnectionLost,
+  (active) => {
+    setConnectionLost(active)
+    if (active) connectionGate.lost()
+    else connectionGate.open()
+  },
 )
 
 const isRecoveryFailure = (error: AxiosError): boolean => {
