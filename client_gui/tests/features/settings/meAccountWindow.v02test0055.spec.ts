@@ -38,7 +38,7 @@ describe('v02test.0055 account window', () => {
     const { wrapper } = bar(); await flushPromises()
     await openMenu(wrapper)
     const rows = wrapper.findAll('.menu-group-row')
-    expect(rows[1].findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['theme', 'agents', 'account'])
+    expect(rows[1].findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['theme', 'agents', 'account', 'security'])
     expect(wrapper.get('[data-card="account"]').text()).toContain(i18n.global.t('gui.taskbar.account'))
     expect(wrapper.get('[data-card="account"]').attributes('data-card-state')).toBe('closed')
   })

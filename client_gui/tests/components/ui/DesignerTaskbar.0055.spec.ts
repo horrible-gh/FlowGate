@@ -121,7 +121,7 @@ describe('taskbar window lifecycle', () => {
   it('lists my AI, question policy, theme and agents cards by group and opens the my AI window without leaving the page', async () => {
     const { wrapper, router } = bar(); await tick()
     await wrapper.get('.menu-trigger').trigger('click'); await tick()
-    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account'])
+    expect(wrapper.findAll('.menu-card').map(c => c.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
     expect(wrapper.findAll('.menu-group-label').map(l => l.text())).toEqual([i18n.global.t('gui.taskbar.group_ai'), i18n.global.t('gui.taskbar.group_settings')])
     const card = () => wrapper.get('[data-card="my-ai"]')
     expect(card().attributes('data-card-state')).toBe('closed')

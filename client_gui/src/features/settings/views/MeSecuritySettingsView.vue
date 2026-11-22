@@ -1,5 +1,5 @@
 <template>
-  <SettingsShell scope="me">
+  <component :is="embedded ? 'div' : SettingsShell" :scope="embedded ? undefined : 'me'" :class="{ 'me-security-embedded': embedded }">
     <template #nav>
       <SettingsSubnav :items="meNav" active="security" />
     </template>
@@ -166,7 +166,7 @@
         </div>
       </template>
     </ModalShell>
-  </SettingsShell>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -184,6 +184,7 @@
 //   state, and POST /auth/totp/setup would replace an existing secret. The administrator routes
 //   (/users/{uid}, /system/users/{id}/tfa-reset) are never used here.
 // A failure, a cancellation or a 401 is never shown as a success.
+// `embedded` draws the same panel without the settings page frame, for the Designer window.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -198,6 +199,8 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useMeNav } from '../components/meNav'
 import { changePassword, listSessions, MeRequestError, revokeOtherSessions, revokeSession, type AuthSession } from '../meApi'
+
+defineProps<{ embedded?: boolean }>()
 
 const { t, locale } = useI18n()
 const meNav = useMeNav()

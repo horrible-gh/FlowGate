@@ -98,7 +98,7 @@ def main():
             assert abs(box['y'] + box['height'] - height) <= 1, box
             assert page.locator('[data-test="designer-header-settings"]').count() == 0
             bar.locator('.menu-trigger').click()
-            assert [c.get_attribute('data-card') for c in bar.locator('[role="menuitem"]').all()] == ['my-ai', 'question-policy', 'theme', 'agents', 'account']
+            assert [c.get_attribute('data-card') for c in bar.locator('[role="menuitem"]').all()] == ['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security']
             # The board is two cards wide: the two AI cards sit side by side on one row.
             ai_cards = [bar.locator(f'[data-card="{key}"]').bounding_box() for key in ('my-ai', 'question-policy')]
             assert abs(ai_cards[0]['y'] - ai_cards[1]['y']) <= 1 and ai_cards[1]['x'] >= ai_cards[0]['x'] + ai_cards[0]['width'], ai_cards
@@ -366,6 +366,69 @@ def main():
             window.locator('[data-modeless-action="close"]').click()
             assert page.locator('[data-test="me-account-window"]').count() == 0
             print('ACCOUNT_WINDOW_OK', width, height, box)
+        # The security card opens the password change and my sign-in sessions as a window over the Designer.
+        # Nothing is signed out and no password is sent here: the test account's sessions stay as they are.
+        sessions_before = context.request.get(base+'/flowgate/auth/sessions', headers=headers).json()['sessions']
+        for width, height in [(1568, 875), (1100, 760)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.locator('.menu-trigger').click()
+            card = page.locator('[data-card="security"]')
+            assert card.get_attribute('data-card-state') == 'closed'
+            # Four settings cards on a board two cards wide: the security card sits right of the account card.
+            row = [page.locator(f'[data-card="{key}"]').bounding_box() for key in ('account', 'security')]
+            assert abs(row[0]['y'] - row[1]['y']) <= 1 and row[1]['x'] >= row[0]['x'] + row[0]['width'], row
+            assert all(abs(b['width'] - 174) <= 1 and abs(b['height'] - 92) <= 1 for b in row), row
+            board = page.locator('.menu-board').bounding_box()
+            assert board['y'] >= 0 and board['y'] + board['height'] <= height - 50, (board, height)
+            if evidence: page.screenshot(path=str(Path(evidence) / f'security_menu_{width}x{height}.png'))
+            card.click()
+            window = page.locator('.ui-modeless-panel:visible').filter(has=page.locator('[data-test="me-security-window"]'))
+            window.wait_for()
+            assert '/designer' in page.url, page.url
+            box = window.bounding_box()
+            assert box['x'] >= 0 and box['x'] + box['width'] <= width and box['y'] >= 0 and box['y'] + box['height'] <= height - 50, (box, width, height)
+            body = window.locator('[data-test="me-security-window"]')
+            assert body.locator('.fgs-layout, .settings-shell-view').count() == 0
+            assert body.locator('.fgs-phead').is_hidden()
+            body.locator('[data-session]').first.wait_for()
+            assert body.locator('[data-session]').count() == len(sessions_before), (body.locator('[data-session]').count(), len(sessions_before))
+            assert body.locator('[data-testid="session-current"]').count() == 1
+            # Nothing is cut off sideways: neither the window body nor the session table scrolls left-right.
+            assert window.locator('.ui-modeless-body').evaluate('el => el.scrollWidth <= el.clientWidth + 1'), window.locator('.ui-modeless-body').evaluate('el => [el.scrollWidth, el.clientWidth]')
+            assert body.locator('.fgs-table-wrap').evaluate('el => el.scrollWidth <= el.clientWidth + 1'), body.locator('.fgs-table-wrap').evaluate('el => [el.scrollWidth, el.clientWidth]')
+            if evidence: page.screenshot(path=str(Path(evidence) / f'security_window_{width}x{height}.png'))
+            if width == 1100:
+                # "Change" opens the three password inputs inside the window; "Cancel" closes them and sends nothing.
+                body.locator('[data-testid="password-open"]').click()
+                assert body.locator('input[type="password"]').count() == 3
+                assert window.locator('.ui-modeless-body').evaluate('el => el.scrollWidth <= el.clientWidth + 1')
+                if evidence: page.screenshot(path=str(Path(evidence) / f'security_password_{width}x{height}.png'))
+                body.locator('[data-testid="password-open"]').click()
+                assert body.locator('input[type="password"]').count() == 0
+                # With other sessions present, "sign out all others" asks first; it is cancelled here.
+                if body.locator('[data-testid="revoke-others"]').count():
+                    body.locator('[data-testid="revoke-others"]').click()
+                    page.locator('[data-testid="confirm-cancel"]').wait_for()
+                    if evidence: page.screenshot(path=str(Path(evidence) / f'security_confirm_{width}x{height}.png'))
+                    page.locator('[data-testid="confirm-cancel"]').click()
+                    assert page.locator('[data-testid="confirm-cancel"]').count() == 0
+            window.locator('[data-modeless-action="minimize"]').click()
+            assert not window.is_visible()
+            item = page.locator('.minimized-item').filter(has_text='보안·세션')
+            assert item.locator('.item-text').inner_text().strip() == '내 설정 · 보안·세션', item.inner_text()
+            page.locator('.menu-trigger').click()
+            assert card.get_attribute('data-card-state') == 'minimized'
+            assert card.locator('[data-test="menu-card-dot"]').is_visible()
+            if evidence: page.screenshot(path=str(Path(evidence) / f'security_minimized_{width}x{height}.png'))
+            card.click()
+            window.wait_for()
+            assert page.locator('[data-test="me-security-window"]').count() == 1
+            assert window.bounding_box() == box, (box, window.bounding_box())
+            window.locator('[data-modeless-action="close"]').click()
+            assert page.locator('[data-test="me-security-window"]').count() == 0
+            print('SECURITY_WINDOW_OK', width, height, box, 'sessions', len(sessions_before))
+        sessions_after = context.request.get(base+'/flowgate/auth/sessions', headers=headers).json()['sessions']
+        assert sorted(s['session_id'] for s in sessions_after) == sorted(s['session_id'] for s in sessions_before)
         # The bell's AI tab opens short: at most 6 rows, the rest behind "show more".
         page.locator('[data-test="designer-header-notifications"]').click()
         page.locator('#notification-tab-ai').click()

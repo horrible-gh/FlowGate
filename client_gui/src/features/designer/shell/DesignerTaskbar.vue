@@ -21,6 +21,7 @@
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
     <MeAgentsWindow :ref="(el) => setWindowRef('agents', el)" :open="windows.agents.open" v-model:minimized="windows.agents.minimized" @close="windows.agents.open = false" />
     <MeAccountWindow :ref="(el) => setWindowRef('account', el)" :open="windows.account.open" v-model:minimized="windows.account.minimized" @close="windows.account.open = false" />
+    <MeSecurityWindow :ref="(el) => setWindowRef('security', el)" :open="windows.security.open" v-model:minimized="windows.security.minimized" @close="windows.security.open = false" />
   </div>
 </template>
 
@@ -34,6 +35,7 @@ import { MyAiWindow, QuestionPolicyWindow } from '@/features/ai'
 import MeThemeWindow from '@/features/settings/windows/MeThemeWindow.vue'
 import MeAgentsWindow from '@/features/settings/windows/MeAgentsWindow.vue'
 import MeAccountWindow from '@/features/settings/windows/MeAccountWindow.vue'
+import MeSecurityWindow from '@/features/settings/windows/MeSecurityWindow.vue'
 import { modelessWindows, modelessStyle, normalizeTaskbarStyle, TASKBAR_STYLE_FIELD, setModelessTaskbar, removeModelessTaskbar, taskbarCapacity, type ModelessEntry } from '@/core/overlay/modelessRegistry'
 
 const { t } = useI18n()
@@ -66,12 +68,12 @@ function restore(entry: ModelessEntry) { close(); entry.restore() }
 // Menu cards open a window over the Designer instead of leaving the page. A card whose window
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
-type CardKey = 'my-ai' | 'question-policy' | 'theme' | 'agents' | 'account'
+type CardKey = 'my-ai' | 'question-policy' | 'theme' | 'agents' | 'account' | 'security'
 const menuGroups: { key: string; label: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
   { key: 'ai', label: 'gui.taskbar.group_ai', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
-  { key: 'settings', label: 'gui.taskbar.group_settings', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }] },
+  { key: 'settings', label: 'gui.taskbar.group_settings', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: '◈', title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
 ]
-const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false } })
+const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false }, security: { open: false, minimized: false } })
 const windowRefs: Partial<Record<CardKey, { bringToFront?: () => void } | null>> = {}
 function setWindowRef(key: CardKey, el: unknown) { windowRefs[key] = el as { bringToFront?: () => void } | null }
 function cardState(key: CardKey) { return !windows[key].open ? 'closed' : windows[key].minimized ? 'minimized' : 'open' }

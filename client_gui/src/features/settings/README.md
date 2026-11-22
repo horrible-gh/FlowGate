@@ -134,6 +134,7 @@ out after the MirageGlass deck `1jnmunhp` screen ⑩ "Environment Settings" by f
     other sessions, POST `/auth/sessions/revoke-others` after a confirmation, the current session via
     POST `/auth/logout` (`core/auth/logout.ts`), POST `/auth/password/change`. No TOTP control: no
     self-service API reports the person's TOTP state and `/auth/totp/setup` would replace a secret.
+    `embedded` draws the panel without the page frame for the Designer window (`windows/MeSecurityWindow.vue`).
 - Overview › Needs attention (flowgate.v02.0077, mockup ⑩): for a system administrator the overview reads
   GET `/api/v1/system/agents` once and lists the Agents that need a look, each with Inspect (→ System
   Agent with that Agent open). A non-administrator's overview sends nothing, and an answer that
