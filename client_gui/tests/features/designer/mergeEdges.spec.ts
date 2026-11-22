@@ -2,129 +2,111 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import type { GraphNode } from '@vue-flow/core'
-import { waitingEdgeIds, progressedEdgeIds } from '@/features/designer/center/graph/edgeProgress'
+import { progressedEdgeIds } from '@/features/designer/center/graph/edgeProgress'
 import { toVueFlowEdges } from '@/features/designer/center/canvas/vueFlowMapping'
-import { routeEdge, routeDrawing, segmentCrossesRect } from '@/features/designer/center/canvas/edgeRouting'
+import { routeEdge, routeEdges, routeDrawing, segmentCrossesRect } from '@/features/designer/center/canvas/edgeRouting'
 import { nodeRect, type NodeRect } from '@/features/designer/center/canvas/edgeGeometry'
+import { planDirectionalLayout, checkDirectionalLayout } from '@/features/designer/center/arrange/directionalLayout'
 import type { FlowGraph } from '@/features/designer/center/graph/flowGraph'
 import FlowEdgePath from '@/features/designer/center/canvas/FlowEdgePath.vue'
 
-const graph = (peer: string | null = 'in_progress', target = 'draft'): FlowGraph => ({
-  flowId: 'test',
-  nodes: [{ id: 'B1', state: 'done' }, { id: 'A2', state: peer }, { id: 'C', state: target }]
-    .map(n => ({ ...n, kind: 'task', title: n.id, x: 0, y: 0 })),
-  edges: ['B1', 'A2'].map(source => ({ id: source + '>C', source, target: 'C', edgeClass: 'execution', editable: true })),
-})
 const rect = (x: number, y: number): NodeRect => ({ x, y, width: 176, height: 108 })
 const node = (id: string, x: number, y: number): GraphNode =>
   ({ id, computedPosition: { x, y, z: 0 }, dimensions: { width: 0, height: 0 } }) as GraphNode
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} }, missingWarn: false, fallbackWarn: false })
+const graph = (target: string): FlowGraph => ({
+  flowId: 'test', nodes: [{ id: 'B1', state: 'done' }, { id: 'A2', state: 'in_progress' }, { id: 'C', state: target }]
+    .map(n => ({ ...n, kind: 'task', title: n.id, x: 0, y: 0 })),
+  edges: ['B1', 'A2'].map(source => ({ id: source + '>C', source, target: 'C', edgeClass: 'execution', editable: true })),
+})
 
-describe('arrived input waiting for a peer', () => {
-  it.each(['draft', 'in_progress', 'review', 'blocked'])('needs a known unfinished peer: %s', state => {
-    const g = graph(state)
-    expect([...waitingEdgeIds(g)]).toEqual(['B1>C'])
-    expect([...progressedEdgeIds(g)]).toEqual([])
-    expect(toVueFlowEdges(g)[0]!.data).toMatchObject({ waiting: true, progressed: false, deletable: true })
+describe('target state controls incoming line colours, independent of deletion protection', () => {
+  it.each(['draft', 'in_progress', 'review', 'done', 'blocked'])('%s gives all incoming edges the same appearance', target => {
+    const g = graph(target)
+    const edges = toVueFlowEdges(g)
+    const wrappers = edges.map(e => mount(FlowEdgePath, { props: {
+      id: e.id, sourceX: 0, sourceY: 0, targetX: 300, targetY: 0,
+      progressed: e.data!.progressed, targetState: target,
+    }, global: { plugins: [i18n] } }))
+    const expected = target === 'done' ? 'progressed' : ['in_progress', 'review'].includes(target) ? 'running' : 'pending'
+    expect(wrappers.map(w => w.get('.flow-edge').attributes('data-progress'))).toEqual([expected, expected])
+    wrappers.forEach(w => w.unmount())
+    expect(edges.every(e => !('waiting' in e.data!))).toBe(true)
+    expect(edges[0]!.data?.deletable).toBe(!progressedEdgeIds(g).has('B1>C'))
   })
-  it.each([null, 'done', 'unknown'])('does not invent waiting from %s', state => {
-    expect([...waitingEdgeIds(graph(state))]).toEqual([])
-  })
-  it('ignores reference, missing, duplicate, self and requirement inputs', () => {
-    const g = graph()
-    for (const edges of [g.edges.slice(0, 1), [g.edges[0]!, { ...g.edges[1]!, edgeClass: 'reference' }],
-      [g.edges[0]!, { ...g.edges[1]!, source: 'missing' }],
-      [g.edges[0]!, { ...g.edges[0]!, id: 'duplicate' }],
-      [g.edges[0]!, { ...g.edges[1]!, source: 'C' }]]) {
-      expect([...waitingEdgeIds({ ...g, edges })]).toEqual([])
-    }
-    expect([...waitingEdgeIds({ ...g, nodes: g.nodes.map(n => n.id === 'A2' ? { ...n, kind: 'requirement' } : n) })]).toEqual([])
-  })
-  it.each(['in_progress', 'review', 'done', 'blocked'])('target reached: %s preserves progress protection', target => {
-    const g = graph('done', target)
-    expect([...waitingEdgeIds(g)]).toEqual([])
-    expect([...progressedEdgeIds(g)]).toEqual(['B1>C', 'A2>C'])
-    expect(toVueFlowEdges(g)[0]!.data).toMatchObject({ progressed: true, deletable: false })
-  })
-  it.each([
-    [{}, 'pending'], [{ waiting: true }, 'waiting'], [{ progressed: true }, 'progressed'],
-    [{ running: true, waiting: true, progressed: true }, 'running'],
-  ] as const)('renders each state with running priority', (state, expected) => {
-    const w = mount(FlowEdgePath, { props: { id: 'e', sourceX: 0, sourceY: 0, targetX: 300, targetY: 0, ...state }, global: { plugins: [i18n] } })
-    expect(w.attributes('data-progress')).toBe(expected)
-    expect(w.classes()).toContain('flow-edge-' + expected)
+  it('a completed source waiting for another input uses a neutral solid line', () => {
+    const data = toVueFlowEdges(graph('draft'))[0]!.data!
+    const w = mount(FlowEdgePath, { props: { id: 'e', sourceX: 0, sourceY: 0, targetX: 300, targetY: 0, ...data }, global: { plugins: [i18n] } })
+    expect(w.get('.flow-edge').attributes('data-progress')).toBe('pending')
+    expect(w.get('.flow-edge').classes()).not.toContain('flow-edge-waiting')
     w.unmount()
   })
 })
 
-describe('obstacle routes', () => {
-  const transforms = [
-    { name: 'right', f: (r: NodeRect) => r },
-    { name: 'left', f: (r: NodeRect) => ({ ...r, x: 1100 - r.x - r.width }) },
-    { name: 'down', f: (r: NodeRect) => ({ x: r.y, y: r.x, width: r.height, height: r.width }) },
-    { name: 'up', f: (r: NodeRect) => ({ x: r.y, y: 1100 - r.x - r.width, width: r.height, height: r.width }) },
-  ]
-  for (const { name, f } of transforms) {
-    it.each([0, 1, 3])(`${name}: avoids %i cards and retains endpoints`, count => {
-      const source = f(rect(0, 0)), target = f(rect(1000, 0))
-      const others = [rect(300, 0), rect(550, -80), rect(750, 60)].slice(0, count).map(f)
-      const route = routeEdge(source, target, others, 16)!
-      expect(route).not.toBeNull()
-      expect(route.points[0]).toEqual({ x: route.anchors.sourceX, y: route.anchors.sourceY })
-      expect(route.points.at(-1)).toEqual({ x: route.anchors.targetX, y: route.anchors.targetY })
-      for (let i = 1; i < route.points.length; i++) {
-        const a = route.points[i - 1]!, b = route.points[i]!
-        expect(a.x === b.x || a.y === b.y).toBe(true)
-        for (const r of others) {
-          expect(segmentCrossesRect(a, b, { x: r.x - 15, y: r.y - 15, width: r.width + 30, height: r.height + 30 })).toBe(false)
-        }
-      }
-      const drawing = routeDrawing(route)
-      expect(drawing.path).not.toMatch(/NaN|undefined/)
-      expect(route.points.slice(1).some((p, i) => {
-        const a = route.points[i]!, m = drawing.middle
-        return (a.x === p.x && m.x === a.x && m.y >= Math.min(a.y, p.y) && m.y <= Math.max(a.y, p.y))
-          || (a.y === p.y && m.y === a.y && m.x >= Math.min(a.x, p.x) && m.x <= Math.max(a.x, p.x))
-      })).toBe(true)
+describe('direct orthogonal routes under cards', () => {
+  it('passes through a card instead of detouring; keeps endpoints and the label on the route', () => {
+    const route = routeEdge(rect(0, 0), rect(1000, 100))
+    const obstacle = rect(400, 0)
+    expect(route.points.some((p, i) => i > 0 && segmentCrossesRect(route.points[i - 1]!, p, obstacle))).toBe(true)
+    expect(route.points).toHaveLength(4)
+    expect(route.points[0]).toEqual({ x: 176, y: 54 })
+    expect(route.points.at(-1)).toEqual({ x: 1000, y: 154 })
+    expect(routeDrawing(route)).toEqual({ path: 'M176,54 L968,54 L968,154 L991,154', middle: { x: 633.5, y: 54 } })
+  })
+  it.each([3, 8, 20])('%i inputs share one side-centre port and one arrow', count => {
+    const nodes = new Map([['T', rect(5000, 200)]])
+    const edges = Array.from({ length: count }, (_, i) => {
+      nodes.set('s' + i, rect(0, i * 156))
+      return { id: 'e' + i, source: 's' + i, target: 'T' }
     })
-  }
-  it('chooses another port when the facing port is obstructed', () => {
-    const obstacle = rect(190, 0)
-    const route = routeEdge(rect(0, 0), rect(1000, 0), [obstacle])!
-    expect(route).not.toBeNull()
-    expect(route.anchors.sourcePosition).not.toBe('right')
-    for (let i = 1; i < route.points.length; i++) {
-      expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, obstacle)).toBe(false)
-    }
+    const routes = [...routeEdges(edges, nodes).values()]
+    expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
+    expect(new Set(routes.map(r => JSON.stringify(r.points.slice(-2)))).size).toBe(1)
   })
-  it('reports completely covered ports instead of a false safe route', () => {
-    expect(routeEdge(rect(0, 0), rect(1000, 0), [{ x: -30, y: -30, width: 240, height: 180 }])).toBeNull()
+  it('unrelated targets on one column have distinct vertical trunks', () => {
+    const nodes = new Map([['a', rect(0, 0)], ['b', rect(0, 200)], ['c', rect(600, 200)], ['d', rect(600, 0)]])
+    const routes = routeEdges([{ id: 'ac', source: 'a', target: 'c' }, { id: 'bd', source: 'b', target: 'd' }], nodes)
+    expect(routes.get('ac')!.points[1]!.x).not.toBe(routes.get('bd')!.points[1]!.x)
   })
-  it('uses fallback sizes before measurement and does not mutate inputs', () => {
-    const source = nodeRect(node('B1', 0, 0)), target = nodeRect(node('C', 1000, 0))
-    const obstacle = Object.freeze(nodeRect(node('A2', 400, 0)))
-    const before = JSON.stringify([source, target, obstacle])
-    expect(routeEdge(source, target, [obstacle])).not.toBeNull()
-    expect(JSON.stringify([source, target, obstacle])).toBe(before)
-    expect(source).toEqual(rect(0, 0))
-  })
-  it('updates hit path, arrow and remove location after obstacle movement and measurement', async () => {
-    const source = node('B1', 0, 0), target = node('C', 1000, 0), obstacle = node('A2', 400, 0)
+  it('follows endpoint movement and size; hides duplicate arrows while keeping selection and removal', async () => {
+    const source = node('s', 0, 0), target = node('t', 1000, 100)
     const w = mount(FlowEdgePath, { props: { id: 'e', sourceX: 0, sourceY: 0, targetX: 0, targetY: 0,
-      sourceNode: source, targetNode: target, obstacleNodes: [source, target, obstacle], selected: true, deletable: true, waiting: true },
-      global: { plugins: [i18n] } })
-    const path = () => w.get('.flow-edge-path').attributes('d')
-    const first = path()
-    expect(w.get('.flow-edge-hit').attributes('d')).toBe(first)
-    expect(w.get('.flow-edge-arrow').attributes('d')).toMatch(/^M1000,54 /)
-    await w.setProps({ obstacleNodes: [source, target, node('A2', 400, 300)] })
-    expect(path()).not.toBe(first)
-    expect(w.get('.flow-edge-hit').attributes('d')).toBe(path())
-    const route = routeEdge(nodeRect(source), nodeRect(target), [rect(400, 300)])!
-    const middle = routeDrawing(route).middle
-    expect(w.get('.flow-edge-remove').attributes('transform')).toBe(`translate(${middle.x},${middle.y})`)
-    await w.setProps({ targetNode: { ...target, dimensions: { width: 200, height: 160 } } })
-    expect(w.get('.flow-edge-arrow').attributes('d')).toMatch(/^M1000,80 /)
+      sourceNode: source, targetNode: target, selected: true, deletable: true }, global: { plugins: [i18n] } })
+    const first = w.get('.flow-edge-path').attributes('d')
+    await w.setProps({ targetNode: node('t', 800, 200) })
+    expect(w.get('.flow-edge-path').attributes('d')).not.toBe(first)
+    expect(w.get('.flow-edge-hit').attributes('d')).toBe(w.get('.flow-edge-path').attributes('d'))
+    await w.setProps({ routedEdge: { ...routeEdge(nodeRect(source), nodeRect(target)), drawArrow: false } })
+    expect(w.find('.flow-edge-arrow').exists()).toBe(false)
+    await w.get('.flow-edge-remove').trigger('click')
+    expect(w.emitted('remove')).toHaveLength(1)
     w.unmount()
+  })
+})
+
+describe('0069 branch and three-input join layout', () => {
+  const example = (): FlowGraph => ({ flowId: 'f', projection: 'graph',
+    nodes: ['R', '1', '2', '3', '4', '5'].map(id => ({ id, kind: id === 'R' ? 'requirement' : 'task', title: id,
+      x: 900, y: 900, movable: true, definition: { nodeType: 'document', docType: id === 'R' ? 'R' : 'T', label: id, paletteItemId: null, assignee: null } })),
+    edges: [['R','1'],['R','2'],['1','3'],['1','4'],['2','5'],['3','5'],['4','5']]
+      .map(([source,target], i) => ({ id: 'e'+i, source: source!, target: target!, edgeClass: 'execution' })),
+  })
+  it('places 5 after 3/4 and at the mean of all three inputs; moving 4 onto 2→5 does not divert it', () => {
+    const g = example()
+    const plan = planDirectionalLayout(g, undefined, 'horizontal')
+    expect(checkDirectionalLayout(plan)).toBeNull()
+    const at = new Map(plan.candidate.map(p => [p.nodeId,p]))
+    expect(at.get('5')!.x).toBeGreaterThan(at.get('4')!.x)
+    expect(at.get('5')!.y).toBeCloseTo((at.get('2')!.y + at.get('3')!.y + at.get('4')!.y) / 3, 0)
+    const nodes = new Map([...at].map(([id,p]) => [id,rect(p.x,p.y)]))
+    const routes = routeEdges(g.edges,nodes)
+    const edge = routes.get('e4')!
+    nodes.set('4', { ...nodes.get('4')!, y: nodes.get('2')!.y })
+    const moved = routeEdges(g.edges,nodes).get('e4')!
+    expect(moved.points).toEqual(edge.points)
+    expect(moved.points.some((p,i) => i > 0 && segmentCrossesRect(moved.points[i-1]!,p,nodes.get('4')!))).toBe(true)
+    expect([...routes.values()].filter(r => r.anchors.targetX === nodes.get('5')!.x && r.drawArrow)).toHaveLength(1)
+    const after = { ...g, nodes:g.nodes.map(n => ({...n,...at.get(n.id)})) }
+    expect(planDirectionalLayout(after,undefined,'horizontal').candidate).toEqual(plan.candidate)
   })
 })

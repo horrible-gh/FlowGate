@@ -108,7 +108,7 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
     const sizes = { R: { width: 120, height: 60 }, A: { width: 300, height: 200 }, C: { width: 250, height: 150 } }
     const g = graph([R(), card('A', 'A'), card('B', 'B'), card('C', 'C')], [['R', 'A'], ['R', 'B'], ['A', 'C'], ['B', 'C']])
     const h = lay(g, 'horizontal', sizes)
-    expect(h.at).toEqual({ R: [0, 0], A: [240, 0], B: [240, 248], C: [708, 0] })
+    expect(h.at).toEqual({ R: [0, 167], A: [204, 0], B: [204, 248], C: [588, 122] })
     expect([h.refusal, h.plan.remainingPierces]).toEqual([null, 0])
     const v = lay(g, 'vertical', sizes)
     expect(v.at).toEqual({ R: [0, 0], A: [0, 364], B: [348, 364], C: [0, 734] })
@@ -123,7 +123,7 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
       )
     for (const [a, b] of [['tmp_1', 'tmp_2'], ['node_z', 'node_a']]) {
       const h = lay(make(a, b), 'horizontal')
-      expect(h.at).toEqual({ R1: [0, 0], R2: [0, 140], [a]: [260, 0], [b]: [260, 140] })
+      expect(h.at).toEqual({ R1: [0, 70], R2: [0, 210], [a]: [260, 0], [b]: [260, 140] })
       const v = lay(make(a, b), 'vertical')
       expect(v.at).toEqual({ R1: [0, 0], R2: [224, 0], [a]: [0, 228], [b]: [224, 228] })
       expect([h.refusal, v.refusal]).toEqual([null, null])
@@ -142,9 +142,9 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
 
 
 
-  it('L5: a short branch merging — no line through a card, every line on the direction sides', () => {
+  it('L5: horizontal branches may pass under cards; vertical layout retains avoidance', () => {
     const h = lay(shortMerge(), 'horizontal')
-    expect(h.at).toEqual({ R: [0, 0], A: [260, 140], B: [520, 0] })
+    expect(h.at).toEqual({ R: [0, 0], A: [260, 0], B: [520, 0] })
     const v = lay(shortMerge(), 'vertical')
     expect(v.at).toEqual({ R: [0, 0], A: [224, 228], B: [0, 456] })
     for (const run of [h, v]) expect([run.refusal, run.plan.remainingPierces]).toEqual([null, 0])
@@ -153,7 +153,7 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
   it('L6: an edge skipping two stages', () => {
     const g = graph([R(), card('A', 'A'), card('B', 'B'), card('C', 'C')], [['R', 'A'], ['A', 'B'], ['B', 'C'], ['R', 'C']])
     const h = lay(g, 'horizontal')
-    expect(h.at).toEqual({ R: [0, 0], A: [260, 140], B: [520, 140], C: [780, 0] })
+    expect(h.at).toEqual({ R: [0, 0], A: [260, 0], B: [520, 0], C: [780, 0] })
     const v = lay(g, 'vertical')
     expect(v.at).toEqual({ R: [0, 0], A: [224, 228], B: [224, 404], C: [0, 632] })
     for (const run of [h, v]) expect([run.refusal, run.plan.remainingPierces]).toEqual([null, 0])
@@ -163,7 +163,7 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
 
   it('L7: branch -> merge, the isolated card apart (below / to the right)', () => {
     expect(lay(branchMerge(), 'horizontal').at).toEqual({
-      R: [0, 0], NA: [260, 0], NB: [260, 140], TA: [520, 0], TB: [520, 140], Z: [780, 0], P: [0, 340],
+      R: [0, 70], NA: [260, 0], NB: [260, 140], TA: [520, 0], TB: [520, 140], Z: [780, 70], P: [0, 340],
     })
     expect(lay(branchMerge(), 'vertical').at).toEqual({
       R: [0, 0], NA: [0, 228], NB: [224, 228], TA: [0, 404], TB: [224, 404], Z: [0, 632], P: [508, 0],
@@ -178,7 +178,7 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
 
   it('L8: five branches and their merge — the farthest branch faces the direction too', () => {
     const h = lay(fiveBranches(), 'horizontal')
-    expect(h.at).toEqual({ R: [0, 0], B0: [564, 0], B1: [564, 140], B2: [564, 280], B3: [564, 420], B4: [564, 560], Z: [1128, 0] })
+    expect(h.at).toEqual({ R: [0, 280], B0: [284, 0], B1: [284, 140], B2: [284, 280], B3: [284, 420], B4: [284, 560], Z: [568, 280] })
     const v = lay(fiveBranches(), 'vertical')
     expect(v.at).toEqual({ R: [0, 0], B0: [0, 900], B1: [224, 900], B2: [448, 900], B3: [672, 900], B4: [896, 900], Z: [0, 1800] })
     expect(sidesOf(applied(fiveBranches(), h.at)).every((side) => side === 'right')).toBe(true)
@@ -209,10 +209,11 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
       [['R', 'A'], ['R', 'B'], ['R', 'C'], ['A', 'B'], ['A', 'C'], ['B', 'C']],
     )
     const h = lay(g, 'horizontal')
-    expect(h.at).toEqual({ R: [0, 0], A: [260, 140], B: [520, 0], C: [780, 0] })
+    expect(h.at).toEqual({ R: [0, 0], A: [260, 0], B: [520, 0], C: [780, 0] })
     const v = lay(g, 'vertical')
     expect(v.at).toEqual({ R: [0, 0], A: [224, 228], B: [0, 456], C: [0, 632] })
-    for (const run of [h, v]) expect([run.refusal, run.plan.remainingPierces]).toEqual([null, 2])
+    expect([h.refusal, h.plan.remainingPierces]).toEqual([null, 0])
+    expect([v.refusal, v.plan.remainingPierces]).toEqual([null, 2])
   })
 
   it('L12: laying L5 out twice gives the same coordinates (also from the laid-out positions)', () => {
@@ -223,9 +224,9 @@ describe('0005-L §5.4 L1 ~ L15 (flowgate.v02.0068 T#2)', () => {
     }
   })
 
-  it('L13: a candidate that skipped the pierce repair is refused (V5 pierce)', () => {
+  it('L13: horizontal permits card crossings; vertical still checks pierce repair', () => {
     const h = lay(shortMerge(), 'horizontal')
-    expect(checkDirectionalLayout(h.plan, [{ nodeId: 'R', x: 0, y: 0 }, { nodeId: 'A', x: 260, y: 0 }, { nodeId: 'B', x: 520, y: 0 }])).toBe('pierce')
+    expect(checkDirectionalLayout(h.plan, [{ nodeId: 'R', x: 0, y: 0 }, { nodeId: 'A', x: 260, y: 0 }, { nodeId: 'B', x: 520, y: 0 }])).toBeNull()
     const v = lay(shortMerge(), 'vertical')
     expect(checkDirectionalLayout(v.plan, [{ nodeId: 'R', x: 0, y: 0 }, { nodeId: 'A', x: 0, y: 176 }, { nodeId: 'B', x: 0, y: 352 }])).toBe('pierce')
   })

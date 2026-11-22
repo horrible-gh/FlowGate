@@ -264,7 +264,7 @@ describe('FlowEdgePath look (items 6 and 7)', () => {
 
   it('is one kind of line: no dashed reference look any more (rev4)', () => {
     const src = readFileSync(join(resolve(__dirname, '../../../src/features/designer/center/canvas'), 'FlowEdgePath.vue'), 'utf8')
-    expect(src).not.toMatch(/stroke-dasharray|flow-edge-reference/)
+    expect(src).not.toMatch(/flow-edge-reference/)
     const edge = mountEdge({ edgeClass: 'reference' }).get('[data-test="designer-canvas-edge"]')
     expect(edge.classes()).not.toContain('flow-edge-reference')
   })
@@ -318,13 +318,13 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
     )
     const edge = () => w.get('[data-test="designer-canvas-edge"]')
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['bottom', 'top'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,108 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,108 L/)
     // The arrow tip sits on the target's top middle and points down into it.
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M128,300 L123,291 L133,291 Z$/)
     ;(w.vm as unknown as { b: GraphNode }).b.computedPosition = { x: 400, y: 20, z: 0 }
     await flushPromises()
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['right', 'left'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,54 C/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,54 L/)
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,74 L391,/)
   })
 })

@@ -98,6 +98,7 @@ export function checkDirectionalLayout(plan: DirectionalLayoutPlan, candidate: r
   }
   // V5: a pierce left on the candidate is one the repair tried.
   for (const [comp, band] of plan.bands) {
+    if (dir === 'horizontal') continue // Lines deliberately pass below other cards.
     if (piercesOf(input, comp, rectOf).some((p) => !band.tried.has(pierceKey(p)))) return 'pierce'
   }
   return null
