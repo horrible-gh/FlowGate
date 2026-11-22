@@ -163,6 +163,19 @@
     <!-- flowgate.v02test.0067 #46: messages wait for the answer after the current one. -->
     <span v-if="activity.code === 'follow_up_waiting'" data-test="tl-follow-up" aria-hidden="true">⏳</span>
     <span class="tl-status-text">{{ statusText }}</span>
+    <!-- flowgate.v02test.0067 card 3: drop the running answer now and answer again with the waiting messages. -->
+    <template v-if="activity.code === 'follow_up_waiting' && replyNow">
+      <button
+        type="button"
+        class="tl-act-btn tl-act-btn--reply-now"
+        data-test="tl-reply-now"
+        :disabled="replyNow.stopping || readOnly"
+        :title="replyNow.editsFiles ? t('gui.conversation.status.follow_up_reply_now_edit_warning') : undefined"
+        :aria-describedby="replyNow.editsFiles ? replyNowWarnId : undefined"
+        @click="emit('reply-now')"
+      >{{ replyNow.stopping ? t('gui.conversation.status.follow_up_reply_now_stopping') : t('gui.conversation.status.follow_up_reply_now') }}</button>
+      <span v-if="replyNow.editsFiles" :id="replyNowWarnId" class="tl-sr" data-test="tl-reply-now-warning">{{ t('gui.conversation.status.follow_up_reply_now_edit_warning') }}</span>
+    </template>
     <template v-if="activity.code === 'run_history_unconfirmed'">
       <button type="button" class="tl-act-btn" data-test="tl-history-retry" @click="emit('retry-history')">{{ t('gui.common.retry') }}</button>
       <button type="button" class="tl-act-btn" data-test="tl-history-dismiss" @click="emit('dismiss-history')">{{ t('gui.conversation.close') }}</button>
@@ -196,9 +209,16 @@ const props = defineProps<{
   /** A decision for this command is in flight. */
   busy?: boolean
   readOnly?: boolean
+  /**
+   * flowgate.v02test.0067 card 3: the [지금 멈추고 다시 답하기] of the follow-up line (code `follow_up_waiting`). Given only
+   * while a message waits; `stopping`: it was pressed and the stop is under way; `editsFiles`: the running call may
+   * edit files, so the button warns that a stop can leave an edit half done.
+   */
+  replyNow?: { stopping: boolean; editsFiles: boolean }
 }>()
 
 const emit = defineEmits<{
+  'reply-now': []
   decide: [decision: CommandDecision]
   'retry-history': []
   'dismiss-history': []
@@ -232,6 +252,7 @@ const commandStateText = computed(() => {
 
 const detailOpen = ref(false)
 const detailId = computed(() => `tl-command-detail-${props.activity.id}`)
+const replyNowWarnId = computed(() => `tl-reply-now-warning-${props.activity.id}`)
 
 /** Every reason the server gave for the outcome, the raw code next to its wording. */
 const errorLines = computed(() => {

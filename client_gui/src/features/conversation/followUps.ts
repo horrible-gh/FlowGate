@@ -22,6 +22,12 @@ export interface FollowUpMark {
   at: number
   /** The follow-up for it has been started once; it is not started again. */
   auto?: boolean
+  /**
+   * 0067 card 3: [지금 멈추고 다시 답하기] was pressed while this message waited. The run is being stopped and, once its
+   * stop is confirmed, ONE call answers the waiting messages. Kept with the mark (not on the screen) so an F5 or another
+   * tab between the press and the confirmed stop still ends in the call — and so a plain [중지] (which clears it) does not.
+   */
+  replyNow?: boolean
 }
 
 /** Why the follow-up waits: the chat's own answer (`run`). Card 4 adds a Flow run (`flow_run`). */
@@ -34,6 +40,10 @@ export interface FollowUpView {
   /** The waiting messages' seqs, oldest first (only the person's messages on screen). */
   waitingSeqs: number[]
   count: number
+  /** [지금 멈추고 다시 답하기] was pressed: the run is being stopped, the new call follows (the button is not pressable again). */
+  stopping: boolean
+  /** The running call may edit files (edit / edit-once): stopping it can leave an edit half done. */
+  editsFiles: boolean
 }
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
@@ -69,6 +79,7 @@ export function writeFollowUps(userId: string, chatId: string, marks: readonly F
     else localStorage.setItem(key, JSON.stringify(marks.slice(-STORAGE_LIMIT).map((m) => ({
       seq: m.seq, providerId: m.providerId, at: m.at,
       ...(m.providerOrigin ? { providerOrigin: m.providerOrigin } : {}), ...(m.auto ? { auto: true } : {}),
+      ...(m.replyNow ? { replyNow: true } : {}),
     }))))
     return true
   } catch {
@@ -80,7 +91,7 @@ export function writeFollowUps(userId: string, chatId: string, marks: readonly F
 export function withFollowUp(marks: readonly FollowUpMark[], mark: FollowUpMark): FollowUpMark[] {
   const old = marks.find((m) => m.seq === mark.seq)
   const next = marks.filter((m) => m.seq !== mark.seq)
-  next.push(old?.auto ? { ...mark, auto: true } : mark)
+  next.push({ ...mark, ...(old?.auto ? { auto: true } : {}), ...(old?.replyNow ? { replyNow: true } : {}) })
   return next.sort((a, b) => a.seq - b.seq)
 }
 
@@ -102,6 +113,20 @@ export function followUpAnswered(turns: readonly ConversationTurn[], seq: number
 /** The marks still waiting for an answer: not answered yet, and not already called for once. */
 export function waitingFollowUps(turns: readonly ConversationTurn[], marks: readonly FollowUpMark[]): FollowUpMark[] {
   return marks.filter((m) => !m.auto && !followUpAnswered(turns, m.seq))
+}
+
+/** Whether the press of [지금 멈추고 다시 답하기] is still waiting on a stop (a flagged mark nobody has answered). */
+export function replyNowRequested(turns: readonly ConversationTurn[], marks: readonly FollowUpMark[]): boolean {
+  return waitingFollowUps(turns, marks).some((m) => m.replyNow)
+}
+
+/** The same marks without the press of [지금 멈추고 다시 답하기] (a refused stop, or a plain [중지] after it). */
+export function withoutReplyNow(marks: readonly FollowUpMark[]): FollowUpMark[] {
+  return marks.map((m) => {
+    const rest = { ...m }
+    delete rest.replyNow
+    return rest
+  })
 }
 
 /** The person's messages among the waiting marks (seqs, oldest first). */
