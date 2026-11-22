@@ -13,10 +13,11 @@ import {
   useQuickMessages,
 } from '@/features/conversation/quickMessages/useQuickMessages'
 
-const net = vi.hoisted(() => ({ list: vi.fn() }))
+const net = vi.hoisted(() => ({ list: vi.fn(), canEdit: vi.fn() }))
 vi.mock('@/features/conversation/quickMessages/api', async (original) => ({
   ...(await original<typeof import('@/features/conversation/quickMessages/api')>()),
   fetchChatQuickMessages: net.list,
+  fetchCanEditQuickMessages: net.canEdit,
 }))
 
 registerAppMessages(i18n)
@@ -71,6 +72,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'ko'
   localStorage.clear()
   net.list.mockReset().mockResolvedValue(LIST)
+  net.canEdit.mockReset().mockResolvedValue(false)
 })
 
 afterEach(() => {

@@ -38,13 +38,20 @@
     <!-- Voice input: live partial text, "transcribing…" with 취소, and the last voice notice. -->
     <ComposerVoiceNotice :voice="voice" />
 
-    <!-- flowgate.v02test.0072: quick message buttons right above the input (card 3 fills the row's actions slot). -->
+    <!-- flowgate.v02test.0072: quick message buttons right above the input; ＋ 추가 / ✎ 편집 / right-click edit are
+         the row's own (only with project.settings.edit). -->
     <ComposerQuickMessages
       :items="quick.items.value"
       :visible="quick.visible.value"
       :is-on="quick.isOn"
       :disabled="!!readOnly"
+      :can-edit="quick.canEdit.value"
+      :editing="quick.editing.value"
+      :save="(input, id) => (id === null ? quick.create(input) : quick.update(id, input))"
+      :remove="quick.remove"
+      :move="quick.move"
       @toggle="quick.toggle"
+      @update:editing="quick.setEditing"
     />
 
     <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
