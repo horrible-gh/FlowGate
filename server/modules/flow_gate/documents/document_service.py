@@ -194,6 +194,15 @@ def _update_document_fields(doc_id, updates, actor_user_id):
     ended = _chat_auto_title_ended(existing, updates)
     if ended is not None:
         updates["meta"] = ended
+    if "title" in updates and existing.get("type_code") == "CH":
+        try:
+            meta = json.loads(updates.get("meta") or existing.get("meta") or "{}")
+        except ValueError:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["first_name_manual"] = True
+        updates["meta"] = json.dumps(meta, ensure_ascii=False)
     doc = db_docs.update(doc_id, updates)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
