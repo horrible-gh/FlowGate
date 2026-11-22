@@ -62,6 +62,11 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'voice/recorder.ts',
         'voice/useVoiceInput.ts',
         'voice/voiceStore.ts',
+        // flowgate.v02test.0072: the quick message row above the input and its module (API, composable, strings).
+        'ComposerQuickMessages.vue',
+        'quickMessages/api.ts',
+        'quickMessages/messages.ts',
+        'quickMessages/useQuickMessages.ts',
         'api.ts',
         'changeDiff.ts',
         // B: the chat's own request failures kept in its history.
@@ -93,7 +98,7 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
   it('reaches the server only through api.ts and the shared transport', () => {
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) {
-        if (/^@shared\/api$|^axios$/.test(spec)) expect(['api.ts', 'voice/api.ts'], spec).toContain(rel(file))
+        if (/^@shared\/api$|^axios$/.test(spec)) expect(['api.ts', 'voice/api.ts', 'quickMessages/api.ts'], spec).toContain(rel(file))
         expect(spec, rel(file)).not.toMatch(/^pinia$|^vue-router$|^axios$/)
       }
     }
@@ -107,6 +112,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
       /^\.\/[A-Za-z]+(\.vue)?$/,
       // The voice module's own files.
       /^\.\/voice\/[A-Za-z]+$/,
+      // The quick message module's own files (flowgate.v02test.0072).
+      /^\.\/quickMessages\/[A-Za-z]+$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^\.\.\/\.\.\/core\/interaction\/clipboard$/,
       /^\.\.\/\.\.\/core\/markdown\/markdownRenderer$/,
@@ -163,3 +170,4 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
     }
   })
 })
+

@@ -38,6 +38,15 @@
     <!-- Voice input: live partial text, "transcribing…" with 취소, and the last voice notice. -->
     <ComposerVoiceNotice :voice="voice" />
 
+    <!-- flowgate.v02test.0072: quick message buttons right above the input (card 3 fills the row's actions slot). -->
+    <ComposerQuickMessages
+      :items="quick.items.value"
+      :visible="quick.visible.value"
+      :is-on="quick.isOn"
+      :disabled="!!readOnly"
+      @toggle="quick.toggle"
+    />
+
     <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
       <textarea
         ref="inputEl"
@@ -50,6 +59,7 @@
         :disabled="disabled || readOnly || sending"
         @input="onInput"
         @paste="onPaste"
+        @keydown="onQuickKey"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
       <!-- Voice input: recording pill and mic (always rendered so the row keeps its grid columns). -->
@@ -78,7 +88,7 @@
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
-        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === '' || attach.blocked.value"
+        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || (draft.trim() === '' && !hasQuick) || attach.blocked.value"
         @click="isStop && emit('stop')"
       >
         <!-- T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
@@ -148,6 +158,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch,
 import { useI18n } from 'vue-i18n'
 import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
+import ComposerQuickMessages from './ComposerQuickMessages.vue'
 import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
@@ -155,6 +166,7 @@ import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import ComposerVoiceNotice from './ComposerVoiceNotice.vue'
 import { createComposerImages, isImageFile } from './composerImages'
 import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
+import { buildOutgoingText, useQuickMessages } from './quickMessages/useQuickMessages'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
 import { deleteMessageAudio, type TurnAudio } from './voice/api'
@@ -231,7 +243,8 @@ const attach = createComposerImages(() => ownerRef.value)
 attach.restore(visibleOwner)
 const draft = ref(loadDraft(visibleOwner))
 const revisions = new Map<string, number>()
-const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[] }>()
+// `draftBody` = what the input held at the press (the snapshot body also carries the quick messages sent with it).
+const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[]; draftBody?: string }>()
 const sameScope = (a: DraftOwner, b: DraftOwner) => a.userId === b.userId && a.projectId === b.projectId && a.groupId === b.groupId && a.intentId === b.intentId
 
 watch(
@@ -256,6 +269,20 @@ watch(
     void nextTick(autoGrow)
   },
 )
+
+// ── flowgate.v02test.0072: quick messages — the row above the input and the text a send carries ──────────────
+const quick = useQuickMessages({ projectId: () => props.projectId, userId: draftUserId })
+watch(() => [props.projectId, draftUserId()] as const, () => { void quick.load() }, { immediate: true })
+/** An on quick message lets an empty input be sent (the quick messages alone go out). */
+const hasQuick = computed(() => quick.active.value.length > 0)
+
+/** Alt+1..9 in the input turns the row's 1st..9th button on / off. */
+function onQuickKey(event: KeyboardEvent): void {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return
+  const digit = /^Digit([1-9])$/.exec(event.code ?? '')?.[1] ?? /^[1-9]$/.exec(event.key ?? '')?.[0]
+  if (!digit || props.readOnly) return
+  if (quick.toggleAt(Number(digit) - 1)) event.preventDefault()
+}
 
 // null = no stop button (the send button shows).
 const stopMode = computed<'available' | 'requested' | null>(() => {
@@ -408,31 +435,38 @@ async function submit(): Promise<void> {
   trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
-  if (!owner || !text || props.disabled || props.readOnly || props.sending || aiPending.value) return
+  // the on quick messages (row order) go after the typed text; a hidden row (load failed) adds nothing.
+  const quickSent = quick.active.value
+  if (!owner || (!text && !quickSent.length) || props.disabled || props.readOnly || props.sending || aiPending.value) return
   // An image still uploading, failed or gone holds the send: it would otherwise be left out without a word.
   if (attach.blocked.value) return
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
   const imageIds = [...attach.readyIds.value]
-  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0,
-    ...(imageIds.length ? { images: imageIds } : {}) }
-  const send = { snapshot, owners: [snapshot.owner] }
+  const draftBody = draft.value
+  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent.map((item) => item.message)) : text
+  // With quick messages the snapshot body is the text that went out, so a retried bubble still matches this send.
+  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: quickSent.length ? outgoing : draftBody,
+    revision: revisions.get(draftKey(owner)) ?? 0, ...(imageIds.length ? { images: imageIds } : {}) }
+  const send = { snapshot, owners: [snapshot.owner], draftBody }
   // Persist before the first await, even if this owner is hidden by the time it fails.
-  saveDraft(owner, snapshot.body)
+  saveDraft(owner, draftBody)
   pending.add(send)
   let ok = false
   try {
-    ok = await props.onSend(text, snapshot, trace)
+    ok = await props.onSend(outgoing, snapshot, trace)
   } finally {
     pending.delete(send)
   }
   if (!ok) return
+  // accepted: the once (1회) buttons that went with it turn off; a failed send keeps them on.
+  quick.consume(quickSent)
   // The server linked the images to the message: they leave the composer (they are not deleted).
   if (imageIds.length) attach.sent(send.owners, imageIds)
   for (const target of send.owners) {
     const key = draftKey(target)
-    if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== snapshot.body) continue
+    if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== draftBody) continue
     saveDraft(target, '')
-    if (!visibleOwner || draftKey(visibleOwner) !== key || draft.value !== snapshot.body) continue
+    if (!visibleOwner || draftKey(visibleOwner) !== key || draft.value !== draftBody) continue
     draft.value = ''
     await nextTick()
     if (visibleOwner && draftKey(visibleOwner) === key) {
@@ -648,3 +682,4 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   min-width: 0;
 }
 </style>
+
