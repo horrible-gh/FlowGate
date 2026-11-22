@@ -528,9 +528,9 @@ def _content_submit(ctx: dict) -> dict:
                     "<This TR's own approval commit subject, used verbatim. Conventional "
                     "commit format: type(scope): summary — e.g. "
                     "'fix(git): preserve finalized commit subject' or "
-                    "'feat(workflow): add TR commit point'. Must be plain English (ASCII); "
-                    "non-English text is ignored and a fixed fallback is used instead. "
-                    "Leave empty and the commit becomes 'chore: approve <doc-code>'.>"
+                    "'feat(workflow): add TR commit point'. Must be one line of plain English (ASCII) "
+                    "in type(scope): summary format. Empty or non-ASCII messages "
+                    "are rejected at submission.>"
                 )
 
     is_work_plan = str(doc_type).upper() == WORK_PLAN_TYPE
