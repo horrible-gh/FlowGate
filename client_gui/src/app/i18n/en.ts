@@ -1301,6 +1301,13 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: 'Will answer next, once the current reply ends',
+      follow_up_waiting_count: '{n} waiting message(s)',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: 'Stop now and answer again',
+      follow_up_reply_now_stopping: 'Stopping…',
+      follow_up_reply_now_edit_warning: 'An edit in progress may be left half done',
       run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
