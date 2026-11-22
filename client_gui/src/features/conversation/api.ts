@@ -510,6 +510,8 @@ interface RawTurn {
   body?: string | null
   based_on_seq?: number | null
   stale_since_seq?: number | null
+  /** 0067 #2: an AI answer of a read chat that started while a card of the Flow ran (server `chat_run_observations`). */
+  observed_during_card_run?: boolean | null
   created_at?: string | null
   images?: RawTurnImage[] | null
   audio?: unknown
@@ -565,6 +567,7 @@ export function toTurn(raw: RawTurn): ConversationTurn {
     sourceRunId: textOrNull(raw.source_run_id),
     basedOnSeq: raw.based_on_seq ?? null,
     staleSinceSeq: raw.stale_since_seq ?? null,
+    ...(raw.observed_during_card_run === true ? { observedDuringCardRun: true } : {}),
     createdAt: raw.created_at ?? null,
   }
 }
@@ -842,6 +845,17 @@ export async function fetchActiveChatRun(chatId: string): Promise<string | null>
   )
   if (!data?.active || !data.run_id || data.doc_ref !== chatId || data.status === 'finished') return null
   return data.run_id
+}
+
+/**
+ * flowgate.v02test.0067 #2: GET /api/v1/flows/{flow_id}/runs/current — only the status of the Flow's Graph run
+ * (`running` / `paused` / `stopping` / `idle` …), or null when the Flow has no run. The Flow id is the chat's group id
+ * (the server's 409 `graph_run_locked` names it as `flow_id`). A refused or failed read rejects (the caller waits on).
+ */
+export async function fetchFlowRunStatus(flowId: string): Promise<string | null> {
+  const data = await call(() => getRequest<{ run?: { status?: unknown } | null }>(`${API}/flows/${encodeURIComponent(flowId)}/runs/current`))
+  const status = data?.run?.status
+  return typeof status === 'string' && status ? status : null
 }
 
 // ── Chat settings ────────────────────────────────────────────────────────────────────

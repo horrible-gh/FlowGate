@@ -77,6 +77,7 @@
           :read-only="readOnly"
           :reply-now="item.kind === 'status' && item.activity.code === 'follow_up_waiting' ? replyNow : undefined"
           @reply-now="emit('reply-now')"
+          @cancel-wait="emit('cancel-wait')"
           @retry-history="emit('retry-history')"
           @dismiss-history="emit('dismiss-history')"
           @decide="(decision) => emit('decide', item.activity.id, decision)"
@@ -139,6 +140,8 @@ const emit = defineEmits<{
   'retry-history': []
   'dismiss-history': []
   'reply-now': []
+  /** flowgate.v02test.0067 #2: [중지] of the «카드 실행이 끝나면 이어서 답합니다» line (gives up the wait only). */
+  'cancel-wait': []
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]

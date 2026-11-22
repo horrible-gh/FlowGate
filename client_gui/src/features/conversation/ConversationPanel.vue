@@ -22,6 +22,8 @@
       :read-only="readOnly"
       :draft="start.isDraft.value"
       :title="headerTitle"
+      :flow-running="sourceLocked || session.flowRunning.value"
+      :chat-running="session.running.value"
       @select="session.selectChat"
       @rename="start.rename"
       @create="onCreate"
@@ -56,6 +58,7 @@
       :reply-now="replyNowView"
       @mutate="session.mutateTurn"
       @reply-now="session.replyNow"
+      @cancel-wait="session.cancelFlowWait"
       @retry-history="session.recover({ history: true })"
       @dismiss-history="session.dismissHistoryWarning"
       @load-older="session.loadOlder"
@@ -292,7 +295,11 @@ const stopState = computed(() => {
 // flowgate.v02test.0067 card 3: [지금 멈추고 다시 답하기] sits on the follow-up line, only while a message waits.
 const replyNowView = computed(() => {
   const view = session.followUp.value
-  return view && !props.readOnly ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
+  return view && view.reason === 'run' && !props.readOnly ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
+})
+// flowgate.v02test.0067 #2: the Designer saw the Flow's run lock go off — a call waiting for the Flow looks again now.
+watch(() => props.sourceLocked, (locked, was) => {
+  if (was && !locked) session.wakeFlowWait()
 })
 function onStop(): void {
   if (session.startStop.value !== 'none') void session.stopRun()

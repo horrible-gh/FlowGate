@@ -53,6 +53,11 @@ export interface ConversationTurn {
   sourceRunId?: string | null
   basedOnSeq?: number | null
   staleSinceSeq?: number | null
+  /**
+   * flowgate.v02test.0067 #2: the answer of a read chat that started while a card of the Flow ran — the files it read
+   * may have been in the middle of the card's change («카드 실행 중에 본 내용»). Only an AI turn carries it.
+   */
+  observedDuringCardRun?: boolean
   createdAt: string | null
 }
 
