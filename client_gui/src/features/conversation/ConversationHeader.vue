@@ -43,7 +43,8 @@
     </button>
 
     <div v-if="listOpen" class="conv-list-pop" data-test="conv-list-pop" role="listbox" :aria-label="t('gui.conversation.header.list')">
-      <p v-if="chatsStatus === 'loading'" class="conv-list-state">{{ t(reconnecting ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading') }}</p>
+      <!-- 0060: a failed list while the app is reconnecting (the App Shell banner) says so; it reads again by itself. -->
+      <p v-if="chatsStatus === 'loading' || (chatsStatus === 'error' && reconnecting)" class="conv-list-state">{{ t(reconnecting ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading') }}</p>
       <p v-else-if="chatsStatus === 'error'" class="conv-list-state conv-list-state--error">
         {{ t('gui.conversation.header.list_failed') }}
         <button type="button" class="conv-list-retry" @click="emit('reload')">{{ t('gui.conversation.retry') }}</button>

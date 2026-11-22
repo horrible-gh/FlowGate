@@ -1,5 +1,6 @@
 import { onScopeDispose, ref, watch, type Ref } from 'vue'
 import { subscribeProjectEvents } from '@/features/project/projectEvents'
+import { useSelfHeal } from '@shared/selfHeal'
 import {
   useProjectStore,
   type FlowAiActivity,
@@ -163,6 +164,8 @@ export function useFlowFileExplorer(projectId: Ref<string | null>, flow: Ref<Flo
   let active: { key: string; promise: Promise<void> } | null = null
   let pendingRecovery = false
   let pendingRefresh = false
+  // A read of this composable is in flight (reactive twin of `active`, for useSelfHeal).
+  const reading = ref(false)
   const currentKey = () => `${projectId.value}:${flow.value?.groupId}`
   const failed = () => error.value || refreshError.value || !aiActivityKnown.value ||
     changes.value.kind === 'error' ||
@@ -180,11 +183,13 @@ export function useFlowFileExplorer(projectId: Ref<string | null>, flow: Ref<Flo
     const promise = load().finally(() => {
       if (active?.promise !== promise) return
       active = null
+      reading.value = false
       const retry = !disposed && key === currentKey() && (pendingRefresh || (pendingRecovery && failed()))
       pendingRecovery = false
       if (retry) return reload()
     })
     active = { key, promise }
+    reading.value = true
     return promise
   }
 
@@ -203,6 +208,14 @@ export function useFlowFileExplorer(projectId: Ref<string | null>, flow: Ref<Flo
     if (pid) cleanup(subscribeProjectEvents(pid, { events: [], event: () => {}, resync: recover }))
   }, { immediate: true, flush: 'sync' })
   onScopeDispose(() => { disposed = true; seq++; pendingRecovery = false; stop() })
+
+  // 0060: a failed tree / change list reads again by itself (5 s, 10 s, 20 s, then every 30 s), without waiting for
+  // the event stream's resync.
+  useSelfHeal({
+    failed: () => !!projectId.value && !!flow.value && failed(),
+    busy: () => reading.value,
+    reload: () => { void reload() },
+  })
 
   return {
     nodes, commit, loading, error, refreshError, changes,

@@ -23,6 +23,7 @@ interface RefreshResponse {
 
 import { notifyGetRetry } from './requestRecovery'
 import { createConnectionRecovery } from './connectionRecovery'
+import { setConnectionLost } from './connectionStatus'
 
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
@@ -769,6 +770,7 @@ const connectionRecovery = createConnectionRecovery(
     }
   },
   () => window.dispatchEvent(new Event('fg:connection_recovered')),
+  setConnectionLost,
 )
 
 const isRecoveryFailure = (error: AxiosError): boolean => {

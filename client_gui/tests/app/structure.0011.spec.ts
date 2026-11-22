@@ -51,8 +51,12 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
   it('the App Shell only assembles layout: Topbar, Sidebar, RouterView, the Project Dialog and the document windows mounts (T0011 §5, T0010/T#3 §2)', () => {
     const imports = importsOf(read(join(SRC, 'app/App.vue')))
     expect(imports.sort()).toEqual([
+      // 0060: the one connection banner while the server cannot be reached.
+      './components/ConnectionBanner.vue',
       './components/Sidebar.vue',
       './components/Topbar.vue',
+      // The merge windows mount (features/designer's public surface).
+      '@/features/designer',
       '@/features/documentWindow',
       '@/features/project',
       'vue-router',
