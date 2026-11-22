@@ -1585,7 +1585,10 @@ async function refreshArchiveTree(pid: string) {
     const flows = new Map(nodes.filter((n) => n.kind === 'group').map((n) => [n.id, n]))
     for (const tab of [...center.state.tabs]) {
       const flow = flows.get(tab.flowId)
-      if (flow) center.setFlowArchived(tab.flowId, !!flow.archivedAt)
+      if (flow) {
+        center.setFlowArchived(tab.flowId, !!flow.archivedAt)
+        renameFlowTab(pid, tab.flowId, flow.title || flow.label)
+      }
       else {
         center.closeFlow(tab.flowId)
         projectStore.forgetRecentFlow(tab.flowId)

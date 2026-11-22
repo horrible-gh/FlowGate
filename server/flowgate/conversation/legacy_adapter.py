@@ -187,6 +187,11 @@ def get_project(project_id: str) -> Optional[dict]:
     return db_projects.get_by_id(project_id)
 
 
+def has_graph_definition(flow_id: str) -> bool:
+    from modules.flow_gate.graph_workflow.store import definition_store
+    return bool(definition_store.draft(flow_id) or definition_store.latest_revision_no(flow_id))
+
+
 def get_group(group_id: str) -> Optional[dict]:
     from modules.flow_gate.db import groups as db_groups
 
