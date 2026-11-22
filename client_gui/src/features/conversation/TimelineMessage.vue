@@ -73,6 +73,23 @@
         <button type="button" :disabled="mutating || (editing && !editText.trim())" data-test="tl-mutate-save" @click="saveMutation">{{ t('gui.conversation.save') }}</button>
         <button type="button" :disabled="mutating" @click="editing = false; deleting = false">{{ t('gui.conversation.cancel') }}</button>
       </div>
+      <!-- flowgate.v02test.0072 card 4: a message sent with quick messages shows only the typed text, and under it the
+           quick message titles in row order in their kind colour (red 계속 / blue 1회); hovering a title shows its text.
+           A body without (well-formed) markers is shown as written. Copy / ⋯ edit keep using the body as written. -->
+      <div v-else-if="isUser && quickView" class="tl-quick-msg" data-test="tl-quick-msg">
+        <div v-if="quickView.text" class="tl-text" data-test="tl-user-text">{{ quickView.text }}</div>
+        <div class="tl-quick-titles" data-test="tl-quick-titles">
+          <span
+            v-for="(item, index) in quickView.quick"
+            :key="index"
+            class="tl-quick-title"
+            :class="item.kind === 'sticky' ? 'is-sticky' : 'is-once'"
+            data-test="tl-quick-title"
+            :data-kind="item.kind"
+            :title="item.message"
+          >{{ item.title || item.message.trim().slice(0, 12) }}</span>
+        </div>
+      </div>
       <div v-else-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
       <!-- the message's images (thumbnails; one opens the original). -->
@@ -97,6 +114,7 @@ import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
 import TimelineAudio from './TimelineAudio.vue'
 import TimelineImages from './TimelineImages.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
+import { parseQuickBody } from './quickMessages/quickMarkup'
 import { formatTimelineTime } from './timeline'
 import type { SendFailure } from './timeline'
 import type { CheckpointKind, ConversationTurn } from './types'
@@ -141,6 +159,8 @@ function saveMutation(): void {
 }
 watch(() => props.turn.deletedAt, () => { editing.value = false; deleting.value = false; editText.value = '' })
 const isUser = computed(() => props.turn.speaker === 'user')
+/** The typed text and the attached quick messages of a user message; null = show the body as written. */
+const quickView = computed(() => (isUser.value ? parseQuickBody(props.turn.body) : null))
 const failureText = computed(() => {
   const failure = props.failed ? props.failure : null
   if (!failure) return ''
@@ -248,6 +268,25 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
 
 <style scoped>
 .tl-edit-input { width: 100%; min-height: 5em; box-sizing: border-box; font: inherit; }
+/* card 4 (시안 v7): small titles only — no background, border or icon; the colour tells the kind. */
+.tl-quick-titles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.tl-quick-title {
+  cursor: default;
+  white-space: nowrap;
+}
+.tl-quick-title.is-sticky {
+  color: var(--fg2-status-danger-fg);
+}
+.tl-quick-title.is-once {
+  color: var(--fg2-status-info-fg);
+}
 .tl-seen-during-run {
   flex: 0 0 auto;
   padding: 0 5px;

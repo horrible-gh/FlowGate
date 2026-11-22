@@ -450,7 +450,7 @@ async function submit(): Promise<void> {
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
   const imageIds = [...attach.readyIds.value]
   const draftBody = draft.value
-  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent.map((item) => item.message)) : text
+  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent) : text
   // With quick messages the snapshot body is the text that went out, so a retried bubble still matches this send.
   const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: quickSent.length ? outgoing : draftBody,
     revision: revisions.get(draftKey(owner)) ?? 0, ...(imageIds.length ? { images: imageIds } : {}) }

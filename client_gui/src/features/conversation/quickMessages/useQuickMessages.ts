@@ -22,6 +22,7 @@ import {
   type QuickMessage,
   type QuickMessageInput,
 } from './api'
+import { buildQuickBody, type QuickMarkupItem } from './quickMarkup'
 
 export type QuickRowStatus = 'idle' | 'loading' | 'ready' | 'hidden'
 
@@ -56,9 +57,12 @@ export function saveStickyIds(userId: string, projectId: string, ids: Iterable<n
   } catch { /* best effort: storage failures never block the row */ }
 }
 
-/** The outgoing text: the typed message, then each quick message on its own line (empty parts are left out). */
-export function buildOutgoingText(text: string, phrases: readonly string[]): string {
-  return [text, ...phrases].map((part) => part.trim()).filter(Boolean).join('\n')
+/**
+ * The outgoing text: the typed message, then each on quick message (row order) wrapped in its marker block, so the
+ * timeline can show only the typed text plus the small titles (card 4). Format and rules: `./quickMarkup`.
+ */
+export function buildOutgoingText(text: string, items: readonly QuickMarkupItem[]): string {
+  return buildQuickBody(text, items)
 }
 
 export interface QuickMessagesOptions {
