@@ -83,6 +83,12 @@ def release_owned_lease(run: dict, reason: str) -> None:
     if run.get("action_scope") == "resolve_base_dirty":
         project_ai_leases.release(str(run.get("project_id") or ""), run["run_id"])
         row = project_ai_leases.get_active(str(run.get("project_id") or ""))
+    elif run.get("lease_scope") == "conversation":
+        from modules.flow_gate.db import chat_ai_leases
+        chat_ai_leases.release(run["group_id"], run["run_id"], reason=reason)
+        if chat_ai_leases.get_by_run_id(run["run_id"]):
+            raise RuntimeError("terminal chat lease still belongs to this run")
+        return
     elif run.get("group_id"):
         group_ai_leases.release(run["group_id"], run["run_id"], reason=reason)
         row = group_ai_leases.get(run["group_id"])
