@@ -419,6 +419,7 @@ def resolve_actor(actor: dict[str, Any], display_name_hint: Optional[str] = None
 
 
 def _turn_wire(row: dict, *, images=None) -> dict:
+    from modules.flow_gate.db import chat_ai_leases
     return {
         "seq": int(row["seq"]),
         "speaker": row["speaker"],
@@ -437,6 +438,10 @@ def _turn_wire(row: dict, *, images=None) -> dict:
             int(row["stale_since_seq"]) if row.get("stale_since_seq") is not None else None
         ),
         "source_run_id": row.get("source_run_id"),
+        "observed_during_card_run": (
+            row.get("speaker") == "ai" and
+            chat_ai_leases.observation(row.get("source_run_id"), row.get("doc_id"))
+        ),
         "created_at": row["created_at"],
     }
 

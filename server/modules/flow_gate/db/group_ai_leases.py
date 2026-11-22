@@ -109,10 +109,16 @@ def get_by_run_id(run_id: str) -> Optional[dict]:
             for row in _memory.values():
                 if row.get("run_id") == run_id:
                     return dict(row)
-            return None
-    return get_store()._fetch_one(
+            from . import chat_ai_leases
+            return chat_ai_leases.get_by_run_id(run_id)
+    row = get_store()._fetch_one(
         "SELECT * FROM group_ai_leases WHERE run_id = ?", [run_id]
     )
+
+    if row is not None:
+        return row
+    from . import chat_ai_leases
+    return chat_ai_leases.get_by_run_id(run_id)
 
 
 def get_by_token_id(token_id: str) -> Optional[dict]:
@@ -123,10 +129,16 @@ def get_by_token_id(token_id: str) -> Optional[dict]:
             for row in _memory.values():
                 if row.get("token_id") == token_id:
                     return dict(row)
-            return None
-    return get_store()._fetch_one(
+            from . import chat_ai_leases
+            return chat_ai_leases.get_by_token_id(token_id)
+    row = get_store()._fetch_one(
         "SELECT * FROM group_ai_leases WHERE token_id = ?", [token_id]
     )
+
+    if row is not None:
+        return row
+    from . import chat_ai_leases
+    return chat_ai_leases.get_by_token_id(token_id)
 
 
 def get(group_id: str) -> Optional[dict]:
@@ -384,6 +396,9 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
 
 def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: str,
              worker_identity: Optional[str], ttl_seconds: int) -> Optional[dict]:
+    from . import chat_ai_leases
+    if chat_ai_leases.get_by_run_id(run_id):
+        return chat_ai_leases.activate(group_id, run_id, token_id, action_scope, worker_identity, ttl_seconds)
     stamp, expires = now_iso(), _expiry(ttl_seconds + ACTIVE_GRACE_SEC)
     if _using_memory():
         with _memory_lock:
@@ -415,6 +430,9 @@ def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: 
 
 
 def heartbeat(group_id: str, run_id: str, ttl_seconds: int = ACTIVE_HEARTBEAT_TTL_SEC) -> bool:
+    from . import chat_ai_leases
+    if chat_ai_leases.get_by_run_id(run_id):
+        return chat_ai_leases.heartbeat(group_id, run_id, ttl_seconds)
     stamp, expires = now_iso(), _expiry(ttl_seconds)
     if _using_memory():
         with _memory_lock:
@@ -475,6 +493,9 @@ def update_token(group_id: str, run_id: str, token_id: Optional[str],
     action_scope is optional so a plain (single-scope) run's retry, which passes None, keeps
     leaving it untouched exactly as before.
     """
+    from . import chat_ai_leases
+    if chat_ai_leases.get_by_run_id(run_id):
+        return chat_ai_leases.update_token(group_id, run_id, token_id, action_scope)
     stamp = now_iso()
     if _using_memory():
         with _memory_lock:
@@ -502,6 +523,9 @@ def release(group_id: str, run_id: str, reason: str = "released") -> bool:
     """reason distinguishes a normal worker-finish release from a manual/forced one
     -- see the callers in admission.py, chain.py,
     finalize.py and review.py for the concrete reasons each path uses."""
+    from . import chat_ai_leases
+    if chat_ai_leases.get_by_run_id(run_id):
+        return chat_ai_leases.release(group_id, run_id, reason)
     if _using_memory():
         with _memory_lock:
             row = _memory.get(group_id)
