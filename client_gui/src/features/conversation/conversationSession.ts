@@ -19,7 +19,8 @@ import { createHttpConversationSource, type ConversationSource } from './convers
 import { buildTimeline, mergeTurns, replaceServerActivities, sendFailureOf, upsertActivity, type PendingTurn, type SendFailure, type TimelineItem } from './timeline'
 import { finishedRunFailed, runBelongsToChat, runBodyState, runStatusLines, type RunBodyState, type TurnReadResult } from './runAssessment'
 import {
-  followUpStorageKey, readFollowUps, waitingFollowUps, waitingMessageSeqs, withFollowUp, writeFollowUps,
+  followUpStorageKey, readFollowUps, replyNowRequested, waitingFollowUps, waitingMessageSeqs, withFollowUp, withoutReplyNow,
+  writeFollowUps,
   type FollowUpMark, type FollowUpView, type RunEnd,
 } from './followUps'
 import { chatErrorActivity, keepLocalChatError, newChatErrorId, readLocalChatErrors, redactChatError, type ChatErrorRecord } from './chatErrors'
@@ -331,6 +332,13 @@ export interface ConversationSession {
    * (the run id is not known yet); a running call is cancelled by its run id.
    */
   stopRun(): Promise<void>
+  /**
+   * flowgate.v02test.0067 card 3 — [지금 멈추고 다시 답하기]: stops the open chat's run the way [중지] does and, once
+   * the stop is confirmed (the run has ended, not before), calls the AI once more; that call reads the waiting messages
+   * too. Only while a message waits (`followUp`); pressing it again meanwhile does nothing. A refused stop leaves the
+   * run and the waiting messages as they were.
+   */
+  replyNow(): Promise<void>
   /** Resolves the chat mention; the screen writes it to the clipboard (it owns the click). */
   issueMention(): Promise<string | null>
   setManualCopyText(text: string | null): void
@@ -800,7 +808,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
    * F5, another chat or Flow and another tab of this browser keep it) and, once the run has ended, ONE call answers
    * every waiting message — on the AI of the latest one. The same happens to a message whose call met another tab's
    * run (409 run_in_progress): that run is followed and judged when it ends. When the run ends:
-   *   - stopped ([중지]) or failed (or its end could not be confirmed): no call; the marks go, the messages stay;
+   *   - stopped ([중지]) or failed (or its end could not be confirmed): no call; the marks go, the messages stay —
+   *     except a stop made by [지금 멈추고 다시 답하기] (card 3: the marks carry `replyNow`), which is called for as if
+   *     the run had ended done: the stop and the new call are one act;
    *   - done: the marks an AI answer has read since (`based_on_seq`, else `stale_since_seq`) go; the rest are called
    *     for once (`auto`) — a follow-up that ends without covering them does not call again (no loop).
    * Opening a chat whose run ended meanwhile (F5, back from another chat) judges the same way from its last run.
@@ -814,7 +824,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if (!chatId || state.runId === null || shown.chatId !== chatId || !shown.marks.length) return null
     if (!waitingFollowUps(state.turns, shown.marks).length) return null
     const waitingSeqs = waitingMessageSeqs(state.turns, shown.marks)
-    return { chatId, reason: 'run', waitingSeqs, count: waitingSeqs.length }
+    return {
+      chatId, reason: 'run', waitingSeqs, count: waitingSeqs.length,
+      stopping: replyNowRequested(state.turns, shown.marks),
+      // the run's own access once its detail is read; before that (an adopted run, F5) the chat's mode, the safe side.
+      editsFiles: (state.runDisplay?.access ?? accessOfMode(state.settings.sourceAccessMode)) === 'read_write',
+    }
   })
 
   function followUpLine(view: FollowUpView): StatusActivity {
@@ -861,9 +876,12 @@ export function createConversationSession(options: ConversationSessionOptions = 
       refreshFollowUps(chatId)
       return
     }
-    const waiting = end === 'done' ? waitingFollowUps(state.turns, marks) : []
+    const unanswered = waitingFollowUps(state.turns, marks)
+    // card 3: a run stopped for [지금 멈추고 다시 답하기] is answered again; a failed one never is, and a [중지] pressed
+    // by the person (which cleared the `replyNow` marks) is not.
+    const waiting = end === 'done' || (end === 'stopped' && unanswered.some((m) => m.replyNow)) ? unanswered : []
     // the marks it calls for stay (as `auto`) until the next end: a mark is answered at most once automatically.
-    storeFollowUps(chatId, waiting.map((m) => ({ ...m, auto: true })))
+    storeFollowUps(chatId, withoutReplyNow(waiting).map((m) => ({ ...m, auto: true })))
     const latest = waiting.at(-1)
     if (latest) void startAiRun(latest.providerId, latest.providerOrigin, null)
   }
@@ -2756,9 +2774,9 @@ export function createConversationSession(options: ConversationSessionOptions = 
    *   it, so pollRun shows it stopping and ending.
    * A stop without an answer (network) is kept for an F5 and shown as unconfirmed; the button can be pressed again.
    */
-  async function stopStarting(chatId: string): Promise<void> {
+  async function stopStarting(chatId: string): Promise<StopOutcome> {
     const press = liveStart
-    if (!press || press.chatId !== chatId || press.stopRequested || !source.cancelChatStart) return
+    if (!press || press.chatId !== chatId || press.stopRequested || !source.cancelChatStart) return 'idle'
     press.stopRequested = true
     state.cancelling = true
     const gen = chatGen
@@ -2766,20 +2784,22 @@ export function createConversationSession(options: ConversationSessionOptions = 
     try {
       const answer = await source.cancelChatStart(chatId, press.requestId)
       forgetStartStop(press.requestId)
-      if (answer.state !== 'cancelled') return
+      if (answer.state !== 'cancelled') return 'sent'
       press.stopped = true
-      if (!isCurrentChat(chatId, gen) || state.runId !== 'starting' || liveStart !== press) return
+      if (!isCurrentChat(chatId, gen) || state.runId !== 'starting' || liveStart !== press) return 'sent'
       noteRunEnd(chatId, gen, 'stopped')
       state.runId = null
       state.cancelling = false
       notify('info', 'start_stopped')
+      return 'sent'
     } catch (error) {
       if (!isNoResponse(error)) forgetStartStop(press.requestId)
       press.stopRequested = false
-      if (!isCurrentChat(chatId, gen)) return
+      if (!isCurrentChat(chatId, gen)) return isNoResponse(error) ? 'unconfirmed' : 'refused'
       state.cancelling = false
       if (isNoResponse(error)) notify('warning', 'cancel_unconfirmed')
       else notify('danger', 'cancel_failed', messageOf(error))
+      return isNoResponse(error) ? 'unconfirmed' : 'refused'
     }
   }
 
@@ -2796,32 +2816,76 @@ export function createConversationSession(options: ConversationSessionOptions = 
     }
   }
 
-  async function stopRun(): Promise<void> {
+  /** How a stop of the open chat's run went: nothing to stop, asked and not refused, refused, or no answer (it may have arrived). */
+  type StopOutcome = 'idle' | 'sent' | 'refused' | 'unconfirmed'
+
+  /** The stop of the open chat's run, shared by [중지] and [지금 멈추고 다시 답하기] (card 3): the same requests, the same notices. */
+  async function stopCurrentRun(): Promise<StopOutcome> {
     const runId = state.runId
     const chatId = state.activeChatId
-    if (!chatId || state.cancelling) return
+    if (!chatId || state.cancelling) return 'idle'
     if (!runId) {
       stopPendingSend()
-      return
+      return 'idle'
     }
-    if (runId === 'starting') {
-      await stopStarting(chatId)
-      return
-    }
+    if (runId === 'starting') return stopStarting(chatId)
     state.cancelling = true
     const gen = chatGen
     try {
       await source.cancelRun(runId)
       // pollRun observes the finish and releases the button exactly once.
+      return 'sent'
     } catch (error) {
-      if (!isCurrentChat(chatId, gen) || state.runId !== runId) return
+      if (!isCurrentChat(chatId, gen) || state.runId !== runId) return 'sent'
       const status = error instanceof ConversationRequestError ? error.status : null
-      if (status === 404 || status === 410) return
+      // the run is gone already: its end is what pollRun is about to see.
+      if (status === 404 || status === 410) return 'sent'
       state.cancelling = false
       // B: no answer is not a refusal -- the stop may have arrived; say so, and allow another press.
-      if (isNoResponse(error)) notifyIfCurrent(gen, 'warning', 'cancel_unconfirmed')
-      else notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
+      if (isNoResponse(error)) {
+        notifyIfCurrent(gen, 'warning', 'cancel_unconfirmed')
+        return 'unconfirmed'
+      }
+      notifyIfCurrent(gen, 'danger', 'cancel_failed', messageOf(error))
+      return 'refused'
     }
+  }
+
+  /** Takes the press of [지금 멈추고 다시 답하기] off the open chat's waiting messages (the marks stay). */
+  function clearReplyNow(chatId: string): void {
+    const marks = readFollowUps(draftUserId(), chatId)
+    if (marks.some((m) => m.replyNow)) storeFollowUps(chatId, withoutReplyNow(marks))
+  }
+
+  async function stopRun(): Promise<void> {
+    const chatId = state.activeChatId
+    // [중지] is the person giving up this answer: a stop that [지금 멈추고 다시 답하기] left unconfirmed (no answer, the run
+    // went on) must not turn it into a new call. While that stop is in flight (`cancelling`) this press does nothing.
+    if (chatId && !state.cancelling) clearReplyNow(chatId)
+    await stopCurrentRun()
+  }
+
+  /**
+   * flowgate.v02test.0067 card 3 — stop the running answer and answer again, as ONE act.
+   *
+   * The press marks the waiting messages (`replyNow`, kept like the marks themselves) BEFORE it asks for the stop, so
+   * the flag is there whenever the run's end is judged: by this screen, by another tab, or after an F5. The stop is the
+   * one [중지] sends. The new call is not started here: settleFollowUp starts it when the run has ended (the stop is
+   * confirmed by the run's own end, the same as every other end), and it calls once (`auto`) for every waiting message.
+   * Pressing again while the stop is in flight, or after the flag is set, does nothing — so two presses are one call.
+   */
+  async function replyNow(): Promise<void> {
+    const chatId = state.activeChatId
+    const view = followUp.value
+    if (!chatId || !view || view.stopping || state.cancelling || state.runId === null) return
+    const marks = readFollowUps(draftUserId(), chatId)
+    const waiting = new Set(waitingFollowUps(state.turns, marks).map((m) => m.seq))
+    if (!waiting.size) return
+    storeFollowUps(chatId, marks.map((m) => (waiting.has(m.seq) ? { ...m, replyNow: true } : m)))
+    const outcome = await stopCurrentRun()
+    // nothing was stopped (no run to stop, or the server refused): back to waiting for the run to end by itself. No
+    // answer to the stop (`unconfirmed`) keeps the press: the stop may have arrived.
+    if (outcome === 'idle' || outcome === 'refused') clearReplyNow(chatId)
   }
 
   // ── Mention / settings ─────────────────────────────────────────────────────────────
@@ -2977,6 +3041,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     supportsChatDocSettings: !!(source.fetchChatDocSettings && source.saveChatDocSettings),
     invokeAi,
     stopRun,
+    replyNow,
     issueMention,
     setManualCopyText,
     mutateTurn,

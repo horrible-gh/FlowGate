@@ -1315,6 +1315,10 @@ export default {
       // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
       follow_up_waiting: '앞 답변이 끝나면 이어서 답합니다',
       follow_up_waiting_count: '기다리는 메시지 {n}개',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: '지금 멈추고 다시 답하기',
+      follow_up_reply_now_stopping: '멈추는 중…',
+      follow_up_reply_now_edit_warning: '하던 수정이 중간까지 남을 수 있음',
       run_timeout: '설정한 시간이 지나 AI 호출이 종료되었습니다.',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',

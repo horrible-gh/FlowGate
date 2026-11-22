@@ -53,7 +53,9 @@
       :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
       :checkpoint-busy="state.savingCheckpoint"
       :my-participant-key="state.myParticipantKey"
+      :reply-now="replyNowView"
       @mutate="session.mutateTurn"
+      @reply-now="session.replyNow"
       @retry-history="session.recover({ history: true })"
       @dismiss-history="session.dismissHistoryWarning"
       @load-older="session.loadOlder"
@@ -286,6 +288,11 @@ function reloadChat(): void {
 const stopState = computed(() => {
   const own = session.startStop.value
   return own !== 'none' ? own : start.stopState.value
+})
+// flowgate.v02test.0067 card 3: [지금 멈추고 다시 답하기] sits on the follow-up line, only while a message waits.
+const replyNowView = computed(() => {
+  const view = session.followUp.value
+  return view && !props.readOnly ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
 })
 function onStop(): void {
   if (session.startStop.value !== 'none') void session.stopRun()

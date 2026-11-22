@@ -75,6 +75,8 @@
           :activity="item.activity"
           :busy="item.kind === 'command' && deciding.includes(item.activity.id)"
           :read-only="readOnly"
+          :reply-now="item.kind === 'status' && item.activity.code === 'follow_up_waiting' ? replyNow : undefined"
+          @reply-now="emit('reply-now')"
           @retry-history="emit('retry-history')"
           @dismiss-history="emit('dismiss-history')"
           @decide="(decision) => emit('decide', item.activity.id, decision)"
@@ -116,6 +118,8 @@ const props = defineProps<{
   /** Changes when another chat opens: the log jumps to its newest entry. */
   chatId: string | null
   readOnly?: boolean
+  /** flowgate.v02test.0067 card 3: the state of the follow-up line's [지금 멈추고 다시 답하기] (none: no waiting message). */
+  replyNow?: { stopping: boolean; editsFiles: boolean }
   /**
    * the chat's context checkpoint (message seq, kind) and whether it can be changed here. The
    * panel passes null while the context setting is not "체크포인트 사용" (nothing is drawn then).
@@ -134,6 +138,7 @@ const emit = defineEmits<{
   decide: [commandId: string, decision: CommandDecision]
   'retry-history': []
   'dismiss-history': []
+  'reply-now': []
   'open-change': [activity: WorkChangeActivity]
   'open-file': [runId: string, path: string]
   read: [seq: number]
