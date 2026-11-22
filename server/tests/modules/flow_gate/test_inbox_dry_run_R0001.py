@@ -526,3 +526,67 @@ def test_token_service_increment_delegates(monkeypatch):
     monkeypatch.setattr(token_service.db_tokens, "increment_dry_run", spy)
     token_service.increment_dry_run("tok-abc")
     spy.assert_called_once_with("tok-abc")
+
+
+# #47-2: TR commit messages must be validated before registration/dry-run.
+@pytest.fixture
+def tr_message_submission(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    _patch_new_validation(monkeypatch, _token_rec("new", "flowgate.default.0050.0001-R"))
+    from modules.flow_gate.services import graph_source_hooks
+    monkeypatch.setattr(graph_source_hooks, "require_writable", lambda *a, **k: None)
+    from modules.flow_gate.graph_workflow.services import result_slot_binding
+    from modules.flow_gate.db import module_identifiers
+    monkeypatch.setattr(result_slot_binding, "reject_legacy_new", lambda *a: None)
+    monkeypatch.setattr(inbox_routes, "_disposed_group_fail", lambda *a: None)
+    monkeypatch.setattr(module_identifiers, "canonical_group_module", lambda p, g, m: m)
+    monkeypatch.setattr(inbox_routes.git_service, "worktree_untracked_summary", lambda *a: None)
+    monkeypatch.setattr(inbox_routes, "_find_body_twin", lambda *a, **k: None)
+    monkeypatch.setattr(inbox_routes.tr_scope_service, "evaluate", lambda **k: None)
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *a: [])
+    monkeypatch.setattr(inbox_routes.tr_scope_service, "resolve_attempt_scope", lambda *a: None)
+    reserve = MagicMock()
+    consume = MagicMock()
+    create = MagicMock()
+    monkeypatch.setattr(inbox_routes.numbering_service, "reserve_document", reserve)
+    monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+    monkeypatch.setattr(inbox_routes.db_docs, "create", create)
+    return reserve, consume, create, _patch_increment(monkeypatch)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("message", [None, "", "   \t", "한글", "fix: café", "\u00a0fix: text", "fix: a\nbody", "fix: a\rbody", "fix: a\r\nbody", "x" * 201])
+def test_tr_invalid_commit_message_has_no_registration_side_effects(tr_message_submission, message, dry_run):
+    body = _new_body(doc_type="TR", dry_run=dry_run)
+    if message is not None:
+        body["commit_message"] = message
+    response = post_inbox(body)
+    assert response.status_code == 422
+    data = response.json()
+    assert data["error"]["code"] == "invalid_commit_message"
+    assert "type(scope): summary" in data["error_message"]
+    assert "fix(git):" in data["error_message"]
+    for side_effect in tr_message_submission:
+        side_effect.assert_not_called()
+
+
+@pytest.mark.parametrize("message", ["fix(git): validate TR commit messages", "plain English summary", "x" * 200, "  fix: normalize   spaces  "])
+def test_tr_ascii_commit_message_accepts_any_format(tr_message_submission, message):
+    response = post_inbox(_new_body(doc_type="TR", dry_run=True, commit_message=message))
+    assert response.status_code == 200, response.text
+    assert response.json()["would_register"]["doc_type"] == "TR"
+    for side_effect in tr_message_submission[:3]:
+        side_effect.assert_not_called()
+    tr_message_submission[3].assert_called_once_with("tok-1")
+
+
+@pytest.mark.parametrize("doc_type", ["NR", "TSR"])
+@pytest.mark.parametrize("message", [None, "", "한글\n메시지", "x" * 201])
+def test_non_tr_commit_message_remains_ignored(tr_message_submission, doc_type, message):
+    response = post_inbox(_new_body(doc_type=doc_type, dry_run=True, commit_message=message))
+    # TSR is server-assembled and already rejects manual new submissions.
+    assert response.status_code == (409 if doc_type == "TSR" else 200), response.text
+    if doc_type == "TSR":
+        tr_message_submission[3].assert_not_called()
+    else:
+        tr_message_submission[3].assert_called_once_with("tok-1")

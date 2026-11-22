@@ -529,8 +529,9 @@ def _content_submit(ctx: dict) -> dict:
                     "commit format: type(scope): summary — e.g. "
                     "'fix(git): preserve finalized commit subject' or "
                     "'feat(workflow): add TR commit point'. Must be one line of plain English (ASCII) "
-                    "in type(scope): summary format. Empty or non-ASCII messages "
-                    "are rejected at submission.>"
+                    "(at most 200 characters). Recommended format: type(scope): summary; "
+                    "any non-empty ASCII single line is accepted. Missing, empty, non-ASCII, "
+                    "multi-line or overlong messages are rejected with 422 before registration.>"
                 )
 
     is_work_plan = str(doc_type).upper() == WORK_PLAN_TYPE
