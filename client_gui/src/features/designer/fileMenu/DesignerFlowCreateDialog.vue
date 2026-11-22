@@ -421,7 +421,7 @@ watch(
       groupPicked.value = false
     }
     if (opening) {
-      title.value = ''
+      title.value = t('gui.designer.file_menu.flow_new_title')
       workBaseRef.value = ''
       selectedOnce = false
     }

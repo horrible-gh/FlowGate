@@ -73,6 +73,17 @@ async function pickBase(value: string) {
 }
 const optionReads = () => get.mock.calls.filter(([url]) => url.endsWith('/git/work-base-options'))
 
+describe('0071 creation names', () => {
+  it.each([null, '직접 정한 이름'])('submits the real default or the entered name (%s)', async custom => {
+    open()
+    await flushPromises()
+    expect(el<HTMLInputElement>('title').value).toBe('새 플로우')
+    if (custom !== null) await input('title', custom)
+    await click('submit')
+    expect(post).toHaveBeenCalledWith('/api/v1/groups', expect.objectContaining({ title: custom ?? '새 플로우' }))
+  })
+})
+
 describe('remote branch import', () => {
   const remoteOptions = (allowed: boolean, imported: () => boolean) => async (url: string) => url.endsWith('/groups/tree') ? tree('p') : {
     data: { git_enabled: true, base_branch: 'main', can_import: allowed, branches: [
@@ -297,7 +308,7 @@ describe('creation states and independent reads', () => {
     pending.resolve({ data: { group_id: 'old' } })
     await flushPromises()
     expect(w.emitted('created')).toBeUndefined()
-    expect(el<HTMLInputElement>('title').value).toBe('')
+    expect(el<HTMLInputElement>('title').value).toBe('새 플로우')
     expect(optionReads()).toHaveLength(2)
   })
 
