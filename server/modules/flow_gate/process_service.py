@@ -2346,6 +2346,9 @@ def update_group(
 
     def write():
         require_writable(group_id)
+        if "title" in updates:
+            from .graph_workflow.services.first_names_store import mark_flow_manual
+            mark_flow_manual(group_id)
         return db_groups.update(group_id, updates)
 
     updated = with_flow_guard(group_id, write)
