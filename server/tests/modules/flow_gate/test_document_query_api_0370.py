@@ -873,6 +873,7 @@ def test_inbox_new_tr_response_carries_worktree_untracked(tmp_path):
                 "project": PROJECT, "module": MODULE, "group_name": GROUP,
                 "prev_doc_id": DOC_R, "action": "new", "doc_type": "TR",
                 "title": "0370 신규 TR 미추적 요약 확인", "content": content,
+                "commit_message": "test(inbox): verify TR untracked summary",
             },
             headers={"Authorization": "Bearer dummy-token"},
         )

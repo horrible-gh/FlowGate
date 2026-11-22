@@ -53,6 +53,7 @@ def test_new_accepts_ordinary_markdown_when_section_is_absent_or_legacy(submissi
     response = client.post("/api/v1/inbox", headers={"Authorization": "Bearer test"}, json={
         "action": "new", "project": PROJECT, "module": MODULE, "group_name": GROUP,
         "prev_doc_id": DOC_R, "doc_type": "TR", "title": "Retirement regression",
+        "commit_message": "test(inbox): verify legacy TR markdown",
         "content": content, "dry_run": dry_run,
     })
     assert response.status_code == (200 if dry_run else 201), response.text
@@ -129,6 +130,7 @@ def test_scope_rejection_remains_when_verification_section_is_absent(submission,
     response = client.post("/api/v1/inbox", headers={"Authorization": "Bearer test"}, json={
         "action": action, "project": PROJECT, "module": MODULE, "group_name": GROUP,
         "prev_doc_id": DOC_R, "doc_type": "TR", "title": "Scope rejection",
+        "commit_message": "test(inbox): verify TR scope rejection",
         "doc_id": doc_id, "edit_reason": "worker_self",
         "content": _BODIES[0], "dry_run": dry_run,
     })
