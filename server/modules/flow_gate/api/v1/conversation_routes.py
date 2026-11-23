@@ -37,7 +37,7 @@ class WorkerConversationTurnAppend(BaseModel):
     commit_message: Optional[str] = None
 
 
-def _fail(status: int, message: str) -> JSONResponse:
+def _fail(status: int, message: str, *, code=None, unknown_keys=None) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         content={
@@ -45,6 +45,7 @@ def _fail(status: int, message: str) -> JSONResponse:
             "http_status": status,
             "error_message": message,
             "help_url": help_url(),
+            **({"code": code, "unknown_keys": unknown_keys or []} if code else {}),
         },
     )
 
@@ -125,7 +126,7 @@ def _list_authenticated(
             **({"through_seq": through_seq} if through_seq is not None else {}),
         )
     except conversation_turn_service.ConversationTurnError as exc:
-        return _fail(exc.status_code, exc.message)
+        return _fail(exc.status_code, exc.message, code=exc.code, unknown_keys=exc.unknown_keys)
     # Reading does not consume the token — a worker must be able to page through a
     # long conversation before it has anything to say.
     return JSONResponse(status_code=200, content=result)
@@ -166,7 +167,7 @@ def _append_authenticated(
                 locale=locale,
             )
         except conversation_turn_service.ConversationTurnError as exc:
-            return _fail(exc.status_code, exc.message)
+            return _fail(exc.status_code, exc.message, code=exc.code, unknown_keys=exc.unknown_keys)
         return JSONResponse(status_code=200, content=result)
 
     try:
@@ -208,7 +209,7 @@ def _append_authenticated(
         )
         return JSONResponse(status_code=200 if result["replayed"] else 201, content=result)
     except conversation_turn_service.ConversationTurnError as exc:
-        return _fail(exc.status_code, exc.message)
+        return _fail(exc.status_code, exc.message, code=exc.code, unknown_keys=exc.unknown_keys)
 
 
 @router.get("/{doc_id}/images/{image_id}/content")

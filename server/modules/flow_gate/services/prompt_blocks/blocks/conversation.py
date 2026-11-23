@@ -39,6 +39,16 @@ def encoding_probe_paragraph(token_id: str) -> list[str]:
         "non-whitespace characters) in force_encoding_reason; it never overrides a damaged probe.",
     ]
 
+def attachment_link_lines(api_base, doc_id):
+    flow_id = doc_id.rsplit(".", 1)[0]
+    return [
+        f"Find files: GET {api_base}/flow/{flow_id}/attachments (same worker Bearer).",
+        "Link a file using [name](fg-attachment:key), copying key exactly from that list, never its filename.",
+        "Unknown or other-Flow keys reject the turn with 422 attachment_link_unknown and unknown_keys, including dry_run.",
+        "Links in fenced/inline code are examples and are ignored. Pending uploads are not attached files yet.",
+    ]
+
+
 def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
                                        payload_lines, can_write, provider):
     """Shared CLI/help turn contract; callers supply examples, never another token."""
@@ -51,6 +61,7 @@ def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
         f"Authorization: Bearer {raw_token}",
         "",
         *payload_lines,
+        *attachment_link_lines(api_base, doc_id),
         "",
         "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
         "from your last read — not a guess. If someone speaks while you are writing, your turn is",
@@ -60,7 +71,7 @@ def conversation_turn_submission_lines(*, api_base, doc_id, raw_token, token_id,
         "",
         f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
         'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
-        "the corruption/fingerprint verdict (and encoding_probe: matched/broken/absent) comes back.",
+        "the attachment-link and corruption/fingerprint checks run (encoding_probe: matched/broken/absent).",
     ]
     if can_write:
         lines += [
@@ -94,6 +105,7 @@ def conversation_turn_brief(*, api_base, doc_id, raw_token, token_id,
         "", "To reply, append ONE turn. Do NOT resubmit the conversation body.",
         f"Submit: POST {api_base}/conversation/{doc_id}/turn",
         f"Authorization: Bearer {raw_token}", *payload_lines,
+        *attachment_link_lines(api_base, doc_id),
         "based_on_seq: send head_seq from your last read, never a guess.",
         "Write the body as a UTF-8 file; read it and post ASCII-only JSON (json.dumps defaults).",
         "Never put the body or probe on a command line, console pipe, redirect, Set-Content or Out-File.",
