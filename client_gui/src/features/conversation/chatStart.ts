@@ -19,6 +19,7 @@
 // chat (same create intent) and sends the same key. Kept over F5: a first message whose chat was never confirmed made
 // comes back failed in its draft (the Flow reopens on that draft once) and is sent only when the user tries again.
 import { beginChatActivity } from './flowChatActivity'
+import { isDefaultChatTitle } from '@/app/i18n/defaultTitles'
 import { subscribeProjectEvents } from '../project/projectEvents'
 import { computed, readonly, ref, watch, getCurrentScope, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import { draftIntent, draftCreateIntent, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
@@ -114,7 +115,7 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
     if (marker && ['done', 'manual', 'failed'].includes(marker.state)) { owed.delete(key); ended.add(key); return }
     if (ended.has(key)) return
     let due = owed.get(key)
-    if (!due && chat && (marker?.state === 'owed' || (!marker && chat.title === defaultTitle())) && state.scope) {
+    if (!due && chat && (marker?.state === 'owed' || (!marker && (chat.title === defaultTitle() || isDefaultChatTitle(chat.title)))) && state.scope) {
       due = { title: marker?.provisionalTitle ?? chat.title, ...state.scope, userId: draftUserId(), accepted: false, status: 'owed' }
       owed.set(key, due)
     }
@@ -135,7 +136,8 @@ export function createChatStart({ session, source, defaultTitle }: ChatStartOpti
   async function rename(title: string): Promise<boolean> {
     if (!isDraft.value) return session.renameActiveChat(title)
     const next = title.trim()
-    draftTitle.value = next && next !== defaultTitle() ? next : null
+    // A default title in any language (새 대화 / New conversation / 新しい会話) is not a typed one: it owes the AI title.
+    draftTitle.value = next && next !== defaultTitle() && !isDefaultChatTitle(next) ? next : null
     return true
   }
 
