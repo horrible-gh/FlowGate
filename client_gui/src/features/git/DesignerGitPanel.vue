@@ -306,6 +306,8 @@ function tabResultOf(kind: string): GitTabActivity | null {
     if (!plan) return null
     if (plan.status === 'stopped') return { state: 'failed', step: plan.steps[plan.cursor] ?? null, code: plan.error }
     const skipped = plan.skipped?.update ?? null
+    // Work left after the run reads as the run box says it (yellow), not as done.
+    if (plan.status === 'remaining') return { state: 'remaining', step: null, code: skipped }
     return { state: skipped ? 'skipped' : 'done', step: skipped ? 'update' : null, code: skipped }
   }
   const step = kind as GitExecutionStep

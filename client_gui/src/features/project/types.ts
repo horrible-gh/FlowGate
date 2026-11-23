@@ -265,6 +265,21 @@ export interface FlowAiActivity {
 }
 
 /**
+ * flowgate.v02test.0068: a Flow's latest durable Git run (GET /groups/{gid}/git/execution), only what the Designer's
+ * Flow tab shows of it. The Git part reads the whole run through its own api.ts.
+ */
+export interface FlowGitExecution {
+  jobId: string
+  status: 'running' | 'stopped' | 'remaining' | 'complete'
+  steps: ('commit' | 'update' | 'merge' | 'push')[]
+  cursor: number
+  /** the server's code of a stop (null otherwise). */
+  error: string | null
+  /** a 받아오기 passed over without stopping the run, with the server's code. */
+  skipped: { update?: string }
+}
+
+/**
  * Old/new content of one Base checkout file (HEAD blob vs working tree,
  * GET /projects/{pid}/git/diff). Same sides as FlowFileDiff.
  */

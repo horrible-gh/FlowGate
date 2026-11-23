@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as GitFeature from '@/features/git'
+import { REVIEW_STATES } from '@/features/git/gitSession'
+import { TAB_REVIEW_STATES } from '@/features/designer/center/flowTabConflicts'
 import { APP_MESSAGES } from '@/app/i18n'
 
 // source-level guards for the Designer Git part.
@@ -90,8 +92,12 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     )
   })
 
-  it('exposes the panel and read-only Flow tab status (the Center Diff is internal)', () => {
-    expect(Object.keys(GitFeature)).toEqual(['DesignerGitPanel', 'fetchGitExecution', 'REVIEW_STATES', 'isResolving'])
+  it('exposes only the panel at runtime (0067 T#4: the Center Diff is internal)', () => {
+    expect(Object.keys(GitFeature)).toEqual(['DesignerGitPanel'])
+  })
+
+  it('keeps the Flow tab\'s own copy of the merge review states equal to the panel\'s', () => {
+    expect(TAB_REVIEW_STATES).toEqual(REVIEW_STATES)
   })
 
   it('reaches the server only through api.ts (actions) and features/project (reads)', () => {
@@ -171,11 +177,11 @@ describe('features/git structure (flowgate.v02.0033)', () => {
   // the Shell owned the Center Diff and handed it through the Center column
   // to the Workspace. the earlier change the earlier implementation — the diff lives in the Git modeless, so the right Tool
   // Panel is again the only Designer file that knows the part (through the public surface).
-  it('is assembled by the Dock and observed by Flow tabs through the public surface', () => {
+  it('is assembled into the Designer by the right Tool Panel only, through the public surface', () => {
     const users = filesUnder(join(SRC, 'features/designer'))
       .filter((file) => /features\/git/.test(read(file)))
       .map((file) => relative(SRC, file).replace(/\\/g, '/'))
-    expect(users).toEqual(['features/designer/center/flowTabConflicts.ts', 'features/designer/center/gitTabActivity.ts', 'features/designer/shell/DesignerRightDock.vue'])
+    expect(users).toEqual(['features/designer/shell/DesignerRightDock.vue'])
     for (const user of users) {
       expect(importsOf(read(join(SRC, user))).filter((spec) => /features\/git/.test(spec)), user).toEqual(['@/features/git'])
     }

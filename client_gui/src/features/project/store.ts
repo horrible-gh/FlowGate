@@ -56,6 +56,7 @@ import type {
   FlowChangeSet,
   FlowFileDiff,
   FlowFileTree,
+  FlowGitExecution,
   GroupTreeNode,
   FlowCanvas,
   FlowCanvasLayoutInput,
@@ -94,6 +95,7 @@ import {
   fetchFlowChangeSet,
   fetchFlowFileDiff,
   fetchFlowFileTree,
+  fetchFlowGitExecution,
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchWorkBaseOptions,
@@ -708,6 +710,11 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowAiActivity(groupId, options)
   }
 
+  // flowgate.v02test.0068: the Designer's Flow tab reads each open Flow's durable Git run through this.
+  function loadFlowGitExecution(groupId: string): Promise<FlowGitExecution | null> {
+    return fetchFlowGitExecution(groupId)
+  }
+
   // the Designer Git part's file reads. A conflict / uncommitted file is a
   // Base checkout file (HEAD vs working tree); a merge review file is read from the frozen
   // review candidate. Stateless like the loaders above.
@@ -891,6 +898,7 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowChanges,
     loadFlowFileDiff,
     loadFlowAiActivity,
+    loadFlowGitExecution,
     loadBaseFileDiff,
     loadMergeReviewFileDiff,
     loadFlowCanvas,

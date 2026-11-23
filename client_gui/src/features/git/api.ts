@@ -30,6 +30,7 @@
 // server `message` is never surfaced (0033-D §4.5).
 import { getRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeGitError, type NormalizedGitError } from '@shared/gitErrors'
+import type { GitExecution, GitExecutionRequest } from './gitExecution'
 import type {
   GitApproveResult,
   GitBaseCommitResult,
@@ -712,8 +713,6 @@ function bodyError(value: unknown): WorktreeBodyError | null {
   const code = str(value.code)
   return code ? { code, details: worktreeErrorDetails(value.details) } : null
 }
-
-import type { GitExecution, GitExecutionRequest } from './gitExecution'
 
 const worktreePath = (groupId: string) => `${groupGit(groupId)}/worktree`
 

@@ -15,7 +15,12 @@
 import { computed, getCurrentInstance, onScopeDispose, reactive, watch, type ComputedRef } from 'vue'
 import { useProjectStore, type FlowAiActivity, type ProjectGitStatus } from '@/features/project'
 import type { ProjectEventSubscription } from '@/features/project/projectEvents'
-import { REVIEW_STATES, isResolving } from '@/features/git'
+
+/** The merge review states of a conflict row — the Designer's own copy of the Git panel's (gitSession.ts REVIEW_STATES):
+ *  the Designer reaches the Git part only through the right Dock. A row in one of them shows no conflict mark. */
+export const TAB_REVIEW_STATES: readonly string[] = ['resolved_pending_review', 're_review', 'applying', 'reconciling']
+/** A resolver run owns the conflict (the panel's AI 해결 중 card). */
+const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
 
 /** A tab's conflict mark; a tab with none is left out. `done` / `total` are null while the server gave no count. */
 export type FlowTabConflict =
@@ -97,7 +102,7 @@ export function useFlowTabConflicts(options: FlowTabConflictOptions): ComputedRe
       const next: Record<string, ConflictRow> = {}
       for (const row of status?.enabled ? status.pending : []) {
         if (row.status !== 'conflict' || !open.has(row.groupId)) continue
-        next[row.groupId] = { mergeId: row.mergeId, review: !!row.reviewState && REVIEW_STATES.includes(row.reviewState) }
+        next[row.groupId] = { mergeId: row.mergeId, review: !!row.reviewState && TAB_REVIEW_STATES.includes(row.reviewState) }
       }
       for (const id of Object.keys(rows)) if (!next[id]) delete rows[id]
       for (const [id, row] of Object.entries(next)) rows[id] = row

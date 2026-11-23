@@ -1949,7 +1949,6 @@ def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = No
         return _manual_guard(exc)
 
 
-
 class GitExecutionBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 

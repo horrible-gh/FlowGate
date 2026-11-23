@@ -11,9 +11,6 @@
 // tab detail the panel owns — so neither it nor `git-center-diff-refresh` is public any more; the
 // worktree intents of `open-diff` no longer go up (the 0033 ones do, unchanged).
 export { default as DesignerGitPanel } from './DesignerGitPanel.vue'
-// Read-only status shared by the open Flow tab observers.
-export { fetchGitExecution } from './api'
-export { REVIEW_STATES, isResolving } from './gitSession'
 export type { GitSource, GitWorktreeSource } from './gitSource'
 export type {
   GitApplyRequest,

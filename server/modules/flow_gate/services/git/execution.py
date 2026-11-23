@@ -206,6 +206,12 @@ def _sync(ctx, p, ev):
     return True
 
 
+def _merge_result(group_id, target):
+    """The target's latest completed manual merge row, or None when the Flow never merged into it."""
+    return next((r for r in manual_merge.merge_results_view(group_id)["results"]
+                 if r["target"]["target_branch"] == target), None)
+
+
 def _child(ctx, p, ev, step):
     gid = ctx.job["group_id"]
     if "child_payload" not in ev:
@@ -218,9 +224,13 @@ def _child(ctx, p, ev, step):
             child = dict(action=manual_merge.MANUAL_MERGE, git_action="merge_only", target_branch=p["target"])
         else:
             remote_refresh.fetch_refs(ctx.job["project_id"], gid)
-            row = next((r for r in manual_merge.merge_results_view(gid)["results"]
-                        if r["target"]["target_branch"] == p["target"]), None)
-            if not row or not row["remote"]["measured"]:
+            row = _merge_result(gid, p["target"])
+            if row is None:
+                # Never merged into the target: nothing ahead means nothing to push, not an unreadable status.
+                if manual_merge.merge_view(gid, p["target"])["ahead_of_target"] == 0:
+                    return {}
+                _fail("merge_result_missing")
+            if not row["remote"]["measured"]:
                 _fail("status_unavailable")
             if row["remote"]["contains_merge_commit"] and row["remote"]["local_ahead_count"] == 0:
                 return {}
@@ -256,9 +266,12 @@ def _remaining(ctx, p, ev):
         remains |= state["ahead_of_target"] != 0 or (not ev.get("skipped", {}).get("update") and state["work_base_behind"] != 0)
     if p["scope"] == "push":
         remote_refresh.fetch_refs(ctx.job["project_id"], gid)
-        row = next((r for r in manual_merge.merge_results_view(gid)["results"]
-                    if r["target"]["target_branch"] == p["target"]), None)
-        remains |= not row or not row["remote"]["measured"] or row["remote"]["contains_merge_commit"] is not True or row["remote"]["local_ahead_count"] != 0
+        row = _merge_result(gid, p["target"])
+        # No merge result: commits not merged yet are already counted by ahead_of_target above.
+        if row is not None:
+            remote = row["remote"]
+            remains |= (not remote["measured"] or remote["contains_merge_commit"] is not True
+                        or remote["local_ahead_count"] != 0)
     return bool(remains)
 
 
