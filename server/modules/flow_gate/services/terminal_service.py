@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import atexit
 from contextlib import ExitStack
+import importlib
 import copy
 import json
 import os
@@ -23,13 +24,19 @@ from .terminal_lock import installation_lock
 
 SHELL_TEST_SECONDS = 15
 SHELL_TEST_SCRIPT = '''import sys
-from modules.flow_gate.services import terminal_pty as pty
+from modules.flow_gate.services import terminal_pty as pty, terminal_bundle as bundle
 bundle_path, cwd = sys.argv[1], sys.argv[2]
+from pathlib import Path
+bundle.root = lambda: Path(cwd)
+if bundle.missing_dependencies():
+    raise RuntimeError("Missing terminal dependencies: " + ", ".join(bundle.missing_dependencies()))
+if pty.IS_WINDOWS:
+    bundle.prune_runtime()
 argv, env = pty.default_shell_argv(), pty.shell_env()
 p = None
 try:
     if pty.IS_WINDOWS:
-        p = pty.WindowsPty(argv, cwd, env, 80, 24, bundle_path=bundle_path)
+        p = pty.WindowsPty(argv, cwd, env, 80, 24, bundle_path=bundle_path or None)
     else:
         p = pty.open_pty(argv, cwd, env, 80, 24)
     if not p.pid:
@@ -71,7 +78,10 @@ def kill_tree(proc):
 def shell_test(directory=None, cancel=None):
     """Run in a child interpreter so staged DLLs are never loaded by the server."""
     from . import terminal_pty
-    bundle_path = str(directory or bundle.active_path() or "")
+    missing = bundle.missing_dependencies()
+    if missing:
+        raise BundleError("terminal_dependency_missing", "Install required libraries: " + ", ".join(missing), 409)
+    bundle_path = str(directory) if directory is not None else ""
     proc = subprocess.Popen([sys.executable, "-c", SHELL_TEST_SCRIPT, bundle_path, str(bundle.root())],
                             cwd=Path(__file__).resolve().parents[3], env=terminal_pty.shell_env(),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -89,6 +99,42 @@ def shell_test(directory=None, cancel=None):
     finally:
         if proc.poll() is None:
             kill_tree(proc)
+
+
+def install_dependencies(cancel, from_dir=None):
+    missing = bundle.missing_dependencies()
+    if not missing:
+        return
+    from . import terminal_pty
+    args = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input"]
+    if from_dir:
+        args += ["--no-index", "--find-links", str(Path(from_dir).resolve())]
+    args += missing
+    download.check_cancel(cancel)
+    try:
+        proc = subprocess.Popen(args, env=terminal_pty.shell_env(),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise BundleError("terminal_dependency_install_failed",
+                          "Could not start pip for " + ", ".join(missing) + ": " + type(exc).__name__, 422) from exc
+    deadline = time.monotonic() + 300
+    try:
+        while proc.poll() is None:
+            download.check_cancel(cancel)
+            if time.monotonic() > deadline:
+                raise BundleError("terminal_dependency_install_failed", "Library installation timed out: " + ", ".join(missing), 422)
+            time.sleep(0.05)
+        if proc.returncode:
+            raise BundleError("terminal_dependency_install_failed",
+                              "pip could not install " + ", ".join(missing) + "; check server Python permissions, pip and package access", 422)
+    finally:
+        if proc.poll() is None:
+            kill_tree(proc)
+    importlib.invalidate_caches()
+    remaining = bundle.missing_dependencies()
+    if remaining:
+        raise BundleError("terminal_dependency_install_failed",
+                          "Libraries still unavailable: " + ", ".join(remaining) + "; restart the server if an older version was loaded", 422)
 
 
 def failure(exc):
@@ -158,6 +204,7 @@ class Manager:
         return {"platform": "windows" if required else sys.platform,
                 "bundle_required": required,
                 "installed": bundle.installed(),
+                "missing_dependencies": bundle.missing_dependencies(),
                 "enabled": terminal_sessions.terminal_enabled(),
                 "open_sessions": terminal_sessions.manager.open_count(),
                 "bundle": info,
@@ -170,7 +217,8 @@ class Manager:
         with self.lock, ExitStack() as stack:
             # Taken before 202 so a running CLI install conflicts immediately.
             stack.enter_context(installation_lock(bundle.root()))
-            if terminal_sessions.terminal_enabled():
+            repair = bundle.active_path() is not None and bool(bundle.missing_dependencies())
+            if terminal_sessions.terminal_enabled() and (not repair or terminal_sessions.manager.open_count()):
                 raise BundleError("terminal_enabled", "Turn off the terminal before installing", 409)
             job_id = "ti_" + uuid.uuid4().hex
             self.jobs[job_id] = dict(install_id=job_id, status="queued", stage="download", progress=0.0,
@@ -209,7 +257,18 @@ class Manager:
                 reported = now
 
         try:
-            self._update(job_id, status="running")
+            self._update(job_id, status="running", message="Checking required libraries")
+            install_dependencies(cancel, from_dir)
+            if bundle.active_path() is not None:
+                self._update(job_id, stage="test", progress=0.85)
+                try:
+                    shell_test(cancel=cancel)
+                except Exception:
+                    (bundle.root() / "installed.json").unlink(missing_ok=True)
+                    raise
+                download.check_cancel(cancel)
+                self._update(job_id, status="done", stage="apply", progress=1.0, message=None)
+                return
             archive = download.fetch(spec, bundle.root() / "downloads", cancel, progress,
                                      Path(from_dir).resolve() if from_dir else None)
             self._update(job_id, stage="verify", progress=0.65)
@@ -231,7 +290,13 @@ class Manager:
                     os.replace(staging, destination)
                 atomic_json(bundle.root() / "installed.json",
                             {"sha256": spec["sha256"], "version": bundle.CATALOG["version"]})
-                self._update(job_id, status="done", progress=1.0)
+                # Verify the same runtime-copy/import path used by real terminals.
+                try:
+                    shell_test(cancel=cancel)
+                except Exception:
+                    (bundle.root() / "installed.json").unlink(missing_ok=True)
+                    raise
+                self._update(job_id, status="done", progress=1.0, message=None)
         except Exception as exc:
             if cancel.is_set():
                 self._update(job_id, status="cancelled", error_code="terminal_install_cancelled",

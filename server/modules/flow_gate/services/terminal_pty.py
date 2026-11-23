@@ -344,7 +344,7 @@ class WindowsPty:
             from .terminal_bundle import load_winpty
             PtyProcess = load_winpty(bundle_path).PtyProcess
         except ImportError as exc:
-            raise PtyError("pywinpty is not installed") from exc
+            raise PtyError(f"Terminal dependency could not load: {exc}") from exc
         try:
             self._proc = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=(rows, cols))
         except Exception as exc:  # noqa: BLE001 -- winpty raises several types

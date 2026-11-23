@@ -203,6 +203,45 @@ FIRST_NAMES_LEASE_SEC = 180
 
 def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str = "",
                         chat_doc_id: Optional[str] = None) -> dict:
+    """Independent conversation candidates; flow/root keep their first candidate."""
+    from . import first_names_ports as p
+    chat_result = None
+    if chat_doc_id:
+        try:
+            def validate_chat():
+                group, _ = p.targets(flow_id, chat_doc_id, chat_only=True)
+                if not legacy_adapter.has_permission(user, UPDATE_PERMISSION, group["project_id"]):
+                    raise PermissionError("no_update_permission")
+            p.guard(flow_id, validate_chat)
+        except Exception as exc:
+            logger.warning("flow_auto_title invalid_chat flow=%s exception_type=%s", flow_id, type(exc).__name__)
+            return {"status": "failed"}
+        chat_result = _generate_names(flow_id, user, provider_id, chat_doc_id=chat_doc_id)
+        if chat_result.get("busy"):
+            return {"status": "unchanged"}
+    flow_result = _generate_names(flow_id, user, provider_id,
+        message or (_first_user_message(chat_doc_id) or "" if chat_doc_id else ""),
+        seed=(chat_result or {}).get("candidate"))
+    results = [flow_result] + ([chat_result] if chat_result else [])
+    changed = [kind for result in results for kind in result.get("changed", [])]
+    if changed:
+        try:
+            from .first_names_triggers import notify
+            notify(flow_id, changed, chat_doc_id if "chat" in changed else None)
+        except Exception as exc:
+            logger.warning("flow naming notification exception_type=%s", type(exc).__name__)
+    states = {kind: state for result in results for kind, state in result.get("targets", {}).items()}
+    if any(r["status"] == "failed" for r in results):
+        status = "pending" if states else "failed"
+    elif "pending" in states.values():
+        status = "pending"
+    else:
+        status = "done" if any(r["status"] == "done" for r in results) else "unchanged"
+    return {"status": status, "targets": states} if states else {"status": status}
+
+
+def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "",
+                        chat_doc_id: Optional[str] = None, seed: Optional[str] = None) -> dict:
     """Best effort, durable, retryable per target. Call outside an open transaction.
 
     The caller supplies actual root/request content, or the existing chat's first
@@ -212,33 +251,50 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
     import time
     import uuid
     from . import first_names_ports as p
+    key = flow_id + ":chat:" + chat_doc_id if chat_doc_id else flow_id
     ticket = uuid.uuid4().hex
+    changed = []
     try:
         def claim():
-            group, targets = p.targets(flow_id, chat_doc_id)
+            group, targets = p.targets(flow_id, chat_doc_id, chat_only=bool(chat_doc_id))
             if not legacy_adapter.has_permission(user, UPDATE_PERMISSION, group["project_id"]):
                 raise PermissionError("no_update_permission")
-            record = p.ledger.load(flow_id)
+            record = p.ledger.load(key)
+            if not chat_doc_id:
+                record.get("targets", {}).pop("chat", None)
             if record.get("candidate"):
+                # A root created/missed after the first attempt still uses the saved candidate.
+                for kind, target in targets.items():
+                    previous = record.setdefault("targets", {}).get(kind, {})
+                    if previous.get("state") != "done" and p.eligible(kind, target):
+                        record["targets"][kind] = {**target, "state": "pending"}
+                p.ledger.save(key, record)
                 return group, record
             if record.get("lease_until", 0) > time.time():
-                return group, None
-            text = str(message or "").strip()
+                return group, {"busy": True}
+            text = (_first_user_message(chat_doc_id) or "") if chat_doc_id else str(message or "").strip()
             if not text and chat_doc_id:
                 text = _first_user_message(chat_doc_id) or ""
-            if not any(ch.isalnum() for ch in text):
+            if not seed and not any(ch.isalnum() for ch in text):
                 return group, None
             pending = {kind: {**target, "state": "pending" if p.eligible(kind, target) else "skipped"}
                        for kind, target in targets.items()}
             if not any(t["state"] == "pending" for t in pending.values()):
-                return group, None
+                return group, {"ineligible": pending}
             record.update(ticket=ticket, lease_until=time.time() + FIRST_NAMES_LEASE_SEC,
                           targets=pending, chat_doc_id=chat_doc_id)
-            p.ledger.save(flow_id, record)
+            if seed:
+                record["candidate"] = seed
+                record["lease_until"] = 0
+            p.ledger.save(key, record)
             return group, {**record, "message": text}
         group, record = p.guard(flow_id, claim)
         if record is None:
             return {"status": "unchanged"}
+        if record.get("busy"):
+            return {"status": "unchanged", "busy": True}
+        if "ineligible" in record:
+            return {"status": "unchanged", "targets": {k: "skipped" for k in record["ineligible"]}}
         if not record.get("candidate"):
             prompt = build_prompt(record["message"]) + (
                 "\nThis title also names the workflow and its start card. "
@@ -249,26 +305,27 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
             if title == "NO_TITLE":
                 title = None
             def remember():
-                current = p.ledger.load(flow_id)
+                current = p.ledger.load(key)
                 if current.get("ticket") != ticket:
                     return None
                 current["lease_until"] = 0
                 if title:
                     current["candidate"] = title
-                p.ledger.save(flow_id, current)
+                p.ledger.save(key, current)
                 return current if title else None
             record = p.guard(flow_id, remember)
             if record is None:
+                logger.warning("flow_auto_title no_title flow=%s target=%s", flow_id, "chat" if chat_doc_id else "flow")
                 return {"status": "unchanged"}
         # Independent transactions: a failed target cannot roll back completed ones.
         for kind in record["targets"]:
             try:
                 def save_one():
-                    current = p.ledger.load(flow_id)
+                    current = p.ledger.load(key)
                     target = current["targets"][kind]
                     if target["state"] != "pending":
                         return
-                    _, live = p.targets(flow_id, current.get("chat_doc_id") if kind == "chat" else None)
+                    _, live = p.targets(flow_id, chat_doc_id, chat_only=bool(chat_doc_id))
                     now = live.get(kind)
                     if (now is None or now["id"] != target["id"] or now["title"] != target["title"]
                             or not p.eligible(kind, now)):
@@ -276,20 +333,29 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                     else:
                         p.apply(flow_id, kind, now, current["candidate"], str(user.get("user_id") or ""))
                         target["state"] = "done"
-                    p.ledger.save(flow_id, current)
-                p.guard(flow_id, save_one)
+                    p.ledger.save(key, current)
+                    return target["state"] == "done"
+                if p.guard(flow_id, save_one):
+                    changed.append("card" if kind == "root" else kind)
             except Exception as exc:
                 logger.warning("flow_auto_title save flow=%s target=%s exception_type=%s",
                                flow_id, kind, type(exc).__name__)
-        final = p.guard(flow_id, lambda: p.ledger.load(flow_id))
+        final = p.guard(flow_id, lambda: p.ledger.load(key))
         states = {k: v["state"] for k, v in final["targets"].items()}
-        try:
-            from .first_names_triggers import notify
-            notify(flow_id)
-        except Exception as exc:
-            logger.warning("flow naming notification exception_type=%s", type(exc).__name__)
-        return {"status": "pending" if "pending" in states.values() else "done", "targets": states}
+        return {"status": "pending" if "pending" in states.values() else "done", "targets": states,
+                "changed": changed, "candidate": final.get("candidate")}
+
     except Exception as exc:
+        # Release only our own generation lease; the next reply can retry immediately.
+        def release():
+            current = p.ledger.load(key)
+            if current.get("ticket") == ticket:
+                current["lease_until"] = 0
+                p.ledger.save(key, current)
+        try:
+            p.guard(flow_id, release)
+        except Exception:
+            pass
         logger.warning("flow_auto_title flow=%s exception_type=%s", flow_id, type(exc).__name__)
         return {"status": "failed"}
 
