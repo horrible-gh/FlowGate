@@ -29,7 +29,7 @@ _SERVER_DIR = Path(__file__).resolve().parents[3]
 _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
-_GROUP = "testprj-__ALL__-0123"
+_GROUP = "testprj-test-0123"
 _BODY_MARKER = "zphiraxquux_unique_body_marker"
 _TITLE_ONLY = "titlematchonlyzz"
 # Marker present in BOTH a markdown heading line and the running prose — the
@@ -145,8 +145,16 @@ def patch_store(tmp_db):
             raise NotImplementedError
 
     conn_mod.STORE = _PatchedStore()
-    yield
-    conn_mod.STORE = original_store
+    # Module-scoped seed fixtures run before the function-scoped startup fixture.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+        integration.register()
+        try:
+            yield
+        finally:
+            conn_mod.STORE = original_store
 
 
 def _write_doc_file(storage_root: Path, rel_path: str, body: str) -> None:
@@ -166,7 +174,7 @@ def seed_data(tmp_db, storage_root):
     content_search_service.reset_cache()
 
     projects.create({"project_id": "testprj", "project_name": "Test Project"})
-    projects.create({"project_id": "OTHERPRJ", "project_name": "Other Project"})
+    projects.create({"project_id": "otherprj", "project_name": "Other Project"})
     users.create({
         "user_id": "usr_test_001",
         "username": "testuser",
@@ -196,7 +204,7 @@ def seed_data(tmp_db, storage_root):
     db_groups.create({
         "group_id": _GROUP,
         "project_id": "testprj",
-        "module": "__ALL__",
+        "module": "test",
         "title": "Search Group",
     })
 
@@ -207,13 +215,13 @@ def seed_data(tmp_db, storage_root):
         f"# Root\n\nThis report discusses the {_BODY_MARKER} deep inside the prose.\n",
     )
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0001-R",
+        "doc_id": "testprj.test.0123.0001-R",
         "project_id": "testprj",
         "type_code": "R",
         "seq": 1,
         "title": "Body Bearing Root",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": body_rel,
@@ -223,13 +231,13 @@ def seed_data(tmp_db, storage_root):
     title_rel = "documents/testprj/main/0123/0002-N_doc.md"
     _write_doc_file(storage_root, title_rel, "# Plain\n\nNothing special in this body.\n")
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0002-N",
+        "doc_id": "testprj.test.0123.0002-N",
         "project_id": "testprj",
         "type_code": "N",
         "seq": 2,
         "title": f"Investigation {_TITLE_ONLY} order",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": title_rel,
@@ -244,13 +252,13 @@ def seed_data(tmp_db, storage_root):
         f"Much later the running prose also says {_HDR_BODY_MARKER} in a sentence.\n",
     )
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0003-R",
+        "doc_id": "testprj.test.0123.0003-R",
         "project_id": "testprj",
         "type_code": "R",
         "seq": 3,
         "title": "Header And Body Doc",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": hdr_rel,
@@ -265,7 +273,7 @@ def seed_data(tmp_db, storage_root):
         storage_root, fm_rel,
         "---\n"
         "project: testprj\n"
-        "module: __ALL__\n"
+        "module: test\n"
         "group: 0123\n"
         "type: B\n"
         "doc_number: 0004-B\n"
@@ -275,13 +283,13 @@ def seed_data(tmp_db, storage_root):
         f"The body proper opens here and mentions {_FM_BODY_MARKER} in a sentence.\n",
     )
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0004-B",
+        "doc_id": "testprj.test.0123.0004-B",
         "project_id": "testprj",
         "type_code": "B",
         "seq": 4,
         "title": "Frontmatter Header Doc",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": fm_rel,
@@ -298,13 +306,13 @@ def seed_data(tmp_db, storage_root):
         "Plain prose that does not repeat the marker token at all.\n",
     )
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0005-R",
+        "doc_id": "testprj.test.0123.0005-R",
         "project_id": "testprj",
         "type_code": "R",
         "seq": 5,
         "title": "Heading Only Doc",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": heading_rel,
@@ -322,32 +330,32 @@ def seed_data(tmp_db, storage_root):
         f"# Root\n\nMigrated-host body talks about {_MIGRATED_BODY_MARKER} in the prose.\n",
     )
     db_docs.create({
-        "doc_id": "testprj.__ALL__.0123.0006-R",
+        "doc_id": "testprj.test.0123.0006-R",
         "project_id": "testprj",
         "type_code": "R",
         "seq": 6,
         "title": "Host Migrated Doc",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": "/home/olduser/legacy/FlowGate/storage/" + migrated_tail,
     })
 
     # Doc in another project carrying the body marker — for the project facet.
-    other_rel = "documents/OTHERPRJ/main/0123/0001-R_doc.md"
+    other_rel = "documents/otherprj/main/0123/0001-R_doc.md"
     _write_doc_file(
         storage_root, other_rel,
-        f"# Other\n\nAlso mentions {_BODY_MARKER} but in OTHERPRJ.\n",
+        f"# Other\n\nAlso mentions {_BODY_MARKER} but in otherprj.\n",
     )
     db_docs.create({
-        "doc_id": "OTHERPRJ.__ALL__.0123.0001-R",
-        "project_id": "OTHERPRJ",
+        "doc_id": "otherprj.test.0123.0001-R",
+        "project_id": "otherprj",
         "type_code": "R",
         "seq": 1,
         "title": "Other Project Root",
         "group_id": _GROUP,
-        "module": "__ALL__",
+        "module": "test",
         "owner_id": "usr_test_001",
         "status": "open",
         "file_path": other_rel,
@@ -366,14 +374,13 @@ def _build_client():
 def _issue_bearer(tmp_path, user_id: str = "usr_test_001", project: str = "testprj") -> str:
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project=project,
-            group_id=_GROUP,
-            action_scope="new",
-            doc_ref=None,
-            issued_to=user_id,
-        )
+    issued = token_service.issue(
+        project=project,
+        group_id=_GROUP,
+        action_scope="new",
+        doc_ref=None,
+        issued_to=user_id,
+    )
     return issued["raw_token"]
 
 
@@ -391,7 +398,7 @@ def test_content_search_body_match_with_snippet(seed_data, tmp_path):
     data = resp.json()
     assert data["ok"] is True
     assert data["scope"] == "content"
-    hit = next(i for i in data["items"] if i["doc_id"] == "testprj.__ALL__.0123.0001-R")
+    hit = next(i for i in data["items"] if i["doc_id"] == "testprj.test.0123.0001-R")
     assert hit["matched_in"] == "body"
     assert _BODY_MARKER in hit["snippet"]
 
@@ -414,7 +421,7 @@ def test_content_search_snippet_keeps_heading_text_without_hash_markup(seed_data
     )
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0003-R")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0003-R")
     assert hit["matched_in"] == "body"
     snippet = hit["snippet"]
     assert snippet is not None
@@ -442,7 +449,7 @@ def test_content_search_heading_only_term_still_yields_snippet(seed_data, tmp_pa
     )
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0005-R")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0005-R")
     assert hit["matched_in"] == "body"
     snippet = hit["snippet"]
     assert snippet is not None
@@ -468,7 +475,7 @@ def test_content_search_snippet_excludes_yaml_frontmatter(seed_data, tmp_path):
     )
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0004-B")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0004-B")
     assert hit["matched_in"] == "body"
     snippet = hit["snippet"]
     assert snippet is not None
@@ -500,7 +507,7 @@ def test_content_search_frontmatter_only_term_is_not_a_body_hit(seed_data, tmp_p
     # The token is only in the YAML header (and that doc's real title does not contain
     # it) → the frontmatter doc must not appear as a body hit.
     assert all(
-        i["doc_id"] != "testprj.__ALL__.0123.0004-B" for i in resp.json()["items"]
+        i["doc_id"] != "testprj.test.0123.0004-B" for i in resp.json()["items"]
     )
 
 
@@ -525,7 +532,7 @@ def test_content_search_recovers_host_migrated_absolute_path(seed_data, tmp_path
 
     assert resp.status_code == 200
     hit = next(
-        i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0006-R"
+        i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0006-R"
     )
     assert hit["matched_in"] == "body"
     assert hit["snippet"] is not None
@@ -552,7 +559,7 @@ def test_content_search_title_fallback_includes_body_preview(seed_data, tmp_path
 
     assert resp.status_code == 200
     items = resp.json()["items"]
-    hit = next(i for i in items if i["doc_id"] == "testprj.__ALL__.0123.0002-N")
+    hit = next(i for i in items if i["doc_id"] == "testprj.test.0123.0002-N")
     assert hit["matched_in"] == "title"
     assert hit["snippet"] is not None
     assert "Plain" in hit["snippet"]
@@ -572,12 +579,12 @@ def test_content_search_doc_id_fallback_includes_body_preview(seed_data, tmp_pat
 
     resp = _get(
         client,
-        "/api/v1/search/documents/content?q=testprj.__ALL__.0123.0001-R&project=testprj",
+        "/api/v1/search/documents/content?q=testprj.test.0123.0001-R&project=testprj",
         raw,
     )
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0001-R")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0001-R")
     assert hit["matched_in"] == "doc_id"
     assert hit["snippet"] is not None
     assert "Root" in hit["snippet"]
@@ -604,7 +611,7 @@ def test_meta_search_doc_id_includes_body_preview(seed_data, tmp_path):
     )
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0001-R")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0001-R")
     # The default endpoint now carries the simplified body preview.
     assert hit["snippet"] is not None
     assert "Root" in hit["snippet"]
@@ -619,7 +626,7 @@ def test_meta_search_title_includes_body_preview(seed_data, tmp_path):
     resp = _get(client, "/api/v1/search/documents?q=Body+Bearing&project=testprj", raw)
 
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0001-R")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0001-R")
     assert hit["snippet"] is not None
     assert _BODY_MARKER in hit["snippet"]
 
@@ -632,7 +639,7 @@ def test_meta_search_no_body_file_snippet_none(seed_data, tmp_path):
     # preview. The contract under test: the field is always present (None when absent).
     resp = _get(client, f"/api/v1/search/documents?q={_TITLE_ONLY}&project=testprj", raw)
     assert resp.status_code == 200
-    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.__ALL__.0123.0002-N")
+    hit = next(i for i in resp.json()["items"] if i["doc_id"] == "testprj.test.0123.0002-N")
     assert "snippet" in hit
 
 
@@ -644,7 +651,7 @@ def test_content_search_type_facet(seed_data, tmp_path):
 
     assert resp.status_code == 200
     # The body marker lives only in R docs → N facet yields no body hits.
-    assert all(i["doc_id"] != "testprj.__ALL__.0123.0001-R" for i in resp.json()["items"])
+    assert all(i["doc_id"] != "testprj.test.0123.0001-R" for i in resp.json()["items"])
 
 
 def test_content_search_project_facet(seed_data, tmp_path):
@@ -655,8 +662,8 @@ def test_content_search_project_facet(seed_data, tmp_path):
 
     assert resp.status_code == 200
     ids = {i["doc_id"] for i in resp.json()["items"]}
-    assert "testprj.__ALL__.0123.0001-R" in ids
-    assert "OTHERPRJ.__ALL__.0123.0001-R" not in ids
+    assert "testprj.test.0123.0001-R" in ids
+    assert "otherprj.test.0123.0001-R" not in ids
 
 
 def test_content_search_mtime_refresh(seed_data, tmp_path, storage_root):
@@ -677,10 +684,10 @@ def test_content_search_mtime_refresh(seed_data, tmp_path, storage_root):
 
     resp_new = _get(client, f"/api/v1/search/documents/content?q={new_marker}&project=testprj", raw)
     assert resp_new.status_code == 200
-    assert any(i["doc_id"] == "testprj.__ALL__.0123.0001-R" for i in resp_new.json()["items"])
+    assert any(i["doc_id"] == "testprj.test.0123.0001-R" for i in resp_new.json()["items"])
 
     resp_old = _get(client, f"/api/v1/search/documents/content?q={_BODY_MARKER}&project=testprj", raw)
-    assert all(i["doc_id"] != "testprj.__ALL__.0123.0001-R" for i in resp_old.json()["items"])
+    assert all(i["doc_id"] != "testprj.test.0123.0001-R" for i in resp_old.json()["items"])
 
 
 def test_content_search_empty_query_400(seed_data, tmp_path):
@@ -708,3 +715,67 @@ def test_content_search_limit_out_of_range_400(seed_data, tmp_path):
     raw = _issue_bearer(tmp_path)
     resp = _get(client, f"/api/v1/search/documents/content?q={_BODY_MARKER}&limit=0", raw)
     assert resp.status_code == 400
+
+
+# User permission, rather than the token's project, controls discovery.
+@pytest.mark.parametrize("allow_other", [False, True])
+def test_flow_discovery_target_project_permission(seed_data, tmp_path, monkeypatch, allow_other):
+    from modules.flow_gate.services import auth_outbound
+    from modules.flow_gate.db import groups
+    from modules.flow_gate.api.v1 import document_routes
+    monkeypatch.setattr(document_routes, "get_answers_for_document", lambda _: [])
+    allowed = {"testprj", "otherprj"} if allow_other else {"testprj"}
+    monkeypatch.setattr(auth_outbound, "has_permission",
+                        lambda user, project, perm: user == "usr_test_001" and project in allowed
+                        and perm == "perm_document_read")
+    gid = "otherprj.test.0041"
+    if groups.get_by_id(gid) is None:
+        groups.create(dict(group_id=gid, project_id="otherprj", module="test", title="Other Flow"))
+    client = _build_client()
+    client.app.include_router(document_routes.router)
+    raw = _issue_bearer(tmp_path)
+    own = _get(client, f"/api/v1/list/groups/{_GROUP}", raw)
+    assert own.status_code == 200
+    assert own.json()["title"] == "Search Group"
+    assert set(("group_id", "title", "module", "status", "parent_id", "created_at",
+                "updated_at", "closed_at", "document_count")) <= own.json().keys()
+    sibling = "testprj.test.0041"
+    if groups.get_by_id(sibling) is None:
+        groups.create(dict(group_id=sibling, project_id="testprj", module="test", title="Sibling"))
+    sibling_info = _get(client, f"/api/v1/list/groups/{sibling}", raw)
+    assert sibling_info.status_code == 200
+    assert sibling_info.json()["title"] == "Sibling"
+    assert sibling_info.json()["document_count"] == 0
+    for path in (f"/list/groups/{gid}", f"/list/groups/{gid}/documents",
+                 "/list/projects/otherprj/groups", "/list/projects/otherprj/modules",
+                 "/search/documents?q=Root&project=otherprj",
+                 f"/search/documents/content?q={_BODY_MARKER}&project=otherprj",
+                 "/document/otherprj.test.0123.0001-R/meta"):
+        response = _get(client, "/api/v1" + path, raw)
+        assert response.status_code == (200 if allow_other else 404), response.text
+    projects = _get(client, "/api/v1/list/projects?limit=1", raw).json()
+    assert projects["total"] == len(allowed)
+    assert all(item["project_id"] in allowed for item in projects["items"])
+    # Same missing-resource response shape for denied and absent flow ids.
+    missing = _get(client, "/api/v1/list/groups/absent.test.0041", raw)
+    assert missing.status_code == 404
+    if not allow_other:
+        denied = _get(client, f"/api/v1/list/groups/{gid}", raw)
+        assert denied.json().keys() == missing.json().keys()
+    # Enforce permissions before pagination/counting, including a global query.
+    for endpoint, query in (("documents", "Root"), ("documents/content", _BODY_MARKER)):
+        response = _get(client, f"/api/v1/search/{endpoint}?q={query}&limit=1", raw)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert all(item["project_id"] in allowed for item in body["items"])
+        assert all("group_title" in item for item in body["items"])
+        own_body = _get(client, f"/api/v1/search/{endpoint}?q={query}&project=testprj", raw).json()
+        assert all(item["group_title"] == "Search Group" for item in own_body["items"])
+        assert body["total"] == own_body["total"] + (1 if allow_other else 0)
+    for suffix in ("?limit=2", "?before=testprj.test.0123.0002-N&limit=2"):
+        listed = _get(client, f"/api/v1/list/groups/{_GROUP}/documents" + suffix, raw)
+        assert listed.status_code == 200, listed.text
+        assert all(item["group_title"] == "Search Group" for item in listed.json()["items"])
+    meta = _get(client, "/api/v1/document/testprj.test.0123.0001-R/meta", raw)
+    assert meta.status_code == 200, meta.text
+    assert meta.json()["group_title"] == "Search Group"

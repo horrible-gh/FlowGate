@@ -124,8 +124,16 @@ def patch_store(tmp_db):
             raise NotImplementedError
 
     conn_mod.STORE = _PatchedStore()
-    yield
-    conn_mod.STORE = original_store
+    # Module-scoped seed fixtures run before the function-scoped startup fixture.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+        integration.register()
+        try:
+            yield
+        finally:
+            conn_mod.STORE = original_store
 
 
 def _write_doc_file(storage_root: Path, rel_path: str, body: str) -> None:
@@ -263,10 +271,9 @@ def _build_client():
 def _issue_bearer(tmp_path, user_id: str = "usr_test_001", project: str = "testprj") -> str:
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project=project, group_id=_GROUP, action_scope="new", doc_ref=None, issued_to=user_id,
-        )
+    issued = token_service.issue(
+        project=project, group_id=_GROUP, action_scope="new", doc_ref=None, issued_to=user_id,
+    )
     return issued["raw_token"]
 
 
@@ -429,3 +436,19 @@ def test_merged_endpoint_document_body_and_turn_hits_coexist(seed_data, tmp_path
     body_hits = [i for i in data["items"] if i["match_kind"] == "document_body"]
     assert len(body_hits) == 1
     assert body_hits[0]["doc_id"] == "testprj.__ALL__.0351search.0002-CH"
+
+
+def test_turn_search_scopes_projects_before_limit(seed_data, tmp_path, monkeypatch):
+    from modules.flow_gate.services import content_search_service, auth_outbound
+    assert content_search_service.search_conversation_turns(
+        q=_TURN_MARKER, allowed_projects=[], limit=1) == []
+    assert content_search_service.search_conversation_turns(
+        q=_TURN_MARKER, allowed_projects=["unreadable"], limit=1) == []
+    assert len(content_search_service.search_conversation_turns(
+        q=_TURN_MARKER, allowed_projects=["testprj"], limit=1)) == 1
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+    response = _get(client, f"/api/v1/search/documents/content?q={_TURN_MARKER}", raw)
+    assert response.status_code == 200
+    assert response.json()["turn_total"] > 0
+    assert all(item["group_title"] == "Search Group" for item in response.json()["items"])

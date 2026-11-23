@@ -74,6 +74,8 @@ def _read(scope, group, resource, view):
         row = run_store.current_run(scope.flow_id)
         payload = run_service.get_run(row["run_id"])["run"] if row else None
         return {**meta, "run": run_view(payload, scope, allowed)}
+    meta["flow"] = {key: group.get(key) for key in
+                    ("title", "module", "status", "created_at", "updated_at")}
     protected = protected_ids(snap.rows)
     ident = IdentityResult(snap, keys_from_record(snap.rows, layout_store.identity_record(scope.flow_id), protected),
                            protected, sequence_tag_of(snap))

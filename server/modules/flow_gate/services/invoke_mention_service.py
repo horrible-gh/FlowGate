@@ -170,6 +170,9 @@ def _chat_lookup_sections(
             sections.append(section)
 
     search_lines = [
+        f"List flows with names: GET {base}/list/projects/{project}/groups",
+        f"Read flow basic information: GET {base}/list/groups/<group_id>",
+        "Flow/document lookup is allowed in projects the requesting user can read; other flow canvases remain restricted.",
         f"Search documents by title/doc id: GET {base}/search/documents?q=<keyword>&project={project}",
         f"List documents in this group: GET {base}/list/groups/{group_name}/documents?limit=5",
         "",
