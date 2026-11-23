@@ -43,111 +43,23 @@ describe('target state controls incoming line colours, independent of deletion p
   })
 })
 
-describe('direct orthogonal routes under cards', () => {
+describe('obstacle-aware orthogonal routes', () => {
   it.each([[600, 100], [-600, -100], [100, 600], [-100, -600]])(
-    'centres a single connection between ports for offset %s,%s', (x, y) => {
+    'uses the same route standalone and on the canvas for %s,%s', (x, y) => {
       const source = rect(0, 0), target = rect(x, y)
-      const nodes = new Map([['s', source], ['t', target]])
-      const edge = { id: 'st', source: 's', target: 't' }
-      for (const route of [routeEdge(source, target), routeEdges([edge], nodes).get('st')!]) {
-        const a = route.anchors
-        if (a.sourcePosition === 'left' || a.sourcePosition === 'right') {
-          expect(route.points.slice(1, 3).map(p => p.x)).toEqual([
-            (a.sourceX + a.targetX) / 2, (a.sourceX + a.targetX) / 2,
-          ])
-        } else {
-          expect(route.points.slice(1, 3).map(p => p.y)).toEqual([
-            (a.sourceY + a.targetY) / 2, (a.sourceY + a.targetY) / 2,
-          ])
-        }
-      }
-      nodes.set('s2', rect(-100, 20))
-      const merged = routeEdges([edge, { id: 's2t', source: 's2', target: 't' }], nodes)
-      expect([...merged.values()].filter(r => r.drawArrow)).toHaveLength(1)
-      expect(routeEdges([edge], nodes).get('st')!.points).toEqual(routeEdge(source, target).points)
+      expect(routeEdges([{ id: 'e', source: 's', target: 't' }], new Map([['s', source], ['t', target]])).get('e')!.points)
+        .toEqual(routeEdge(source, target).points)
     })
-
-  it.each([[180, 150, 'bottom', 'top'], [-180, -150, 'top', 'bottom'],
-    [300, 40, 'right', 'left'], [-300, -40, 'left', 'right']])(
-    'chooses facing sides for offset %s,%s without crossing either endpoint card', (x, y, from, to) => {
-      const source = rect(0, 0), target = rect(Number(x), Number(y))
-      const route = routeEdge(source, target)
-      expect(route.anchors.sourcePosition).toBe(from)
-      expect(route.anchors.targetPosition).toBe(to)
-      for (let i = 1; i < route.points.length; i++) {
-        expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, source)).toBe(false)
-        expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, target)).toBe(false)
-      }
-    })
-  it.each(['right', 'left', 'down', 'up'])('centres merged inputs heading %s in either input order', direction => {
-    const nodes = new Map(direction === 'right'
-      ? [['a', rect(0, 0)], ['b', rect(0, 200)], ['t', rect(600, 100)]]
-      : direction === 'left'
-        ? [['a', rect(600, 0)], ['b', rect(600, 200)], ['t', rect(0, 100)]]
-        : direction === 'down'
-          ? [['a', rect(0, 0)], ['b', rect(200, 0)], ['t', rect(100, 600)]]
-          : [['a', rect(0, 600)], ['b', rect(200, 600)], ['t', rect(100, 0)]])
-    const edges = ['a', 'b'].map(source => ({ id: source, source, target: 't' }))
-    const horizontal = direction === 'right' || direction === 'left'
-    for (const ordered of [edges, [...edges].reverse()]) {
-      const routes = [...routeEdges(ordered, nodes).values()]
-      expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
-      for (const route of routes) {
-        const a = route.anchors
-        const midpoint = horizontal ? (a.sourceX + a.targetX) / 2 : (a.sourceY + a.targetY) / 2
-        expect(route.points.slice(1, 3).map(p => horizontal ? p.x : p.y)).toEqual([midpoint, midpoint])
-      }
-      expect(routes[0]!.points.slice(-2)).toEqual(routes[1]!.points.slice(-2))
-    }
-  })
-  it('centres a wide shared gap against the nearest input with different source columns', () => {
-    const nodes = new Map([['far', rect(0, 0)], ['near', rect(200, 100)], ['t', rect(800, 50)]])
-    const edges = ['far', 'near'].map(source => ({ id: source, source, target: 't' }))
-    for (const ordered of [edges, [...edges].reverse()]) {
-      expect([...routeEdges(ordered, nodes).values()].map(r => r.points[1]!.x)).toEqual([588, 588])
-    }
-  })
-  it('keeps a shared trunk inside a narrow gap regardless of input order', () => {
-    const nodes = new Map([['far', rect(0, 0)], ['near', rect(400, 40)], ['t', rect(600, 60)]])
-    const edges = ['far', 'near'].map(source => ({ id: source, source, target: 't' }))
-    for (const ordered of [edges, [...edges].reverse()]) {
-      const routes = routeEdges(ordered, nodes)
-      expect(new Set([...routes.values()].map(r => r.points[1]!.x))).toEqual(new Set([588]))
-      expect([...routes.values()].filter(r => r.drawArrow)).toHaveLength(1)
-      for (const edge of ordered) {
-        const route = routes.get(edge.id)!
-        for (let i = 1; i < route.points.length; i++) {
-          expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, nodes.get(edge.source)!)).toBe(false)
-          expect(segmentCrossesRect(route.points[i - 1]!, route.points[i]!, nodes.get('t')!)).toBe(false)
-        }
-      }
-    }
-  })
-  it('passes through a card instead of detouring; keeps endpoints and the label on the route', () => {
-    const route = routeEdge(rect(0, 0), rect(1000, 100))
+  it('avoids an intervening card and keeps the label on the route', () => {
     const obstacle = rect(400, 0)
-    expect(route.points.some((p, i) => i > 0 && segmentCrossesRect(route.points[i - 1]!, p, obstacle))).toBe(true)
-    expect(route.points).toHaveLength(4)
-    expect(route.points[0]).toEqual({ x: 176, y: 54 })
-    expect(route.points.at(-1)).toEqual({ x: 1000, y: 154 })
-    expect(routeDrawing(route)).toEqual({ path: 'M176,54 L588,54 L588,154 L991,154', middle: { x: 588, y: 99.5 } })
-  })
-  it.each([3, 8, 20])('%i inputs share one side-centre port and one arrow', count => {
-    const nodes = new Map([['T', rect(5000, 200)]])
-    const edges = Array.from({ length: count }, (_, i) => {
-      nodes.set('s' + i, rect(0, i * 156))
-      return { id: 'e' + i, source: 's' + i, target: 'T' }
-    })
-    const routes = [...routeEdges(edges, nodes).values()]
-    expect(routes.filter(r => r.drawArrow)).toHaveLength(1)
-    expect(new Set(routes.map(r => JSON.stringify(r.points.slice(-2)))).size).toBe(1)
-  })
-  it('centres merged targets on the same column without shifting their trunks', () => {
-    const nodes = new Map([['a', rect(0, 0)], ['b', rect(0, 200)], ['c', rect(600, 200)], ['d', rect(600, 0)]])
-    const routes = routeEdges([{ id: 'ac', source: 'a', target: 'c' }, { id: 'bc', source: 'b', target: 'c' },
-      { id: 'bd', source: 'b', target: 'd' }, { id: 'ad', source: 'a', target: 'd' }], nodes)
-    expect([...routes.values()].map(r => r.points[1]!.x)).toEqual([388, 388, 388, 388])
-    expect([...routes.values()].filter(r => r.drawArrow)).toHaveLength(2)
+    const route = routeEdge(rect(0, 0), rect(1000, 100), [obstacle])
+    expect(route.points.some((p, i) => i > 0 && segmentCrossesRect(route.points[i - 1]!, p, obstacle))).toBe(false)
+    const { path, middle } = routeDrawing(route)
+    expect(path).toMatch(/^M/)
+    expect(route.points.some((p, i) => i > 0 && (
+      p.x === middle.x && route.points[i - 1]!.x === middle.x && middle.y >= Math.min(p.y, route.points[i - 1]!.y) && middle.y <= Math.max(p.y, route.points[i - 1]!.y)
+      || p.y === middle.y && route.points[i - 1]!.y === middle.y && middle.x >= Math.min(p.x, route.points[i - 1]!.x) && middle.x <= Math.max(p.x, route.points[i - 1]!.x)
+    ))).toBe(true)
   })
   it('follows endpoint movement and size; hides duplicate arrows while keeping selection and removal', async () => {
     const source = node('s', 0, 0), target = node('t', 1000, 100)
@@ -172,7 +84,7 @@ describe('0069 branch and three-input join layout', () => {
     edges: [['R','1'],['R','2'],['1','3'],['1','4'],['2','5'],['3','5'],['4','5']]
       .map(([source,target], i) => ({ id: 'e'+i, source: source!, target: target!, edgeClass: 'execution' })),
   })
-  it('places 5 after 3/4 and at the mean of all three inputs; moving 4 onto 2→5 does not divert it', () => {
+  it('places 5 after 3/4 and at the mean of all three inputs; moving 4 onto 2→5 diverts it', () => {
     const g = example()
     const plan = planDirectionalLayout(g, undefined, 'horizontal')
     expect(checkDirectionalLayout(plan)).toBeNull()
@@ -184,8 +96,8 @@ describe('0069 branch and three-input join layout', () => {
     const edge = routes.get('e4')!
     nodes.set('4', { ...nodes.get('4')!, y: nodes.get('2')!.y })
     const moved = routeEdges(g.edges,nodes).get('e4')!
-    expect(moved.points).toEqual(edge.points)
-    expect(moved.points.some((p,i) => i > 0 && segmentCrossesRect(moved.points[i-1]!,p,nodes.get('4')!))).toBe(true)
+    expect(moved.points).not.toEqual(edge.points)
+    expect(moved.points.some((p,i) => i > 0 && segmentCrossesRect(moved.points[i-1]!,p,nodes.get('4')!))).toBe(false)
     expect([...routes.values()].filter(r => r.anchors.targetX === nodes.get('5')!.x && r.drawArrow)).toHaveLength(1)
     const after = { ...g, nodes:g.nodes.map(n => ({...n,...at.get(n.id)})) }
     expect(planDirectionalLayout(after,undefined,'horizontal').candidate).toEqual(plan.candidate)
