@@ -455,7 +455,7 @@ describe('0120 T#2 — list, accessible edit and preserved system registry', () 
     expect(rows[0].get('[data-edit-agent]').attributes('title')).toBe('수정')
     expect(rows[0].get('[data-edit-agent]').attributes('aria-label')).toBe('build-online 수정')
     expect(rows[0].findAll('button')).toHaveLength(2)
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'users', 'projects'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'terminal', 'users', 'projects'])
   })
 
   it('disabled takes priority; incompatible and revoked are never presented as online; edit has read-only status and OS', async () => {
