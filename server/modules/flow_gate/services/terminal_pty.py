@@ -339,9 +339,10 @@ class PosixPty:
 
 
 class WindowsPty:
-    def __init__(self, argv: list[str], cwd: str, env: dict, cols: int, rows: int):
+    def __init__(self, argv: list[str], cwd: str, env: dict, cols: int, rows: int, bundle_path=None):
         try:
-            from winpty import PtyProcess
+            from .terminal_bundle import load_winpty
+            PtyProcess = load_winpty(bundle_path).PtyProcess
         except ImportError as exc:
             raise PtyError("pywinpty is not installed") from exc
         try:
