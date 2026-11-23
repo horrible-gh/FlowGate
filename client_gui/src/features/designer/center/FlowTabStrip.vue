@@ -309,7 +309,7 @@ function runEndOf(flowId: string): FlowTabRunEnd | null {
   return props.runEnds[flowId] ?? null
 }
 
-/** flowgate.v02test.0068: the Flow's Git run (running / done / skipped / failed), or null. */
+/** flowgate.v02test.0068: the Flow's Git run (running / done / skipped / remaining / failed), or null. */
 function gitOf(flowId: string): GitTabActivity | null {
   return props.gitActivity?.[flowId] ?? null
 }
@@ -1004,7 +1004,8 @@ function pickFromList(flowId: string, close: () => void) {
   animation: flow-tab-spin 0.8s linear infinite;
 }
 .flow-tab-git.is-done { color: var(--fg2-status-success-fg, #4fe0d3); }
-.flow-tab-git.is-skipped { color: var(--fg2-status-warning-fg, #ffc072); }
+.flow-tab-git.is-skipped,
+.flow-tab-git.is-remaining { color: var(--fg2-status-warning-fg, #ffc072); }
 .flow-tab-git.is-failed { color: var(--fg2-status-danger-fg, #ff96a6); }
 .flow-tab-git:not(.is-running)::after {
   content: '';

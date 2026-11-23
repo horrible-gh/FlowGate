@@ -1949,6 +1949,46 @@ def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = No
         return _manual_guard(exc)
 
 
+class GitExecutionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    scope: Literal["commit", "merge", "push"]
+    target: str | None = None
+    message: str = ""
+    provider_id: str | None = None
+    paths: list[str] | None = None
+    all: bool = False
+    request_id: str
+    resume_from: str | None = None
+    commit_remaining: bool = False
+
+
+@router.get("/groups/{group_id}/git/execution")
+def get_git_execution(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import execution
+    try:
+        return {"ok": True, "result": {"execution": execution.latest(group_id)}}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/execution")
+def post_git_execution(group_id: str, body: GitExecutionBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    if not _UUID_RE.match(body.request_id):
+        return _error_response(422, "invalid_request_id", "request_id must be a UUID")
+    from modules.flow_gate.services.git import execution
+    try:
+        return {"ok": True, "result": {"execution": execution.start(group_id, **body.model_dump())}}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
 router.include_router(_worktree_mutations)
 
 

@@ -61,7 +61,7 @@ describe('scope execution', () => {
     expect(p.completed).toEqual(['commit','update','merge','push'])
   })
   it('passes over an update the server refuses for its own reasons and still merges', async()=>{
-    for (const code of ['git_error','base_dirty','group_lease_active','group_work_base_unverified']) {
+    for (const code of ['git_error','base_dirty','update_unavailable','group_work_base_unverified']) {
       const f=createFakeWorktreeSource({status:worktreeStatus({files:[]}),merge:manualMergeView({aheadOfTarget:0})},{updateFromBase:async()=>{throw gitError(409,code)}})
       const p=newExecution('merge','v0.2'); await executeGit(p,f.source,input())
       expect(p.status).toBe('complete'); expect(p.error).toBeNull()
@@ -72,6 +72,27 @@ describe('scope execution', () => {
     const f=createFakeWorktreeSource({status:worktreeStatus({files:[]})},{updateFromBase:async()=>{throw gitError(409,'group_untracked_conflict')}})
     const p=newExecution('push','v0.2'); await executeGit(p,f.source,input())
     expect(p.error).toBe('group_untracked_conflict'); expect(p.cursor).toBe(1); expect(f.source.manualMerge).not.toHaveBeenCalled()
+  })
+  it('stops on a busy lock during update instead of passing over it (the server waits it out)', async()=>{
+    for (const code of ['git_busy','group_lease_active','run_already_active','branch_merge_claim_active']) {
+      const f=createFakeWorktreeSource({status:worktreeStatus({files:[]})},{updateFromBase:async()=>{throw gitError(409,code)}})
+      const p=newExecution('merge','v0.2'); await executeGit(p,f.source,input())
+      expect(p.status).toBe('stopped'); expect(p.error).toBe(code); expect(p.cursor).toBe(1)
+    }
+  })
+  it('completes a push run with nothing to commit, merge or push (no merge result yet)', async()=>{
+    const f=createFakeWorktreeSource({status:worktreeStatus({files:[]}),merge:manualMergeView({aheadOfTarget:0}),results:mergeResults({results:[]})},{updateFromBase:async()=>({status:'no_change',mergeId:null})})
+    const p=newExecution('push','v0.2'); await executeGit(p,f.source,input())
+    expect(p.error).toBeNull(); expect(p.status).toBe('complete')
+    expect(p.completed).toEqual(['commit','update','merge','push'])
+    expect(f.source.manualMerge).not.toHaveBeenCalled(); expect(f.source.pushMergeResult).not.toHaveBeenCalled()
+  })
+  it('names a missing merge result instead of an unreadable status when commits are ahead', async()=>{
+    const f=createFakeWorktreeSource({status:worktreeStatus({files:[]}),merge:manualMergeView({aheadOfTarget:0}),results:mergeResults({results:[]})},{updateFromBase:async()=>({status:'no_change',mergeId:null})})
+    const p=newExecution('push','v0.2'); p.cursor=3; p.completed=['commit','update','merge']
+    f.db.merge=manualMergeView({aheadOfTarget:2})
+    await executeGit(p,f.source,input())
+    expect(p.error).toBe('merge_result_missing'); expect(f.source.pushMergeResult).not.toHaveBeenCalled()
   })
   it('clears an earlier skip when a resumed update succeeds', async()=>{
     let fail=true

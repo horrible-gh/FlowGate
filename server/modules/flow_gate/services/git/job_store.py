@@ -89,7 +89,7 @@ def reconcile_retry_interval_sec() -> int:
 
 KINDS = ("final_approval_publish", "branch_merge_publish", "worktree_provision",
          "worktree_cleanup", "base_publish", "archive_preserve", "archive_restore",
-         "archive_purge", "project_provision", "gate_publish", "gate_cleanup")
+         "archive_purge", "project_provision", "gate_publish", "gate_cleanup", "git_execution")
 FREEZE_KINDS = frozenset(("final_approval_publish",))
 
 # (operation job): ``gate_publish`` is one confirm gate decision's Git apply, archive
@@ -109,6 +109,7 @@ GATE_CLEANUP = "gate_cleanup"
 
 # Meaning fields per kind — requester and time excluded (L 2.13.1).
 _CANONICAL_FIELDS = {
+    "git_execution": ("group_id", "scope", "target_branch", "message", "provider_id", "paths", "all", "resume_from", "commit_remaining"),
     "final_approval_publish": ("doc_id", "doc_revision_no", "git_action", "target_branch",
                                "commit_title", "group_id"),
     "worktree_provision": ("group_id", "group_generation"),

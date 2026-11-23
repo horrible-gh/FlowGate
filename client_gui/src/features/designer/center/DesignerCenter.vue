@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
@@ -128,7 +128,7 @@ import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
-import { clearGitTabResult, gitTabActivity, pruneGitTabActivity } from './gitTabActivity'
+import { clearGitTabResult, gitTabActivity, observeGitTabActivity, pruneGitTabActivity } from './gitTabActivity'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
 import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
@@ -269,6 +269,8 @@ watch(() => props.center.state.activeFlowId, (flowId) => { if (flowId) clearGitT
 watch(() => props.center.state.tabs.map((tab) => tab.flowId).join('\n'), () => {
   pruneGitTabActivity(new Set(props.center.state.tabs.map((tab) => tab.flowId)))
 })
+// A run goes on in the server after the Git panel lets go of it: the open tabs read it until the Center goes.
+onUnmounted(observeGitTabActivity(() => props.center.state.tabs.map((tab) => tab.flowId)))
 const timeMachine = props.center.timeMachine
 /** the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {
