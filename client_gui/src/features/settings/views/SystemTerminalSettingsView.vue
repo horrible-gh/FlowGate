@@ -40,7 +40,7 @@
                       type="checkbox"
                       role="switch"
                       :checked="system.enabled"
-                      :disabled="!system.installed || busy || state === 'installing'"
+                      :disabled="(!system.installed && !system.enabled) || busy || state === 'installing'"
                       :aria-label="w.use"
                       data-testid="terminal-switch"
                       @change="onSwitch($event)"

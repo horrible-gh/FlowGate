@@ -48,8 +48,20 @@ def active_path():
     return None
 
 
+def missing_dependencies():
+    if not required():
+        return []
+    try:
+        psutil = importlib.import_module("psutil")
+        if tuple(psutil.version_info) >= (5, 9) and psutil.pid_exists(os.getpid()):
+            return []
+    except Exception:
+        pass
+    return ["psutil>=5.9"]
+
+
 def installed():
-    return not required() or active_path() is not None
+    return not required() or (active_path() is not None and not missing_dependencies())
 
 
 def prune_runtime():

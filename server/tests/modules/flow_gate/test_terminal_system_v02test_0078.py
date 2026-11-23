@@ -21,6 +21,7 @@ from modules.flow_gate.services.terminal_errors import BundleError
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     values = {}
+    monkeypatch.setattr(bundle, "missing_dependencies", lambda: [])
     monkeypatch.setattr(bundle, "root", lambda: tmp_path / "terminal")
     monkeypatch.setattr(service.system_settings, "get_value", lambda k, default=None: values.get(k, default))
     def set_value(key, value, *, value_type, updated_by=None):
@@ -100,14 +101,14 @@ def test_offline_install_stages_disabled_and_remove(env, monkeypatch, tmp_path):
     monkeypatch.setattr(bundle, "required", lambda: True)
     monkeypatch.setattr(bundle, "specification", lambda: spec)
     seen = []
-    monkeypatch.setattr(service, "shell_test", lambda path, cancel: seen.append((path / "winpty/__init__.py").is_file()))
+    monkeypatch.setattr(service, "shell_test", lambda path=None, cancel=None: seen.append(((path or bundle.active_path()) / "winpty/__init__.py").is_file()))
     monkeypatch.setattr(download.urllib.request, "urlopen", lambda *a, **k: pytest.fail("offline made network request"))
     job = mgr.install(directory)
     mgr.threads[job["install_id"]].join(5)
     result = mgr.job(job["install_id"])
     assert result["status"] == "done", result
     assert result["stage"] == "apply" and result["progress"] == 1
-    assert seen == [True] and bundle.installed() and not sessions.terminal_enabled()
+    assert seen == [True, True] and bundle.installed() and not sessions.terminal_enabled()
     assert mgr.latest()["install_id"] == job["install_id"]
     mgr.enable(True)
     with pytest.raises(BundleError) as error:
@@ -277,6 +278,114 @@ def test_retired_dotenv_key_ignored_without_relaxing_other_validation(tmp_path):
     dotenv.write_text("unknown_setting=garbage\n", encoding="utf-8")
     with pytest.raises(ValueError):
         RetiredSettings(_env_file=dotenv)
+
+
+@pytest.mark.parametrize("version", [None, (5, 8, 0), (5, 9, 0)])
+def test_dependency_probe_checks_import_and_version(monkeypatch, version):
+    from types import SimpleNamespace
+    monkeypatch.setattr(bundle, "required", lambda: True)
+    def load(name):
+        assert name == "psutil"
+        if version is None:
+            raise ImportError("psutil missing")
+        return SimpleNamespace(version_info=version, pid_exists=lambda pid: True)
+    monkeypatch.setattr(bundle.importlib, "import_module", load)
+    assert bundle.missing_dependencies() == ([] if version == (5, 9, 0) else ["psutil>=5.9"])
+
+
+def test_existing_bundle_missing_library_can_be_repaired(env, monkeypatch, tmp_path):
+    mgr, values, _ = env
+    _, spec = wheel(tmp_path)
+    monkeypatch.setattr(bundle, "required", lambda: True)
+    monkeypatch.setattr(bundle, "specification", lambda: spec)
+    monkeypatch.setattr(bundle, "active_path", lambda: tmp_path)
+    missing = ["psutil>=5.9"]
+    monkeypatch.setattr(bundle, "missing_dependencies", lambda: missing[:])
+    values["terminal.enabled"] = "true"
+    assert mgr.status()["installed"] is False
+    assert mgr.status()["missing_dependencies"] == missing
+    with pytest.raises(BundleError):
+        mgr.enable(True)
+    calls = []
+    class Pip:
+        returncode = 0
+        def poll(self): return 0
+    def popen(args, **kwargs):
+        calls.append(args)
+        missing.clear()
+        return Pip()
+    monkeypatch.setattr(service.subprocess, "Popen", popen)
+    monkeypatch.setattr(service, "shell_test", lambda **kwargs: calls.append("live-shell"))
+    monkeypatch.setattr(download, "fetch", lambda *args: pytest.fail("existing bundle downloaded again"))
+    job = mgr.install()
+    mgr.threads[job["install_id"]].join(5)
+    assert mgr.job(job["install_id"])["status"] == "done"
+    assert mgr.status()["installed"]
+    assert calls[0][:4] == [service.sys.executable, "-m", "pip", "install"]
+    assert calls[0][-1] == "psutil>=5.9"
+    assert calls[1] == "live-shell"
+
+
+def test_dependency_install_failure_keeps_repair_available(env, monkeypatch, tmp_path):
+    mgr, _, _ = env
+    _, spec = wheel(tmp_path)
+    monkeypatch.setattr(bundle, "required", lambda: True)
+    monkeypatch.setattr(bundle, "specification", lambda: spec)
+    monkeypatch.setattr(bundle, "active_path", lambda: tmp_path)
+    monkeypatch.setattr(bundle, "missing_dependencies", lambda: ["psutil>=5.9"])
+    class Pip:
+        returncode = 1
+        def poll(self): return 1
+    monkeypatch.setattr(service.subprocess, "Popen", lambda *a, **kw: Pip())
+    job = mgr.install(tmp_path)
+    mgr.threads[job["install_id"]].join(5)
+    result = mgr.job(job["install_id"])
+    assert result["status"] == "failed"
+    assert result["error_code"] == "terminal_dependency_install_failed"
+    assert "psutil" in result["message"]
+    assert not mgr.status()["installed"]
+
+
+def test_shell_test_refuses_missing_dependency_before_spawning(env, monkeypatch):
+    monkeypatch.setattr(bundle, "missing_dependencies", lambda: ["psutil>=5.9"])
+    monkeypatch.setattr(service.subprocess, "Popen", lambda *a, **kw: pytest.fail("spawned without psutil"))
+    with pytest.raises(BundleError) as exc:
+        service.shell_test()
+    assert exc.value.code == "terminal_dependency_missing"
+
+
+def test_live_shell_failure_does_not_publish_install(env, monkeypatch, tmp_path):
+    mgr, _, _ = env
+    directory, spec = wheel(tmp_path)
+    monkeypatch.setattr(bundle, "required", lambda: True)
+    monkeypatch.setattr(bundle, "specification", lambda: spec)
+    def shell_test(path=None, cancel=None):
+        if path is None:
+            raise BundleError("terminal_shell_test_failed", "Live runtime failed", 422)
+    monkeypatch.setattr(service, "shell_test", shell_test)
+    job = mgr.install(directory)
+    mgr.threads[job["install_id"]].join(5)
+    assert mgr.job(job["install_id"])["status"] == "failed"
+    assert not bundle.installed()
+
+
+def test_existing_bundle_failed_live_test_clears_ready_marker(env, monkeypatch, tmp_path):
+    mgr, _, _ = env
+    _, spec = wheel(tmp_path)
+    monkeypatch.setattr(bundle, "required", lambda: True)
+    monkeypatch.setattr(bundle, "specification", lambda: spec)
+    destination = bundle.root() / "bundles" / spec["sha256"][:16] / "winpty"
+    destination.mkdir(parents=True)
+    (destination / "__init__.py").write_text("# test bundle", encoding="utf-8")
+    service.atomic_json(bundle.root() / "installed.json", {"sha256": spec["sha256"]})
+    assert bundle.installed()
+    def fail(**kwargs):
+        raise BundleError("terminal_shell_test_failed", "Live runtime failed", 422)
+    monkeypatch.setattr(service, "shell_test", fail)
+    job = mgr.install()
+    mgr.threads[job["install_id"]].join(5)
+    assert mgr.job(job["install_id"])["status"] == "failed"
+    assert not bundle.installed()
 
 
 def test_current_windows_abi_has_catalog_wheel():
