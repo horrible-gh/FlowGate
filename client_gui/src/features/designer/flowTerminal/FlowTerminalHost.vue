@@ -157,8 +157,8 @@ watch(() => !!props.flowId && windows.value.some(x => x.id === props.flowId), on
 /* ── notices ── */
 const toasts = ref<ToastHostItem[]>([])
 let toastSeq = 0
-const FAILURE_WORD: Record<OpenFailure, 'limit' | 'exists' | 'notAdmin' | 'disabled' | 'failed'> = {
-  limit: 'limit', exists: 'exists', not_admin: 'notAdmin', disabled: 'disabled', failed: 'failed',
+const FAILURE_WORD: Record<OpenFailure, 'limit' | 'exists' | 'notAdmin' | 'disabled' | 'noCwd' | 'failed'> = {
+  limit: 'limit', exists: 'exists', not_admin: 'notAdmin', disabled: 'disabled', no_cwd: 'noCwd', failed: 'failed',
 }
 function notify(failure: OpenFailure) {
   const tone = failure === 'failed' ? 'danger' : 'warning'
