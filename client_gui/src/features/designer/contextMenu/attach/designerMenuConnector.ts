@@ -180,6 +180,7 @@ export interface DesignerContextMenuDeps {
   readonly archive?: {
     read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean }>
     busy: (flowId: string) => boolean
+    running?: (flowId: string) => boolean
     archiveFlow: (flowId: string) => Promise<void>
     restoreFlow: (flowId: string) => Promise<void>
   }
@@ -263,7 +264,8 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const build = () => live() ? projectTreeMenu({
       target,
       available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId),
-        archived: archive?.archived, archiveEligible: archive?.eligible,
+        archived: archive?.archived,
+        archiveEligible: archive?.eligible && !(target.kind === 'flow' && deps.archive?.running?.(target.flowId)),
         archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
         // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
         groupArchived: target.kind === 'group' ? target.archived === true : undefined,

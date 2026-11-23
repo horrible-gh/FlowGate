@@ -1558,7 +1558,15 @@ const archiveState = ref<FlowArchiveState | null>(null)
 let archiveReadSeq = 0
 // v02test.0083: only a Flow actually running (or stopping) keeps the toolbar's Archive off on the client; a paused,
 // stopped or never-run Flow follows the server's `eligible` alone.
-const archiveRunActive = computed(() => runPhase.value === 'running' || runPhase.value === 'stopping')
+function archiveRunActiveFor(flowId: string): boolean {
+  const phase = center.state.activeFlowId === flowId
+    ? runPhase.value : runPhaseOf(center.runStatus(flowId).run?.status)
+  return phase === 'running' || phase === 'stopping' || center.state.runs[flowId]?.action === 'stop'
+}
+const archiveRunActive = computed(() => {
+  const flowId = center.state.activeFlowId
+  return flowId !== null && archiveRunActiveFor(flowId)
+})
 const archiveReason = computed(() => {
   const reason = archiveState.value?.reason
   const key = `gui.designer.archive.${reason ?? 'unavailable'}`
@@ -1583,6 +1591,7 @@ async function changeArchive(flowId: string, archived: boolean) {
   const pid = projectId.value
   if (!pid || projectStore.archiveBusy[flowId]) return
   try {
+    if (archived && archiveRunActiveFor(flowId)) return
     const result = await projectStore.setFlowArchived(pid, flowId, archived)
     if (projectId.value !== pid) return
     center.setFlowArchived(flowId, result.archived)
@@ -1600,6 +1609,7 @@ async function archiveCompleted(flowId: string): Promise<boolean> {
   return (await projectStore.readFlowArchive(flowId)).completed
 }
 async function archiveFlow(flowId: string) {
+  if (archiveRunActiveFor(flowId)) return
   let completed: boolean
   try { completed = await archiveCompleted(flowId) } catch {
     menuToast(() => t('gui.designer.archive.failed'), 'warning')
@@ -1851,6 +1861,7 @@ const contextMenu = useDesignerContextMenu({
   archive: {
     read: (flowId) => projectStore.readFlowArchive(flowId),
     busy: (flowId) => !!projectStore.archiveBusy[flowId],
+    running: archiveRunActiveFor,
     archiveFlow,
     restoreFlow: (flowId) => changeArchive(flowId, false),
   },
