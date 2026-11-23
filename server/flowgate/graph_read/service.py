@@ -87,6 +87,7 @@ def _read(scope, group, resource, view):
         if scope.node_key and row["node_key"] != scope.node_key:
             continue
         out = scalar_fields(row, NODE_FIELDS)
+        out["card_ref"] = row.get("card_ref")       # display id (F77-12 forms) as stored; this read assigns none
         out["document"] = document(row.get("document"), allowed)
         out["node_run"] = node_run(row.get("node_run"), allowed)
         out["card_documents"] = [scalar_fields(line, LINE_FIELDS) for line in row.get("card_documents", [])
@@ -98,7 +99,7 @@ def _read(scope, group, resource, view):
     keys = {n["node_key"] for n in nodes}
     edges = [{**scalar_fields(e, ("edge_id", "edge_class", "origin", "source", "target", "relation")), "editable": False}
              for e in raw["edges"] if e.get("source") in keys and e.get("target") in keys]
-    return {**meta, "projection": raw["projection"], "view": raw["view"],
+    return {**meta, "flow_ref": raw.get("flow_ref"), "projection": raw["projection"], "view": raw["view"],
             "graph": {"latest_revision_no": raw["graph"].get("latest_revision_no")} if not scope.node_key else None,
             "nodes": nodes, "edges": edges, "external_relations": [],
             "run": run_view(raw.get("run"), scope, allowed)}

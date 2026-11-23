@@ -37,6 +37,7 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
 )
 from modules.flow_gate.graph_workflow.projection.graph_projector import title_state_block, to_graph_node
 from modules.flow_gate.graph_workflow.store import assignment_store, definition_store, layout_store, title_store
+from modules.flow_gate.services import card_numbers
 
 from .canvas_events import publish_canvas_changed
 from .canvas_service import follow_supersede
@@ -287,6 +288,8 @@ def write_draft(group: dict, user_id: Optional[str], req: dr.DraftRequest, clien
         if written != 1:
             raise version_conflict(flow_id, req.draft_version, current)
         definition_store.replace_draft_content(flow_id, nodes, edges)
+        # Card numbers: a new node key (a new or copied card) takes the Flow's next number in the same unit.
+        card_numbers.assign(flow_id, [n["node_key"] for n in nodes])
         new_nodes, new_edges = {n["node_key"] for n in nodes}, {e["edge_id"] for e in edges}
         removed_nodes = [n["node_key"] for n in (current or {}).get("nodes", []) if n["node_key"] not in new_nodes]
         removed_edges = [e["edge_id"] for e in (current or {}).get("edges", []) if e["edge_id"] not in new_edges]

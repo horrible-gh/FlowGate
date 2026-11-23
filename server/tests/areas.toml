@@ -1437,6 +1437,7 @@ tests = [
   "tests/modules/flow_gate/graph_workflow/domain/test_graph_canvas_domain_0045.py",
   "tests/modules/flow_gate/graph_workflow/domain/test_graph_definition_domain_0045.py",
   "tests/modules/flow_gate/graph_workflow/projection/test_graph_canvas_projection_0045.py",
+  "tests/modules/flow_gate/test_card_ids_v02test_0077.py",
   "tests/modules/flow_gate/test_flow_archive_browser_v02test_0002.py",
   "tests/modules/flow_gate/test_flow_archive_readonly_v02_0152.py",
   "tests/modules/flow_gate/test_flow_archive_v02test_0002.py",

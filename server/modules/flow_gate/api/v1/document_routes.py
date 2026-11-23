@@ -1185,10 +1185,21 @@ def download_document(request: Request, doc_id: str):
 
 @router.get("/document/{doc_id}")
 def get_document(request: Request, doc_id: str):
-    """Retrieve document content and metadata (D021 s.4-2)."""
+    """Retrieve document content and metadata (D021 s.4-2).
+
+    A card display id (``flowgate.v02test.F77-12``, ``F77-12``) opens the card's representative document (its work
+    instruction, else its requirement / bug document); a Flow id (``F77``) its root. The answer then carries
+    ``requested_id`` and the stored ``doc_id``; a stored doc_id is read exactly as before."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+
+    requested = doc_id
+    alias = _resolve_display_id(auth, doc_id)
+    if alias is not None:
+        if not alias:
+            return _fail(404, f"No card or Flow with a document matches {requested}")
+        doc_id = alias["doc_id"]
 
     try:
         _validate_outbound_doc_id(doc_id)
@@ -1197,7 +1208,7 @@ def get_document(request: Request, doc_id: str):
 
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
-        return _fail(404, f"Document {doc_id} does not exist")
+        return _fail(404, f"Document {requested} does not exist")
 
     file_path = doc.get("file_path")
     try:
@@ -1245,4 +1256,21 @@ def get_document(request: Request, doc_id: str):
         resp["answers"] = qa_pairs
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
+    from modules.flow_gate.services import card_numbers
+    card = card_numbers.card_of_document(doc_id, doc.get("group_id"))
+    resp["card_ref"] = card["card_ref"] if card else None
+    if requested != doc_id:
+        resp["requested_id"] = requested
     return JSONResponse(content=resp)
+
+
+def _resolve_display_id(auth, text: str) -> Optional[dict]:
+    """The one Flow / card a display id names among the projects this caller reads (with a document); ``{}`` for
+    a display id naming none (or several); None when ``text`` is no display id (a stored doc_id never is one)."""
+    from modules.flow_gate.services import card_ids, card_numbers
+    if card_ids.parse(text, allow_bare=False, allow_local=False) is None:
+        return None
+    from modules.flow_gate.services.auth_outbound import readable_projects
+    found = [ref for ref in card_numbers.resolve(text, allowed_projects=readable_projects(auth), allow_bare=False)
+             if ref.get("doc_id")]
+    return found[0] if len(found) == 1 else {}
