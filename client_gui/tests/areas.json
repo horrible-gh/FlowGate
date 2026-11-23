@@ -164,6 +164,7 @@
         "tests/features/designer/flowAttachmentPagehide.0036.spec.ts",
         "tests/features/designer/flowAttachments.0030.spec.ts",
         "tests/features/designer/flowAttachmentWindow.0030.spec.ts",
+      "tests/features/designer/flowAttachmentWindow.0074.spec.ts",
         "tests/features/designer/FlowBaseBranchDialog.0104.spec.ts",
         "tests/features/designer/FlowCanvasDraft.0045.spec.ts",
         "tests/features/designer/FlowCanvasFixes.0045.spec.ts",

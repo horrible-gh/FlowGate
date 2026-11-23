@@ -2,6 +2,8 @@
 // for delete / undo: those words are only tooltips and accessible names.
 type Origin = 'ai' | 'upload' | 'bug' | 'requirement' | 'chat' | 'card'
 type ErrorKind = 'delete' | 'upload' | 'download' | 'read'
+type OriginChip = 'all' | 'ai' | 'upload'
+type SortName = 'newest' | 'oldest' | 'name'
 
 const ko = {
   uploadProgress: (name: string, pending: number) => `업로드 중: ${name} · 대기 ${pending}개`,
@@ -17,6 +19,10 @@ const ko = {
   errorLead: { delete: n => `삭제하지 못한 파일: ${n}`, upload: n => `업로드하지 못한 파일: ${n}`, download: n => `다운로드하지 못한 파일: ${n}`, read: () => '목록을 불러오지 못했습니다' } as Record<ErrorKind, (names: string) => string>,
   cancelledNames: (names: string) => `이름이 같아 취소된 파일: ${names}`, closeError: '오류 닫기', more: (n: number) => `외 ${n}개`,
   origin: { ai: 'AI 첨부 승인', upload: '직접 업로드', bug: '버그 카드', requirement: '요구사항 카드', chat: '대화', card: '카드' } as Record<Origin, string>,
+  // 0074: origin chips (counts follow the search), the order menu and the bar that comes up under the list.
+  chips: { all: '전체', ai: 'AI 첨부', upload: '직접 업로드' } as Record<OriginChip, string>, chipsLabel: '출처로 거르기',
+  sorts: { newest: '최신 순', oldest: '오래된 순', name: '이름 순' } as Record<SortName, string>, sortLabel: '정렬',
+  barLabel: '선택한 파일 동작', clearSelection: '선택 해제',
 }
 type Words = typeof ko
 
@@ -33,6 +39,9 @@ const en: Words = {
   errorLead: { delete: n => `Could not delete: ${n}`, upload: n => `Could not upload: ${n}`, download: n => `Could not download: ${n}`, read: () => 'Could not load the list' },
   cancelledNames: names => `Cancelled because the name is in use: ${names}`, closeError: 'Close error', more: n => `and ${n} more`,
   origin: { ai: 'AI approval', upload: 'Uploaded', bug: 'Bug card', requirement: 'Requirement card', chat: 'Chat', card: 'Card' },
+  chips: { all: 'All', ai: 'AI attached', upload: 'Uploaded' }, chipsLabel: 'Filter by origin',
+  sorts: { newest: 'Newest first', oldest: 'Oldest first', name: 'By name' }, sortLabel: 'Sort',
+  barLabel: 'Selected file actions', clearSelection: 'Clear selection',
 }
 
 const ja: Words = {
@@ -48,6 +57,9 @@ const ja: Words = {
   errorLead: { delete: n => `削除できなかったファイル: ${n}`, upload: n => `アップロードできなかったファイル: ${n}`, download: n => `ダウンロードできなかったファイル: ${n}`, read: () => '一覧を読み込めませんでした' },
   cancelledNames: names => `名前が重複したためキャンセルされたファイル: ${names}`, closeError: 'エラーを閉じる', more: n => `ほか${n}件`,
   origin: { ai: 'AI 添付承認', upload: '直接アップロード', bug: 'バグカード', requirement: '要件カード', chat: '会話', card: 'カード' },
+  chips: { all: 'すべて', ai: 'AI 添付', upload: '直接アップロード' }, chipsLabel: '出どころで絞り込み',
+  sorts: { newest: '新しい順', oldest: '古い順', name: '名前順' }, sortLabel: '並べ替え',
+  barLabel: '選択したファイルの操作', clearSelection: '選択解除',
 }
 
 export const words: Record<'ko' | 'en' | 'ja', Words> = { ko, en, ja }
@@ -55,3 +67,4 @@ export function wordsFor(locale: string): Words {
   return words[locale as keyof typeof words] ?? words.en
 }
 export type { Origin, Words }
+
