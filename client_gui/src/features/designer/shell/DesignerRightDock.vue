@@ -81,6 +81,10 @@
           :subscribe-events="subscribeChatEvents"
           :attachment-request-row="AttachmentRequestItem"
           :attachment-request-bulk="AttachmentRequestBulkBar"
+          :attachments-open="flowAttachmentUi.currentOpen"
+          :attachments-pending="attachmentsPending"
+          :focus-attachment="focusAttachment"
+          @toggle-attachments="flowAttachmentUi.toggle?.()"
           :active="!collapsed && !unselected && tool === 'conversation'"
         />
       </div>
@@ -103,6 +107,11 @@ import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentReque
 import { ConversationPanel } from '@/features/conversation'
 import { DesignerGitPanel } from '@/features/git'
 import { useProjectStore, type FlowRef, type ProjectEventSubscription } from '@/features/project'
+// v02test.0074: the chat's file chips go to a file's row of the attachment window through this (the chat itself never
+// imports the Designer).
+import { focusAttachment } from '../flowAttachments/focus'
+import { useFlowAttachmentPending } from '../flowAttachments/pendingCount'
+import { flowAttachmentUi } from '../flowAttachments/state'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'
 import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
@@ -164,6 +173,13 @@ watch(
 // reset to their empty state and read nothing; the target's context arrives with the first choice.
 const partProjectId = computed(() => (props.unselected ? null : props.projectId))
 const partFlow = computed(() => (props.unselected ? null : props.activeFlow))
+
+// the 📎 badge counts the waiting AI attachment requests of the whole Flow (the server's Flow-level count, the same
+// number as the band of the attachment window), so a chat switch does not change it. It is read once the Conversation
+// has been shown, and again on every `attachment_request_updated` event of the Flow.
+const attachmentsPending = useFlowAttachmentPending(() =>
+  mountedTools.conversation && partProjectId.value && partFlow.value ? { projectId: partProjectId.value, flowId: partFlow.value.groupId } : null,
+)
 
 // the Conversation knows no store; it hears the project's shared event stream through this.
 // A Dock mounted without the app's Pinia (a unit test) hands in nothing and the chat hears no event.

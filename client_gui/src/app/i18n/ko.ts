@@ -14,6 +14,8 @@ export default {
     pending_n: '승인 대기 {n}건',
     target: '대상: {title}',
     by_ai: '{name} 요청',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: '첨부파일 창에서 보기: {name}',
     tab_pending: '대기 {n}',
     tab_section: 'AI 첨부 승인 대기 {n}건',
     run_result_pending: '첨부 승인 대기 {n}건',
@@ -1244,6 +1246,22 @@ export default {
       copy: '원문 복사',
       copied: '복사했습니다',
       copy_failed: '복사하지 못했습니다',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: '삭제됨',
+        replaced: '변경됨',
+        open: '첨부파일 창에서 보기: {name}',
+        download: '{name} 다운로드',
+        linked_n: '이 답변에 링크된 파일 {n}개',
+        zip: '모두 받기(ZIP)',
+        preview: '미리보기',
+        hide_preview: '미리보기 닫기',
+        download_failed: '파일을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+        not_found: '첨부파일 창에서 이 파일을 찾지 못했습니다.',
+        preview_loading: '불러오는 중…',
+        preview_failed: '미리보기를 불러오지 못했습니다.',
+        preview_none: '미리 볼 수 없는 파일입니다. 다운로드해서 확인해 주세요.',
+      },
     },
     command: {
       title: '명령 실행 요청',
@@ -1360,6 +1378,8 @@ export default {
       label: '참여',
     },
     composer: {
+      attachments: '첨부파일',
+      attachments_pending: '첨부파일 · 승인 대기 {n}건',
       creating: "대화 생성 중…",
       loading: "대화 이력 확인 중…",
       sending: "메시지 전송 중… (시도 {attempt})",

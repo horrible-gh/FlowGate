@@ -77,7 +77,8 @@
            quick message titles in row order in their kind colour (red 계속 / blue 1회); hovering a title shows its text.
            A body without (well-formed) markers is shown as written. Copy / ⋯ edit keep using the body as written. -->
       <div v-else-if="isUser && quickView" class="tl-quick-msg" data-test="tl-quick-msg">
-        <div v-if="quickView.text" class="tl-text" data-test="tl-user-text">{{ quickView.text }}</div>
+        <div v-if="quickView.text && quickTextHtml" class="tl-text" data-test="tl-user-text" @click.capture="onBodyClick" v-html="quickTextHtml" />
+        <div v-else-if="quickView.text" class="tl-text" data-test="tl-user-text">{{ quickView.text }}</div>
         <div class="tl-quick-titles" data-test="tl-quick-titles">
           <span
             v-for="(item, index) in quickView.quick"
@@ -90,8 +91,16 @@
           >{{ item.title || item.message.trim().slice(0, 12) }}</span>
         </div>
       </div>
+      <!-- v02test.0074 (시안 v2 · 6): `[name](fg-attachment:<key>)` is drawn as a file chip (icon · name · size · ⬇) in a
+           person's text as well as in an AI answer. A person's message is still plain text: only the chips are HTML,
+           everything else is escaped (attachmentLinks.ts). Without such a link the text is shown exactly as before. -->
+      <div v-else-if="isUser && userHtml" class="tl-text" data-test="tl-user-links" @click.capture="onBodyClick" v-html="userHtml" />
       <div v-else-if="isUser" class="tl-text">{{ turn.body }}</div>
       <div v-else class="tl-text tl-md" data-test="tl-md" @click.capture="onBodyClick" v-html="html" />
+      <!-- A chip's ⬇ or name could not do its work (the download failed / the file is not in the attachment window). -->
+      <p v-if="fileError" class="tl-note tl-note--failed" role="alert" data-test="tl-file-error">{{ fileError }}</p>
+      <!-- The files the answer links, once more under it (preview / download / ZIP). -->
+      <TimelineLinkedFiles v-if="!isUser && !turn.deletedAt && linkedFiles.length" :files="linkedFiles" />
       <!-- the message's images (thumbnails; one opens the original). -->
       <p v-if="mutationError" role="alert">{{ mutationError }}</p>
       <TimelineAudio v-if="!turn.deletedAt && turn.audio" :audio="turn.audio" />
@@ -113,7 +122,17 @@ import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createMarkdownRenderer } from '../../core/markdown/markdownRenderer'
 import TimelineAudio from './TimelineAudio.vue'
 import TimelineImages from './TimelineImages.vue'
+import TimelineLinkedFiles from './TimelineLinkedFiles.vue'
 import TimelineMessageMenu from './TimelineMessageMenu.vue'
+import {
+  attachmentChipHtml,
+  attachmentChipOf,
+  attachmentKeyOf,
+  linkedFilesOf,
+  plainTextWithChips,
+  useAttachmentLinkActions,
+  type AttachmentChipLabels,
+} from './attachmentLinks'
 import { parseQuickBody } from './quickMessages/quickMarkup'
 import { formatTimelineTime } from './timeline'
 import type { SendFailure } from './timeline'
@@ -176,12 +195,61 @@ const rootEl = ref<HTMLElement | null>(null)
 // the run result window's renderer (GFM tables, a copy button per code block), made once per
 // message as in that window. The computed caches the parse: it runs again only when the body or the language (the
 // code copy label) changes.
-const renderMarkdown = createMarkdownRenderer({ copyLabel: () => t('gui.document_window.viewer.copy_code'), safe: true })
+// v02test.0074: an `fg-attachment:` link is drawn as a file chip instead of going through the safe link rule (which
+// would leave only its text). The state of each file comes from the turn (`attachmentLinks`), read at each parse.
+const chipLabels = (): AttachmentChipLabels => ({
+  deleted: t('gui.conversation.message.file.deleted'),
+  replaced: t('gui.conversation.message.file.replaced'),
+  open: (name) => t('gui.conversation.message.file.open', { name }),
+  download: (name) => t('gui.conversation.message.file.download', { name }),
+})
+const renderMarkdown = createMarkdownRenderer({
+  copyLabel: () => t('gui.document_window.viewer.copy_code'),
+  safe: true,
+  link: (href, _inner, text) => {
+    const key = attachmentKeyOf(href)
+    return key ? attachmentChipHtml(attachmentChipOf(key, text, props.turn.attachmentLinks), chipLabels()) : null
+  },
+})
 const html = computed(() => {
   if (isUser.value) return ''
   void locale.value
   return renderMarkdown(props.turn.body)
 })
+/** A person's plain text with its file links as chips; null = no such link (the text is shown as written). */
+const userHtml = computed(() => {
+  if (!isUser.value || props.turn.deletedAt) return null
+  void locale.value
+  return plainTextWithChips(props.turn.body, props.turn.attachmentLinks, chipLabels())
+})
+const quickTextHtml = computed(() => {
+  const text = quickView.value?.text
+  if (!text) return null
+  void locale.value
+  return plainTextWithChips(text, props.turn.attachmentLinks, chipLabels())
+})
+const linkedFiles = computed(() => linkedFilesOf(props.turn.attachmentLinks))
+
+const fileActions = useAttachmentLinkActions()
+const fileError = ref('')
+const downloadingKeys = new Set<string>()
+
+/** A chip's button: ⬇ downloads the original at once, the name shows the file's row in the attachment window. */
+async function onChipAction(button: Element): Promise<void> {
+  const chip = button.closest<HTMLElement>('[data-file-key]')
+  const key = chip?.dataset.fileKey
+  if (!chip || !key) return
+  fileError.value = ''
+  if (button.getAttribute('data-fg-action') === 'download') {
+    if (downloadingKeys.has(key)) return
+    downloadingKeys.add(key)
+    const done = await fileActions.download(key, chip.dataset.fileName ?? '')
+    downloadingKeys.delete(key)
+    if (!done) fileError.value = t('gui.conversation.message.file.download_failed')
+    return
+  }
+  if (!(await fileActions.focus(key))) fileError.value = t('gui.conversation.message.file.not_found')
+}
 
 type CopyState = 'idle' | 'done' | 'failed'
 const COPY_FLASH_MS = 1500
@@ -241,6 +309,13 @@ async function copyBody(): Promise<void> {
 
 /** A code block's copy button (the renderer's wrapper): only the code of the block that was pressed. */
 async function onBodyClick(event: MouseEvent): Promise<void> {
+  const chipButton = (event.target as Element | null)?.closest?.('[data-fg-action]')
+  if (chipButton) {
+    event.stopPropagation()
+    event.preventDefault()
+    await onChipAction(chipButton)
+    return
+  }
   const button = (event.target as Element | null)?.closest?.('.code-copy-btn')
   if (!button) return
   event.stopPropagation()
@@ -634,6 +709,100 @@ async function onBodyClick(event: MouseEvent): Promise<void> {
   color: var(--fg2-status-danger-fg);
   border-color: var(--fg2-status-danger-border);
   opacity: 1;
+}
+
+/* v02test.0074: a linked file as a chip inside the text (the chip is renderer / attachmentLinks.ts HTML, hence :deep).
+   Theme variables only. One line, never wider than the bubble: the name gives way with an ellipsis. */
+.tl-text :deep(.tl-fchip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 0 3px 0 5px;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface-flat);
+  color: var(--fg2-text);
+  font-size: 11.5px;
+  line-height: 1.5;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.tl-text :deep(.tl-fchip-ico) {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.tl-text :deep(.tl-fchip-name) {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-text :deep(button.tl-fchip-name) {
+  cursor: pointer;
+}
+
+.tl-text :deep(button.tl-fchip-name:hover),
+.tl-text :deep(button.tl-fchip-name:focus-visible) {
+  color: var(--fg2-blue);
+  text-decoration: underline;
+}
+
+.tl-text :deep(.tl-fchip-size),
+.tl-text :deep(.tl-fchip-tag) {
+  flex: 0 0 auto;
+  color: var(--fg2-muted);
+  font-size: 10.5px;
+}
+
+.tl-text :deep(.tl-fchip--replaced .tl-fchip-tag) {
+  color: var(--fg2-status-warning-fg);
+}
+
+.tl-text :deep(.tl-fchip-dl) {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--fg2-line-strong);
+  background: transparent;
+  color: var(--fg2-status-info-fg);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tl-text :deep(.tl-fchip-dl:hover),
+.tl-text :deep(.tl-fchip-dl:focus-visible) {
+  color: var(--fg2-text);
+  background: var(--fg2-control-surface-strong);
+}
+
+/* A deleted file: grey, struck through, no button. */
+.tl-text :deep(.tl-fchip--deleted) {
+  border-style: dashed;
+  background: transparent;
+  color: var(--fg2-muted);
+}
+
+.tl-text :deep(.tl-fchip--deleted .tl-fchip-name) {
+  font-weight: 400;
+  text-decoration: line-through;
 }
 
 .tl-note {

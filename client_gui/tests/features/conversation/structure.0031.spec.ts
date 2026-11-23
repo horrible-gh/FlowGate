@@ -48,6 +48,9 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         // the AI attachment request block of a run (rows drawn by the container's component).
         'TimelineAttachments.vue',
         'TimelineImages.vue',
+        // v02test.0074: the files an answer links (preview / download / ZIP) and the fg-attachment chip module.
+        'TimelineLinkedFiles.vue',
+        'attachmentLinks.ts',
         'TimelineMessage.vue',
         // a message's ⋯ menu (context checkpoint: from this message / from the next / clear).
         'TimelineMessageMenu.vue',
