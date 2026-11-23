@@ -58,6 +58,7 @@ import { attachRightButtonGuard } from '../gesture'
 import { createDesignerMenuHost, type DesignerMenuHost } from '../host'
 import { paletteMenu } from '../paletteMenu'
 import { projectTreeMenu } from '../projectTreeMenu'
+import { flowArchiveReason } from '../../archive/flowArchiveReason'
 import type {
   CanvasTarget,
   CardRunCommand,
@@ -178,7 +179,7 @@ export interface DesignerContextMenuDeps {
   readonly copyDocumentId?: (docId: string) => void
   readonly projectGitEnabled?: (projectId: string) => boolean | undefined
   readonly archive?: {
-    read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean }>
+    read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean; reason?: string | null }>
     busy: (flowId: string) => boolean
     running?: (flowId: string) => boolean
     archiveFlow: (flowId: string) => Promise<void>
@@ -260,13 +261,15 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const projectAt = deps.projectId()
     // The row must still be in the Explorer's tree (a re-read may have removed the Group / Flow) — §3.3, §3.4.
     const live = () => deps.projectId() === projectAt && (alive?.() ?? true)
-    let archive: { archived: boolean; eligible: boolean } | null = null
+    let archive: { archived: boolean; eligible: boolean; reason?: string | null } | null = null
     const build = () => live() ? projectTreeMenu({
       target,
       available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId),
         archived: archive?.archived,
         archiveEligible: archive?.eligible && !(target.kind === 'flow' && deps.archive?.running?.(target.flowId)),
         archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
+        // F83-5: why Archive is off, by the toolbar's own rule (not read yet → no tooltip).
+        archiveReason: archive && target.kind === 'flow' ? flowArchiveReason(archive, !!deps.archive?.running?.(target.flowId), t, te) : undefined,
         // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
         groupArchived: target.kind === 'group' ? target.archived === true : undefined,
         groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined },

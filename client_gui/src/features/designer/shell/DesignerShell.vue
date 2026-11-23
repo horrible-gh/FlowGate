@@ -280,6 +280,7 @@ import DesignerTaskbar from './DesignerTaskbar.vue'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
+import { flowArchiveReason } from '../archive/flowArchiveReason'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
 import ConfirmDialog from '../../../components/ui/ConfirmDialog.vue'
 import { copyToClipboard } from '@/core/interaction/clipboard'
@@ -1567,12 +1568,8 @@ const archiveRunActive = computed(() => {
   const flowId = center.state.activeFlowId
   return flowId !== null && archiveRunActiveFor(flowId)
 })
-const archiveReason = computed(() => {
-  const reason = archiveState.value?.reason
-  const key = `gui.designer.archive.${reason ?? 'unavailable'}`
-  if (archiveState.value?.eligible) return archiveRunActive.value ? t('gui.designer.archive.work_unfinished') : ''
-  return t(te(key) ? key : 'gui.designer.archive.unavailable')
-})
+// F83-5: the same text the project tree's right-click Archive item shows (one shared rule).
+const archiveReason = computed(() => flowArchiveReason(archiveState.value, archiveRunActive.value, t, te))
 async function refreshArchiveState() {
   const flowId = center.state.activeFlowId
   const seq = ++archiveReadSeq
