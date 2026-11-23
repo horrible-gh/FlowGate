@@ -1349,6 +1349,8 @@ export default {
       label: 'With',
     },
     composer: {
+      attachments: 'Attachments',
+      attachments_pending: 'Attachments · {n} awaiting approval',
       creating: "Creating conversation…",
       loading: "Loading conversation history…",
       sending: "Sending message… (attempt {attempt})",

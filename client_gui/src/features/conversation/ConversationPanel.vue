@@ -108,6 +108,9 @@
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
       :on-send="start.send"
+      :attachments-open="attachmentsOpen"
+      :attachments-pending="attachmentsPending"
+      @toggle-attachments="emit('toggle-attachments')"
       @select-provider="session.selectProvider"
       @retry-ai-pick="session.retryChatProvider"
       @save-settings="onSaveSettings"
@@ -166,12 +169,18 @@ const props = withDefaults(
     attachmentRequestBulk?: Component
     /** the container shows this part (false while another Dock tab is shown). */
     active?: boolean
+    /** the Flow's attachment window is open (the 📎 button of the input shows it pressed). */
+    attachmentsOpen?: boolean
+    /** Waiting AI attachment requests of the whole Flow (every chat and card), for the badge of the 📎 button; the container reads it. */
+    attachmentsPending?: number
   }>(),
-  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
+  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined, attachmentsOpen: false, attachmentsPending: 0 },
 )
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
+  /** the 📎 button of the input: the container opens / closes the Flow's attachment window. */
+  'toggle-attachments': []
 }>()
 
 // the attachment request blocks of the timeline draw their rows with the container's component.
