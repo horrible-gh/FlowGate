@@ -30,6 +30,7 @@ export { useProjectStore } from './store'
 // adds the Designer F5 snapshot shape the Designer Shell saves / restores through the store.
 export type { RoleRunFields, RoleWaitReason } from './types'
 export type { FlowArchiveState } from './flowArchiveApi'
+export type { CardRefMatch } from './cardRefApi'
 export type { AiInvocation, AiInvocationsPage } from './aiInvocationsApi'
 // adds the result of one step / full command (the run result windows read it through the store).
 export type {

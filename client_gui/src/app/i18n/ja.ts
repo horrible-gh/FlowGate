@@ -642,7 +642,7 @@ export default {
     project_explorer: {
       title: 'プロジェクト',
       refresh: '再読み込み',
-      search_placeholder: 'プロジェクト・グループ・フローを検索',
+      search_placeholder: 'プロジェクト・グループ・フロー・F77-12 を検索',
       search_clear: '検索をクリア',
       loading: 'プロジェクト構造を読み込んでいます...',
       load_failed: 'プロジェクト構造を読み込めませんでした。',
@@ -653,6 +653,11 @@ export default {
       group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
       reconnecting: '再接続中…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · ID に使う名前: {key}',
+      archived: 'アーカイブ済み',
+      cards: 'カード',
+      enter_open: 'Enter で開く',
     },
     // Designer File Explorer.
     file_explorer: {

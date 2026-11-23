@@ -199,6 +199,7 @@
         "tests/features/designer/ProjectExplorer.0023.spec.ts",
         "tests/features/designer/ProjectExplorer.resync.0060.spec.ts",
         "tests/features/designer/projectExplorerTree.0023.spec.ts",
+        "tests/features/designer/projectExplorerIds.0077.spec.ts",
         "tests/features/designer/requestedReread.0156.spec.ts",
         "tests/features/designer/revisionAdoption.0010.spec.ts",
         "tests/features/designer/structure.0024.spec.ts",
