@@ -389,9 +389,16 @@ function onPaste(event: ClipboardEvent): void {
 
 const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files')
 
+// 0074 TR0014: a file dragged over the input never goes to the browser — also while sending or when the input is
+// locked (the browser would open the image and leave the app). Then nothing is taken (dropEffect none). Drags
+// without `Files` (text, quick message order) keep their default.
 function onDragOver(event: DragEvent): void {
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+    return
+  }
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   dragging.value = true
 }
@@ -403,8 +410,9 @@ function onDragLeave(event: DragEvent): void {
 
 function onDrop(event: DragEvent): void {
   dragging.value = false
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) return
   attach.add(Array.from(event.dataTransfer?.files ?? []))
 }
 
