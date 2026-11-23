@@ -48,6 +48,7 @@
           v-for="flow in group.flows"
           :key="flow.id"
           :flow="flow"
+          :label-width="group.flowLabelWidth"
           :selected="isSelected('flow', flow.id)"
           :active="flow.id === activeFlowId"
           @select="emit('select-flow', $event)"

@@ -57,7 +57,7 @@
         class="flow-tab-button"
         :aria-selected="tab.flowId === activeFlowId"
         :tabindex="tab.flowId === activeFlowId ? 0 : -1"
-        :title="tab.name"
+        :title="tabTitle(tab)"
         data-test="designer-flow-tab-button"
         @click="onClick(tab.flowId)"
         @keydown="onKeydown($event, tab.flowId)"
@@ -107,7 +107,9 @@
           :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>
         <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
           :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" :title="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)"
-          data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
+          data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span><!--
+          flowgate.v02test.0077: the Flow number before the name, dim (`F77 ID`); none for an id without a group number. -->
+        <span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-no">{{ flowLabel(tab.flowId) }}</span>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -154,7 +156,7 @@
               class="flow-tab-list-item"
               :class="{ 'is-active': tab.flowId === activeFlowId, 'is-archived': isArchived(tab.flowId) }"
               :aria-checked="tab.flowId === activeFlowId ? 'true' : 'false'"
-              :title="tab.name"
+              :title="tabTitle(tab)"
               data-test="designer-flow-tab-list-item"
               :data-flow-id="tab.flowId"
               @click="pickFromList(tab.flowId, close)"
@@ -192,7 +194,7 @@
               <span v-if="gitOf(tab.flowId)" class="flow-tab-git" :class="`is-${gitOf(tab.flowId)!.state}`" role="img"
                 :aria-label="gitLabel(tab.flowId)" :title="gitLabel(tab.flowId)" :data-git-state="gitOf(tab.flowId)!.state"
                 data-test="designer-flow-tab-list-git"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="6" cy="19" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="18" cy="7" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><path d="M6 7.3v9.4M18 9.3c0 4.8-6 4.2-11 7.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></span>
-        <span class="flow-tab-list-name">{{ tab.name }}</span>
+        <span class="flow-tab-list-name"><span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-list-no">{{ flowLabel(tab.flowId) }}</span>{{ tab.name }}</span>
             </button>
           </div>
         </div>
@@ -212,12 +214,19 @@ import LineIcon from '../../../components/ui/LineIcon.vue'
 import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 import type { FlowTabConflict } from './flowTabConflicts'
+import { flowLabel } from './graph/cardIds'
 import { gitTabActivityLabel, type GitTabActivity } from './gitTabActivity'
 import { wordsFor as terminalWordsFor } from '../flowTerminal/words'
 
 export interface FlowTabStripItem {
   readonly flowId: string
   readonly name: string
+}
+
+/** flowgate.v02test.0077: a tab's hover text — `F77 · ID` (the name alone for an id without a group number). */
+function tabTitle(tab: FlowTabStripItem): string {
+  const label = flowLabel(tab.flowId)
+  return label ? `${label} · ${tab.name}` : tab.name
 }
 
 /** the run states a tab marks (the run lock's statuses, each with its own mark). */
@@ -831,6 +840,15 @@ function pickFromList(flowId: string, close: () => void) {
   display: block;
   width: 14px;
   height: 14px;
+}
+
+/* flowgate.v02test.0077: the Flow number before a tab name — dim, monospace, never taking the name's colour. */
+.flow-tab-no {
+  margin-right: 5px;
+  color: #7d95ab;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .flow-tab-list-name {

@@ -196,6 +196,7 @@ source = [
 tests = [
   "tests/modules/flow_gate/services/test_agent_api_base_0472.py",
   "tests/modules/flow_gate/services/test_prompt_selection_0049.py",
+  "tests/modules/flow_gate/services/test_display_names_v02test_0077.py",
   "tests/modules/flow_gate/services/test_terminal_prompt_0049.py",
   "tests/modules/flow_gate/settings/test_ai_cli_presets_0519.py",
   "tests/modules/flow_gate/test_agent_capacity_0043.py",
@@ -1437,6 +1438,7 @@ tests = [
   "tests/modules/flow_gate/graph_workflow/domain/test_graph_canvas_domain_0045.py",
   "tests/modules/flow_gate/graph_workflow/domain/test_graph_definition_domain_0045.py",
   "tests/modules/flow_gate/graph_workflow/projection/test_graph_canvas_projection_0045.py",
+  "tests/modules/flow_gate/test_card_ids_v02test_0077.py",
   "tests/modules/flow_gate/test_flow_archive_browser_v02test_0002.py",
   "tests/modules/flow_gate/test_flow_archive_readonly_v02_0152.py",
   "tests/modules/flow_gate/test_flow_archive_v02test_0002.py",

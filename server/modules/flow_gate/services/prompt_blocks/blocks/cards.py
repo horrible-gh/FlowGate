@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from ..registry import Block, register
 
+# The display ids the canvas read carries (card 0077 numbering) and how to say them to the user.
+DISPLAY_IDS = ("Canvas names: flow_name F77(name), nodes[].card_name F77-12(card title), card_ref (#12, full id). "
+               "Say these to the user; API calls keep flow_id/node_key/doc_id.")
+
 
 def graph_state_read(api_base, _raw_token=None):
     """Bound Graph state read (canvas / runs/current); moved verbatim from ``graph_read.tools.cli_mention``."""
@@ -20,7 +24,8 @@ def graph_state_read(api_base, _raw_token=None):
             "Use this run's existing worker/chat Bearer, never a user JWT. Only your bound group is readable; "
             "a card worker sees only its active node/attempt. Chat canvas defaults to latest; view=revision "
             "shows the execution definition. No write, execution, history or external-group access is granted. "
-            "These reads report stored state and never reconcile or start work. Never log the Bearer.")
+            "These reads report stored state and never reconcile or start work. Never log the Bearer.\n"
+            + DISPLAY_IDS)
 
 
 register(Block("cards.state", brief=graph_state_read, detail=graph_state_read, help_leaf="cards/state"))
