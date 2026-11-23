@@ -82,6 +82,8 @@ def run_ending(run: dict) -> None:
 def run_ended(run: dict) -> None:
     """The run finished and released its group lease. Never raises."""
     _call(ON_RUN_ENDED, run)
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    first_names_hooks.completed(run)
 
 
 def question_answered(answer: dict) -> None:
