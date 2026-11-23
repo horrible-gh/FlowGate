@@ -34,6 +34,15 @@ export const CANVAS_CARD_STEP_EVENTS = ['document_explorer_refresh', 'doc_review
  * the Flow's Canvas (and its run) again too, coalesced like the card step frames.
  */
 export const CANVAS_GATE_JOB_EVENTS = ['gate_publish_job_changed'] as const
+/**
+ * flowgate.v02test.0080: the AI named a Flow's default names (Flow name, root R/B card title, chat title) — the server's
+ * `group_view_refresh` with `reason: "first_names"`. The Canvas read carries each card's title (the card body and the
+ * Inspector header show it), so the Flow's Canvas is read again, coalesced like the card step frames. Other
+ * `group_view_refresh` reasons are not Canvas changes and stay ignored here. The frame's names are never used: the
+ * read is the value. `targets` / `doc_id` hints are not needed — the whole Canvas is one read.
+ */
+export const CANVAS_FIRST_NAMES_EVENT = 'group_view_refresh'
+export const CANVAS_FIRST_NAMES_REASON = 'first_names'
 /** One Canvas read for a burst of card step frames of a Flow. */
 export const CANVAS_CARD_STEP_COALESCE_MS = 200
 /** Wait before a closed stream (e.g. a 401 on a rotated token) is opened again with a fresh token. */
@@ -88,8 +97,14 @@ export function subscribeFlowCanvasChanges(projectId: string, handlers: FlowCanv
     )
   }
   const stop = subscribeProjectEvents(projectId, {
-    events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS, ...CANVAS_GATE_JOB_EVENTS],
+    events: [...CANVAS_REFRESH_EVENTS, ...CANVAS_CARD_STEP_EVENTS, ...CANVAS_GATE_JOB_EVENTS, CANVAS_FIRST_NAMES_EVENT],
     event: (frame: ProjectEventFrame) => {
+      if (frame.type === CANVAS_FIRST_NAMES_EVENT) {
+        if (frame.payload.reason !== CANVAS_FIRST_NAMES_REASON) return
+        const raw = frame.payload.flow_id ?? frame.groupId
+        if (typeof raw === 'string' && raw) stepChanged(raw)
+        return
+      }
       // Document writes do not return a Canvas, even when they originated in this tab.
       const flowId = changedFlowOfFrame(frame.type === 'document_explorer_refresh'
         ? { ...frame.payload, origin_client_id: undefined } : frame.payload, frame.groupId)
