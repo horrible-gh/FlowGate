@@ -9,6 +9,12 @@ export interface MarkdownRendererOptions {
   readonly copyLabel: () => string
   /** Escape raw HTML and drop unsafe link / image addresses. */
   readonly safe?: boolean
+  /**
+   * Draws a link itself (v02test.0074: the chat's `fg-attachment:` file chips). `inner` is the link text already
+   * rendered to HTML, `text` the link text as written. Null leaves the link to the renderer (the safe rule included);
+   * the returned HTML is used as is, so the caller escapes what it puts in.
+   */
+  readonly link?: (href: string, inner: string, text: string) => string | null
 }
 
 export function escapeHtml(text: string): string {
@@ -46,6 +52,17 @@ export function createMarkdownRenderer(options: MarkdownRendererOptions): (sourc
         },
         image({ text }: Tokens.Image): string {
           return escapeHtml(text)
+        },
+      },
+    })
+  }
+  const drawLink = options.link
+  if (drawLink) {
+    // Registered last, so it is asked first; `false` hands the link back to the renderers above.
+    renderer.use({
+      renderer: {
+        link(this: { parser: { parseInline(tokens: Token[]): string } }, { href, tokens, text }: Tokens.Link): string | false {
+          return drawLink(href, this.parser.parseInline(tokens), text) ?? false
         },
       },
     })

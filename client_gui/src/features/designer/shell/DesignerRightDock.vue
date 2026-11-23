@@ -83,6 +83,7 @@
           :attachment-request-bulk="AttachmentRequestBulkBar"
           :attachments-open="flowAttachmentUi.currentOpen"
           :attachments-pending="attachmentsPending"
+          :focus-attachment="focusAttachment"
           @toggle-attachments="flowAttachmentUi.toggle?.()"
           :active="!collapsed && !unselected && tool === 'conversation'"
         />
@@ -106,6 +107,9 @@ import AttachmentRequestItem from '@/features/attachmentRequests/AttachmentReque
 import { ConversationPanel } from '@/features/conversation'
 import { DesignerGitPanel } from '@/features/git'
 import { useProjectStore, type FlowRef, type ProjectEventSubscription } from '@/features/project'
+// v02test.0074: the chat's file chips go to a file's row of the attachment window through this (the chat itself never
+// imports the Designer).
+import { focusAttachment } from '../flowAttachments/focus'
 import { useFlowAttachmentPending } from '../flowAttachments/pendingCount'
 import { flowAttachmentUi } from '../flowAttachments/state'
 import Tabs, { type TabItem } from '../../../components/ui/Tabs.vue'

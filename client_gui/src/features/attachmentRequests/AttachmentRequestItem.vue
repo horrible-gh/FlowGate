@@ -19,13 +19,23 @@
         :aria-label="t('gui.attachment_request.bulk.select_one', { name: current.filename })"
         @change="onSelect"
       />
-      <!-- data-attachment-key: the file key of the approved attachment in the Flow attachment window (a later card links the
-           name to that row; this row only carries the key). -->
+      <!-- data-attachment-key: the file key of the approved attachment in the Flow attachment window. An approved request's
+           name is a button (v02test.0074 · 1·3): it opens that window on the file's row and lights it (focusAttachment),
+           in the chat card and in the window's own waiting band alike. Any other state has no file: a plain name. -->
+      <button
+        v-if="fileKey"
+        type="button"
+        class="ar-name ar-name-link"
+        :title="t('gui.attachment_request.open_in_window', { name: registered?.name ?? current.filename })"
+        data-test="ar-name"
+        :data-attachment-key="fileKey"
+        @click="showInWindow"
+      >{{ current.filename }}</button>
       <span
+        v-else
         class="ar-name"
         :title="current.originalFilename ?? current.filename"
         data-test="ar-name"
-        :data-attachment-key="fileKey ?? undefined"
       >{{ current.filename }}</span>
       <span class="ar-state" data-test="ar-state">{{ t(`gui.attachment_request.status.${statusKey}`) }}</span>
     </div>
@@ -121,6 +131,7 @@ import {
   type AttachmentRequestConflictMode,
   type AttachmentRequestPreview,
 } from '@/features/document/api/attachmentRequests'
+import { focusAttachment } from '@/features/designer/flowAttachments/focus'
 import { attachmentFileKey, registeredFileContent, registeredFilePreview } from './registeredFile'
 
 const props = defineProps<{
@@ -161,6 +172,14 @@ const registered = computed(() => {
 /** There is a real file to look at: the staged copy while open, the registered attachment once approved. */
 const hasFile = computed(() => open.value || registered.value !== null)
 const fileKey = computed(() => (registered.value ? attachmentFileKey(registered.value.docId, registered.value.name) : null))
+/**
+ * The approved file's row in the Flow attachment window (opened if needed, the row scrolled to and lit). Nothing happens
+ * when the window cannot show it (focusAttachment resolves false: no Designer, another Flow, the file is gone).
+ */
+function showInWindow(): void {
+  const flowId = current.value.flowId
+  if (flowId && fileKey.value) void focusAttachment(flowId, fileKey.value)
+}
 const expected = computed(() => props.expectedDocId ?? current.value.targetDocId ?? null)
 const conflict = computed<AttachmentRequestConflict | null>(() => props.existing ?? current.value.conflict)
 const statusKey = computed(() =>
@@ -351,6 +370,21 @@ onBeforeUnmount(dropImage)
   white-space: nowrap;
   min-width: 0;
   flex: 1 1 auto;
+}
+/* The approved name as a button: the same look as the plain name, a link on hover / keyboard focus. */
+.ar-name-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ar-name-link:hover,
+.ar-name-link:focus-visible {
+  color: var(--fg2-blue);
+  text-decoration: underline;
 }
 .ar-state {
   flex: none;

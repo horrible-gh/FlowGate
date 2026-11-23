@@ -11,6 +11,8 @@ export default {
     pending_n: '承認待ち {n}件',
     target: '対象: {title}',
     by_ai: '{name} の依頼',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: '添付ファイルウィンドウで表示: {name}',
     tab_pending: '待ち {n}',
     tab_section: 'AI添付の承認待ち {n}件',
     run_result_pending: '添付の承認待ち {n}件',
@@ -1233,6 +1235,23 @@ export default {
       copy: '原文をコピー',
       copied: 'コピーしました',
       copy_failed: 'コピーできませんでした',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: '削除済み',
+        replaced: '変更済み',
+        open: '添付ファイルウィンドウで表示: {name}',
+        download: '{name} をダウンロード',
+        linked_n: 'この回答にリンクされたファイル {n}件',
+        zip: 'すべてダウンロード(ZIP)',
+        preview: 'プレビュー',
+        hide_preview: 'プレビューを閉じる',
+        download_button: 'ダウンロード',
+        download_failed: 'ファイルをダウンロードできませんでした。しばらくしてからもう一度お試しください。',
+        not_found: '添付ファイルウィンドウでこのファイルが見つかりませんでした。',
+        preview_loading: '読み込み中…',
+        preview_failed: 'プレビューを読み込めませんでした。',
+        preview_none: 'プレビューできないファイルです。ダウンロードして確認してください。',
+      },
     },
     command: {
       title: 'コマンド実行リクエスト',
