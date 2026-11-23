@@ -2,7 +2,7 @@
 // (rejection item 3, after the `edgeGeometry` rule of 04-designer-flow-rules.html): never a fixed
 // side, but the side that faces the other card. Centre distances are normalized by the
 // cards' combined half sizes, so wide cards also connect naturally through top / bottom.
-// The edge enters the opposite facing side. A card dragged around another one
+// By default the edge enters the opposite facing side; routing may supply explicit sides. A card dragged around another one
 // changes the sides as it moves. Pure over two rectangles; FlowEdgePath feeds it the live Vue Flow
 // node positions, so nothing here knows the Graph or the screen.
 import { Position } from '@vue-flow/core'
@@ -60,10 +60,12 @@ export function facingSide(source: NodeRect, target: NodeRect): Position {
   return dy >= 0 ? Position.Bottom : Position.Top
 }
 
-/** The two anchor points (and sides) of the Edge from `source` to `target`. */
-export function edgeAnchors(source: NodeRect, target: NodeRect): EdgeAnchors {
-  const from = facingSide(source, target)
-  const to = OPPOSITE[from]
+/** Side-centre anchors; optional independent sides let routing form perpendicular paths.
+ * The two-argument form preserves the layout API and its facing-side rule. */
+export function edgeAnchors(
+  source: NodeRect, target: NodeRect,
+  from: Position = facingSide(source, target), to: Position = OPPOSITE[from],
+): EdgeAnchors {
   const start = sideMiddle(source, from)
   const end = sideMiddle(target, to)
   return { sourceX: start.x, sourceY: start.y, sourcePosition: from, targetX: end.x, targetY: end.y, targetPosition: to }
