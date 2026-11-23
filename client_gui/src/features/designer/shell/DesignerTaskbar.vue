@@ -10,13 +10,10 @@
     <Teleport to="body" :disabled="!launchpad">
     <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', launchpad, 'overflow-list': popup === 'overflow' }" :data-blur="launchpad ? (plainBackdrop ? 'off' : 'on') : undefined" :aria-label="launchpad ? t('gui.taskbar.menu') : undefined" @keydown="menuKey" @pointerdown="launchpadPointer">
       <template v-if="launchpad">
-        <div class="launch-groups">
-          <section v-for="group in menuGroups" :key="group.key" class="launch-group">
-            <div class="launch-group-label">{{ t(group.label) }}</div>
-            <div class="launch-group-row" role="group" :aria-label="t(group.label)">
-              <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="launch-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="launch-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="launch-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
-            </div>
-          </section>
+        <div class="launch-grid" role="group" :aria-label="t('gui.taskbar.menu')">
+          <template v-for="group in menuGroups" :key="group.key">
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="launch-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="launch-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="launch-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+          </template>
         </div>
         <p class="launchpad-hint">{{ t('gui.taskbar.launchpad_hint') }}</p>
       </template>
@@ -244,9 +241,8 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .taskbar-popup.launchpad { background-color: rgba(6, 12, 24, .82); } }
 @keyframes launchpad-in { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .taskbar-popup.launchpad { animation: none; } }
-.launch-groups { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 36px 72px; max-width: 100%; }
-.launch-group-label { margin: 0 0 18px; font-size: 14px; font-weight: 700; text-align: center; color: #f2f6fc; text-shadow: 0 1px 3px #000b; }
-.launch-group-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 40px; }
+/* Like a real launchpad: one icon grid with no group headings above it. */
+.launch-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 28px 40px; max-width: min(100%, 1048px); }
 .taskbar-popup .launch-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 112px; padding: 6px 0 12px; border: 0; border-radius: 14px; background: transparent; color: inherit; text-align: center; }
 .taskbar-popup .launch-tile:hover { background: transparent; }
 .launch-tile-icon { display: grid; place-items: center; width: 84px; height: 84px; border-radius: 20px; font-size: 34px; color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--card-color, #94a3b8) 85%, #fff), color-mix(in srgb, var(--card-color, #94a3b8) 70%, #0a1a33)); box-shadow: 0 8px 22px #0007, inset 0 1px 0 #fff6; transition: transform .15s; }

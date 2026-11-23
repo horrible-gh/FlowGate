@@ -42,7 +42,12 @@ describe('dock taskbar style', () => {
     expect(pad!.parentElement).toBe(document.body)
     expect(wrapper.find('.menu-board').exists()).toBe(false)
     expect([...pad!.querySelectorAll('.launch-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
-    expect([...pad!.querySelectorAll('.launch-group-label')].map(l => l.textContent)).toEqual([String(i18n.global.t('gui.taskbar.group_ai')), String(i18n.global.t('gui.taskbar.group_settings'))])
+    // No group headings above the icons, as on a real launchpad: one grid holds all six tiles.
+    expect(pad!.querySelectorAll('.launch-grid')).toHaveLength(1)
+    expect(pad!.querySelector('.launch-grid')!.querySelectorAll('.launch-tile')).toHaveLength(6)
+    const padText = pad!.textContent ?? ''
+    expect(padText).not.toContain(String(i18n.global.t('gui.taskbar.group_ai')))
+    expect(padText).not.toContain(String(i18n.global.t('gui.taskbar.group_settings')))
     expect(document.activeElement?.getAttribute('data-card')).toBe('my-ai')
   })
   it('closes when an empty area is pressed or Esc is pressed, but not when an icon is pressed', async () => {
