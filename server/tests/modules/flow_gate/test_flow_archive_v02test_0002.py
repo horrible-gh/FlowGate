@@ -113,12 +113,15 @@ def test_completed_current_run_qualifies(env):
     ("running", None), ("paused", None), ("idle", "waiting_confirm"), ("idle", "needs_intervention"),
     ("idle", "gate_publish"), ("idle", "hold"), ("idle", "step_completed"), ("idle", None),
 ])
-def test_incomplete_run_refused_even_with_successful_intermediate_gate(env, status, reason):
+def test_incomplete_run_can_archive_without_activity(env, status, reason):
     seed_run(env, status=status, reason=reason)
     seed_decision(env)
-    assert call(env)["reason"] == "run_not_completed"
-    assert call(env, "post", expected=409)["error"]["code"] == "run_not_completed"
-    assert sql(env, "SELECT archived_at FROM groups WHERE group_id=?", [FLOW])[0]["archived_at"] is None
+    view = call(env)
+    assert view["eligible"] is True and view["reason"] is None
+    assert view["completed"] is False
+    archived = call(env, "post")
+    assert archived["archived"] is True and archived["completed"] is False
+    assert sql(env, "SELECT archived_at FROM groups WHERE group_id=?", [FLOW])[0]["archived_at"] is not None
 
 
 @pytest.mark.parametrize("status", ["accepted", "failed", "recovery_required"])
