@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import axios, { AxiosError } from 'axios'
 import api, { flushPendingTreeReports } from '@shared/api'
+import { setConnectionLost } from '@shared/connectionStatus'
 import { readTreeReports } from '@shared/treeReadReports'
 const original = api.defaults.adapter
 beforeEach(() => {
   localStorage.clear()
   window.__accessToken__ = `x.${btoa(JSON.stringify({ sub: 'alice' }))}.x`
 })
-afterEach(() => { api.defaults.adapter = original; vi.restoreAllMocks(); delete window.__accessToken__ })
+afterEach(() => { api.defaults.adapter = original; vi.restoreAllMocks(); delete window.__accessToken__; setConnectionLost(false) })
 it.each(['/api/v1/projects/p/groups/tree?token=secret', '/api/v1/projects/p/git/groups/g/tree'])('observes failure and later success for %s', async (path) => {
   const send = vi.spyOn(axios, 'post').mockResolvedValue({ data: { ok: true } })
   api.defaults.adapter = async (config) => {
@@ -17,6 +18,9 @@ it.each(['/api/v1/projects/p/groups/tree?token=secret', '/api/v1/projects/p/git/
   expect(readTreeReports('alice')).toHaveLength(1)
   expect(JSON.stringify(readTreeReports('alice'))).not.toContain('secret')
   api.defaults.adapter = async (config) => ({ config, data: {}, status: 200, statusText: 'OK', headers: {} })
+  // The timeout marked the connection lost (0060); the later read is the one that finds it back, not one held
+  // in shared/connectionGate until the recovery probe answers.
+  setConnectionLost(false)
   await api.get(path)
   await vi.waitFor(() => expect(readTreeReports('alice')).toHaveLength(0))
   expect(send).toHaveBeenCalledTimes(1)
