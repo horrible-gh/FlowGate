@@ -3442,6 +3442,12 @@ export default {
         lower_impact: 'Repeat choices of saved or paused runs are re-evaluated against the current limit when they run or resume. An existing choice above the limit may be treated as no review or the default restart count.',
         lower_no_rewrite: 'This screen does not change what a run has stored, and it does not resume any run.',
       },
+      attach_read: {
+        title: 'AI attachment read limit',
+        label: 'Maximum size (MB)',
+        invalid: 'Enter a whole number of MB from {min} to {max}.',
+        hint: 'The largest attachment an AI may read. 1 to 64 MB, default 1 MB. A saved value applies at once without a server restart. The upload-request preview stays at 1 MB.',
+      },
       leave: {
         title: 'You have unsaved changes',
         unsaved: 'Leaving this screen discards the unsaved Scratch retention · AI repeat limit input.',

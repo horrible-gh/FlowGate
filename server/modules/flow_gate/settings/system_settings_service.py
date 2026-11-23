@@ -10,6 +10,7 @@ from modules.flow_gate.db import system_settings as _db
 from modules.flow_gate.db import connection as _connection
 from modules.flow_gate.settings import scratch_retention as _scratch_retention
 from modules.flow_gate.settings import ai_execution_policy_service as _ai_execution_policy_service
+from modules.flow_gate.settings import attach_read_limit as _attach_read_limit
 from modules.flow_gate.storage.paths import get_storage_root
 
 _JST = timezone(timedelta(hours=9))
@@ -32,6 +33,7 @@ ALLOWLIST: set[str] = {
     "token_blacklist",
     "source_mode",
     "ai_repeat_count_max",
+    _attach_read_limit.SETTING_KEY,
     _scratch_retention.VALUE_KEY,
     _scratch_retention.UNIT_KEY,
 }
@@ -54,6 +56,7 @@ _VALUE_TYPES: dict[str, str] = {
     "token_blacklist": "boolean",
     "source_mode": "string",
     "ai_repeat_count_max": "integer",
+    _attach_read_limit.SETTING_KEY: "integer",
     _scratch_retention.VALUE_KEY: "integer",
     _scratch_retention.UNIT_KEY: "string",
 }
@@ -72,7 +75,22 @@ def _apply_effective_defaults(row: dict | None) -> dict | None:
         row.get("setting_value")
     ):
         return {**row, "setting_value": str(_ai_execution_policy_service.get_repeat_count_max())}
+    if row.get("setting_key") == _attach_read_limit.SETTING_KEY and not _attach_read_limit.valid_setting_value(
+        row.get("setting_value")
+    ):
+        return {**row, "setting_value": str(_attach_read_limit.get_max_mb())}
     return row
+
+
+def _attach_read_default_row() -> dict:
+    return {
+        "setting_key": _attach_read_limit.SETTING_KEY,
+        "setting_value": str(_attach_read_limit.get_max_mb()),
+        "value_type": "integer",
+        "description": _attach_read_limit.DESCRIPTION,
+        "updated_at": "",
+        "updated_by": None,
+    }
 
 
 
@@ -100,6 +118,8 @@ def get_all() -> list[dict]:
             "updated_at": "",
             "updated_by": None,
         })
+    if not any(row.get("setting_key") == _attach_read_limit.SETTING_KEY for row in rows):
+        rows.append(_attach_read_default_row())
     for key, value, value_type, description in (
         (_scratch_retention.VALUE_KEY, _scratch_retention.DEFAULT_VALUE, "integer", "Scratch retention amount"),
         (_scratch_retention.UNIT_KEY, _scratch_retention.DEFAULT_UNIT, "string", "Scratch retention unit"),
@@ -133,6 +153,8 @@ def get_one(key: str) -> dict | None:
             "updated_at": "",
             "updated_by": None,
         }
+    if row is None and key == _attach_read_limit.SETTING_KEY:
+        return _attach_read_default_row()
     if row is None and key in {_scratch_retention.VALUE_KEY, _scratch_retention.UNIT_KEY}:
         is_value = key == _scratch_retention.VALUE_KEY
         return {
@@ -158,6 +180,11 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
         updates["ai_repeat_count_max"]
     ):
         raise ValueError("ai_repeat_count_max must be an integer between 1 and 30")
+    if _attach_read_limit.SETTING_KEY in updates:
+        if not _attach_read_limit.valid_setting_value(updates[_attach_read_limit.SETTING_KEY]):
+            raise ValueError(_attach_read_limit.OUT_OF_RANGE_MESSAGE)
+        # Stored canonical ("08" -> "8") so the screen's save check compares like with like.
+        updates = {**updates, _attach_read_limit.SETTING_KEY: str(int(str(updates[_attach_read_limit.SETTING_KEY]).strip()))}
 
     if _scratch_retention.VALUE_KEY in updates or _scratch_retention.UNIT_KEY in updates:
         value = updates.get(_scratch_retention.VALUE_KEY)
