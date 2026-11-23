@@ -36,10 +36,13 @@ def naming(env, monkeypatch):
             state["hook"]()
         return state["answer"], None
     monkeypatch.setattr(legacy_adapter, "complete_prompt", prompt)
+    monkeypatch.setattr(legacy_adapter, "first_turns", lambda *args: [
+        {"speaker": "user", "body": state.get("message", TEXT)}, {"speaker": "ai", "body": "done"}])
     return state
 
 
 def run(naming, text=TEXT):
+    naming["message"] = text
     return a.generate_flow_names(FA, USER, "provider", text, naming["chat"])
 
 

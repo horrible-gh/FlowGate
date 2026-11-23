@@ -1,6 +1,7 @@
 """Storage boundary for the shared first-run naming operation (0071)."""
 from __future__ import annotations
 import json
+import logging
 from modules.flow_gate.db import groups, documents
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.graph_workflow.services import first_names_store as ledger
@@ -20,7 +21,7 @@ def guard(flow_id, body):
     return with_flow_guard(flow_id, body)
 
 
-def targets(flow_id, chat_doc_id):
+def targets(flow_id, chat_doc_id, *, chat_only=False):
     require_writable(flow_id)
     group = groups.get_by_id(flow_id)
     if not group:
@@ -28,27 +29,31 @@ def targets(flow_id, chat_doc_id):
     record = ledger.load(flow_id)
     out = {"flow": {"id": flow_id, "title": group["title"],
                     "manual": bool(record.get("flow_manual"))}}
-    draft = definition_store.draft(flow_id)
-    latest = definition_store.latest_revision_no(flow_id)
-    definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
-    snap = read_snapshot(flow_id)
-    binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
-                                 alive_documents(snap), assignment_store.root_binding(flow_id),
-                                 lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
-    if binding.node_key and binding.doc_type in ("R", "B"):
-        row = next(n for n in definition["nodes"] if n["node_key"] == binding.node_key)
-        st = title_store.state(flow_id, binding.node_key) if title_store.available() else None
-        views, by_id = title_views(flow_id)
-        display_custom = False
-        for view in views:
-            shown_row = next((n for n in view.nodes if n["node_key"] == binding.node_key), None)
-            if shown_row is not None:
-                shown = (st or {}).get("title") or card_title_source(shown_row, card_document(view, shown_row, by_id))[1]
-                display_custom |= not is_default_title(shown, "root", doc_type=binding.doc_type)
-        out["root"] = {"id": binding.node_key, "doc_type": binding.doc_type,
-                       "title": (st or {}).get("title") or row.get("label"),
-                       "manual": display_custom or bool(st and (st["human_edited"] or st["opportunity_state"] != "unused")),
-                       "version": st["version"] if st else None}
+    if not chat_only:
+        try:
+            draft = definition_store.draft(flow_id)
+            latest = definition_store.latest_revision_no(flow_id)
+            definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
+            snap = read_snapshot(flow_id)
+            binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
+                                         alive_documents(snap), assignment_store.root_binding(flow_id),
+                                         lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
+            if binding.node_key and binding.doc_type in ("R", "B"):
+                row = next(n for n in definition["nodes"] if n["node_key"] == binding.node_key)
+                st = title_store.state(flow_id, binding.node_key) if title_store.available() else None
+                views, by_id = title_views(flow_id)
+                display_custom = False
+                for view in views:
+                    shown_row = next((n for n in view.nodes if n["node_key"] == binding.node_key), None)
+                    if shown_row is not None:
+                        shown = (st or {}).get("title") or card_title_source(shown_row, card_document(view, shown_row, by_id))[1]
+                        display_custom |= not is_default_title(shown, "root", doc_type=binding.doc_type)
+                out["root"] = {"id": binding.node_key, "doc_type": binding.doc_type,
+                               "title": (st or {}).get("title") or row.get("label"),
+                               "manual": display_custom or bool(st and (st["human_edited"] or st["opportunity_state"] != "unused")),
+                               "version": st["version"] if st else None}
+        except Exception as exc:
+            logging.getLogger(__name__).warning("flow_auto_title target=root exception_type=%s", type(exc).__name__)
     if chat_doc_id:
         doc = documents.get_by_id(chat_doc_id)
         if not doc or doc.get("group_id") != flow_id or doc.get("project_id") != group["project_id"] or doc.get("type_code") != "CH":
@@ -57,8 +62,8 @@ def targets(flow_id, chat_doc_id):
         marker = meta.get("chat_auto_title", {})
         out["chat"] = {"id": chat_doc_id, "title": doc.get("title"), "meta": doc.get("meta"),
                        "manual": bool(meta.get("first_name_manual") or marker.get("state") in
-                                      ("manual", "done", "claimed", "failed"))}
-    return group, out
+                                      ("manual", "done"))}
+    return group, ({"chat": out["chat"]} if chat_only else {k: v for k, v in out.items() if k != "chat"})
 
 
 def eligible(kind, target):

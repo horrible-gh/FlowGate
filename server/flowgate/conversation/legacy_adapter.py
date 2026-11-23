@@ -37,6 +37,13 @@ def get_run_record(run_id: Optional[str]) -> Optional[dict]:
         return None
 
 
+def persisted_naming_run(run_id):
+    if not run_id:
+        return None
+    from modules.flow_gate.db import ai_invoke_runs
+    return ai_invoke_runs.get(str(run_id))
+
+
 def now_mono() -> float:
     """The engine's monotonic clock (the one its watchdog reads)."""
     return float(_ai_invoke()._now_mono())
