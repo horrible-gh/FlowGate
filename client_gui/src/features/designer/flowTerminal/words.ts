@@ -14,6 +14,9 @@ const ko = {
   exitCode: (code: number) => `종료 코드 ${code}`,
   confirmTitle: '실행 중인 명령이 있습니다', confirmBody: '창을 닫으면 실행 중인 명령도 함께 끝납니다.',
   confirmClose: '닫기', cancel: '취소', dismiss: '알림 닫기',
+  // 0009-T: docking into the Designer's bottom Dock.
+  dock: '아래에 붙이기', undock: '떼기', dockClose: '닫기',
+  inspectorTab: '인스펙터', terminalTab: '터미널', dockSwitch: '아래 칸 보기 전환',
 }
 type Words = typeof ko
 
@@ -29,6 +32,8 @@ const en: Words = {
   exitCode: code => `exit code ${code}`,
   confirmTitle: 'A command is running', confirmBody: 'Closing the window also ends the running command.',
   confirmClose: 'Close', cancel: 'Cancel', dismiss: 'Dismiss',
+  dock: 'Dock below', undock: 'Undock', dockClose: 'Close',
+  inspectorTab: 'Inspector', terminalTab: 'Terminal', dockSwitch: 'Bottom panel view',
 }
 
 const ja: Words = {
@@ -43,6 +48,8 @@ const ja: Words = {
   exitCode: code => `終了コード ${code}`,
   confirmTitle: '実行中のコマンドがあります', confirmBody: 'ウィンドウを閉じると実行中のコマンドも終了します。',
   confirmClose: '閉じる', cancel: 'キャンセル', dismiss: '通知を閉じる',
+  dock: '下にドッキング', undock: '切り離す', dockClose: '閉じる',
+  inspectorTab: 'インスペクター', terminalTab: 'ターミナル', dockSwitch: '下パネルの表示切替',
 }
 
 export const words: Record<'ko' | 'en' | 'ja', Words> = { ko, en, ja }
