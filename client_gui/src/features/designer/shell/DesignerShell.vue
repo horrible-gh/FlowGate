@@ -37,7 +37,7 @@
       :targets="menuTargets"
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
-      :can-archive="archiveState?.eligible === true && runPhase === 'idle'"
+      :can-archive="archiveState?.eligible === true && !archiveRunActive"
       :archive-busy="!!projectStore.archiveBusy[center.state.activeFlowId ?? '']"
       :archive-reason="archiveReason"
       @archive="archiveActiveFlow"
@@ -151,6 +151,11 @@
     <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" :flow-name="runResultFlowName" @close="runResult.closeDetail" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
+    <!-- v02test.0083: the toolbar's and the Flow row menu's Archive ask once for a Flow that is not completed. -->
+    <ConfirmDialog :open="archiveConfirmFlowId !== null" :title="t('gui.designer.archive.confirm_title')"
+      :message="t('gui.designer.archive.confirm_incomplete')" :confirm-label="t('gui.designer.archive.action')"
+      :cancel-label="t('gui.designer.archive.cancel')" icon="alert" data-test="designer-archive-confirm"
+      @confirm="confirmArchive" @cancel="archiveConfirmFlowId = null" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
@@ -276,6 +281,7 @@ import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, re
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
+import ConfirmDialog from '../../../components/ui/ConfirmDialog.vue'
 import { copyToClipboard } from '@/core/interaction/clipboard'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
@@ -1550,10 +1556,14 @@ watch(
 // Display archive: toolbar and clicked-row menu share this action. Server rechecks under its Flow guard.
 const archiveState = ref<FlowArchiveState | null>(null)
 let archiveReadSeq = 0
+// v02test.0083: only a Flow actually running (or stopping) keeps the toolbar's Archive off on the client; a paused,
+// stopped or never-run Flow follows the server's `eligible` alone.
+const archiveRunActive = computed(() => runPhase.value === 'running' || runPhase.value === 'stopping')
 const archiveReason = computed(() => {
   const reason = archiveState.value?.reason
   const key = `gui.designer.archive.${reason ?? 'unavailable'}`
-  return archiveState.value?.eligible ? '' : t(te(key) ? key : 'gui.designer.archive.unavailable')
+  if (archiveState.value?.eligible) return archiveRunActive.value ? t('gui.designer.archive.work_unfinished') : ''
+  return t(te(key) ? key : 'gui.designer.archive.unavailable')
 })
 async function refreshArchiveState() {
   const flowId = center.state.activeFlowId
@@ -1583,10 +1593,29 @@ async function changeArchive(flowId: string, archived: boolean) {
     void refreshArchiveState()
   }
 }
-async function archiveFlow(flowId: string) { await changeArchive(flowId, true) }
+// v02test.0083: a Flow that is not completed (`completed === false`, or absent) is archived only after one confirmation.
+const archiveConfirmFlowId = ref<string | null>(null)
+async function archiveCompleted(flowId: string): Promise<boolean> {
+  if (center.state.activeFlowId === flowId && archiveState.value) return archiveState.value.completed
+  return (await projectStore.readFlowArchive(flowId)).completed
+}
+async function archiveFlow(flowId: string) {
+  let completed: boolean
+  try { completed = await archiveCompleted(flowId) } catch {
+    menuToast(() => t('gui.designer.archive.failed'), 'warning')
+    return
+  }
+  if (completed) await changeArchive(flowId, true)
+  else archiveConfirmFlowId.value = flowId
+}
+function confirmArchive() {
+  const flowId = archiveConfirmFlowId.value
+  archiveConfirmFlowId.value = null
+  if (flowId) void changeArchive(flowId, true)
+}
 function archiveActiveFlow() {
   const flowId = center.state.activeFlowId
-  if (flowId && archiveState.value?.eligible) void archiveFlow(flowId)
+  if (flowId && archiveState.value?.eligible && !archiveRunActive.value) void archiveFlow(flowId)
 }
 
 let archiveEvents: (() => void) | null = null
