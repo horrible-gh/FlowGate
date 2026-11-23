@@ -21,8 +21,11 @@ export interface CanvasAvailability {
   readonly structureEditable?: boolean
   readonly definitionExists?: boolean
   readonly progressed?: boolean
-  /** flowgate.v02gui.0003: the card holds a document (ID 복사 copies its id; without one the item is disabled). */
-  readonly hasDocument?: boolean
+  /**
+   * flowgate.v02gui.0003 / v02test.0077: the card has an id to copy — its card number (the full display id), else a
+   * bound document (its id); without either the ID 복사 item is disabled.
+   */
+  readonly hasCardId?: boolean
 }
 /** One item of the card's existing run menu, already judged (disabled) and worded (label) by the caller. */
 export interface CardRunItem {
@@ -72,7 +75,7 @@ export function canvasMenu({ target, available: v, connected, definitions = [], 
       s('canvas-arrange'), arrangeItem('canvas.arrange', 'arrangeLayout', arrange),
     ]
   } else if (target.kind === 'node') {
-    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), a('node.copyId', 'copyId', '#', !v.hasDocument), ...(runItems.length ? [s('node-run'), ...runItems.map((item) => ({
+    items = [a('node.detail', 'detail', 'ⓘ'), s('node-copy'), a('node.copy', 'copy', '▣'), a('node.copyId', 'copyId', '#', !v.hasCardId), ...(runItems.length ? [s('node-run'), ...runItems.map((item) => ({
         ...a(item.command, '', RUN_ICONS[item.command], item.disabled, item.danger), label: item.label,
       }))] : []), s('node-delete'),
       a('node.delete', 'delete', '×', !v.editable || !v.structureEditable || !v.definitionExists, true)]

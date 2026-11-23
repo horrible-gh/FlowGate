@@ -103,6 +103,12 @@ export interface FlowGateNodeData {
   questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   bodyUnreadable?: boolean
   /**
+   * flowgate.v02test.0077: the card number in its Flow (`#3`, after the kind name) and its short id (`F74-3`, the hover
+   * text); absent while the card has no number.
+   */
+  cardLocal?: string
+  cardShort?: string
+  /**
    * v02gui.0015 T2: the earlier attempts of the card whose uncommitted changes its attempt did not take
    * (kept, never carried over automatically) — the `미인계` chip; absent when none.
    */
@@ -168,6 +174,10 @@ export function toVueFlowNodes(
     data.documents = cardDocumentButtons(node)
     if (node.cardDocuments?.some(lineWarns)) data.bodyUnreadable = true
     if (node.docType) data.docType = node.docType
+    if (node.cardRef) {
+      data.cardLocal = node.cardRef.local
+      data.cardShort = node.cardRef.short
+    }
     if (connectable) data.connectable = true
     if (issues.has(node.id)) {
       data.issue = true
