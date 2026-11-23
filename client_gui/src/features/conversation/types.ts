@@ -58,7 +58,27 @@ export interface ConversationTurn {
    * may have been in the middle of the card's change («카드 실행 중에 본 내용»). Only an AI turn carries it.
    */
   observedDuringCardRun?: boolean
+  /**
+   * v02test.0074: the `[name](fg-attachment:<key>)` links of the body with the current state of each file (server
+   * `attachment_links`, one entry per key in first-seen order). Missing = the server did not say (a message not
+   * stored yet).
+   */
+  attachmentLinks?: TurnAttachmentLink[]
   createdAt: string | null
+}
+
+/**
+ * One linked Flow attachment of a turn as the server reports it now. `available`: the key is still in the Flow (name and
+ * size are the current ones). `replaced`: the key is gone and exactly one file of the same name is there instead
+ * (`replacementKey`; name and size are that file's). `deleted`: no file — `name` is the original name when the server
+ * could tell it, `size` is null.
+ */
+export interface TurnAttachmentLink {
+  key: string
+  status: 'available' | 'replaced' | 'deleted'
+  name: string | null
+  size: number | null
+  replacementKey: string | null
 }
 
 /** one message image as the server lists it on a turn (never the bytes). */
@@ -327,6 +347,18 @@ export const ATTACHMENT_REQUEST_BULK = 'fg.conversation.attachmentRequestBulk'
  * it after a bulk call — also a failed one, which may have been processed in part — so the rows show the server state.
  */
 export const ATTACHMENT_REQUEST_REFRESH = 'fg.conversation.attachmentRequestRefresh'
+
+/**
+ * v02test.0074: what a message's file chips need from the panel (ConversationPanel provides it): the Flow the chat
+ * belongs to (downloads go to that Flow's attachment API) and the container's "show this file in the attachment window"
+ * (`focusAttachment` prop; resolves false when the file or the window is not there). Without it a chip still draws;
+ * its buttons report that the file could not be reached.
+ */
+export interface AttachmentLinkContext {
+  flowId: () => string | null
+  focus: (flowId: string, key: string) => Promise<boolean>
+}
+export const ATTACHMENT_LINK_CONTEXT = 'fg.conversation.attachmentLinkContext'
 
 
 export type ConversationActivity = CommandRequestActivity | WorkChangeActivity | StatusActivity | AttachmentRequestActivity

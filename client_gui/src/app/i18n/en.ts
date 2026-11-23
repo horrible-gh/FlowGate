@@ -11,6 +11,8 @@ export default {
     pending_n: '{n} waiting for approval',
     target: 'Target: {title}',
     by_ai: 'Requested by {name}',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: 'Show in the attachment window: {name}',
     tab_pending: '{n} waiting',
     tab_section: '{n} AI attachment requests waiting',
     run_result_pending: '{n} attachment requests waiting for approval',
@@ -1233,6 +1235,22 @@ export default {
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: 'Deleted',
+        replaced: 'Changed',
+        open: 'Show in the attachment window: {name}',
+        download: 'Download {name}',
+        linked_n: '{n} file(s) linked in this answer',
+        zip: 'Download all (ZIP)',
+        preview: 'Preview',
+        hide_preview: 'Hide preview',
+        download_failed: 'Could not download the file. Try again in a moment.',
+        not_found: 'This file was not found in the attachment window.',
+        preview_loading: 'Loading…',
+        preview_failed: 'Could not load the preview.',
+        preview_none: 'This file cannot be previewed. Download it to check.',
+      },
     },
     command: {
       title: 'Command request',
@@ -1349,6 +1367,8 @@ export default {
       label: 'With',
     },
     composer: {
+      attachments: 'Attachments',
+      attachments_pending: 'Attachments · {n} awaiting approval',
       creating: "Creating conversation…",
       loading: "Loading conversation history…",
       sending: "Sending message… (attempt {attempt})",

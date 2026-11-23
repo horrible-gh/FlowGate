@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     FLOWGATE_TOKEN_PEPPER_ACTIVE_ID: str | None = None
     FLOWGATE_TOKEN_PEPPER_V1: str | None = None
     FLOWGATE_INBOX_CONTENT_MAX: int = 10485760  # 10 MB default
+    # AI/worker attachment read ceiling in bytes. Kept as a string on purpose: a bad
+    # value must fall back to 1 MiB with a warning, not crash the boot, so
+    # attachments.constants.attach_read_max_bytes() parses it (default 1 MiB, cap 64 MiB).
+    FLOWGATE_ATTACH_READ_MAX_BYTES: str | None = None
 
     # Git integration — base64-encoded 32-byte AES key for the
     # project git credential store. Provisioned by the docker entrypoint (or the
@@ -200,6 +204,7 @@ for _env_key in (
     "FLOWGATE_AI_EVALUATION_HMAC_KEY",
     "FLOWGATE_AGENT_PEPPER",
     "FLOWGATE_AGENT_PEPPER_ID",
+    "FLOWGATE_ATTACH_READ_MAX_BYTES",
 ):
     _env_val = getattr(settings, _env_key, None)
     if _env_val and not os.environ.get(_env_key):

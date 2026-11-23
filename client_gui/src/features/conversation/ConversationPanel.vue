@@ -108,6 +108,9 @@
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
       :on-send="start.send"
+      :attachments-open="attachmentsOpen"
+      :attachments-pending="attachmentsPending"
+      @toggle-attachments="emit('toggle-attachments')"
       @select-provider="session.selectProvider"
       @retry-ai-pick="session.retryChatProvider"
       @save-settings="onSaveSettings"
@@ -145,7 +148,7 @@ import RunChangeWindow from './RunChangeWindow.vue'
 import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
 import { useChatEvents, type SubscribeChatEvents } from './conversationEvents'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
-import { ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST_ROW, type ChatSettingsPatch, type ChatSummary, type WorkChangeActivity } from './types'
+import { ATTACHMENT_LINK_CONTEXT, ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST_ROW, type AttachmentLinkContext, type ChatSettingsPatch, type ChatSummary, type WorkChangeActivity } from './types'
 
 const props = withDefaults(
   defineProps<{
@@ -166,17 +169,33 @@ const props = withDefaults(
     attachmentRequestBulk?: Component
     /** the container shows this part (false while another Dock tab is shown). */
     active?: boolean
+    /** the Flow's attachment window is open (the 📎 button of the input shows it pressed). */
+    attachmentsOpen?: boolean
+    /** Waiting AI attachment requests of the whole Flow (every chat and card), for the badge of the 📎 button; the container reads it. */
+    attachmentsPending?: number
+    /**
+     * v02test.0074: shows one file of a Flow in that Flow's attachment window (the container's `focusAttachment`); the
+     * name of a message's file chip calls it. Resolves false when the file or the window is not there.
+     */
+    focusAttachment?: (flowId: string, key: string) => Promise<boolean>
   }>(),
-  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
+  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined, attachmentsOpen: false, attachmentsPending: 0, focusAttachment: undefined },
 )
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
+  /** the 📎 button of the input: the container opens / closes the Flow's attachment window. */
+  'toggle-attachments': []
 }>()
 
 // the attachment request blocks of the timeline draw their rows with the container's component.
 provide(ATTACHMENT_REQUEST_ROW, computed(() => props.attachmentRequestRow ?? null))
 provide(ATTACHMENT_REQUEST_BULK, computed(() => props.attachmentRequestBulk ?? null))
+// v02test.0074: a message's file chips download from this chat's Flow and go to the attachment window through the container.
+provide<AttachmentLinkContext>(ATTACHMENT_LINK_CONTEXT, {
+  flowId: () => props.groupId,
+  focus: (flowId, key) => props.focusAttachment?.(flowId, key) ?? Promise.resolve(false),
+})
 
 const { t, te } = useI18n()
 

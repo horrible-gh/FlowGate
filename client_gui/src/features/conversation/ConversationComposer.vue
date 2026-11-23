@@ -139,6 +139,22 @@
         :locked="sourceLocked"
         @set="(mode) => emit('set-source-mode', mode)"
       />
+      <!-- 📎: opens / closes this Flow's attachment window (the container does it). The yellow badge counts the AI's
+           upload requests still waiting for a decision. -->
+      <Button
+        variant="ghost"
+        size="sm"
+        class="conv-attach"
+        :class="{ 'is-open': attachmentsOpen }"
+        data-test="conv-attachments"
+        :aria-pressed="attachmentsOpen"
+        :title="attachLabel"
+        :aria-label="attachLabel"
+        @click="emit('toggle-attachments')"
+      >
+        <span aria-hidden="true">📎</span>
+        <span v-if="attachmentsPending > 0" class="conv-attach-badge" data-test="conv-attachments-badge">{{ attachmentsPending }}</span>
+      </Button>
       <span class="conv-assist-spacer"></span>
       <ComposerSettings
         :timeout-enabled="chatId !== null"
@@ -163,6 +179,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Button from '@/components/ui/Button.vue'
 import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
 import ComposerQuickMessages from './ComposerQuickMessages.vue'
@@ -181,9 +198,13 @@ import { installVoiceMessages } from './voice/messages'
 import { useVoiceInput } from './voice/useVoiceInput'
 import { loadVoice } from './voice/voiceStore'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The open chat; null while a new chat is a draft (its first send creates it). */
   chatId: string | null
+  /** The Flow's attachment window is open (the 📎 button shows pressed). */
+  attachmentsOpen?: boolean
+  /** AI upload requests of this chat still waiting for a decision (the 📎 badge; none shown at 0). */
+  attachmentsPending?: number
   projectId?: string | null
   groupId?: string | null
   draftIntentId?: string | null
@@ -219,9 +240,10 @@ const props = defineProps<{
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
   onSend: (text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace) => Promise<boolean>
-}>()
+}>(), { attachmentsOpen: false, attachmentsPending: 0 })
 
 const emit = defineEmits<{
+  'toggle-attachments': []
   'select-provider': [providerId: string]
   'retry-ai-pick': []
   'save-settings': [patch: ChatSettingsPatch, done: (ok: boolean) => void]
@@ -235,6 +257,11 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 installVoiceMessages(useI18n({ useScope: 'global' }))
+const attachLabel = computed(() =>
+  props.attachmentsPending > 0
+    ? t('gui.conversation.composer.attachments_pending', { n: props.attachmentsPending })
+    : t('gui.conversation.composer.attachments'),
+)
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 function currentOwner(): DraftOwner | null {
@@ -687,6 +714,34 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-assist-spacer {
   flex: 1;
   min-width: 0;
+}
+
+/* 📎: the shared ghost button, sized into the 29px assist row; theme tokens only. */
+.conv-attach {
+  position: relative;
+  height: 26px;
+  padding: 0 8px;
+  gap: 4px;
+}
+
+.conv-attach.is-open {
+  border-color: var(--fg2-line-strong);
+  background: var(--fg2-control-surface-flat);
+}
+
+.conv-attach-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--fg2-control-radius-pill);
+  border: 1px solid var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 14px;
+  text-align: center;
 }
 </style>
 
