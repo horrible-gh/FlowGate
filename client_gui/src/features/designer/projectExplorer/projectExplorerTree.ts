@@ -13,6 +13,7 @@
 // query, so there is no second tree store to keep in sync.
 
 import type { GroupTreeNode } from '@/features/project'
+import { flowLabelOfNumber } from '../center/graph/cardIds'
 
 export interface ExplorerFlow {
   archived?: boolean
@@ -110,11 +111,8 @@ export function projectNodeId(projectId: string): string {
   return `project:${projectId}`
 }
 
-/** `"0077"` -> `"F77"`; null for a missing or non-numeric number. Same rule as the server (not stored anywhere). */
-export function flowLabelOf(number: string | null | undefined): string | null {
-  if (!number || !/^\d+$/.test(number)) return null
-  return `F${Number.parseInt(number, 10)}`
-}
+/** `"0077"` -> `"F77"`; null for a missing or non-numeric number. The shared client rule (center/graph/cardIds). */
+export const flowLabelOf = flowLabelOfNumber
 
 function childrenIndex(nodes: GroupTreeNode[]): Map<string, GroupTreeNode[]> {
   const byParent = new Map<string, GroupTreeNode[]>()

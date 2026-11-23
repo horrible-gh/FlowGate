@@ -9,14 +9,21 @@
 
 import type { FlowCardRef } from '@/features/project'
 
+/**
+ * A group number -> its Flow number: `"0077"` -> `F77`; null for a missing, non-numeric or zero number. The one client
+ * rule — the Project Explorer (`flowLabelOf`) and the tabs / Inspector (`flowLabel`) both go through it.
+ */
+export function flowLabelOfNumber(number: string | null | undefined): string | null {
+  if (!number || !/^\d{1,9}$/.test(number)) return null
+  const value = Number(number)
+  return value >= 1 ? `F${value}` : null
+}
+
 /** `flowgate.v02test.0077` -> `F77`; null for an id without a group number (a client-only Flow, malformed). */
 export function flowLabel(groupId: string | null | undefined): string | null {
   const parts = (groupId ?? '').split('.')
   if (parts.length < 3 || parts.slice(0, -1).some((part) => !part)) return null
-  const tail = parts[parts.length - 1]
-  if (!/^\d{1,9}$/.test(tail)) return null
-  const number = Number(tail)
-  return number >= 1 ? `F${number}` : null
+  return flowLabelOfNumber(parts[parts.length - 1])
 }
 
 /**
