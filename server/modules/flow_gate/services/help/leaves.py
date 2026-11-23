@@ -13,7 +13,7 @@ def leaf_content(area, leaf, ctx):
         from flowgate.chat_control import tools
         if leaf == "state":
             base = ctx["base_url"].removesuffix("/api/v1")
-            return {"method": "GET", "urls": [base + "/api/v2/ai/flows/{flow_id}/canvas", base + "/api/v2/ai/flows/{flow_id}/runs/current"], "note": "Use the bound worker/chat Bearer. Reads report stored state; they never reconcile or start work."}
+            return {"method": "GET", "urls": [base + "/api/v2/ai/flows/{flow_id}/canvas", base + "/api/v2/ai/flows/{flow_id}/runs/current"], "note": "Use the bound worker/chat Bearer. Reads report stored state; they never reconcile or start work. Name the Flow/cards to the user by flow_name / nodes[].card_name (F77(name), F77-12(card title)); API calls keep flow_id/node_key/doc_id."}
         if leaf == "topology":
             return {"body": tools.TOPOLOGY_GUIDE}
         body = getattr(tools, "contract_" + leaf)(ctx["base_url"], "<YOUR_CHAT_TOKEN>")

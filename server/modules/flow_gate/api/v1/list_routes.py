@@ -17,7 +17,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.services import card_ids
+from modules.flow_gate.services import card_ids, display_names
 from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project, readable_projects
 from modules.flow_gate.utils.help_url import help_url
 
@@ -202,6 +202,7 @@ def list_groups(
                 "status": r.get("status"),
                 "seq": None,
                 "flow_label": card_ids.flow_label(r["group_id"]),
+                "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
                 "created_at": r.get("created_at"),
             }
             for r in rows
@@ -240,6 +241,7 @@ def list_groups(
             "status": r.get("status"),
             "seq": None,  # groups table has no seq column
             "flow_label": card_ids.flow_label(r["group_id"]),
+            "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
             "created_at": r.get("created_at"),
         }
         for r in rows
@@ -624,6 +626,8 @@ def get_group(request: Request, group_id: str):
             "created_at", "updated_at", "closed_at")},
         "document_count": count["cnt"] if count else 0,
         "flow_ref": card_ids.flow_ref(group_id),
+        # How AI text names this Flow to the user (F77(name)); API calls keep group_id.
+        "flow_name": display_names.flow_name(group_id, group.get("title")),
     }
     if requested != group_id:
         body["requested_id"] = requested
