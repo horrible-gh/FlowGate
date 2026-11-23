@@ -95,6 +95,8 @@ def card_title_source(row: dict, document: Optional[dict]) -> tuple[str, Optiona
     document's title, else its label -> ``(kind, text, doc_id)``, kind "label" or "document"."""
     if row.get("node_type") == "custom":
         return "label", row.get("label"), None
+    if document and document.get("type_code") in ("TR", "TSR", "NR"):
+        return "label", row.get("label"), None
     if document and document.get("title"):
         return "document", document["title"], document.get("doc_id")
     return "label", row.get("label"), None
@@ -123,6 +125,12 @@ def graph_node(row: dict, origin: str, ownership: str, document: Optional[dict],
     state = title_state_block(title_state)
     titled = document if document is not None else reported_document(lines, by_id or {})
     shown = card_title_source(row, titled)[1]
+    if row.get("node_type") != "custom" and titled and titled.get("type_code") in ("TR", "TSR", "NR"):
+        instruction = next((by_id.get(line.get("doc_id")) for line in lines or []
+                            if line.get("author") == "instruction_ai_or_human"
+                            and (by_id or {}).get(line.get("doc_id"))), None)
+        if instruction and instruction.get("title"):
+            shown = instruction["title"]
     return {
         "node_key": node.key,
         "identity_source": "graph_node",

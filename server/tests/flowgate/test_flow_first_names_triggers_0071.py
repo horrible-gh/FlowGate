@@ -21,13 +21,13 @@ def wired(naming, monkeypatch):
     return naming
 
 @pytest.mark.parametrize("first", ["chat", "run"])
-def test_both_orders_share_one_candidate_and_saved_titles(wired, first):
+def test_both_orders_name_chat_from_its_own_message(wired, first):
     chat = lambda: t.chat(wired["chat"], USER, {"provider_id": "provider"})
     run = lambda: t._run(FA, USER["user_id"], 1)
     (chat if first == "chat" else run)()
     (run if first == "chat" else chat)()
     assert titles(wired) == (TITLE, TITLE, TITLE)
-    assert wired["calls"] == 1
+    assert wired["calls"] == (1 if first == "chat" else 2)
 
 
 def test_unflagged_chat_participates(wired):
@@ -48,7 +48,8 @@ def test_run_notification_is_after_commit_and_scoped(wired, monkeypatch):
     events = []
     def publish(event):
         assert not in_transaction()
-        assert titles(wired) == (TITLE, TITLE, TITLE)
+        assert titles(wired) == (TITLE, TITLE, "새 대화")
+        assert event.payload["targets"] == ["flow", "card"]
         events.append(event)
     monkeypatch.setattr(publisher, "broadcast_event_nowait", publish)
     t._run(FA, USER["user_id"], 1)
@@ -56,10 +57,10 @@ def test_run_notification_is_after_commit_and_scoped(wired, monkeypatch):
     assert events[0].group_id == FA
 
 
-def test_chat_and_run_overlap_share_claim(wired):
+def test_chat_and_run_overlap_keep_independent_claims(wired):
     wired["hook"] = lambda: t._run(FA, USER["user_id"], 1)
     t.chat(wired["chat"], USER, {"provider_id": "provider"})
-    assert wired["calls"] == 1 and titles(wired) == (TITLE, TITLE, TITLE)
+    assert wired["calls"] == 2 and titles(wired) == (TITLE, TITLE, TITLE)
 
 
 def test_run_without_chat_does_not_create_chat(wired, monkeypatch):
@@ -71,7 +72,7 @@ def test_run_without_chat_does_not_create_chat(wired, monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["full", "step"])
-def test_route_schedules_only_after_successful_full_run(monkeypatch, mode):
+def test_route_schedules_after_successful_full_or_step_run(monkeypatch, mode):
     order = []
     monkeypatch.setattr(routes.envelope, "authenticate", lambda _: "u")
     monkeypatch.setattr(routes.envelope, "authorize", lambda *args: None)
@@ -83,7 +84,7 @@ def test_route_schedules_only_after_successful_full_run(monkeypatch, mode):
     monkeypatch.setattr(first_names_hooks, "schedule", lambda *args: order.append(args))
     response = routes.post_flow_run(FA, Request({"type": "http", "headers": []}), {"mode": mode})
     assert response.status_code == 201
-    assert order == (["committed", (FA, "u", 7)] if mode == "full" else ["committed"])
+    assert order == ["committed", (FA, "u", 7)]
 
 
 def test_naming_schedule_failure_cannot_fail_accepted_run(monkeypatch):
@@ -110,7 +111,7 @@ def test_real_run_context_reads_bound_body_and_selected_provider(naming, monkeyp
     monkeypatch.setattr(assignment_store, "root_binding", lambda _: {"doc_id": naming["chat"]})
     monkeypatch.setattr(paths, "locate_storage_path", lambda *args, **kwargs: (root, "readable"))
     provider, text, chat_id = t.run_context(FA, 1)
-    assert provider == "selected" and text.strip() == TEXT and chat_id == naming["chat"]
+    assert provider == "selected" and text.strip() == TEXT and chat_id is None
     root.write_text("---\ntitle: metadata only\n---\n", encoding="utf-8")
     assert not t.run_context(FA, 1)[1].strip()
 

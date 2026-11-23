@@ -179,6 +179,17 @@
         <span>{{ attachmentWords.title }}</span>
         <i v-if="flowAttachmentUi.currentOpen" class="designer-tool-attachment-dot" aria-hidden="true" />
       </button>
+      <!-- 0078: [터미널] right after [첨부파일], in the same group (no separator), the same shape. Not an admin or the
+           system setting off (0015-T C-1, for admins too): not drawn at all, no gap; lit with a dot while the open
+           Flow's terminal is open (floating or filling the Designer — then pressing it gives that terminal the keyboard). -->
+      <button v-if="terminalState !== 'hidden'" type="button" class="designer-tool designer-tool-attachment designer-tool-terminal"
+        :class="{ 'has-window': terminalState === 'on' }"
+        :disabled="disabled" :title="terminalWords.title"
+        data-test="flow-terminal-open" :data-state="terminalState" @click="openTerminal">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M7 9.5l3 2.5-3 2.5M12.5 15H17" /></svg>
+        <span>{{ terminalWords.title }}</span>
+        <i v-if="terminalState === 'on'" class="designer-tool-attachment-dot" data-test="flow-terminal-dot" aria-hidden="true" />
+      </button>
     </div>
   </div>
 </template>
@@ -188,6 +199,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { words } from '../flowAttachments/words'
 import { flowAttachmentUi } from '../flowAttachments/state'
+import { words as terminalWordSets } from '../flowTerminal/words'
+import { flowTerminalUi, terminalButtonState } from '../flowTerminal/state'
 import {
   ALL_MENU_TARGETS,
   DESIGNER_LAYOUT_GROUPS,
@@ -254,6 +267,13 @@ function chooseZoom(event: Event) {
 
 const { t, locale } = useI18n()
 const attachmentWords = computed(() => words[locale.value as keyof typeof words] ?? words.en)
+const terminalWords = computed(() => terminalWordSets[locale.value as keyof typeof terminalWordSets] ?? terminalWordSets.en)
+// 0078: decided by GET /terminal/status of the open Flow (the terminal Host keeps it in flowTerminalUi).
+const terminalState = computed(() => terminalButtonState(flowTerminalUi.status, flowTerminalUi.currentOpen))
+function openTerminal() {
+  if (props.disabled || terminalState.value === 'hidden') return
+  emit('command', 'view.terminal')
+}
 
 // Keep Pause visible but disabled while stopping; hide it once execution returns to idle.
 type RunIcon = 'next' | 'all' | 'pause' | 'stop'

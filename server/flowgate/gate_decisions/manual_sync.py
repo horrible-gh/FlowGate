@@ -6,7 +6,7 @@ Conflicts use the existing manual review session and retain its original inputs.
 from flowgate.gate_decisions import git_adapter as git
 
 
-def sync(group_id: str, target: str) -> dict:
+def sync(group_id: str, target: str, *, on_started=None) -> dict:
     from modules.flow_gate.services.git import finalize, lock_manager as locks, manual_merge, merge_target
     slot = git.slot_of(group_id)
     rows = manual_merge.merge_results_view(group_id)["results"]
@@ -34,7 +34,7 @@ def sync(group_id: str, target: str) -> dict:
             raise git.GitServiceError(409, "target_ref_unreadable", "target state could not be read")
         if not remote:
             return {"status": "no_change"}
-        result = git.sync_merge(slot, "", "", target, head, remote, lambda evidence: None,
+        result = git.sync_merge(slot, "", "", target, head, remote, on_started or (lambda evidence: None),
                                 lock_holder=ctx.ctx_id)
         return {"status": "conflict" if result["outcome"] == git.CONFLICT else "updated",
                 "merge_id": result.get("merge_id")}

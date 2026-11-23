@@ -3352,6 +3352,7 @@ export default {
       agents: 'システム Agent',
       projects: '全プロジェクト',
       voice: '音声入力',
+      terminal: 'Web ターミナル',
     },
     me_nav: {
       account: 'アカウント · 画面',

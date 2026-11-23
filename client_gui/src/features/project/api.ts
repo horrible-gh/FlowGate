@@ -43,6 +43,7 @@ import type {
   FlowAiActivity,
   FlowChangeSet,
   FlowFileDiff,
+  FlowGitExecution,
   FlowFileNode,
   FlowFileTree,
   GroupScopeFloor,
@@ -611,6 +612,33 @@ export async function fetchFlowAiActivity(groupId: string, options: { conflictPr
     return activity
   } catch (error) {
     throw loadError(error, 'Failed to load the Flow AI activity.')
+  }
+}
+
+const GIT_RUN_STEPS: readonly string[] = ['commit', 'update', 'merge', 'push']
+const GIT_RUN_STATUSES: readonly string[] = ['running', 'stopped', 'remaining', 'complete']
+
+/** GET /api/v1/groups/{gid}/git/execution — the Flow's latest durable Git run; null = none yet (or not one we read). */
+export async function fetchFlowGitExecution(groupId: string): Promise<FlowGitExecution | null> {
+  try {
+    const response = await getRequest<{ result?: { execution?: Record<string, unknown> | null } }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/git/execution`,
+    )
+    const raw = response.data?.result?.execution
+    if (!raw || typeof raw.jobId !== 'string' || typeof raw.cursor !== 'number'
+      || !GIT_RUN_STATUSES.includes(String(raw.status))
+      || !Array.isArray(raw.steps) || !raw.steps.every((step) => GIT_RUN_STEPS.includes(String(step)))) return null
+    const skipped = raw.skipped && typeof raw.skipped === 'object' ? (raw.skipped as Record<string, unknown>).update : null
+    return {
+      jobId: raw.jobId,
+      status: raw.status as FlowGitExecution['status'],
+      steps: raw.steps as FlowGitExecution['steps'],
+      cursor: raw.cursor,
+      error: typeof raw.error === 'string' ? raw.error : null,
+      skipped: typeof skipped === 'string' ? { update: skipped } : {},
+    }
+  } catch (error) {
+    throw loadError(error, 'Failed to load the Flow Git run.')
   }
 }
 

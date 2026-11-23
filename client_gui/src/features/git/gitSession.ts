@@ -185,6 +185,12 @@ export interface GitSession {
   abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
   /**
+   * flowgate.v02test.0068: aborts the Flow's open Git session that no card shows (git/status has no conflict row for it —
+   * a branch merge, a graph attempt merge …), the one worktree status names with `session_open`. null = the server closed
+   * it; otherwise why not (the code, and git's own reason line when it gave one). Both status reads follow.
+   */
+  abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null>
+  /**
    * (task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
    * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
    * the session. `target` names another group's session (the admin list); default is the shown group's conflict.
@@ -781,6 +787,26 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId), { forceConflicts: true })
   }
 
+  async function abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null> {
+    // Not a notice code: the Git tab words it (GitQuickActions REASONS.git_busy).
+    const busyCode = 'git_busy'
+    if (!canAct.value || disposed) return { code: busyCode, reason: null }
+    const myCtx = ctx
+    let refused: { code: string; reason: string | null } | null = null
+    state.busy = 'abort'
+    try {
+      await src().abortMerge(target.groupId, target.mergeId)
+    } catch (error) {
+      const err = gitErrorOf(error)
+      if (err.status === 403 || err.code === 'forbidden') state.forbidden = true
+      refused = { code: err.network ? 'network' : err.code ?? String(err.status ?? 'failed'), reason: gitReasonOf(err) }
+    } finally {
+      state.busy = null
+    }
+    if (myCtx === ctx && !disposed) await load({ forceConflicts: true })
+    return refused
+  }
+
   async function forceCleanupPreview(target?: ForceCleanupTarget): Promise<GitForceCleanupPreview | null> {
     const wanted = target ?? activeConflict()
     const read = src().fetchForceCleanupPreview
@@ -1124,6 +1150,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     resolveFile,
     abortForReapproval,
     abortMerge,
+    abortOpenSession,
     forceCleanupPreview,
     forceCleanup,
     loadAbortFailures,
