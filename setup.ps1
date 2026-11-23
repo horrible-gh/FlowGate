@@ -434,6 +434,17 @@ if ($Interactive -and $dbReady) {
     }
 }
 
+if ($Interactive -and $dbReady) {
+    if ((Read-Host '웹 터미널 셸 부품 설치 (y/N)') -match '^[Yy]') {
+        try {
+            & $VenvPython (Join-Path $Root 'server\setup_terminal.py')
+            if ($LASTEXITCODE -ne 0) { Write-Host '[!] Terminal setup did not complete; retry in System Settings.' }
+        }
+        catch { Write-Host "[!] Terminal setup did not complete: $_" }
+        Write-Host 'Enable the terminal separately in System Settings.'
+    }
+}
+
 # ── done ─────────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '──────────────────────────────────────────────────────────────'

@@ -8,7 +8,7 @@ nothing to persist except the start/end record.
 Life of a session
 -----------------
 1. ``POST /terminal/sessions`` -> :meth:`TerminalManager.create` checks admin, the
-   ``TERMINAL_ENABLED`` setting, the one-per-Flow and three-per-person limits, decides the
+   ``terminal.enabled`` setting, the one-per-Flow and three-per-person limits, decides the
    start folder (group worktree, else the project branch checkout) and returns a one-time
    ticket valid for 30 seconds. No process exists yet.
 2. ``WS /terminal/ws?ticket=`` -> :func:`serve_websocket` redeems the ticket (single use),
@@ -67,12 +67,12 @@ class TerminalError(Exception):
 
 
 def terminal_enabled() -> bool:
-    """``TERMINAL_ENABLED`` (server setting, installed default off)."""
+    """Read the system setting every time; missing/unreadable means off."""
     try:
-        from config import settings
-    except Exception:  # noqa: BLE001 -- no readable settings: treat as off
+        from modules.flow_gate.db import system_settings
+        return json.loads(system_settings.get_value("terminal.enabled", "false")) is True
+    except Exception:
         return False
-    return bool(getattr(settings, "TERMINAL_ENABLED", False))
 
 
 def resolve_flow(flow_id: str) -> tuple[str, str]:
@@ -258,6 +258,7 @@ class TerminalManager:
         project_id, cwd = self.flow_resolver(flow_id)     # DB/filesystem: outside the lock
         now = self.clock()
         with self._lock:
+            self._gate(user)                           # disable may have raced resolution
             self._check_limits(user_id, flow_id)          # again: another request may have won
             session = TerminalSession(
                 session_id="ts_" + uuid.uuid4().hex, user_id=user_id, flow_id=flow_id,
@@ -377,6 +378,15 @@ class TerminalManager:
             self.recorder("terminal_session_ended", session, reason)
         return True
 
+    def open_count(self) -> int:
+        with self._lock:
+            return sum(s.live for s in self._sessions.values())
+
+    def disable_all(self) -> int:
+        with self._lock:
+            sessions = list(self._sessions.values())
+        return sum(self.end(session, "terminal_disabled") for session in sessions)
+
     def shutdown(self) -> None:
         """Server stop: no shell may outlive the server process."""
         with self._lock:
@@ -407,7 +417,8 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
     if session is None or not mgr.enabled():
         if session is not None:
             await anyio.to_thread.run_sync(mgr.end, session, "error")
-        await websocket.close(code=1008)
+        await websocket.close(code=4403 if session is not None else 1008,
+                              reason="terminal_disabled" if session is not None else "")
         return
     await websocket.accept()
     loop = asyncio.get_running_loop()
@@ -427,7 +438,13 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
         outcome.setdefault("code", code)
         loop.call_soon_threadsafe(ended.set)
 
-    session._closers.append(on_end)
+    with mgr._lock:
+        session._closers.append(on_end)
+        if not session.live:
+            on_end(session.end_reason or "closed", session.exit_code)
+    if not session.live:
+        await _finish(websocket, send, open_state, session.end_reason or "closed", session.exit_code)
+        return
     try:
         await anyio.to_thread.run_sync(mgr.spawn, session)
     except Exception:  # noqa: BLE001 -- includes PtyError
@@ -529,6 +546,8 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
         with anyio.CancelScope(shield=True):
             await asyncio.gather(*tasks, return_exceptions=True)
             await anyio.to_thread.run_sync(ender.join)
+    if session.end_reason == "terminal_disabled":
+        reason = "terminal_disabled"
     if code is None:
         code = session.exit_code if reason == "shell_exit" else None
     await _finish(websocket, send, open_state, reason, code)
@@ -536,6 +555,13 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
 
 async def _finish(websocket, send, open_state: dict, reason: str, code: Optional[int]) -> None:
     if not open_state["open"]:
+        return
+    if reason == "terminal_disabled":
+        open_state["open"] = False
+        try:
+            await websocket.close(code=4403, reason="terminal_disabled")
+        except Exception:
+            pass
         return
     try:
         await send({"type": "exit", "reason": reason if reason in EXIT_REASONS else "error", "code": code})

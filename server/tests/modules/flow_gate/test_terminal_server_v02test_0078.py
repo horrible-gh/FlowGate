@@ -186,14 +186,13 @@ def test_disabled_setting_refuses_and_defaults_off(env, monkeypatch):
     response = client_for(ADMIN).post("/api/v1/terminal/sessions", json={"flow_id": "g1", "cols": 80, "rows": 24})
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "terminal_disabled"
-    # Read from source: importing config mirrors .env keys into os.environ for the session.
-    import ast
-
-    tree = ast.parse((Path(__file__).resolve().parents[3] / "config.py").read_text(encoding="utf-8"))
-    settings_cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Settings")
-    field = next(n for n in settings_cls.body if isinstance(n, ast.AnnAssign)
-                 and getattr(n.target, "id", None) == "TERMINAL_ENABLED")
-    assert isinstance(field.value, ast.Constant) and field.value.value is False
+    from modules.flow_gate.db import system_settings
+    monkeypatch.setattr(system_settings, "get_value", lambda key, default=None: default)
+    assert ts.terminal_enabled() is False
+    monkeypatch.setattr(system_settings, "get_value", lambda key, default=None: "true")
+    assert ts.terminal_enabled() is True
+    monkeypatch.setattr(system_settings, "get_value", lambda key, default=None: "false")
+    assert ts.terminal_enabled() is False
 
 
 def test_ticket_from_a_session_is_refused_once_the_setting_is_off(env):
