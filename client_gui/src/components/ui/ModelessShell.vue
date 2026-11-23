@@ -384,6 +384,54 @@ defineExpose({ bringToFront, geometry, setGeometry })
   color: #fff;
 }
 
+/* Dock: rounder window, centred title, round close / minimize buttons on the left (close first). */
+.ui-modeless-panel[data-taskbar-style="dock"] {
+  border-radius: 11px;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
+}
+
+[data-taskbar-style="dock"] .ui-modeless-titlebar {
+  flex-direction: row-reverse;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--fg2-text) 6%, var(--fg2-panel)), color-mix(in srgb, var(--fg2-text) 2%, var(--fg2-panel)));
+}
+
+[data-taskbar-style="dock"] .ui-modeless-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+[data-taskbar-style="dock"] .ui-modeless-titlebar-actions {
+  min-width: 44px;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  order: -1;
+  width: 13px;
+  min-width: 0;
+  height: 13px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  background: #febc2e;
+  color: transparent;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]) {
+  order: -2;
+  background: #ff5f57;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  color: rgba(0, 0, 0, 0.65);
+  filter: brightness(1.05);
+}
+
 .is-minimized .ui-modeless-titlebar {
   border-bottom: none;
 }
@@ -419,3 +467,4 @@ defineExpose({ bringToFront, geometry, setGeometry })
   cursor: nwse-resize;
 }
 </style>
+
