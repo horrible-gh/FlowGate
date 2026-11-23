@@ -454,6 +454,7 @@ def search_document_bodies(
     include_matches: bool = True,
     context_lines: int = None,
     hits_per_doc: int = None,
+    allowed_projects: list[str] = None,
 ) -> tuple[list[dict], int]:
     """Full document search (body + title + doc_id) with optional metadata facets.
 
@@ -475,7 +476,7 @@ def search_document_bodies(
         return [], 0
 
     rows = db_docs.list_documents_for_fulltext(
-        project=project, doc_type=doc_type, status=status
+        project=project, doc_type=doc_type, status=status, allowed_projects=allowed_projects
     )
     matches: list[dict] = []
     for doc in rows:
@@ -547,6 +548,7 @@ def search_conversation_turns(
     include_matches: bool = True,
     context_lines: int = None,
     hits_per_doc: int = None,
+    allowed_projects: list[str] = None,
 ) -> list[dict]:
     """Conversation-turn body search (T4, the earlier implementation / the plan scenario 16).
 
@@ -573,6 +575,10 @@ def search_conversation_turns(
     like_pattern = "%" + _escape_like(needle) + "%"
     clauses = [f"LOWER(t.body) LIKE LOWER(?) ESCAPE {escape_literal}"]
     params: list = [like_pattern]
+    if allowed_projects is not None:
+        clauses.append("d.project_id IN (" + ",".join("?" for _ in allowed_projects) + ")"
+                       if allowed_projects else "1 = 0")
+        params.extend(allowed_projects)
     if project:
         clauses.append("d.project_id = ?")
         params.append(project)

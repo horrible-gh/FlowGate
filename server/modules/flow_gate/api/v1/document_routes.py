@@ -19,7 +19,7 @@ from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.storage.paths import resolve_storage_path
-from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.q_service import get_answers_for_document
 from modules.flow_gate.services import ai_response_slim
@@ -700,7 +700,7 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
         return _fail(422, str(exc)), None, None
 
     doc = db_docs.get_by_id(doc_id)
-    if doc is None:
+    if doc is None or not can_read_project(auth, doc.get("project_id")):
         return _fail(404, f"Document {doc_id} does not exist"), None, None
 
     try:
@@ -906,11 +906,15 @@ def get_document_meta(
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
     # Use the existing lookup if you need answer contents; the point here is to omit bodies, so only counts.
+    from modules.flow_gate.db import groups as db_groups
+    group = db_groups.get_by_id(doc.get("group_id")) if doc.get("group_id") else None
+    resp["group_title"] = (group.get("title") if group and
+                           group.get("project_id") == doc.get("project_id") else None)
     resp["answers_count"] = len(get_answers_for_document(doc_id) or [])
     body["state"] = _content_state(doc, text)
     resp["body"] = body
     resp["content_state"] = body["state"]
-    return JSONResponse(content=ai_response_slim.for_ai(request, resp))
+    return JSONResponse(content=ai_response_slim.for_ai(request, resp, keep=("group_title",)))
 
 
 _RELATIONS_REFERENCED_BY_MAX = 50

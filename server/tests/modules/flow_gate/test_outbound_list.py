@@ -110,8 +110,16 @@ def patch_store(tmp_db):
             raise NotImplementedError
 
     conn_mod.STORE = _PatchedStore()
-    yield
-    conn_mod.STORE = original_store
+    # Module-scoped seed fixtures run before the function-scoped startup fixture.
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    from flowgate.card_document_edit import integration
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(card_document_ports, "_handlers", dict(card_document_ports._handlers))
+        integration.register()
+        try:
+            yield
+        finally:
+            conn_mod.STORE = original_store
 
 
 @pytest.fixture(scope="module")
@@ -153,6 +161,10 @@ def seed_data(tmp_db):
     store._execute(
         "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) VALUES (?,?,?,?)",
         ["usr_test_001", "testprj", "role_worker", now],
+    )
+    store._execute(
+        "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) VALUES (?,?,?,?)",
+        ["usr_test_001", "OFFPRJ", "role_worker", now],
     )
     db_groups.create({
         "group_id": "testprj-__ALL__-0001",
@@ -208,14 +220,13 @@ def _build_client():
 def _issue_bearer(tmp_path, user_id: str = "usr_test_001", project: str = "testprj") -> str:
     from modules.flow_gate.services import token_service
 
-    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
-        issued = token_service.issue(
-            project=project,
-            group_id="testprj-__ALL__-0001",
-            action_scope="new",
-            doc_ref=None,
-            issued_to=user_id,
-        )
+    issued = token_service.issue(
+        project=project,
+        group_id="testprj-__ALL__-0001",
+        action_scope="new",
+        doc_ref=None,
+        issued_to=user_id,
+    )
     return issued["raw_token"]
 
 

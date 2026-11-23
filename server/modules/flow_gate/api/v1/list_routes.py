@@ -17,7 +17,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project, readable_projects
 from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundList"])
@@ -68,23 +68,11 @@ def list_projects(
             return _fail(400, "status/is_active must be active, inactive, or all")
 
     store = get_store()
-    count_sql = "SELECT COUNT(*) as cnt FROM projects"
-    count_params: list = []
-    data_sql = "SELECT * FROM projects"
-    data_params: list = []
-
-    if active_filter is not None:
-        count_sql += " WHERE is_active = ?"
-        data_sql += " WHERE is_active = ?"
-        count_params.append(active_filter)
-        data_params.append(active_filter)
-
-    total_row = store._fetch_one(count_sql, count_params)
-    total = total_row["cnt"] if total_row else 0
-
-    data_sql += " ORDER BY project_id LIMIT ? OFFSET ?"
-    data_params += [limit, offset]
-    rows = store._fetch_all(data_sql, data_params)
+    rows = store._fetch_all("SELECT * FROM projects ORDER BY project_id", [])
+    rows = [r for r in rows if can_read_project(auth, r["project_id"])
+            and (active_filter is None or r.get("is_active", 1) == active_filter)]
+    total = len(rows)
+    rows = rows[offset:offset + limit]
 
     items = [
         {
@@ -119,7 +107,7 @@ def list_modules(
         return err
 
     project = db_projects.get_by_id(p)
-    if project is None:
+    if project is None or not can_read_project(auth, p):
         return _fail(404, f"Project {p} does not exist")
 
     # modules: distinct module values from groups
@@ -176,7 +164,7 @@ def list_groups(
         )
 
     project = db_projects.get_by_id(p)
-    if project is None:
+    if project is None or not can_read_project(auth, p):
         return _fail(404, f"Project {p} does not exist")
 
     store = get_store()
@@ -297,7 +285,7 @@ def list_documents(
         return _fail(400, f"Invalid sort value: {sort}")
 
     group = db_groups.get_by_id(gid)
-    if group is None:
+    if group is None or not can_read_project(auth, group.get("project_id")):
         return _fail(404, f"Group {gid} does not exist")
 
     store = get_store()
@@ -330,6 +318,8 @@ def list_documents(
         items = [
             {
                 "doc_id": r["doc_id"],
+                "group_title": group.get("title"),
+            "group_title": group.get("title"),
                 "doc_type": r.get("type_code"),
                 "title": r.get("title"),
                 "status": r.get("status"),
@@ -373,6 +363,7 @@ def list_documents(
     items = [
         {
             "doc_id": r["doc_id"],
+            "group_title": group.get("title"),
             "type": r.get("type_code"),
             "title": r.get("title"),
             "status": r.get("status"),
@@ -417,9 +408,12 @@ def search_documents(
     if not query:
         return _fail(400, "q is required")
 
+    if project and not can_read_project(auth, project):
+        return _fail(404, f"Project {project} does not exist")
+    allowed_projects = [project] if project else readable_projects(auth)
     rows, total = db_docs.search_documents(
         q=query, project=project, doc_type=type, status=status,
-        limit=limit, offset=offset,
+        limit=limit, offset=offset, allowed_projects=allowed_projects,
     )
     # Attach a brief body preview to every result so the default explorer search
     # (the one that runs when "search inside contents" is off) shows the document's simplified
@@ -445,6 +439,7 @@ def search_documents(
         }
         for r in rows
     ]
+    _add_group_titles(items)
     return JSONResponse(content={
         "ok": True, "query": query, "total": total,
         "offset": offset, "limit": limit, "items": items,
@@ -513,17 +508,23 @@ def search_documents_content(
     )
     per_doc_hits = max(1, min(int(per_doc_hits), outline_svc.HITS_PER_DOC_MAX))
 
+    if project and not can_read_project(auth, project):
+        return _fail(404, f"Project {project} does not exist")
+    allowed_projects = [project] if project else readable_projects(auth)
     items, total = content_search_service.search_document_bodies(
         q=query, project=project, doc_type=type, status=status,
         limit=limit, offset=offset,
         include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+        allowed_projects=allowed_projects,
     )
     turn_items: list = []
     if not type or "CH".startswith(type.strip().upper()):
         turn_items = content_search_service.search_conversation_turns(
             q=query, project=project, status=status,
             include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+            allowed_projects=allowed_projects,
         )
+    _add_group_titles(items + turn_items)
     return JSONResponse(content={
         "ok": True, "query": query, "scope": "content", "total": total,
         "offset": offset, "limit": limit,
@@ -571,4 +572,34 @@ def list_doc_types(
     ]
     return JSONResponse(content={
         "ok": True, "total": total, "offset": offset, "limit": limit, "items": items,
+    })
+
+
+def _add_group_titles(items):
+    groups = {}
+    for item in items:
+        gid = item.get("group_id")
+        if gid not in groups:
+            groups[gid] = db_groups.get_by_id(gid) if gid else None
+        group = groups[gid]
+        item["group_title"] = (group.get("title") if group and
+                               group.get("project_id") == item.get("project_id") else None)
+
+
+@router.get("/list/groups/{group_id}")
+def get_group(request: Request, group_id: str):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    group = db_groups.get_by_id(group_id)
+    if group is None or not can_read_project(auth, group.get("project_id")):
+        return _fail(404, f"Group {group_id} does not exist")
+    count = get_store()._fetch_one(
+        "SELECT COUNT(*) AS cnt FROM documents WHERE group_id = ?", [group_id])
+    return JSONResponse(content={
+        "ok": True,
+        **{key: group.get(key) for key in (
+            "group_id", "title", "module", "status", "parent_id",
+            "created_at", "updated_at", "closed_at")},
+        "document_count": count["cnt"] if count else 0,
     })
