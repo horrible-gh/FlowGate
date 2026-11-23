@@ -58,6 +58,8 @@
         </svg>
       </span>
       <span class="flow-node-kind" data-test="designer-canvas-node-kind">{{ t(kindLabelKey) }}</span>
+      <!-- flowgate.v02test.0077: the card number right after the kind name (`작업 #3`); its hover names the short id. -->
+      <span v-if="data.cardLocal" class="flow-node-no" :title="data.cardShort" data-test="designer-canvas-node-no">{{ data.cardLocal }}</span>
       <span v-if="!data.hold && headerState && headerGlyph" class="flow-node-state is-card is-icon"
         :class="`flow-node-state--${headerGlyph!.tone}`" role="img" :aria-label="headerTitle"
         :title="headerTitle" :data-test="data.gateState ? 'designer-canvas-node-gate-state' : data.cardState ? 'designer-canvas-node-card-state' : 'designer-canvas-node-state'"
@@ -124,7 +126,7 @@
       <p
         v-if="showTitle"
         class="flow-node-title"
-        :title="data.title"
+        :title="data.cardShort ? `${data.cardShort} · ${data.title}` : data.title"
         data-test="designer-canvas-node-title"
       >{{ data.title }}</p>
     </div>
@@ -399,6 +401,23 @@ const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.valu
   font-size: 10.5px;
   font-weight: 650;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* flowgate.v02test.0077: the card number after the kind name — a small monospace chip in the card's accent; it keeps its
+   width (the kind name and the state shrink first). */
+.flow-node-no {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--flow-node-accent) 55%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--flow-node-accent) 22%, #0a1422);
+  color: color-mix(in srgb, var(--flow-node-accent) 35%, #fff);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 16px;
   white-space: nowrap;
 }
 

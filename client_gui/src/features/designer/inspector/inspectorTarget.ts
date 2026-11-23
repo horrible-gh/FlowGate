@@ -6,6 +6,7 @@
 // (B1): the card's own title state and whether it may be edited now (the session's titleEdit) —
 // the Inspector header edits the title; the title text rules it checks before sending are the Canvas's (nodeTitle.ts).
 import { cardApprovalFailureView, cardStateView, type CardApprovalFailureView, type CardStateView } from '../center/graph/cardStateView'
+import type { FlowCardRef } from '@/features/project'
 import type {
   FlowGraph,
   FlowGraphCardDocument,
@@ -70,6 +71,11 @@ export interface InspectorTarget {
   readonly nodeKind: string
   /** The live document bound to the Node, or null. */
   readonly docId: string | null
+  /**
+   * flowgate.v02test.0077: the card's display ids (`F74-1`, `flowgate.v02test.F74-1`); absent while it has no number
+   * (an older server, a card not saved yet). The header shows and copies it.
+   */
+  readonly cardRef?: FlowCardRef
   /** Document type: the bound document's, else the Graph definition's, else the Node's. */
   readonly docType: string | null
   readonly cardKind: InspectorCardKind
@@ -253,6 +259,7 @@ export function toInspectorTarget(selection: FlowGraphSelection | null | undefin
     nodeId: node.id,
     nodeKind: node.kind,
     docId: document?.docId ?? null,
+    ...(node.cardRef ? { cardRef: node.cardRef } : {}),
     docType,
     cardKind: inspectorCardKind(docType),
     title: node.title,

@@ -61,9 +61,12 @@ function draftGraph(flowId: string): FlowGraph {
     flowId,
     ownership: 'unassigned',
     nodes: [
-      { id: 'gn_a', kind: 'task', title: 'A', x: 0, y: 0, movable: true, structureEditable: true, definition: definition('A'), state: 'done' },
+      // flowgate.v02test.0077: gn_a has a card number but no document; gn_b both; gn_c / gn_lock neither.
+      { id: 'gn_a', kind: 'task', title: 'A', x: 0, y: 0, movable: true, structureEditable: true, definition: definition('A'), state: 'done',
+        cardRef: { cardNo: 1, local: '#1', short: 'F1-1', moduleRef: 'm.F1-1', full: 'p.m.F1-1' } },
       { id: 'gn_b', kind: 'task', title: 'B', x: 300, y: 0, movable: true, structureEditable: true, definition: definition('B'), state: 'in_progress',
-        document: { docId: 'p.m.f1.0002-T', typeCode: 'T', seq: 2, title: 'B', docReviewStatus: null, status: 'draft', supersedes: [] } },
+        document: { docId: 'p.m.f1.0002-T', typeCode: 'T', seq: 2, title: 'B', docReviewStatus: null, status: 'draft', supersedes: [] },
+        cardRef: { cardNo: 2, local: '#2', short: 'F1-2', moduleRef: 'm.F1-2', full: 'p.m.F1-2' } },
       { id: 'gn_c', kind: 'task', title: 'C', x: 600, y: 0, movable: true, structureEditable: true, definition: definition('C') },
       { id: 'gn_lock', kind: 'task', title: 'L', x: 0, y: 220, movable: true, structureEditable: false, definition: definition('L') },
     ],
@@ -346,7 +349,7 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(graphOf(center).nodes.map((node) => node.title).sort()).toEqual(['A', 'B', 'C', 'L'])
   })
 
-  it('a card with a document: ID 복사 copies the document id the Inspector copies; a card without one keeps it disabled (v02gui.0003)', async () => {
+  it('ID 복사 copies the card\'s full display id (not its document id), also on a card without a document; a card with neither keeps it disabled (v02gui.0003, v02test.0077)', async () => {
     const { w, center, calls } = await mountHarness()
     const before = invariants(center)
     rightClick(card(w, 'gn_b'))
@@ -355,15 +358,22 @@ describe('Designer context menu — Canvas (0006-D §9.3 ④)', () => {
     expect(item('node.copyId').getAttribute('aria-disabled')).toBe('false')
     item('node.copyId').click()
     await settle()
-    expect(calls.copied).toEqual(['p.m.f1.0002-T'])
+    expect(calls.copied).toEqual(['p.m.F1-2'])
     expect(menuEl()).toBeNull()
     expect(invariants(center)).toBe(before)
+    // A numbered card without a document: enabled, its full id.
+    rightClick(card(w, 'gn_a'))
+    await settle()
+    expect(item('node.copyId').getAttribute('aria-disabled')).toBe('false')
+    item('node.copyId').click()
+    await settle()
+    expect(calls.copied).toEqual(['p.m.F1-2', 'p.m.F1-1'])
     rightClick(card(w, 'gn_c'))
     await settle()
     expect(item('node.copyId').getAttribute('aria-disabled')).toBe('true')
     item('node.copyId').click()
     await settle()
-    expect(calls.copied).toHaveLength(1)
+    expect(calls.copied).toHaveLength(2)
   })
 
   it('a locked card / a progressed line open an all-disabled menu: no command, Escape closes and returns focus', async () => {

@@ -33,6 +33,7 @@ import type {
   FlowCanvasTitleState,
   FlowCanvasView,
   FlowCanvasViewport,
+  FlowCardRef,
   FlowGraphAssignee,
 } from './types'
 
@@ -258,7 +259,21 @@ function toNode(raw: Raw): FlowCanvasNode {
     ...(Array.isArray(raw.card_documents) ? { cardDocuments: toCardDocuments(raw.card_documents) } : {}),
     // kept only when sent (an older server sends none: no title edit, no version compare).
     ...('title_state' in raw ? { titleState: toTitleState(raw.title_state) } : {}),
+    // flowgate.v02test.0077: the card's display ids, kept only when sent (null = no number yet).
+    ...('card_ref' in raw ? { cardRef: toCardRef(raw.card_ref) } : {}),
   }
+}
+
+/** flowgate.v02test.0077: `card_ref` -> FlowCardRef, or null (no number yet, or malformed). */
+export function toCardRef(raw: unknown): FlowCardRef | null {
+  const value = raw as Raw | null
+  if (!value || typeof value !== 'object') return null
+  const cardNo = count(value.card_no)
+  const local = str(value.local)
+  const short = str(value.short)
+  const full = str(value.full)
+  if (!cardNo || !local || !short || !full) return null
+  return { cardNo, local, short, moduleRef: str(value.module_ref), full }
 }
 
 /** `title_state` -> one bundle, or null (not a title node, or malformed). */

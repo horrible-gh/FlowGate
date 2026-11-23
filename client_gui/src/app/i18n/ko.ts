@@ -769,6 +769,11 @@ export default {
         more: '더보기',
         copy_id: 'ID 복사',
         copied: 'ID 복사됨',
+        // flowgate.v02test.0077 — the card id chip (F74-1) and the bound document's own id in the ⋯ menu.
+        card_id_copy: '누르면 {id} 복사',
+        card_id_copied: '복사됨',
+        copy_doc_id: '문서 ID 복사',
+        doc_id_copied: '문서 ID 복사됨',
         kind_bug: '버그',
         // flowgate.v02.0052 묶음 A — the status pill tooltip: the server values behind the one label.
         state_tip: '문서 상태: {doc} / 실행 상태: {run}',
