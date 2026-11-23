@@ -24,7 +24,7 @@
       :is-read-only="id => center.isFlowReadOnly(id)" :is-archived="id => center.isFlowArchived?.(id) ?? null" />
     <!-- 0078: the Flow terminal windows (admins only; the toolbar's [터미널]). -->
     <FlowTerminalHost ref="terminalHost" :key="`terminal:${projectStore.designerSessionOwner ?? ''}`"
-      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" />
+      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" :dock-target="terminalDockTarget" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"
@@ -269,7 +269,7 @@ import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRunResultWatch, runWaitText } from '@/features/ai'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import DesignerTaskbar from './DesignerTaskbar.vue'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
@@ -511,6 +511,15 @@ const activeFlowRef = center.activeFlowRef
 const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
 // 0078: the Flow terminal windows.
 const terminalHost = ref<InstanceType<typeof FlowTerminalHost> | null>(null)
+// 0078 · 0009-T: a terminal can be docked into the bottom Dock. The Dock gives its terminal place and draws the
+// Inspector | 터미널 switch through this bridge (it injects the same key and imports nothing of the terminal).
+const terminalDockTarget = shallowRef<HTMLElement | null>(null)
+provide(Symbol.for('flowgate.designer.bottomDockTerminal'), {
+  pane: (flowId: string | null) => terminalHost.value?.bottomPane(flowId) ?? null,
+  select: (flowId: string, pane: 'inspector' | 'terminal') => terminalHost.value?.selectBottomPane(flowId, pane),
+  setTarget: (el: HTMLElement | null) => { terminalDockTarget.value = el },
+  labels: () => terminalHost.value?.dockLabels() ?? null,
+})
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 

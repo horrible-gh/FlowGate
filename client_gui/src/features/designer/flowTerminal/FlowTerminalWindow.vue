@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <section v-show="visible" ref="root" class="ft-window" :class="{ focused, minimized }" :style="placeStyle"
+    <section v-show="visible && !docked" ref="root" class="ft-window" :class="{ focused, minimized }" :style="placeStyle"
       tabindex="-1" role="dialog" :aria-label="`${w.title} · ${title}`" data-test="flow-terminal-window" :data-flow-id="flowId"
       :data-minimized="minimized ? 'true' : undefined" @pointerdown="emit('focus')">
       <header class="ft-head" @pointerdown="startDrag" @dblclick="toggleMinimize">
@@ -10,6 +10,11 @@
         <!-- 0001-R §3.1-6: the working folder is always in the title bar (a long path is cut at its start, the tooltip has all). -->
         <span class="ft-cwd" :title="`${w.cwd}: ${session.cwd}`" data-test="flow-terminal-cwd"><bdi dir="ltr">{{ session.cwd }}</bdi></span>
         <span class="ft-spacer" />
+        <!-- 0009-T 할 일 1: into the Designer's bottom Dock (the same shell goes on there). -->
+        <Button variant="ghost" size="sm" class="ft-head-btn" :title="w.dock" :aria-label="w.dock" :disabled="!canDock"
+          data-test="flow-terminal-dock" @pointerdown.stop @dblclick.stop @click="emit('dock', true)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11z" /><path d="M2.5 9h11" /><path d="M8 4.8v2.6M6.6 6l1.4 1.4L9.4 6" /></svg>
+        </Button>
         <Button variant="ghost" size="sm" class="ft-head-btn" :title="minimized ? w.restore : w.minimize" :aria-label="minimized ? w.restore : w.minimize"
           data-test="flow-terminal-minimize" @pointerdown.stop @dblclick.stop @click="toggleMinimize">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path v-if="minimized" d="M3.5 3.5h9v9h-9z" /><path v-else d="M3.5 11.5h9" /></svg>
@@ -21,6 +26,18 @@
       </header>
 
       <div v-show="!minimized" class="ft-main">
+        <!-- 0009-T 할 일 2·4: docked, this part (the xterm.js screen, its overlays and the band) is moved into the bottom
+             Dock's terminal place by the Teleport — the same DOM, Terminal, WebSocket and session; nothing is made again. -->
+        <Teleport :to="dockTarget ?? 'body'" :disabled="!docked || !dockTarget">
+        <div v-show="!docked || visible" class="ft-body" :class="{ 'is-docked': docked }" data-test="flow-terminal-body"
+          :data-flow-id="flowId" :data-docked="docked ? 'true' : undefined" @pointerdown="docked && emit('focus')">
+        <header v-if="docked" class="ft-dock-head" data-test="flow-terminal-dock-head">
+          <span class="ft-dock-label">{{ w.cwd }}</span>
+          <span class="ft-cwd ft-dock-cwd" :title="`${w.cwd}: ${session.cwd}`" data-test="flow-terminal-dock-cwd"><bdi dir="ltr">{{ session.cwd }}</bdi></span>
+          <span class="ft-spacer" />
+          <Button variant="ghost" size="sm" class="ft-dock-btn" :title="w.undock" data-test="flow-terminal-undock" @click="emit('dock', false)">{{ w.undock }}</Button>
+          <Button variant="ghost" size="sm" class="ft-dock-btn ft-close" :title="w.close" data-test="flow-terminal-dock-close" @click="requestClose">{{ w.dockClose }}</Button>
+        </header>
         <p v-if="cardRunning && !ended" class="ft-band" role="status" data-test="flow-terminal-card-running">{{ w.cardRunning }}</p>
         <div class="ft-screen-wrap">
           <div ref="screen" class="ft-screen" data-test="flow-terminal-screen" />
@@ -41,6 +58,8 @@
             </div>
           </div>
         </div>
+        </div>
+        </Teleport>
       </div>
     </section>
   </Teleport>
@@ -54,6 +73,10 @@
 // "세션이 끝났습니다" with [새로 열기] — no reattach in this stage. Hidden (another Flow tab) the session goes on.
 // Copy: Ctrl+Shift+C, or Ctrl+C while text is selected (Ctrl+C without a selection is the shell's interrupt).
 // Paste: Ctrl+V / Ctrl+Shift+V go to the browser's paste, which xterm.js sends as input. Korean input uses the IME.
+// 0009-T: `docked` draws the screen in the Designer's bottom Dock (`dockTarget`) instead of the window — [아래에 붙이기]
+// / [떼기] ask the Host (`dock` event). The window keeps its place and size while docked, so [떼기] brings it back
+// where it was. After each move the screen is fitted again and its rows / columns are sent to the shell; the Dock's
+// height and the Center column's width are followed by the same ResizeObserver as the window's size.
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Terminal } from '@xterm/xterm'
@@ -68,10 +91,15 @@ import { wordsFor } from './words'
 const props = defineProps<{
   flowId: string; title: string; session: TerminalSession; position: number
   visible: boolean; focused: boolean; zIndex: number
+  /** Drawn in the bottom Dock (0009-T). */
+  docked?: boolean
+  /** The bottom Dock's terminal place; null = no Dock to go to ([아래에 붙이기] is unavailable). */
+  dockTarget?: HTMLElement | null
 }>()
-const emit = defineEmits<{ close: []; focus: []; reopen: [] }>()
+const emit = defineEmits<{ close: []; focus: []; reopen: []; dock: [docked: boolean] }>()
 const { locale } = useI18n()
 const w = computed(() => wordsFor(locale.value))
+const canDock = computed(() => !!props.dockTarget)
 
 /* ── place: dragged by the header, resized by the corner (CSS resize), minimized to the header ── */
 const root = ref<HTMLElement | null>(null)
@@ -109,7 +137,7 @@ function toggleMinimize() {
 }
 /** Brings the window back (from minimized too) and puts the keyboard in the shell. */
 function reveal() {
-  if (minimized.value) toggleMinimize()
+  if (minimized.value && !props.docked) toggleMinimize()
   if (term && !ended.value) term.focus()
   else root.value?.focus({ preventScroll: true })
 }
@@ -197,7 +225,7 @@ async function loadScreen() {
   if (props.visible && props.focused) created.focus()
 }
 function fitNow() {
-  if (!fit || minimized.value || !props.visible || !screen.value?.offsetWidth) return
+  if (!fit || (minimized.value && !props.docked) || !props.visible || !screen.value?.offsetWidth) return
   try { fit.fit() } catch { /* not measurable yet (hidden) — the next resize fits */ }
 }
 function keyEvent(event: KeyboardEvent): boolean {
@@ -241,6 +269,14 @@ function shutdown() {
 }
 
 watch(() => props.visible, shown => { if (shown) void nextTick(fitNow) })
+// Moved into / out of the bottom Dock: the window comes back unminimized, the screen is fitted to its new place and
+// the shell gets the rows / columns (sent again even when they happen to be the same).
+watch(() => props.docked && !!props.dockTarget, async () => {
+  if (props.docked) minimized.value = false
+  await nextTick()
+  fitNow()
+  if (term) send(resizeFrame(term.cols, term.rows))
+})
 onMounted(() => {
   const el = root.value
   if (el) { el.style.width = `${first.width}px`; el.style.height = `${first.height}px` }
@@ -282,6 +318,16 @@ defineExpose({ reveal, requestClose })
 .ft-window .ft-close:hover { background: var(--fg2-status-danger-bg); border-color: var(--fg2-status-danger-border); color: var(--fg2-text); }
 
 .ft-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ft-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Docked: fills the bottom Dock's terminal place (its own colors, as in the window). */
+.ft-body.is-docked { position: absolute; inset: 0; background: #0a1626; color: #d8e8f5; font-size: 12px; }
+.ft-body button { font-family: inherit; }
+.ft-dock-head { flex-shrink: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 11px;
+  border-bottom: 1px solid #355876; background: #10273e; }
+.ft-dock-label { flex-shrink: 0; font-size: 11px; color: #7f9db6; white-space: nowrap; }
+.ft-body .ft-dock-btn { height: 22px; padding: 0 9px; border: 1px solid var(--fg2-line-strong); border-radius: 5px; color: var(--fg2-control-fg);
+  font-size: 11px; white-space: nowrap; }
+.ft-body .ft-close:hover { background: var(--fg2-status-danger-bg); border-color: var(--fg2-status-danger-border); color: var(--fg2-text); }
 .ft-band { flex-shrink: 0; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--fg2-status-warning-border, #8a6a24);
   background: var(--fg2-status-warning-bg, #3a2f12); color: var(--fg2-status-warning-fg, #ffd98a); font-size: 12px; }
 .ft-screen-wrap { position: relative; flex: 1 1 auto; min-height: 0; }
