@@ -363,6 +363,27 @@ defineExpose({ bringToFront, geometry, setGeometry })
   background: color-mix(in srgb, var(--modeless-kind-color) 8%, var(--fg2-panel));
 }
 
+/* Modern: flat title bar, rounder window, no kind stripe; − and × stay on the right. */
+.ui-modeless-panel[data-taskbar-style="modern"] {
+  border-radius: 10px;
+  border-color: var(--fg2-line);
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar {
+  padding: 6px 6px 6px 14px;
+  border-bottom-color: transparent;
+  background: color-mix(in srgb, var(--fg2-text) 4%, var(--fg2-panel));
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep(button) {
+  border-radius: 6px;
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]:hover) {
+  background: #c42b1c;
+  color: #fff;
+}
+
 .is-minimized .ui-modeless-titlebar {
   border-bottom: none;
 }
