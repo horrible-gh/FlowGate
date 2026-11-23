@@ -184,6 +184,7 @@
 import { computed, ref, watch } from 'vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useI18n } from 'vue-i18n'
+import { isDefaultCardTitle } from '../../cardDefaultTitle'
 import { Handle, Position } from '@vue-flow/core'
 import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHeaderIcon } from './flowNodeKinds'
 import type { FlowGateNodeData } from './vueFlowMapping'
@@ -317,7 +318,7 @@ const approveTitle = computed(() => {
 })
 
 /** The title is shown unless it only repeats the kind name of the head row. */
-const showTitle = computed(() => props.data.title.trim() !== t(kindLabelKey.value).trim())
+const showTitle = computed(() => !isDefaultCardTitle(props.data.title, kindLabelKey.value))
 </script>
 
 <style scoped>

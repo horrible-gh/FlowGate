@@ -371,10 +371,14 @@ describe('DesignerCenterColumn — Bottom Dock with the Inspector', () => {
     const { w } = await mountColumn()
     const dock = get(w, 'designer-bottom-dock')
     expect(dock.attributes('style')).toContain('height: 300px')
+    // 0078 · 0009-T: the left 7 is the Inspector's place shared with a docked terminal (no switch while none is docked).
     expect([...dock.element.children].map((c) => c.getAttribute('data-test'))).toEqual([
-      'designer-inspector',
+      'designer-bottom-main',
       'designer-bottom-minimap',
     ])
+    const main = get(w, 'designer-bottom-main')
+    expect(main.find('[data-test="designer-bottom-switch"]').exists()).toBe(false)
+    expect(main.get('[data-test="designer-bottom-inspector-pane"]').find('[data-test="designer-inspector"]').exists()).toBe(true)
     expect(get(w, 'designer-bottom-minimap').find('[data-test^="designer-placeholder-"]').exists()).toBe(false)
     expect(get(w, 'designer-bottom-minimap').get('[data-test="designer-minimap"]').attributes('data-empty')).toBe('true')
     expect((dock.element as HTMLElement).style.gridTemplateColumns).toBe(DESIGNER_BOTTOM_DOCK_COLUMNS)

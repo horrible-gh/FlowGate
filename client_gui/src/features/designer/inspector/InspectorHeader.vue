@@ -69,7 +69,6 @@
       <!-- The title area: one header item holding the title (or its input) and the note right of it, so they share
            the title's room and shrink together instead of pushing the ✎ 메모 and ⋯ off the line. -->
       <span
-        v-if="editing || !titleRepeatsKind || titleEditable || note"
         class="inspector-header-title-area"
         :class="{ 'is-editing': editing }"
         data-test="designer-inspector-title-area"
@@ -103,11 +102,12 @@
           @keydown="onTitleKeydown"
         >{{ target.title }}</span>
         <button
-          v-else-if="titleEditable"
+          v-else
           type="button"
           class="inspector-header-title-edit"
-          :aria-label="t('gui.designer.nodeTitle.edit')"
-          :title="t('gui.designer.nodeTitle.edit')"
+          :disabled="!titleEditable"
+          :aria-label="titleEditTooltip"
+          :title="titleEditTooltip"
           data-test="designer-inspector-title-edit"
           @click="openEdit"
         >✎</button>
@@ -203,6 +203,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isDefaultCardTitle } from '../cardDefaultTitle'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
@@ -378,9 +379,16 @@ async function copyId() {
 
 const host = inject(INSPECTOR_HOST, null)
 
-/** The title only repeats the kind name of the badge: not shown again (the ✎ entry stays when it may be edited). */
-const titleRepeatsKind = computed(() => props.target.nodeType !== 'gate' && props.target.title.trim() === t(kindLabelKey.value).trim())
+/** Default titles are hidden in every locale; their ✎ entry stays visible, including when locked. */
+const titleRepeatsKind = computed(() => props.target.nodeType !== 'gate' && isDefaultCardTitle(props.target.title, kindLabelKey.value))
 const titleEditable = computed(() => props.target.canEditTitle === true && !!host?.saveTitle)
+const titleEditTooltip = computed(() => {
+  if (titleEditable.value) return t('gui.designer.nodeTitle.edit')
+  if (props.target.titleLock === 'running') return t('gui.designer.nodeTitle.locked')
+  if (props.target.readOnly === 'conflict') return t('gui.designer.inspector.header.read_only_conflict')
+  if (props.target.readOnly === 'revision') return t('gui.designer.inspector.header.read_only_revision')
+  return t('gui.designer.inspector.header.read_only')
+})
 
 const editing = ref(false)
 const draft = ref('')
@@ -689,8 +697,13 @@ onScopeDispose(() => {
   cursor: pointer;
 }
 
-.inspector-header-title-edit:hover {
+.inspector-header-title-edit:hover:not(:disabled) {
   color: var(--fg2-text);
+}
+
+.inspector-header-title-edit:disabled {
+  cursor: not-allowed;
+  opacity: var(--fg2-control-disabled-opacity);
 }
 
 /* The length, a refusal or the lock note: small text right of the title, inside the title area; a long sentence
