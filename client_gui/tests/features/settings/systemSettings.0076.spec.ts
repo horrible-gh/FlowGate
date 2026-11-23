@@ -50,7 +50,7 @@ const net = vi.hoisted(() => ({
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
   const fail = (status: number, data: unknown) => Object.assign(new Error(`HTTP ${status}`), { response: { status, data } })
-  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode'])
+  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'attach_read_max_mb', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode'])
   const MINUTES: Record<string, bigint> = { minute: 1n, hour: 60n, day: 1440n }
   const row = (key: string): Row => ({ setting_key: key, setting_value: net.rows[key].value, value_type: net.rows[key].type })
   const listRows = () => Object.keys(net.rows).sort().map(row)
@@ -83,6 +83,12 @@ vi.mock('@shared/api', async (importOriginal) => {
       const v = updates.ai_repeat_count_max
       if (!/^\s*[0-9]+\s*$/.test(String(v)) || Number(v) < 1 || Number(v) > 30) {
         throw fail(422, { detail: { code: 'ai_repeat_count_out_of_range', params: { min: 1, max: 30 } } })
+      }
+    }
+    if ('attach_read_max_mb' in updates) {
+      const v = updates.attach_read_max_mb
+      if (!/^\s*[0-9]+\s*$/.test(String(v)) || Number(v) < 1 || Number(v) > 64) {
+        throw fail(422, { detail: { code: 'attach_read_max_out_of_range', params: { min: 1, max: 64 } } })
       }
     }
     if ('scratch_ttl_value' in updates || 'scratch_ttl_unit' in updates) {
@@ -223,6 +229,7 @@ beforeEach(async () => {
   window.__accessToken__ = 'token-system-0076'
   net.rows = {
     ai_repeat_count_max: { value: '10', type: 'integer' },
+    attach_read_max_mb: { value: '1', type: 'integer' },
     log_level: { value: 'INFO', type: 'string' },
     scratch_ttl_unit: { value: 'day', type: 'string' },
     scratch_ttl_value: { value: '7', type: 'integer' },
@@ -267,7 +274,7 @@ afterEach(() => {
   for (const body of patches()) {
     const keys = Object.keys((body as { updates: Record<string, string> }).updates).sort()
     expect(keys).not.toContain('storage_root')
-    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max']]).toContainEqual(keys)
+    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max'], ['attach_read_max_mb']]).toContainEqual(keys)
   }
   wrapper?.unmount()
   wrapper = null
@@ -869,6 +876,48 @@ describe('사용자 — a re-read that fails after a change is not a success', (
     await click(w, '[data-testid="confirm-ok"]')
     expect(w.text()).toContain('비활성화됨')
     expect(w.find('[data-testid="users-refresh-error"]').exists()).toBe(false)
+  })
+})
+
+describe('flowgate.v02test.0075 — AI 첨부 읽기 상한 (attach_read_max_mb)', () => {
+  it('shows the stored MB, saves attach_read_max_mb alone, the re-read agrees and Saved shows', async () => {
+    const w = await open('/settings/system/general')
+    const card = w.get('[data-card="attach-read"]')
+    expect(card.text()).toContain('AI 첨부 읽기 상한')
+    expect((w.get('[data-testid="attach-read-value"]').element as HTMLInputElement).value).toBe('1')
+    expect(w.get('[data-testid="attach-read-save"]').attributes('disabled')).toBeDefined()
+    await type(w, '[data-testid="attach-read-value"]', '8')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(patches()).toEqual([{ updates: { attach_read_max_mb: '8' } }])
+    expect(net.requests.slice(-2)).toEqual(['PATCH /api/v1/system/settings', 'GET /api/v1/system/settings'])
+    expect(stored('attach_read_max_mb')).toBe('8')
+    expect(w.find('[data-testid="attach-read-saved"]').exists()).toBe(true)
+    expect(w.find('[data-testid="attach-read-error"]').exists()).toBe(false)
+  })
+
+  it.each([['0'], ['65'], ['2.5'], ['-1'], [''], ['abc']])('%j is refused on screen: no PATCH', async (value) => {
+    const w = await open('/settings/system/general')
+    await type(w, '[data-testid="attach-read-value"]', value)
+    expect(w.get('[data-testid="attach-read-invalid"]').text()).toContain('1~64')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(patches()).toEqual([])
+    expect(stored('attach_read_max_mb')).toBe('1')
+  })
+
+  it('64 is the largest value that saves', async () => {
+    const w = await open('/settings/system/general')
+    await type(w, '[data-testid="attach-read-value"]', '64')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(stored('attach_read_max_mb')).toBe('64')
+  })
+
+  it('a server without the row keeps the other editors working and only this card says so', async () => {
+    delete net.rows.attach_read_max_mb
+    const w = await open('/settings/system/general')
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+    expect(w.find('[data-testid="attach-read-missing"]').exists()).toBe(true)
+    expect(w.find('[data-testid="attach-read-value"]').exists()).toBe(false)
+    expect(w.find('[data-testid="repeat-value"]').exists()).toBe(true)
   })
 })
 

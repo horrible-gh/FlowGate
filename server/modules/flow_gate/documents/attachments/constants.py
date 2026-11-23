@@ -12,68 +12,17 @@ approved deck's own caption ("20MB max per file").
 """
 from __future__ import annotations
 
-import logging
-import os
-
 # ── §1-1 size / count limits ────────────────────────────────────────────────────
 ATTACH_MAX_UPLOAD_BYTES = 20971520          # 20 MiB — one uploaded file
 ATTACH_MAX_REQUEST_BYTES = 104857600        # 100 MiB — one upload request body
 ATTACH_MAX_FILES_PER_REQUEST = 20           # `file` parts accepted per request
 ATTACH_MAX_COUNT_PER_DOC = 200              # registered attachments per document
-ATTACH_READ_MAX_BYTES = 1048576             # 1 MiB — read() ceiling DEFAULT; see attach_read_max_bytes()
-ATTACH_READ_MAX_BYTES_CAP = 67108864        # 64 MiB — the most FLOWGATE_ATTACH_READ_MAX_BYTES may raise it to
-ATTACH_PREVIEW_MAX_BYTES = 1048576          # 1 MiB — upload-request preview text cut (fixed, not configurable)
+ATTACH_READ_MAX_BYTES = 1048576             # 1 MiB — read() ceiling DEFAULT; the live value is the
+                                            # system setting attach_read_max_mb (settings/attach_read_limit.py)
+ATTACH_PREVIEW_MAX_BYTES = 1048576          # 1 MiB — upload-request preview text cut (fixed, not a setting)
 ATTACH_MAX_FILENAME_BYTES = 200             # UTF-8 bytes of the sanitized filename
 ATTACH_MAX_TARGET_PATH_CHARS = 1024         # copy target_path total length
 ATTACH_MAX_PATH_SEGMENT_BYTES = 255         # UTF-8 bytes of one path segment
-
-# ── §1-1a configurable read ceiling ────────────────────────────────────────────
-# Only the AI/worker attachment READ ceiling is an operator knob. read() returns the whole
-# file (base64 for binaries, ~4/3 of the size in the response) and refuses rather than
-# truncates, so a 4 MB demo video needs the ceiling raised, not cut. The upload-request
-# preview keeps its own fixed ATTACH_PREVIEW_MAX_BYTES: raising this knob must not grow the
-# text a person's screen is handed.
-#
-# Read per call from the process environment (stg.py / dev.py load .env into it, the same
-# way inbox_routes._content_max() reads FLOWGATE_INBOX_CONTENT_MAX), so a restart picks a
-# new value up and tests can monkeypatch it. Blank / unset -> the 1 MiB default silently;
-# not an integer or <= 0 -> the default with a warning; above the 64 MiB cap -> the cap
-# with a warning (a huge value would make one read hold that much in memory twice).
-ATTACH_READ_MAX_BYTES_ENV = "FLOWGATE_ATTACH_READ_MAX_BYTES"
-
-_logger = logging.getLogger("flow_gate.attachments")
-_warned_values: set[str] = set()
-
-
-def _warn_once(raw: str, message: str, *args) -> None:
-    # One line per distinct bad value, not one per read.
-    if raw in _warned_values:
-        return
-    _warned_values.add(raw)
-    _logger.warning(message, *args)
-
-
-def attach_read_max_bytes() -> int:
-    """The effective attachment read ceiling in bytes (see §1-1a)."""
-    raw = os.environ.get(ATTACH_READ_MAX_BYTES_ENV)
-    if raw is None or raw.strip() == "":
-        return ATTACH_READ_MAX_BYTES
-    try:
-        value = int(raw.strip())
-    except ValueError:
-        _warn_once(raw, "%s=%r is not an integer; using the default %d bytes",
-                   ATTACH_READ_MAX_BYTES_ENV, raw, ATTACH_READ_MAX_BYTES)
-        return ATTACH_READ_MAX_BYTES
-    if value <= 0:
-        _warn_once(raw, "%s=%r must be positive; using the default %d bytes",
-                   ATTACH_READ_MAX_BYTES_ENV, raw, ATTACH_READ_MAX_BYTES)
-        return ATTACH_READ_MAX_BYTES
-    if value > ATTACH_READ_MAX_BYTES_CAP:
-        _warn_once(raw, "%s=%r exceeds the %d byte cap; using the cap",
-                   ATTACH_READ_MAX_BYTES_ENV, raw, ATTACH_READ_MAX_BYTES_CAP)
-        return ATTACH_READ_MAX_BYTES_CAP
-    return value
-
 
 # ── §1-2 processing parameters ──────────────────────────────────────────────────
 ATTACH_STREAM_CHUNK_BYTES = 1048576         # upload receive / hash chunk

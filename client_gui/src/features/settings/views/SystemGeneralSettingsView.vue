@@ -142,6 +142,48 @@
               </div>
             </div>
           </div>
+
+          <!-- AI attachment read limit: attach_read_max_mb only (MB, 1~64, applies without a restart) -->
+          <div class="fgs-sec" data-card="attach-read">
+            <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.attach_read.title') }}</h3></div>
+            <div class="fgs-rows">
+              <div v-if="attachConfirmed === null" class="fgs-row sub">
+                <span class="fgs-error" data-testid="attach-read-missing">{{ t('gui.settings.general.errors.bad_response') }}</span>
+              </div>
+              <div v-else class="fgs-row">
+                <div class="fgs-row-label">
+                  <label for="sys-attach-read-mb">{{ t('gui.settings.general.attach_read.label') }}</label>
+                  <small>{{ t('gui.settings.general.attach_read.hint') }}</small>
+                </div>
+                <div class="fgs-row-ctrl">
+                  <span v-if="attachSaved && !attachDirty && !attachError" class="fgs-muted" data-testid="attach-read-saved">{{ t('gui.settings.saved') }}</span>
+                  <input
+                    id="sys-attach-read-mb"
+                    v-model="attachValue"
+                    class="fgs-input num"
+                    :class="{ dirty: attachDirty }"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    :disabled="attachSaving"
+                    data-testid="attach-read-value"
+                  />
+                  <button
+                    type="button"
+                    class="fgs-btn pri"
+                    :disabled="!attachCanSave"
+                    data-testid="attach-read-save"
+                    @click="saveAttach"
+                  >{{ attachSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
+                </div>
+              </div>
+              <div v-if="attachDirty && attachProblem" class="fgs-row sub">
+                <span class="fgs-error" data-testid="attach-read-invalid">{{ attachProblem }}</span>
+              </div>
+              <div v-if="attachError" class="fgs-row sub">
+                <span class="fgs-error" role="alert" data-testid="attach-read-error">{{ attachError }}</span>
+              </div>
+            </div>
+          </div>
         </template>
 
         <!-- System default limits for AI attachment approval requests (inherited unless the project overrides them). -->
@@ -171,7 +213,7 @@
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
         <div class="conf-who">{{ t('gui.settings.general.leave.title') }}</div>
         <p class="conf-text">{{ t('gui.settings.general.leave.unsaved') }}</p>
-        <p v-if="scratchSaving || repeatSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
+        <p v-if="scratchSaving || repeatSaving || attachSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
       </div>
       <template #footer>
         <div class="fgs-modal-actions">
@@ -218,7 +260,7 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSystemNav } from '../components/systemNav'
 import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
-import { getSystemSettings, getSystemStorageRoot, saveRepeatCountMax, saveScratchRetention } from '../api'
+import { getSystemSettings, getSystemStorageRoot, saveAttachReadMaxMb, saveRepeatCountMax, saveScratchRetention } from '../api'
 import type { ScratchUnit, SystemSettingRow, SystemStorageRoot } from '../types'
 
 const SCRATCH_UNITS: readonly ScratchUnit[] = ['minute', 'hour', 'day']
@@ -228,6 +270,9 @@ const MINUTES_PER_UNIT: Record<ScratchUnit, bigint> = { minute: 1n, hour: 60n, d
 const MAX_SCRATCH_MINUTES = 999999999n * 1440n + 1439n
 const REPEAT_MIN = 1
 const REPEAT_MAX = 30
+const ATTACH_READ_MIN_MB = 1
+const ATTACH_READ_MAX_MB = 64
+const ATTACH_READ_KEY = 'attach_read_max_mb'
 
 const { t } = useI18n()
 const systemNav = useSystemNav()
@@ -294,6 +339,10 @@ async function loadSettings() {
     scratchUnit.value = scratch.unit
     repeatConfirmed.value = repeat
     repeatValue.value = repeat
+    // Its own editor: a server without this row only disables this card, not the other two.
+    const attach = rowValue(rows, ATTACH_READ_KEY)
+    attachConfirmed.value = attach
+    attachValue.value = attach ?? ''
   } catch (err) {
     settingsError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -443,6 +492,61 @@ async function rereadRepeat(): Promise<string | null> {
   }
 }
 
+// ── AI attachment read limit (MB) ──
+const attachConfirmed = ref<string | null>(null)
+const attachValue = ref('')
+const attachSaving = ref(false)
+const attachError = ref('')
+const attachSaved = ref(false)
+
+const attachDirty = computed(() => attachConfirmed.value !== null && attachValue.value.trim() !== attachConfirmed.value)
+
+const attachProblem = computed(() => {
+  const value = attachValue.value.trim()
+  const n = /^[0-9]+$/.test(value) ? Number(value) : NaN
+  return Number.isInteger(n) && n >= ATTACH_READ_MIN_MB && n <= ATTACH_READ_MAX_MB
+    ? ''
+    : t('gui.settings.general.attach_read.invalid', { min: ATTACH_READ_MIN_MB, max: ATTACH_READ_MAX_MB })
+})
+
+const attachCanSave = computed(() => attachDirty.value && !attachProblem.value && !attachSaving.value)
+
+async function saveAttach() {
+  if (!attachCanSave.value) return
+  const value = String(Number(attachValue.value.trim()))
+  attachSaving.value = true
+  attachError.value = ''
+  attachSaved.value = false
+  try {
+    const answered = rowValue(await saveAttachReadMaxMb(value), ATTACH_READ_KEY)
+    if (answered !== value) {
+      attachError.value = t('gui.settings.general.errors.unconfirmed')
+      await rereadAttach()
+      return
+    }
+    const reread = await rereadAttach()
+    if (reread !== value) {
+      attachError.value = t('gui.settings.general.errors.reread_mismatch')
+      return
+    }
+    attachSaved.value = true
+  } catch (err) {
+    attachError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    attachSaving.value = false
+  }
+}
+
+async function rereadAttach(): Promise<string | null> {
+  try {
+    const value = rowValue(await getSystemSettings(), ATTACH_READ_KEY)
+    if (value !== null) attachConfirmed.value = value
+    return value
+  } catch {
+    return null
+  }
+}
+
 // A success notice is for the value that was saved, not for what is typed afterwards.
 watch([scratchValue, scratchUnit], () => {
   scratchSaved.value = false
@@ -450,9 +554,14 @@ watch([scratchValue, scratchUnit], () => {
 watch(repeatValue, () => {
   repeatSaved.value = false
 })
+watch(attachValue, () => {
+  attachSaved.value = false
+})
 
 // ── Unsaved changes guard ──
-const unsaved = computed(() => scratchDirty.value || repeatDirty.value || scratchSaving.value || repeatSaving.value)
+const unsaved = computed(() =>
+  scratchDirty.value || repeatDirty.value || attachDirty.value
+  || scratchSaving.value || repeatSaving.value || attachSaving.value)
 const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 
 onMounted(() => {

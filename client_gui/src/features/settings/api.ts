@@ -179,6 +179,13 @@ export const saveRepeatCountMax = async (value: string) =>
     'save_failed',
   )).updated
 
+/** AI attachment read ceiling in whole MB (attach_read_max_mb, 1~64), alone. */
+export const saveAttachReadMaxMb = async (value: string) =>
+  (await call(
+    () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, { updates: { attach_read_max_mb: value } }),
+    'save_failed',
+  )).updated
+
 // ── System › System Agent ─────────────────────
 // Only the /system/agents management family of api/v1/agent_routes.py (the one the old
 // client/src/settings AgentsView used). The Agent runtime routes /agent/enrollments and
