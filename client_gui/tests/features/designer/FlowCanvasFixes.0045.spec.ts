@@ -319,13 +319,13 @@ describe('Edge sides from the card positions (04-designer-flow-rules edgeGeometr
     )
     const edge = () => w.get('[data-test="designer-canvas-edge"]')
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['bottom', 'top'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M88,108 L/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M128,108 L/)
     // The arrow tip sits on the target's top middle and points down into it.
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M128,300 L123,291 L133,291 Z$/)
     ;(w.vm as unknown as { b: GraphNode }).b.computedPosition = { x: 400, y: 20, z: 0 }
     await flushPromises()
     expect([edge().attributes('data-source-side'), edge().attributes('data-target-side')]).toEqual(['right', 'left'])
-    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,54 L/)
+    expect(edge().get('[data-test="designer-canvas-edge-path"]').attributes('d')).toMatch(/^M176,74 L/)
     expect(edge().get('[data-test="designer-canvas-edge-arrow"]').attributes('d')).toMatch(/^M400,74 L391,/)
   })
 })
