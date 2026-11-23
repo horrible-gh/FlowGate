@@ -259,6 +259,12 @@ def test_flow_information_and_document_reads_take_display_ids(env, routes):
     res = routes.get("/api/v1/list/groups/flowgate.v02.F92", headers=_h())
     assert res.status_code == 200, res.text
     assert res.json()["group_id"] == FB and res.json()["flow_ref"]["label"] == "F92"
+    title = res.json()["title"]
+    assert res.json()["flow_name"] == (f"F92({title})" if title else "F92")     # how the AI names it
+    listed = routes.get("/api/v1/list/projects/flowgate/groups", headers=_h())
+    assert listed.status_code == 200, listed.text
+    item = next(i for i in listed.json()["items"] if i["group_id"] == FB)
+    assert item["flow_label"] == "F92" and item["flow_name"] == res.json()["flow_name"]
     res = routes.get(f"/api/v1/list/groups/{FB}", headers=_h())                       # stored id, as before
     assert res.status_code == 200 and res.json()["group_id"] == FB and "requested_id" not in res.json()
     res = routes.get("/api/v1/list/groups/flowgate.v02.F92-2", headers=_h())
