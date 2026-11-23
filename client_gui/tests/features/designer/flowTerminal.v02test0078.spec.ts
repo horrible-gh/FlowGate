@@ -1,4 +1,5 @@
-/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / dimmed / ready / lit), the `>_` mark on
+/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / ready / lit; 0015-T C: the system setting
+ *  off hides it for admins too), the `>_` mark on
  *  Flow tabs and in the tab list, the three-session notice, and the WebSocket frames. The terminal server may not exist
  *  yet, so the API is mocked; the terminal window is replaced by a stand-in (xterm.js needs a real layout). */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -27,10 +28,10 @@ vi.mock('@/features/designer/flowTerminal/FlowTerminalWindow.vue', async () => {
   return {
     default: defineComponent({
       name: 'FlowTerminalWindow',
-      props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex'],
-      emits: ['focus', 'close', 'reopen'],
+      props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex', 'designer', 'fillTarget'],
+      emits: ['focus', 'close', 'reopen', 'designer', 'disabled'],
       setup(props, { expose, emit }) {
-        expose({ reveal: () => {}, requestClose: () => emit('close') })
+        expose({ reveal: () => {}, requestClose: () => emit('close'), dispose: () => {} })
         return () => h('div', {
           'data-test': 'terminal-standin', 'data-flow-id': props.flowId, 'data-visible': String(props.visible), 'data-cwd': props.session?.cwd,
         })
@@ -76,10 +77,11 @@ afterEach(() => {
 })
 
 describe('terminalButtonState', () => {
-  it('hides for a non-admin or an unknown status, dims a server-off terminal, lights an open one', () => {
+  it('hides for a non-admin, an unknown status or the system setting off (0015-T C-1), lights an open one', () => {
     expect(terminalButtonState(null, false)).toBe('hidden')
     expect(terminalButtonState(NOT_ADMIN, false)).toBe('hidden')
-    expect(terminalButtonState(DISABLED, false)).toBe('disabled')
+    expect(terminalButtonState(DISABLED, false)).toBe('hidden')
+    expect(terminalButtonState(DISABLED, true)).toBe('hidden')
     expect(terminalButtonState(status(), false)).toBe('ready')
     expect(terminalButtonState(status(), true)).toBe('on')
   })
@@ -114,15 +116,18 @@ describe('toolbar [터미널] button', () => {
     expect(button().find('span').text()).toBe('터미널')
   })
 
-  it('is dimmed with the tooltip "서버 설정에서 꺼져 있음" when the server setting is off, and does nothing', async () => {
+  it('is not drawn at all (no gap, no dimmed button) when the system setting is off, for an admin too', async () => {
     flowTerminalUi.status = DISABLED
     mountToolbar()
     await nextTick()
-    expect(button().attributes('aria-disabled')).toBe('true')
-    expect(button().classes()).toContain('is-off')
-    expect(button().attributes('title')).toBe('서버 설정에서 꺼져 있음')
-    await button().trigger('click')
-    expect(wrapper!.emitted('command')).toBeUndefined()
+    expect(button().exists()).toBe(false)
+    expect(wrapper!.find('.designer-tool-terminal').exists()).toBe(false)
+    const group = wrapper!.get('[data-test="flow-attachments-open"]').element.parentElement!
+    expect(group.lastElementChild).toBe(wrapper!.get('[data-test="flow-attachments-open"]').element)
+    // Turned on again: it comes back.
+    flowTerminalUi.status = status()
+    await nextTick()
+    expect(button().exists()).toBe(true)
   })
 
   it('opens the terminal (view.terminal) and is lit with a dot while the window is open', async () => {
@@ -141,11 +146,11 @@ describe('toolbar [터미널] button', () => {
 
   it('speaks English too', async () => {
     i18n.global.locale.value = 'en'
-    flowTerminalUi.status = DISABLED
+    flowTerminalUi.status = status()
     mountToolbar()
     await nextTick()
     expect(button().find('span').text()).toBe('Terminal')
-    expect(button().attributes('title')).toBe('Turned off in the server settings')
+    expect(button().attributes('title')).toBe('Terminal')
   })
 })
 
@@ -307,6 +312,49 @@ describe('terminal Host', () => {
     expect(api.openTerminalSession).toHaveBeenCalledTimes(2)
     expect(standins()).toHaveLength(1)
     expect(wrapper!.findComponent({ name: 'FlowTerminalWindow' }).props('session')).toMatchObject({ session_id: 's2' })
+  })
+
+  it('the setting turned off: a status read with enabled=false closes the open terminals (no DELETE) and hides the button', async () => {
+    api.readTerminalStatus.mockResolvedValue(status())
+    api.openTerminalSession.mockResolvedValue(session())
+    mountHost()
+    flowTerminalUi.open!()
+    await flushPromises()
+    expect(standins()).toHaveLength(1)
+    api.readTerminalStatus.mockResolvedValue(DISABLED)
+    await wrapper!.vm.refreshStatus()
+    await flushPromises()
+    expect(standins()).toHaveLength(0)
+    expect(flowTerminalUi.openFlows).toEqual({})
+    expect(terminalButtonState(flowTerminalUi.status, flowTerminalUi.currentOpen)).toBe('hidden')
+    expect(api.closeTerminalSession).not.toHaveBeenCalled()
+  })
+
+  it('a WebSocket closed for terminal_disabled (the window\'s `disabled`) closes that terminal without a notice and reads the status again', async () => {
+    api.readTerminalStatus.mockResolvedValue(status())
+    api.openTerminalSession.mockResolvedValue(session())
+    mountHost()
+    flowTerminalUi.open!()
+    await flushPromises()
+    api.readTerminalStatus.mockClear()
+    api.readTerminalStatus.mockResolvedValue(DISABLED)
+    wrapper!.findComponent({ name: 'FlowTerminalWindow' }).vm.$emit('disabled')
+    await flushPromises()
+    expect(standins()).toHaveLength(0)
+    expect(api.readTerminalStatus).toHaveBeenCalledWith('p.m.0001')
+    expect(flowTerminalUi.status).toEqual(DISABLED)
+    expect(document.body.textContent).not.toContain('세션이 끝났습니다')
+  })
+
+  it('opening refused with terminal_disabled shows no notice (the button hides after the status read)', async () => {
+    api.readTerminalStatus.mockResolvedValue(DISABLED)
+    api.openTerminalSession.mockRejectedValue(conflict('terminal_disabled'))
+    mountHost()
+    flowTerminalUi.open!()
+    await flushPromises()
+    expect(standins()).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('다시 시도해 주세요')
+    expect(terminalButtonState(flowTerminalUi.status, false)).toBe('hidden')
   })
 
   it('clears the shared state on unmount (sign-out / another Project)', async () => {
