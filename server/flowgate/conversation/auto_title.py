@@ -290,10 +290,13 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
             return group, {**record, "message": text}
         group, record = p.guard(flow_id, claim)
         if record is None:
+            logger.info("flow naming skipped reason=empty_message flow=%s target=%s", flow_id, "chat" if chat_doc_id else "flow")
             return {"status": "unchanged"}
         if record.get("busy"):
+            logger.info("flow naming skipped reason=busy flow=%s target=%s", flow_id, "chat" if chat_doc_id else "flow")
             return {"status": "unchanged", "busy": True}
         if "ineligible" in record:
+            logger.info("flow naming skipped reason=ineligible flow=%s target=%s", flow_id, "chat" if chat_doc_id else "flow")
             return {"status": "unchanged", "targets": {k: "skipped" for k in record["ineligible"]}}
         if not record.get("candidate"):
             prompt = build_prompt(record["message"]) + (
@@ -324,12 +327,14 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
                     current = p.ledger.load(key)
                     target = current["targets"][kind]
                     if target["state"] != "pending":
+                        logger.info("flow naming skipped reason=target_not_pending flow=%s target=%s state=%s", flow_id, kind, target["state"])
                         return
                     _, live = p.targets(flow_id, chat_doc_id, chat_only=bool(chat_doc_id))
                     now = live.get(kind)
                     if (now is None or now["id"] != target["id"] or now["title"] != target["title"]
                             or not p.eligible(kind, now)):
                         target["state"] = "skipped"
+                        logger.info("flow naming skipped reason=target_changed_or_ineligible flow=%s target=%s", flow_id, kind)
                     else:
                         p.apply(flow_id, kind, now, current["candidate"], str(user.get("user_id") or ""))
                         target["state"] = "done"
@@ -372,11 +377,13 @@ def schedule_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                         chat_doc_id: Optional[str] = None) -> bool:
     """Queue after caller commit; False on saturation/shutdown, never blocks sending."""
     if not _first_names_slots.acquire(blocking=False):
+        logger.info("flow naming skipped reason=pool_full flow=%s", flow_id)
         return False
     try:
         future = _first_names_pool.submit(generate_flow_names, flow_id, dict(user), provider_id, message, chat_doc_id)
         future.add_done_callback(lambda _: _first_names_slots.release())
         return True
-    except Exception:
+    except Exception as exc:
         _first_names_slots.release()
+        logger.warning("flow naming skipped reason=pool_unavailable flow=%s exception_type=%s", flow_id, type(exc).__name__)
         return False
