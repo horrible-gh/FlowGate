@@ -25,6 +25,8 @@ def archive_eligibility(flow_id: str) -> dict:
         if any(row["status"] in decisions.RESERVING for row in rows):
             return {"eligible": False, "reason": "gate_job_unfinished", "completed": completed}
         reason = cleanup.activity_blocker(flow_id, run["run_id"])
+        if reason is None and run["status"] == run_store.RUNNING:
+            reason = "work_unfinished"
     return {"eligible": reason is None, "reason": reason, "completed": completed}
 
 

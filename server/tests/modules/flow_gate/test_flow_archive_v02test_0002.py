@@ -110,7 +110,7 @@ def test_completed_current_run_qualifies(env):
 
 
 @pytest.mark.parametrize("status,reason", [
-    ("running", None), ("paused", None), ("idle", "waiting_confirm"), ("idle", "needs_intervention"),
+    ("paused", None), ("idle", "waiting_confirm"), ("idle", "needs_intervention"),
     ("idle", "gate_publish"), ("idle", "hold"), ("idle", "step_completed"), ("idle", None),
 ])
 def test_incomplete_run_can_archive_without_activity(env, status, reason):
@@ -122,6 +122,16 @@ def test_incomplete_run_can_archive_without_activity(env, status, reason):
     archived = call(env, "post")
     assert archived["archived"] is True and archived["completed"] is False
     assert sql(env, "SELECT archived_at FROM groups WHERE group_id=?", [FLOW])[0]["archived_at"] is not None
+
+
+def test_running_without_active_work_still_refuses_archive(env):
+    seed_run(env, status="running", reason=None)
+    seed_decision(env)
+    view = call(env)
+    assert view["eligible"] is False and view["reason"] == "work_unfinished"
+    assert view["completed"] is False
+    assert call(env, "post", expected=409)["error"]["code"] == "work_unfinished"
+    assert sql(env, "SELECT archived_at FROM groups WHERE group_id=?", [FLOW])[0]["archived_at"] is None
 
 
 @pytest.mark.parametrize("status", ["accepted", "failed", "recovery_required"])
