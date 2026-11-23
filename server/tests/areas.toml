@@ -1935,6 +1935,7 @@ source = [
 ]
 tests = [
   "tests/modules/flow_gate/test_terminal_server_v02test_0078.py",
+  "tests/modules/flow_gate/test_terminal_integration_v02test_0078.py",
 ]
 also = []
 
