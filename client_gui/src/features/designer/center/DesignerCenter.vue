@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch, watchEffect } from 'vue'
+import { computed, reactive, watch, watchEffect, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
@@ -128,7 +128,7 @@ import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
-import { clearGitTabResult, gitTabActivity, pruneGitTabActivity } from './gitTabActivity'
+import { clearGitTabResult, gitTabActivity, pruneGitTabActivity, observeGitTabActivity } from './gitTabActivity'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
 import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
@@ -265,6 +265,8 @@ const tabChatEnds = computed(() => {
   return ends
 })
 // flowgate.v02test.0068: a Git result mark stays on its tab until the tab is activated again (left and come back) or closed.
+const stopGitTabObserver = observeGitTabActivity(() => props.center.state.tabs.map(tab => tab.flowId))
+onUnmounted(stopGitTabObserver)
 watch(() => props.center.state.activeFlowId, (flowId) => { if (flowId) clearGitTabResult(flowId) })
 watch(() => props.center.state.tabs.map((tab) => tab.flowId).join('\n'), () => {
   pruneGitTabActivity(new Set(props.center.state.tabs.map((tab) => tab.flowId)))

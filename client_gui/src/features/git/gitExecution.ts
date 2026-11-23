@@ -2,9 +2,25 @@ import type { GitWorktreeSource } from './gitSource'
 import type { WorktreeSelection, WorktreeStatus } from './types'
 import { worktreeErrorOf } from './api'
 
+export interface GitExecutionRequest {
+  scope: GitExecutionScope
+  target: string | null
+  message: string
+  provider_id: string | null
+  paths?: string[]
+  all?: boolean
+  request_id: string
+  resume_from?: string
+  commit_remaining?: boolean
+}
+
 export type GitExecutionScope = 'commit' | 'merge' | 'push'
 export type GitExecutionStep = 'commit' | 'update' | 'merge' | 'push'
 export interface GitExecution {
+  jobId?: string
+  jobStatus?: string
+  mergeId?: number | null
+  childJobId?: string | null
   scope: GitExecutionScope
   target: string | null
   steps: GitExecutionStep[]

@@ -407,7 +407,7 @@ def _require_history_recovered(group_id: str) -> None:
 
 
 def commit(group_id: str, *, message, worktree_token: str | None = None,
-           index_token: str | None = None) -> dict:
+           index_token: str | None = None, before_commit=None) -> dict:
     """Commit exactly the index. Never stages, unstages, absorbs, merges or pushes."""
     subject = _commit_subject(message)
     with mutation_context(group_id) as (_, cfg, _, root):
@@ -438,6 +438,8 @@ def commit(group_id: str, *, message, worktree_token: str | None = None,
             # The server never unstages on the requester's behalf.
             raise GitServiceError(409, "staged_protected_paths", "Protected paths are staged",
                                   details={"counts": counts, "paths": protected})
+        if before_commit is not None:
+            before_commit(root, current["snapshot"])
         proc = gs._run_git([*gs._GIT_IDENT, "commit", "-q", "-m", subject], cwd=root,
                            author_env=gs._author_env_from_cfg(cfg))
         if proc.returncode:

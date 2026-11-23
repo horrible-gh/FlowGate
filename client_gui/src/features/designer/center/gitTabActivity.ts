@@ -3,8 +3,10 @@
 // stopped / failed ! (red) — with the step and the reason on hover. The Git panel (DesignerGitPanel) emits
 // `git-activity`, the right Dock (the one Designer file that assembles the Git part) writes it here, the tab strip
 // reads it. The result stays even while its tab is the one shown (the person may be looking at the
-// Canvas, not the Git panel); it goes when the tab is activated again (left and come back) or closed. Memory only.
+// Canvas, not the Git panel). This store is a display cache: the observer restores durable server runs
+// for every open Flow after navigation or reload; closing a tab stops observing it.
 import { reactive, readonly } from 'vue'
+import { fetchGitExecution } from '@/features/git'
 /** The Git steps a tab names (the Git part's execution steps; the Designer keeps its own copy of the names). */
 export type GitTabStep = 'commit' | 'update' | 'merge' | 'push'
 
@@ -37,6 +39,30 @@ export function clearGitTabResult(flowId: string): void {
 /** Drops every Flow not in `open` (closed tabs). */
 export function pruneGitTabActivity(open: ReadonlySet<string>): void {
   for (const flowId of Object.keys(store)) if (!open.has(flowId)) delete store[flowId]
+}
+
+/** Observe every open Flow, including ones whose Git panel is unmounted. */
+export function observeGitTabActivity(openFlows: () => readonly string[]): () => void {
+  let disposed = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const poll = async () => {
+    await Promise.all(openFlows().map(async (flowId) => {
+      try {
+        const run = await fetchGitExecution(flowId)
+        if (disposed || !openFlows().includes(flowId) || !run) return
+        const skipped = run.skipped?.update ?? null
+        setGitTabActivity(flowId, {
+          state: run.status === 'running' ? 'running' : run.status === 'complete'
+            ? skipped ? 'skipped' : 'done' : 'failed',
+          step: run.steps[run.cursor] ?? null,
+          code: run.error ?? skipped,
+        })
+      } catch { /* A read failure is not evidence that the server run stopped. */ }
+    }))
+    if (!disposed) timer = setTimeout(() => { void poll() }, 3000)
+  }
+  void poll()
+  return () => { disposed = true; if (timer !== null) clearTimeout(timer) }
 }
 
 type Lang = 'ko' | 'en' | 'ja'

@@ -15,7 +15,7 @@
 import { computed, getCurrentInstance, onScopeDispose, reactive, watch, type ComputedRef } from 'vue'
 import { useProjectStore, type FlowAiActivity, type ProjectGitStatus } from '@/features/project'
 import type { ProjectEventSubscription } from '@/features/project/projectEvents'
-import { REVIEW_STATES, isResolving } from '@/features/git/gitSession'
+import { REVIEW_STATES, isResolving } from '@/features/git'
 
 /** A tab's conflict mark; a tab with none is left out. `done` / `total` are null while the server gave no count. */
 export type FlowTabConflict =
