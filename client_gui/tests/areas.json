@@ -159,6 +159,7 @@
         "tests/features/designer/fileExplorerModel.0024.spec.ts",
         "tests/features/designer/firstRunAiSetup.0113.spec.ts",
         "tests/features/designer/fixtureFlowGraphSource.0026.spec.ts",
+        "tests/features/designer/flowAttachmentDrop.v02test0074.spec.ts",
         "tests/features/designer/flowAttachmentErrors.0036.spec.ts",
         "tests/features/designer/flowAttachmentHostToggle.v02test0074.spec.ts",
         "tests/features/designer/flowAttachmentOperations.0036.spec.ts",
