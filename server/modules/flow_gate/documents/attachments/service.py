@@ -33,8 +33,9 @@ from .constants import (
     ATTACH_STREAM_CHUNK_BYTES,
     ATTACH_TEXT_SNIFF_BYTES,
     WINDOWS_RESERVED_NAMES,
-    attach_read_max_bytes,
 )
+from modules.flow_gate.settings import attach_read_limit as _attach_read_limit
+
 from .errors import AttachmentError, unexpected
 from .locator import (
     project_branch,
@@ -613,8 +614,9 @@ def read_attachment(doc_id: str, name: str, mode: str = "auto", encoding: str = 
     filename = row.get("filename") or name
 
     # R4 — before R5, so an oversized file is never loaded. '>' so the exact limit passes.
-    # The ceiling is FLOWGATE_ATTACH_READ_MAX_BYTES (default 1 MiB, capped at 64 MiB).
-    limit = attach_read_max_bytes()
+    # The ceiling is the system setting attach_read_max_mb (System > General, default 1 MB),
+    # read per call so a change on the screen applies without a restart.
+    limit = _attach_read_limit.get_max_bytes()
     size = path.stat().st_size
     if size > limit:
         raise AttachmentError(

@@ -618,7 +618,7 @@ def test_read_text_mode_refuses_undecodable_bytes(env):
     assert (excinfo.value.status_code, excinfo.value.code) == (415, "INVALID_TEXT_ENCODING")
 
 
-def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env, monkeypatch):
+def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env):
     """R4 — R4 runs before R5, so an oversized file is never even loaded.
 
     Cutting the content and answering 200 would let the caller treat a fragment as the whole
@@ -627,7 +627,6 @@ def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env, m
     from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
     from modules.flow_gate.documents.attachments.constants import ATTACH_READ_MAX_BYTES
 
-    monkeypatch.delenv("FLOWGATE_ATTACH_READ_MAX_BYTES", raising=False)  # the shipped default
     upload([FakePart("big.txt", b"x" * (ATTACH_READ_MAX_BYTES + 1))])
 
     with pytest.raises(AttachmentError) as excinfo:
@@ -636,151 +635,79 @@ def test_read_over_the_limit_refuses_the_whole_file_instead_of_truncating(env, m
     assert excinfo.value.details["limit_bytes"] == ATTACH_READ_MAX_BYTES
 
 
-def test_read_at_exactly_the_limit_is_allowed(env, monkeypatch):
+def test_read_at_exactly_the_limit_is_allowed(env):
     """the comparison is `>`, so the boundary itself passes."""
     from modules.flow_gate.documents.attachments import read_attachment
     from modules.flow_gate.documents.attachments.constants import ATTACH_READ_MAX_BYTES
 
-    monkeypatch.delenv("FLOWGATE_ATTACH_READ_MAX_BYTES", raising=False)  # the shipped default
     upload([FakePart("exact.txt", b"x" * ATTACH_READ_MAX_BYTES)])
     assert read_attachment(DOC_ID, "exact.txt", mode="base64")["kind"] == "binary"
 
 
-# ── configurable read ceiling (flowgate.v02test.0075 T0003) ─────────────────────
-# FLOWGATE_ATTACH_READ_MAX_BYTES raises ONLY the AI/worker read ceiling. Default 1 MiB,
-# bad value -> default + one warning, above 64 MiB -> 64 MiB; the upload-request preview
-# stays at its own fixed 1 MiB whatever the knob says.
-
-READ_ENV = "FLOWGATE_ATTACH_READ_MAX_BYTES"
-EIGHT_MIB = 8388608
-DEMO_MP4_SIZE = 4243017      # the 0001-R attachment that answered 413 READ_TOO_LARGE
-
+# ── read ceiling as a system setting (attach_read_max_mb, System > General) ─────
+# Only the AI/worker read ceiling follows the setting; the upload-request preview stays 1 MiB.
 
 @pytest.fixture
-def read_limit_log(monkeypatch):
-    """Record the resolver's warnings without depending on logger propagation."""
-    from modules.flow_gate.documents.attachments import constants
+def read_limit_mb(env):
+    """Set attach_read_max_mb in the real system_settings table; the row is removed afterwards."""
+    from modules.flow_gate.db import system_settings as db_settings
+    from modules.flow_gate.settings.attach_read_limit import SETTING_KEY
 
-    lines = []
+    def _set(value):
+        db_settings.set_value(SETTING_KEY, str(value), "integer")
 
-    class _Log:
-        def warning(self, message, *args):
-            lines.append(message % args)
-
-    monkeypatch.setattr(constants, "_logger", _Log())
-    monkeypatch.setattr(constants, "_warned_values", set())
-    return lines
+    yield _set
+    db_settings.delete(SETTING_KEY)
 
 
-def test_read_ceiling_defaults_to_one_mib_when_unset_or_blank(monkeypatch, read_limit_log):
-    from modules.flow_gate.documents.attachments.constants import attach_read_max_bytes
-
-    monkeypatch.delenv(READ_ENV, raising=False)
-    assert attach_read_max_bytes() == 1048576
-    monkeypatch.setenv(READ_ENV, "   ")
-    assert attach_read_max_bytes() == 1048576
-    assert read_limit_log == []          # unset / blank is the normal case, not a warning
-
-
-def test_read_ceiling_follows_the_environment(monkeypatch, read_limit_log):
-    from modules.flow_gate.documents.attachments.constants import attach_read_max_bytes
-
-    monkeypatch.setenv(READ_ENV, str(EIGHT_MIB))
-    assert attach_read_max_bytes() == EIGHT_MIB
-    monkeypatch.setenv(READ_ENV, " 2097152 ")
-    assert attach_read_max_bytes() == 2097152
-    assert read_limit_log == []
-
-
-@pytest.mark.parametrize("raw", ["abc", "8MB", "1.5", "0", "-1"])
-def test_a_bad_read_ceiling_falls_back_to_the_default_with_one_warning(monkeypatch, read_limit_log, raw):
-    from modules.flow_gate.documents.attachments.constants import attach_read_max_bytes
-
-    monkeypatch.setenv(READ_ENV, raw)
-    assert attach_read_max_bytes() == 1048576
-    assert attach_read_max_bytes() == 1048576
-    assert len(read_limit_log) == 1      # once per distinct value, not once per read
-    assert READ_ENV in read_limit_log[0]
-
-
-def test_an_oversized_read_ceiling_is_clamped_to_64_mib(monkeypatch, read_limit_log):
-    from modules.flow_gate.documents.attachments.constants import (
-        ATTACH_READ_MAX_BYTES_CAP,
-        attach_read_max_bytes,
-    )
-
-    assert ATTACH_READ_MAX_BYTES_CAP == 67108864
-    monkeypatch.setenv(READ_ENV, str(ATTACH_READ_MAX_BYTES_CAP))
-    assert attach_read_max_bytes() == ATTACH_READ_MAX_BYTES_CAP   # the cap itself is allowed
-    assert read_limit_log == []
-    monkeypatch.setenv(READ_ENV, str(10 * 1024 ** 3))
-    assert attach_read_max_bytes() == ATTACH_READ_MAX_BYTES_CAP
-    assert len(read_limit_log) == 1
-
-
-def test_without_the_variable_a_demo_sized_file_is_still_refused_at_one_mib(env, monkeypatch):
+def test_read_ceiling_follows_the_system_setting_without_a_restart(env, read_limit_mb):
     from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
 
-    monkeypatch.delenv(READ_ENV, raising=False)
-    upload([FakePart("flowgate_demo.mp4", b"\x00" * DEMO_MP4_SIZE)])
+    mib = 1048576
+    upload([FakePart("demo.mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x01" * (4 * mib))])
     with pytest.raises(AttachmentError) as excinfo:
-        read_attachment(DOC_ID, "flowgate_demo.mp4")
-    assert (excinfo.value.status_code, excinfo.value.code) == (413, "READ_TOO_LARGE")
-    assert excinfo.value.details["limit_bytes"] == 1048576
+        read_attachment(DOC_ID, "demo.mp4")
+    assert excinfo.value.details["limit_bytes"] == mib            # no row -> 1 MB default
 
+    read_limit_mb(8)
+    assert read_attachment(DOC_ID, "demo.mp4")["kind"] == "binary"   # same process, applied at once
 
-def test_eight_mib_reads_the_demo_sized_file_whole(env, monkeypatch):
-    import base64
-
-    from modules.flow_gate.documents.attachments import read_attachment
-
-    monkeypatch.setenv(READ_ENV, str(EIGHT_MIB))
-    payload = bytes(range(256)) * (DEMO_MP4_SIZE // 256) + b"\x00" * (DEMO_MP4_SIZE % 256)
-    upload([FakePart("flowgate_demo.mp4", payload)])
-
-    result = read_attachment(DOC_ID, "flowgate_demo.mp4")
-    assert (result["kind"], result["content_encoding"], result["truncated"]) == ("binary", "base64", False)
-    assert base64.b64decode(result["content"]) == payload
-
-
-def test_eight_mib_still_refuses_above_eight_mib_and_reports_the_new_limit(env, monkeypatch):
-    from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
-
-    monkeypatch.setenv(READ_ENV, str(EIGHT_MIB))
-    upload([FakePart("exact8.bin", b"\x00" * EIGHT_MIB), FakePart("over8.bin", b"\x00" * (EIGHT_MIB + 1))])
-
-    assert read_attachment(DOC_ID, "exact8.bin", mode="base64")["truncated"] is False
+    read_limit_mb(2)
     with pytest.raises(AttachmentError) as excinfo:
-        read_attachment(DOC_ID, "over8.bin")
-    assert (excinfo.value.status_code, excinfo.value.code) == (413, "READ_TOO_LARGE")
-    assert excinfo.value.details["limit_bytes"] == EIGHT_MIB
-    assert excinfo.value.details["size"] == EIGHT_MIB + 1
+        read_attachment(DOC_ID, "demo.mp4")
+    assert (excinfo.value.status_code, excinfo.value.details["limit_bytes"]) == (413, 2 * mib)
 
 
-def test_upload_request_preview_stays_at_one_mib_whatever_the_read_ceiling(tmp_path, monkeypatch):
-    """Raising the AI read ceiling must not grow the text a person's preview is handed."""
-    from modules.flow_gate.documents.attachments import requests as req_mod
-    from modules.flow_gate.documents.attachments.constants import ATTACH_PREVIEW_MAX_BYTES
+@pytest.mark.parametrize("stored", ["", "abc", "0", "65", "-3", "2.5"])
+def test_a_bad_stored_read_ceiling_means_the_1_mb_default(env, read_limit_mb, stored):
+    from modules.flow_gate.settings import attach_read_limit
 
-    assert ATTACH_PREVIEW_MAX_BYTES == 1048576
-    staged = tmp_path / "blob"
-    staged.write_bytes(b"a" * (3 * 1024 * 1024))
-    open_status = sorted(req_mod.db.OPEN_STATUSES)[0]
-    monkeypatch.setattr(req_mod, "readable_row", lambda request_id, user: {
-        "request_id": request_id, "status": open_status, "filename": "big.txt",
-        "size": staged.stat().st_size,
-    })
-    monkeypatch.setattr(req_mod, "staged_file", lambda row: staged)
+    read_limit_mb(stored)
+    assert attach_read_limit.get_max_bytes() == 1048576
 
-    for raw in (None, str(EIGHT_MIB), str(64 * 1024 * 1024)):
-        if raw is None:
-            monkeypatch.delenv(READ_ENV, raising=False)
-        else:
-            monkeypatch.setenv(READ_ENV, raw)
-        result = req_mod.preview("aur_test", ACTOR)
-        assert result["kind"] == "text"
-        assert result["truncated"] is True
-        assert len(result["content"]) == ATTACH_PREVIEW_MAX_BYTES
+
+def test_read_ceiling_save_range_is_1_to_64_mb(env, read_limit_mb):
+    from modules.flow_gate.settings import system_settings_service as svc
+
+    for bad in ["0", "65", "", "abc", "1.5", None]:
+        with pytest.raises(ValueError, match="attach_read_max_mb must be an integer between 1 and 64"):
+            svc.set_values({"attach_read_max_mb": bad})
+    saved = svc.set_values({"attach_read_max_mb": "08"})
+    assert saved[0]["setting_value"] == "8"                         # stored canonical
+    assert svc.get_one("attach_read_max_mb")["setting_value"] == "8"
+    assert svc.set_values({"attach_read_max_mb": "64"})[0]["setting_value"] == "64"
+
+
+def test_settings_list_always_carries_the_read_ceiling_row(env, read_limit_mb):
+    from modules.flow_gate.db import system_settings as db_settings
+    from modules.flow_gate.settings import system_settings_service as svc
+
+    db_settings.delete("attach_read_max_mb")
+    rows = {r["setting_key"]: r["setting_value"] for r in svc.get_all()}
+    assert rows["attach_read_max_mb"] == "1"
+    read_limit_mb(16)
+    rows = {r["setting_key"]: r["setting_value"] for r in svc.get_all()}
+    assert rows["attach_read_max_mb"] == "16"
 
 
 def test_an_unknown_encoding_is_422_not_500(env):
