@@ -457,6 +457,9 @@ export interface WorktreeOwnership {
 export interface WorktreeBlocker {
   code: string
   operations: string[]
+  /** `session_open` only (flowgate.v02test.0068): the open session's kind (merge / group_update / tr_revert / …) and id. */
+  sessionKind?: string | null
+  mergeId?: number | null
 }
 
 /** GET /groups/{gid}/git/worktree/status (E1), also the `status` of every E2–E6 answer. */

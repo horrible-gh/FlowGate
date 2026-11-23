@@ -180,7 +180,8 @@ def _admission(group_id: str, state: dict) -> None:
     if session is not None:
         raise GitServiceError(409, "invalid_state", "A Git session is open",
                               details={"reason": "session_open",
-                                       "session_kind": gs.db_git.session_kind(session)})
+                                       "session_kind": gs.db_git.session_kind(session),
+                                       "merge_id": session.get("merge_id")})
     if (state.get("status") or "none") not in ("none", "awaiting_choice", "waiting"):
         raise GitServiceError(409, "invalid_state", "Group state blocks manual Git",
                               details={"reason": "group_state"})
@@ -192,8 +193,14 @@ def _blockers(group_id: str, state: dict) -> list[dict]:
     try:
         _admission(group_id, state)
     except GitServiceError as exc:
-        result.append({"code": "session_open" if exc.details.get("reason") == "session_open" else exc.code,
-                       "operations": list(OPERATIONS)})
+        details = exc.details or {}
+        blocker = {"code": "session_open" if details.get("reason") == "session_open" else exc.code,
+                   "operations": list(OPERATIONS)}
+        if blocker["code"] == "session_open":
+            # flowgate.v02test.0068: which session holds the Flow, so the Git tab can name it and offer its abort
+            # even when no conflict card shows it (a branch merge / graph attempt session is not a pending row).
+            blocker.update(session_kind=details.get("session_kind"), merge_id=details.get("merge_id"))
+        result.append(blocker)
     if operation_job.get_group_freeze_claim(group_id):
         result.append({"code": "group_frozen_for_approval", "operations": list(OPERATIONS)})
     return result

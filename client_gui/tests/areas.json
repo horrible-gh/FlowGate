@@ -173,6 +173,7 @@
         "tests/features/designer/FlowCanvasFixes.0045.spec.ts",
         "tests/features/designer/FlowCanvasLayout.0045.spec.ts",
         "tests/features/designer/flowTabChatMark.0020.spec.ts",
+        "tests/features/designer/flowTabGitMark.v02test0068.spec.ts",
         "tests/features/designer/flowTabMarks.0035.spec.ts",
         "tests/features/designer/flowTabOverflowList.0023.spec.ts",
         "tests/features/designer/flowTabs.0026.spec.ts",

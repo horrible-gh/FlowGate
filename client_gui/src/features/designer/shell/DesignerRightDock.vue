@@ -93,6 +93,7 @@
           :project-id="partProjectId"
           :flow="partFlow"
           :active="!collapsed && !unselected && tool === 'git'"
+          @git-activity="setGitTabActivity"
         />
       </div>
     </div>
@@ -117,6 +118,7 @@ import ChatBubbleIcon from '../../../components/ui/ChatBubbleIcon.vue'
 import PalettePanel from '../palette/PalettePanel.vue'
 import type { PaletteItemDefinition } from '../palette/paletteCatalog'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'
+import { setGitTabActivity } from '../center/gitTabActivity'
 
 const props = withDefaults(
   defineProps<{
