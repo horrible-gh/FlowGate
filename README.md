@@ -1,223 +1,156 @@
-<div align="center">
-
 # FlowGate
 
-### Ditch your editor right now.
-**Your agent can write the code. FlowGate makes it prove the work.**
+**The gate between *the agent says it's done* and *it's actually done*: a v0.2 workspace for chat, visual flows, and evidence you can approve.**
 
-![FlowGate hero](assets/images/flowgate-hero.gif)
-
-</div>
-
-> **You handed the task to an autonomous agent, said *"it'll figure it out,"* and walked away.**
-> It says it's done. Is it?
-
-### FlowGate is the gate between *"the agent says it's done"* and *"it's actually done."*
-
-A typed document pipeline where completion isn't a claim — it's evidence.
-*Requirement → Task → Task Report → Approval — every handoff passes a gate a human (or another agent) signs off on.*
-
-<div align="center">
-
-***The agent didn't lie. It just never had to be right.***
-
-![FlowGate dashboard](assets/images/flowgate-dashboard-v0.1.png)
-
-*Register a requirement → start a continuous run → inspect the evidence → approve.*
-
-![FlowGate demo](assets/images/flowgate-demo.gif)
-
-</div>
-
----
+[![FlowGate demo](assets/images/flowgate-demo.gif)](assets/images/flowgate-demo.mp4)
 
 ## Try it (Docker)
 
+Requires Docker with the Compose plugin. From a clone of this repository:
+
 ```bash
-git clone https://github.com/horrible-gh/FlowGate.git
-cd FlowGate
 docker compose up -d --build
 docker compose exec flowgate python create_dev_user.py \
-  --username admin --email admin@flowgate.local --password 'ChangeMe!' --admin
-# → open http://localhost:8089/flowgate  and log in as admin
+  --username admin --email admin@flowgate.local --password 'ReplaceWithYourPassword' --admin
 ```
 
-> That's the fastest taste. The full Quick start — local dev with auto-reload, plus MySQL/PostgreSQL — is [further down](#quick-start-local-sqlite).
-
----
-
-## Why this exists
-
-Hand a coding task to an autonomous AI agent and you eventually hit the same wall: **it tells you it's done when it isn't.** The tests "pass," the bug is "fixed," the feature is "fully implemented" — and none of it is true. The agent isn't lying maliciously; it just has no structural reason to be accountable. There's no gate between *"I claim I did X"* and *"X is accepted."*
-
-FlowGate is that gate.
-
-It turns work into a **typed document pipeline**. An agent can't just *say* a task is finished — it has to register an artifact (a Task, a Task Report, a Requirement) through an authenticated API. That artifact enters an **inbox**, gets a **review status**, and can be **approved, rejected with a reason, or sent back for revision**. Nothing moves to the next stage until the current one clears its gate. The agent's claim and the verified state are no longer the same thing — which is the entire point.
-
-The system has been **dogfooding itself for its own development**: the requirement and work order that produced *this very README* were filed, reviewed, and approved through FlowGate.
-
----
+Open `http://localhost:8089/login` and sign in. The workspace lives at `/app/`; `/flowgate` is the API context, not the sign-in page. Wait for the initial database migrations before creating the admin.
 
 ## How it works
 
-Each unit of work is a **document** with a type and a place in a sequence. Documents are grouped, numbered automatically, and chained: a Requirement (`R`) triggers a Task (`T`), which produces a Task Report (`TR`), and so on. Every transition is a reviewable gate.
+1. **Describe the work in chat.** Work with the AI to clarify requirements. Ask it to organize the work into cards; after you agree to the plan, it writes instructions and places the cards in the flow.
+2. **Follow the Designer canvas.** Connected cards define dependencies, including parallel branches. Each work card carries its instructions, execution, verification, and configured review stages; AI roles and review counts can be set per card.
+3. **Resolve uncertainty with Q&A.** Agents register questions against the document they are working on. Answers stay with the work instead of disappearing into an unattended terminal prompt.
+4. **Inspect evidence before accepting.** Reports, changed files, and test results make completion reviewable. Review the result, request corrections, and approve or reject at the human confirmation gate.
+5. **Keep source work isolated.** Git-integrated flows have their own branches and worktrees. Card results are brought together with merge and conflict handling before final acceptance.
 
-![FlowGate workflow](assets/images/flowgate-workflow.png)
+Also included:
 
-- **Typed documents & auto-numbering** — `R` (requirement), `T` (task), `TR` (task report), conversation docs, and more, each numbered and chained within a group.
-- **Work plans & sequences** — a Work Plan (`WP`, approval not required) pours into candidate rows that seed the sequence edit dialog's starting state; the workflow sequence itself only changes once a human reviews it and presses **Save**, with per-step AI provider, note, and review configuration set at that point.
-- **Review gates & rework** — the default gate is approve / reject-with-reason / request-revision, with full rejection history kept on the document. Separately, an optional automated document review loop can be invoked to drive reviewer selection and AI-assisted correction through repeated rounds until the document passes review or reaches a configured review, retry, or total-time limit — it is an opt-in AI execution feature, not something every rejection triggers.
-- **Remote worker API** — agents authenticate with **scoped Bearer tokens** and submit work over HTTP. A **dry-run** mode validates a submission (URL, token, fields, permissions) without consuming the token.
-- **Structured clarification (Q)** — when an agent is unsure, it doesn't guess and it doesn't pop a dialog into the void: it **registers a question bound to the document**, which the system routes for a definite answer.
-- **Live updates** — Server-Sent Events push status changes to every watcher in real time, with a notification feed and unread badge.
-- **Mentions & handoffs** — generated, copy-ready mention blocks carry the exact context (references, predecessors) the next worker needs, including hop handoff between chained runs.
-- **AI execution & continuous (unmanned) work** — direct AI invocation or a scoped continuation token that self-chains through the workflow toward a target stage: provider selection/pinning, pause/resume, per-step review, step timeouts, run diagnostics, and prompt audit, with optional human Q&A along the way.
-- **Git-backed branches & worktrees** — a group branch explorer with live worktrees where available, file diffs, changed/untracked/deleted indicators, update-from-base, a merge conflict resolver, and finalize actions.
-- **Conversation documents** — a dedicated chat-style document type (`CH`) for back-and-forth that doesn't fit the requirement → task → report spine, with user-controlled, configurable AI source access — read-only, persistent edit, or one-time edit.
-
----
-
-## Tech & engineering
-
-| Area | What's in the box |
-|------|-------------------|
-| **Backend** | Python · FastAPI · v1 route modules for documents, workflow, RBAC, tokens, remote tools, SSE, dashboard, inbox, Q&A, and more |
-| **Database** | SQLite / MySQL / PostgreSQL — **130+ ordered migrations per backend**, one matching set in each of `sqlite`, `mysql`, and `postgres`, plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
-| **AI orchestration** | A dedicated invoke engine (`services/ai_invoke/`) driving Claude, Copilot, Codex, custom-CLI, and API-based providers — continuous chains, pause/resume, provider pin, per-step review, step timeouts, run diagnostics, and prompt audit |
-| **Git integration** | Group branch/worktree lifecycle, file diff/blob browsing, update-from-base, merge conflict resolution, and finalize actions (`services/git_service.py`, `api/v1/git_routes.py`) |
-| **Auth & security** | JWT + bcrypt + **TOTP 2FA** (with backup codes) + refresh/blacklist · per-token action scopes · `slowapi` rate limiting |
-| **Frontend** | Vue 3 · Pinia · vue-i18n (ko / ja / en) · vue-router · Vite |
-| **Testing** | Focused backend and frontend regression tests around workflow, auth, documents, SSE, dashboard, Q&A, and review flows |
-| **Ops** | **Docker / docker-compose** (one-command, SQLite or bundled Postgres/MySQL) · `systemd` unit (`deploy/flowgate.service`) · one-shot `setup.sh` (Linux) / `setup.ps1` (Windows) · selectable DB backend · Redis-ready |
-
-### Security posture and trust boundary
-
-AI CLI integrations (such as Claude and Codex) and configured test runners are deliberately arbitrary-command execution surfaces: executing repository commands is the feature, not a capability FlowGate can safely remove. Treat anyone who can configure or launch them as having command-execution authority inside the FlowGate service account and its filesystem/container boundary, and isolate that boundary and grant it only the credentials and paths it needs. Newly registered providers keep **Skip permission confirmation** off by default; an operator must explicitly enable the warning-marked option. Leaving it off can pause unmanned work at an approval prompt, while enabling it allows the CLI to act without per-command confirmation.
-
-`FLOWGATE_AGENT_API_BASE` is the canonical origin reachable by spawned CLI workers, not the browser-facing/operator URL. Set it to an HTTP(S) origin only; for a same-host default deployment the recommended value is `http://127.0.0.1:8089`. If it is absent, FlowGate keeps an explicit operator port or otherwise uses the trusted `FLOWGATE_PORT` fallback. Blank or malformed configured values stop CLI startup instead of silently sending a work token to a different origin.
-
----
+- Flow attachments and upload requests, alongside the conversation and card documents.
+- Live status updates through Server-Sent Events and an unread notification feed.
+- Multiple AI providers, including Claude Code and Codex CLI integrations, with separate execution and review assignments.
 
 ## Quick start (local, SQLite)
 
-> Requires Python 3 and Node.js.
+Requires Python 3 and Node.js. Run these commands from the repository root:
 
 ```bash
-# 1. Backend
+# Backend terminal
 cd server
-cp .env.sample .env          # set SECRET_KEY, DB_TYPE=sqlite, CONTEXT=/flowgate
+cp .env.sample .env
+# Set a random SECRET_KEY, DB_TYPE=sqlite3, and CONTEXT=/flowgate in .env.
 pip install -r requirements.txt
-python dev.py                 # serves on http://0.0.0.0:8088  (auto-reload)
+python dev.py                         # http://localhost:8088, auto-reload
+```
 
-# 2. Frontend (separate terminal)
+After the server finishes migrating the database, create the first admin in another terminal:
+
+```bash
+cd server
+python create_dev_user.py \
+  --username admin --email admin@flowgate.local --password 'ReplaceWithYourPassword' --admin
+```
+
+Start the frontend in a separate terminal, again from the repository root:
+
+```bash
 cd client_gui
 npm install
-npm run dev                   # Vite dev server with HMR on http://localhost:3001/app/
+npm run dev                          # http://localhost:3001/app/
 ```
 
-Create the first user with `server/create_dev_user.py`, then sign in. With the Vite dev server the sign-in page is `http://localhost:3001/app/login.html`; a built client (`client_gui/build.sh`) is served by the server itself, with the sign-in page at `/` and `/login` and the app under `/app`.
+Sign in at `http://localhost:3001/app/login.html`. Vite proxies backend requests to port `8088`. A built client (`client_gui/build.sh`) is served by the backend: `/` and `/login` show sign-in, and `/app/` opens the workspace. Configure the keys described under Operations before enabling Agents or 2FA in a manual installation.
 
-For a one-command staging deploy on **Linux** (venv + `.env` + client build + `systemd` install + admin account), run `./setup.sh` from the repo root. On **Windows**, run `.\setup.ps1` (venv + `.env` + client build + generated `run.bat` launcher + admin account). Both default to SQLite; target MySQL/MariaDB or PostgreSQL by presetting `DB_TYPE` (e.g. `DB_TYPE=postgres DB_HOST=… ./setup.sh`, or `.\setup.ps1 -DbType postgres -DbHost …`).
+### Setup scripts and other databases
 
-## Quick start (Docker)
+Run `./setup.sh` on Linux for a virtual environment, configuration, client build, systemd service, and admin setup. On Windows, `.\setup.ps1` creates the environment, builds the client, and generates `run.bat`. Both default to SQLite; Linux accepts `DB_TYPE=postgres DB_HOST=... ./setup.sh`, and Windows accepts `.\setup.ps1 -DbType postgres -DbHost ...` with the remaining database credentials.
 
-> Requires Docker with the Compose plugin. Builds the client and server into one image; persistent state (SQLite DB, document storage, generated secrets) lives in the `flowgate-data` volume.
+Docker keeps SQLite, document storage, and generated secrets in the `flowgate-data` volume. For a bundled network database:
 
 ```bash
-# SQLite (default) — one container, state on a named volume
-docker compose up -d --build
-# → http://localhost:8089/flowgate
-
-# Seed the first admin (idempotent; re-runs skip if it already exists)
-docker compose exec flowgate python create_dev_user.py \
-  --username admin --email admin@flowgate.local --password 'ChangeMe!' --admin
+DB_TYPE=postgres docker compose --profile postgres up -d --build
+DB_TYPE=mysql docker compose --profile mysql up -d --build
 ```
 
-`SECRET_KEY` and the token pepper are generated **once** on first start and persisted to the data volume (never rotated on restart, so issued tokens keep working). To run against a bundled database instead, start with a profile and set `DB_TYPE` — the app waits for the DB and auto-migrates the schema on boot:
+The entrypoint waits for the database; the server applies migrations at startup. Admin creation skips an existing account on subsequent runs.
+
+## Connecting an agent
+
+Use the **worker/chat Bearer issued for the active run**, with its bound flow ID. These graph reads do not use a user JWT or an Agent enrollment credential:
 
 ```bash
-DB_TYPE=postgres docker compose --profile postgres up -d --build   # + Postgres 16
-DB_TYPE=mysql    docker compose --profile mysql    up -d --build   # + MariaDB 11
+# Set FLOW_ID to the bound group ID and WORKER_TOKEN to the run's token.
+curl "http://localhost:8089/flowgate/api/v2/ai/flows/$FLOW_ID/canvas" \
+  -H "Authorization: Bearer $WORKER_TOKEN"
+curl "http://localhost:8089/flowgate/api/v2/ai/flows/$FLOW_ID/runs/current" \
+  -H "Authorization: Bearer $WORKER_TOKEN"
+curl "http://localhost:8089/flowgate/api/v1/help/tools" \
+  -H "Authorization: Bearer $WORKER_TOKEN"
 ```
 
-### Required security settings and secret backups
+The two graph endpoints only read stored state within the bound flow. Card workers are restricted to their active node and attempt; chat canvas reads default to the latest definition (`?view=revision` selects the execution definition). These reads grant no graph write, execution, or history access. The help endpoint lists the source tools available to that token; follow the returned contracts and the run's instructions for changes and reports.
 
-`ALLOWED_ORIGIN` now defaults to an empty value, which blocks all cross-origin browser requests while leaving the bundled same-origin client unaffected. Set it explicitly to the permitted origin or origins before a separately hosted frontend or another external web origin calls the API.
+## Tech & engineering
 
-Stored AI provider API keys are encrypted with `FLOWGATE_AI_ENCRYPT_KEY`; `FLOWGATE_AI_ENCRYPT_KEY_PREV` is available temporarily when rotating that key. Docker, `setup.sh`, and `setup.ps1` generate the active key automatically, so a normal installation does not require an operator to invent one.
-
-Back up the secret material together with the database and storage volume. For Docker, include `$FLOWGATE_STORAGE_DIR/.flowgate-secrets.env` from the `flowgate-data` volume. For local or setup-script installations, include `server/.env` entries for `SECRET_KEY`, the `FLOWGATE_TOKEN_PEPPER_*` values, `FLOWGATE_GIT_ENCRYPT_KEY`, `FLOWGATE_TOTP_ENCRYPT_KEY`, `FLOWGATE_AI_ENCRYPT_KEY`, and `FLOWGATE_AGENT_PEPPER` (plus any `_PREV` key present during rotation). Losing or replacing these values can make stored Git credentials, AI provider API keys, and enrolled TOTP secrets unreadable, and stops every registered Agent from authenticating; a database-only backup is therefore incomplete. The installers generate `FLOWGATE_AGENT_PEPPER` once, but refuse to when Agents are already registered without it: then the original value has to be restored by hand.
-
-### Talking to it as an agent
-
-```bash
-# Submit an artifact (use dry_run:true first to validate without consuming the token)
-curl -X POST http://<host>:8089/flowgate/api/v1/inbox \
-  -H "Authorization: Bearer <scoped-token>" \
-  -H "Content-Type: application/json" \
-  -d '{ "action":"new", "project":"flowgate", "module":"default",
-        "group_name":"flowgate.default.0072", "doc_type":"TR",
-        "prev_doc_id":"flowgate.default.0072.0002-T",
-        "title":"...", "content":"..." }'
-```
-
-The API exposes typed help endpoints (`GET /flowgate/api/v1/help/doc_type`) so an agent can discover document types and required fields at runtime.
-
----
+| Area | Implementation |
+| --- | --- |
+| Backend | Python and FastAPI; graph workflow, card lifecycle, conversations, Q&A, and scoped worker APIs |
+| Database | SQLite, MySQL/MariaDB, and PostgreSQL; 190+ ordered migrations per backend |
+| Frontend | Vue 3, Pinia, Vue Router, Vue Flow, Vite, and ko/ja/en localization |
+| AI and Git | Configurable CLI/API providers; per-flow source workspaces, diffs, reviews, and conflict resolution |
+| Validation | Backend and frontend regression suites; see [TESTING.md](TESTING.md) |
+| Deployment | Docker Compose, Linux systemd, and a Windows launcher |
 
 ## Project layout
 
-```
+```text
 FlowGate/
-├── server/                    # FastAPI backend
-│   ├── routers/               # app wiring (main.py mounts every sub-router)
-│   ├── modules/flow_gate/     # the real domain
-│   │   ├── api/                # inbox, tokens (top level) + v1/ routes: documents, workflow, git, AI invoke, conversation, remote tools, SSE, dashboard, Q&A…
-│   │   ├── services/           # work_plan_* (plan → sequence), git_service, ai_invoke/ (chain, admission, provider_cli, provider_api, review, diagnostics…), conversation_*, mutation_policy…
-│   │   ├── auth/  rbac/        # JWT + 2FA, role-based access
-│   │   ├── workflow/  numbering/
-│   │   ├── documents/  conversation.py  process_service.py
-│   │   └── db/                 # multi-backend data access
-│   ├── sql/migrations/         # 130+ ordered migrations in each of {sqlite, mysql, postgres}
-│   ├── tools/                  # maintenance/one-off scripts, incl. the dialect migration generator (regen_dialect_migrations.py)
-│   └── tests/                  # backend regression tests
-├── client_gui/                 # Vue 3 + Pinia + Vite client (served under /app)
-│   ├── index.html  login.html  # two entries: the /app SPA and the sign-in page (/ and /login)
-│   ├── src/app/  src/features/ # app shell, router, Designer, documents, git, settings…
-│   ├── src/login/              # sign-in page (password, TOTP, backup code, invitation, password change)
-│   └── src/shared/             # transport (api.ts), auth, i18n shared by the app and the sign-in page
-├── Dockerfile                 # multi-stage: build client → Python runtime
-├── docker-compose.yml         # one-command stack (SQLite / Postgres / MySQL profiles)
-├── deploy/
-│   ├── flowgate.service       # systemd unit template (rendered by setup.sh)
-│   └── docker-entrypoint.sh   # container init: secrets, DB wait, admin seed
-├── setup.sh                   # one-shot staging deploy (Linux)
-├── setup.ps1                  # one-shot staging deploy (Windows)
-└── TESTING.md                 # how to run the suites (areas, 5 tiers, install check) and when to add a test
+├── server/
+│   ├── routers/                 # FastAPI wiring and client routes
+│   ├── flowgate/                # card lifecycle, chat control, graph reads/policies
+│   ├── modules/flow_gate/       # APIs, graph_workflow, services, auth, and database access
+│   ├── sql/migrations/          # sqlite, mysql, postgres
+│   └── tests/
+├── client_gui/
+│   ├── index.html, login.html  # workspace and sign-in entries
+│   └── src/
+│       ├── app/                # application shell and routing
+│       ├── features/           # designer, conversation, attachmentRequests, git, settings
+│       ├── login/              # sign-in UI
+│       └── shared/             # transport, auth, and localization
+├── Dockerfile, docker-compose.yml
+├── deploy/                     # entrypoint and systemd template
+├── setup.sh, setup.ps1
+└── TESTING.md
 ```
 
----
+## Operations
 
-## Status
+### Security posture and trust boundary
 
-FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development, including this README's own update. What started as a document-approval pipeline is now an actively evolving orchestration workspace, with several fronts moving at once: **workflow orchestration** (Work Plans, sequence editing, per-step provider/review configuration), the **AI execution lifecycle** (direct invocation, continuous chains, pause/resume, provider pin, step timeouts, run diagnostics, prompt audit), **review/rework automation** (reviewer selection, AI-assisted correction, rework loops), **Git/worktree operation** (branch explorer, diff, update-from-base, conflict resolution, finalize), **multi-dialect database support** (SQLite / MySQL / PostgreSQL), and **conversation-based source access control** (read-only / persistent edit / one-time edit).
+AI CLI integrations and configured test runners execute repository commands. Anyone who can configure or launch them has command-execution authority inside the FlowGate service account and its filesystem/container boundary. Isolate that boundary and grant only the credentials and paths it needs.
 
-## v0.2 — future workspace roadmap mockup
+New providers keep **Skip permission confirmation** off by default. Operators must explicitly enable it. Leaving it off can pause unattended work at a CLI approval prompt; enabling it permits commands without per-command confirmation.
 
-> **Future roadmap mockup — not a current product screen.** This visual describes a possible v0.2 presentation of FlowGate's existing direction; it does not represent implemented features, UI, data, or availability.
+`FLOWGATE_AGENT_API_BASE` is the HTTP(S) origin reachable by spawned CLI workers, not the browser URL. Use an origin only, such as `http://127.0.0.1:8089` for same-host workers. If unset, FlowGate preserves an explicit operator port or uses `FLOWGATE_PORT` on loopback. Blank or malformed configured values stop CLI startup.
 
-![FlowGate v0.2 future workspace roadmap mockup](assets/images/flowgate-v0.2-roadmap-mockup.svg)
+### Required security settings and secret backups
 
-*The current-state dashboard image near the top of this README is labelled v0.1. This distinct v0.2 visual is a conceptual roadmap view only.*
+`ALLOWED_ORIGIN` defaults to empty: cross-origin browser requests are blocked, while the bundled same-origin client works. Set permitted origins explicitly for a separately hosted frontend.
 
-**Roadmap:**
+Docker and the setup scripts generate encryption keys and peppers once. Stored provider API keys use `FLOWGATE_AI_ENCRYPT_KEY`; `FLOWGATE_AI_ENCRYPT_KEY_PREV` supports rotation. Back up the database and document storage together with the secret material:
 
-- **Workspace evolution** — sharpen the existing SPA's operator UX and orchestration visibility (clearer AI/group execution management, run diagnostics surfaced more directly) rather than a ground-up GUI rebuild — FlowGate's primary surface is already this SPA, not a CLI.
-- **AI group orchestration** — evolve the presentation of coordinated execution, review/rework, and handoffs so operators can understand group-level work more readily; this describes a v0.2 UX direction, not newly implemented runtime behavior.
-- **Deeper Git / hosting integration** — build on the existing branch/worktree, diff, merge, and finalize support with pull-request hosting integrations and configurable transition policies.
-- **Agent protocol / integration evolution** — more provider-aware orchestration and broader external agent interoperability beyond the current CLI/API invocation surface.
+- Docker: `$FLOWGATE_STORAGE_DIR/.flowgate-secrets.env` in `flowgate-data`.
+- Local/setup installations: `server/.env`, including `SECRET_KEY`, `FLOWGATE_TOKEN_PEPPER_ACTIVE_ID`, all `FLOWGATE_TOKEN_PEPPER_*` values, `FLOWGATE_GIT_ENCRYPT_KEY`, `FLOWGATE_TOTP_ENCRYPT_KEY`, `FLOWGATE_AI_ENCRYPT_KEY`, and `FLOWGATE_AGENT_PEPPER` (plus any encryption `_PREV` keys present during rotation).
+- If using automatically generated encryption key files instead of environment values, preserve the storage root containing those files too.
 
----
+A database-only backup is incomplete: lost keys can make Git credentials, provider API keys, and TOTP secrets unreadable. Losing the Agent pepper invalidates registered Agent credentials; it has no `_PREV` fallback. Installers refuse to generate a replacement pepper when Agents are already registered without it: restore the original value.
+
+## Status / Roadmap
+
+FlowGate v0.2 is a working chat and visual-flow workspace with card execution, verification, review, and human confirmation. Its own development uses these flows. Which checks and AI reviews run depends on each card's settings.
+
+Future direction: clearer orchestration diagnostics, deeper Git hosting integration, and broader external-agent interoperability. These are roadmap goals, not promises of currently available integrations.
 
 ## License
 
