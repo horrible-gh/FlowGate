@@ -46,8 +46,8 @@
             <span v-if="index" class="ar">→</span>
             <span v-if="step === 'commit'" class="st gq-files" :class="{ skip: !selectedCount }" role="button" tabindex="0" :aria-expanded="filesOpen" @click="filesOpen = !filesOpen" @keydown.enter="filesOpen = !filesOpen"><span>{{ words.files }} <b>{{ selectedCount }}</b>/<span data-test="git-worktree-summary-changed">{{ wt.state.status?.counts.changed ?? '—' }}</span></span></span>
             <span v-else-if="step === 'update'" class="st"><span>{{ words.update }}<template v-if="behind">{{ ' ' }}<b>{{ behind }}</b></template></span></span>
-            <span v-else-if="step === 'merge'" class="st" :class="{ skip: !mergeTodo }">{{ wt.state.mergeTarget ?? '—' }}</span>
-            <span v-else class="st" :class="{ skip: !pushTodo }">origin</span>
+            <span v-else-if="step === 'merge'" class="st" :class="{ skip: !mergeTodo }"><span>{{ wt.state.mergeTarget ?? '—' }}<template v-if="ahead !== 0">{{ ' ' }}<b data-test="git-summary-merge-ahead">{{ ahead ?? '—' }}</b></template></span></span>
+            <span v-else class="st" :class="{ skip: !pushTodo }"><span>origin<template v-if="unpushed > 0">{{ ' ' }}<b data-test="git-summary-push-ahead">{{ unpushed }}</b></template></span></span>
           </template>
         </div>
         <div v-if="files.length" class="bar"><input class="inp" data-test="git-message" :value="wt.state.message" :disabled="busy" :placeholder="words.message" :aria-label="words.message" @input="wt.setMessage(($event.target as HTMLInputElement).value)" /></div>
