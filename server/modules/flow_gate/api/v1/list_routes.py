@@ -500,7 +500,8 @@ def search_documents_content(
     turn ordering (desc by default). doc_id lifts the per-document turn cap and uses
     limit (up to SEARCH_TURN_LIMIT) and next_cursor for keyset paging. Pass a cursor
     back with the same search conditions; document-body rows are omitted on subsequent
-    cursor pages. A group/global search remains capped and has no next cursor.
+    cursor pages, with total set to 0. A group/global search remains capped and has
+    no next cursor.
     """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -557,6 +558,7 @@ def search_documents_content(
     )
     if cursor is not None:
         items = []
+        total = 0
     next_cursor = None
     turn_items: list = []
     if not type or "CH".startswith(type.strip().upper()):
