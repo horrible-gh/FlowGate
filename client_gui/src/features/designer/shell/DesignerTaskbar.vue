@@ -1,12 +1,20 @@
 <template>
   <div ref="root" class="designer-taskbar" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
-    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>{{ t('gui.taskbar.menu') }}</button>
-    <button class="taskbar-item designer-item" type="button" aria-pressed="true"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
+    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :title="t('gui.taskbar.menu')" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
+    <button class="taskbar-item designer-item" type="button" aria-pressed="true" :title="t('gui.nav.designer.title')"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
     <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
-    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
-      <template v-if="popup === 'menu'">
+    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle !== 'modern', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
+      <template v-if="popup === 'menu' && modelessStyle === 'modern'">
+        <template v-for="group in menuGroups" :key="group.key">
+          <div class="start-group-label">{{ t(group.label) }}</div>
+          <div class="start-group-row" role="group" :aria-label="t(group.label)">
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="start-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="start-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="start-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+          </div>
+        </template>
+      </template>
+      <template v-else-if="popup === 'menu'">
         <template v-for="group in menuGroups" :key="group.key">
           <div class="menu-group-label" :style="{ '--card-color': group.color }"><i aria-hidden="true" />{{ t(group.label) }}</div>
           <div class="menu-group-row" role="group" :aria-label="t(group.label)">
@@ -48,7 +56,7 @@ const width = ref(0)
 const popup = ref<'menu' | 'overflow' | null>(null)
 const id = Symbol('taskbar')
 const minimized = computed(() => modelessWindows.value.filter(entry => entry.minimized))
-const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length))
+const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length, modelessStyle.value))
 const visible = computed(() => minimized.value.slice(0, capacity.value))
 const overflow = computed(() => minimized.value.slice(capacity.value))
 watch(overflow, (entries) => { if (!entries.length && popup.value === 'overflow') close() })
@@ -166,4 +174,29 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .card-port { position: absolute; right: -5px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--fg2-panel); border: 1.5px solid var(--card-color, #94a3b8); }
 .overflow-list { right: 10px; width: min(360px, calc(100vw - 48px)); max-height: min(400px, 60vh); overflow: auto; }
 .overflow-list button { width: 100%; margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Modern: a flat bar whose icon-only items gather in the middle; names show on hover (title). */
+.designer-taskbar[data-taskbar-style="modern"] { justify-content: center; gap: 4px; background: color-mix(in srgb, var(--fg2-panel) 88%, var(--fg2-bg)); border-top-color: var(--fg2-line); }
+[data-taskbar-style="modern"] .taskbar-item { position: relative; width: 44px; height: 40px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; box-shadow: none; text-align: center; }
+[data-taskbar-style="modern"] .taskbar-item:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="modern"] .item-text, [data-taskbar-style="modern"] .item-label, [data-taskbar-style="modern"] .designer-item i { display: none; }
+[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .menu-trigger[aria-expanded="true"] { background: color-mix(in srgb, var(--fg2-text) 10%, transparent); }
+[data-taskbar-style="modern"] .item-icon { width: 24px; height: 24px; border-radius: 6px; font-size: 14px; }
+[data-taskbar-style="modern"] .designer-item { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="modern"] .designer-item::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .minimized-item::after { content: ''; position: absolute; left: 50%; bottom: 3px; width: 6px; height: 3px; margin-left: -3px; border-radius: 2px; background: var(--fg2-muted, #94a3b8); }
+[data-taskbar-style="modern"] .overflow-trigger { width: 48px; font-size: 11px; }
+[data-taskbar-style="modern"] .taskbar-separator { height: 20px; margin: 0 2px; }
+[data-taskbar-style="modern"] .taskbar-popup { border-radius: 12px; }
+[data-taskbar-style="modern"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
+.start-box { left: 50%; transform: translateX(-50%); width: 440px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; box-sizing: border-box; padding: 18px 22px; }
+.start-group-label { margin: 14px 4px 8px; font-size: 12px; font-weight: 700; color: var(--fg2-text); }
+.start-group-label:first-child { margin-top: 0; }
+.start-group-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.taskbar-popup .start-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: center; }
+.taskbar-popup .start-tile:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+.start-tile-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; font-size: 18px; color: var(--card-color, #94a3b8); background: color-mix(in srgb, var(--card-color, #94a3b8) 18%, var(--fg2-panel)); }
+.start-tile-name { max-width: 100%; font-size: 11.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.start-tile .menu-card-dot { position: absolute; top: 8px; right: 12px; margin: 0; }
 </style>

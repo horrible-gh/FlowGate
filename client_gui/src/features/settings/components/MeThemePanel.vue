@@ -6,7 +6,7 @@
       <div class="fgs-row-label"><label :for="fieldId">{{ t('gui.taskbar.style') }}</label></div>
       <div class="fgs-row-ctrl">
         <select :id="fieldId" v-model="selected" class="fgs-input" data-test="taskbar-style" :disabled="saving" @change="save">
-          <option v-for="style in TASKBAR_STYLES" :key="style" :value="style">{{ style === 'flowgate' ? 'FlowGate' : style }}</option>
+          <option v-for="style in TASKBAR_STYLES" :key="style" :value="style">{{ t(`gui.taskbar.style_${style}`) }}</option>
         </select>
         <button type="button" class="fgs-btn" :disabled="saving" @click="save">{{ t('gui.common.save') }}</button>
         <span v-if="saving" role="status">{{ t('gui.settings.saving') }}</span>
