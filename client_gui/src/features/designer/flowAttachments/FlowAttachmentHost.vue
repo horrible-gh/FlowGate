@@ -63,6 +63,13 @@ function close(id: string) {
   windows.value = windows.value.filter(x => x.id !== id)
   if (focusedId.value === id) focusedId.value = windows.value.at(-1)?.id ?? null
 }
+/** Opens the open Flow's window, or closes it when it is already open. */
+function toggle() {
+  const id = props.flowId
+  if (!id) return
+  if (windows.value.some(x => x.id === id)) close(id)
+  else void open()
+}
 
 watch(() => props.flowId, (id, before) => {
   if (!id || id === before) return
@@ -101,6 +108,7 @@ function onDrop(event: DragEvent) {
 function hide() { dropping.value = false }
 const disconnectReadOnly = connectReadOnly((projectId, flowId) => projectId === props.projectId ? props.isArchived?.(flowId) ?? null : null)
 onMounted(() => {
+  flowAttachmentUi.toggle = toggle
   document.addEventListener('dragenter', onDragOver, true)
   document.addEventListener('dragover', onDragOver, true)
   document.addEventListener('dragleave', onDragLeave, true)
@@ -116,9 +124,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('dragend', hide, true)
   window.removeEventListener('blur', hide)
   disconnectReadOnly()
+  if (flowAttachmentUi.toggle === toggle) flowAttachmentUi.toggle = null
   flowAttachmentUi.currentOpen = false
 })
-defineExpose({ open })
+defineExpose({ open, close, toggle })
 </script>
 
 <style scoped>

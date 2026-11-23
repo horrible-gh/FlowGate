@@ -1349,6 +1349,8 @@ export default {
       label: '参加',
     },
     composer: {
+      attachments: '添付ファイル',
+      attachments_pending: '添付ファイル · 承認待ち {n}件',
       creating: "会話を作成中…",
       loading: "会話履歴を確認中…",
       sending: "送信中…（試行 {attempt}）",

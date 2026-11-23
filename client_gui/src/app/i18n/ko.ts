@@ -1360,6 +1360,8 @@ export default {
       label: '참여',
     },
     composer: {
+      attachments: '첨부파일',
+      attachments_pending: '첨부파일 · 승인 대기 {n}건',
       creating: "대화 생성 중…",
       loading: "대화 이력 확인 중…",
       sending: "메시지 전송 중… (시도 {attempt})",
