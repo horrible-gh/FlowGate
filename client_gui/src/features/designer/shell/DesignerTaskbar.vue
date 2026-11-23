@@ -1,12 +1,23 @@
 <template>
   <div ref="root" class="designer-taskbar" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
+    <div class="taskbar-group">
     <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :title="t('gui.taskbar.menu')" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
     <button class="taskbar-item designer-item" type="button" aria-pressed="true" :title="t('gui.nav.designer.title')"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
     <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
-    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle !== 'modern', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
-      <template v-if="popup === 'menu' && modelessStyle === 'modern'">
+    </div>
+    <Teleport to="body" :disabled="!launchpad">
+    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', launchpad, 'overflow-list': popup === 'overflow' }" :data-blur="launchpad ? (plainBackdrop ? 'off' : 'on') : undefined" :aria-label="launchpad ? t('gui.taskbar.menu') : undefined" @keydown="menuKey" @pointerdown="launchpadPointer">
+      <template v-if="launchpad">
+        <div class="launch-grid" role="group" :aria-label="t('gui.taskbar.menu')">
+          <template v-for="group in menuGroups" :key="group.key">
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="launch-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="launch-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="launch-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+          </template>
+        </div>
+        <p class="launchpad-hint">{{ t('gui.taskbar.launchpad_hint') }}</p>
+      </template>
+      <template v-else-if="popup === 'menu' && modelessStyle === 'modern'">
         <template v-for="group in menuGroups" :key="group.key">
           <div class="start-group-label">{{ t(group.label) }}</div>
           <div class="start-group-row" role="group" :aria-label="t(group.label)">
@@ -24,6 +35,7 @@
       </template>
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
+    </Teleport>
     <MyAiWindow :ref="(el) => setWindowRef('my-ai', el)" :open="windows['my-ai'].open" v-model:minimized="windows['my-ai'].minimized" @close="windows['my-ai'].open = false" />
     <QuestionPolicyWindow :ref="(el) => setWindowRef('question-policy', el)" :open="windows['question-policy'].open" v-model:minimized="windows['question-policy'].minimized" @close="windows['question-policy'].open = false" />
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
@@ -60,6 +72,20 @@ const capacity = computed(() => taskbarCapacity(width.value, minimized.value.len
 const visible = computed(() => minimized.value.slice(0, capacity.value))
 const overflow = computed(() => minimized.value.slice(capacity.value))
 watch(overflow, (entries) => { if (!entries.length && popup.value === 'overflow') close() })
+// Dock opens the menu as a full-screen launchpad (teleported to body so no ancestor clips it).
+const launchpad = computed(() => popup.value === 'menu' && modelessStyle.value === 'dock')
+// The launchpad blurs everything behind it. Where that is likely to stutter (few cores or little
+// memory) or the user asked for less transparency, it only darkens the screen instead.
+const plainBackdrop = (() => {
+  if (typeof window === 'undefined') return false
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-transparency: reduce)').matches
+  return reduced || (nav.hardwareConcurrency > 0 && nav.hardwareConcurrency <= 2) || (typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 2)
+})()
+function launchpadPointer(event: PointerEvent) {
+  // Pressing an empty part of the launchpad (anything but an icon) closes it.
+  if (launchpad.value && event.target instanceof Element && !event.target.closest('button')) close(true)
+}
 
 function close(focus = false) {
   const trigger = popup.value === 'menu' ? menuTrigger.value : overflowTrigger.value
@@ -92,7 +118,7 @@ function openCard(key: CardKey) {
   windowRefs[key]?.bringToFront?.()
 }
 function outside(event: Event) {
-  if (event.target instanceof Node && !root.value?.contains(event.target)) close()
+  if (event.target instanceof Node && !root.value?.contains(event.target) && !popupRoot.value?.contains(event.target)) close()
 }
 function escape(event: KeyboardEvent) {
   if (popup.value && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true) }
@@ -190,6 +216,41 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="modern"] .taskbar-separator { height: 20px; margin: 0 2px; }
 [data-taskbar-style="modern"] .taskbar-popup { border-radius: 12px; }
 [data-taskbar-style="modern"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
+/* Dock: a floating rounded group in the middle with large icon tiles; open windows get a dot below. */
+.taskbar-group { display: contents; }
+.designer-taskbar[data-taskbar-style="dock"] { justify-content: center; height: 54px; flex-basis: 54px; padding: 3px 10px; background: transparent; border-top-color: var(--fg2-line); }
+[data-taskbar-style="dock"] .taskbar-group { display: flex; align-items: center; gap: 4px; min-width: 0; height: 48px; padding: 0 8px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--fg2-text) 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--fg2-panel) 72%, transparent); backdrop-filter: blur(20px); box-shadow: 0 6px 18px #0003; }
+[data-taskbar-style="dock"] .taskbar-item { position: relative; width: 44px; height: 42px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; box-shadow: none; text-align: center; overflow: visible; }
+[data-taskbar-style="dock"] .taskbar-item:hover { background: transparent; }
+[data-taskbar-style="dock"] .item-text, [data-taskbar-style="dock"] .item-label, [data-taskbar-style="dock"] .designer-item i { display: none; }
+[data-taskbar-style="dock"] .menu-trigger svg { width: 32px; height: 32px; box-sizing: border-box; padding: 7px; border-radius: 8px; color: #fff; background: linear-gradient(160deg, #5b6b82, #2d3a4f); box-shadow: 0 2px 6px #0006; }
+[data-taskbar-style="dock"] .item-icon { width: 32px; height: 32px; border-radius: 8px; font-size: 15px; box-shadow: 0 2px 6px #0006; }
+[data-taskbar-style="dock"] .designer-item .item-icon { color: #fff; background: linear-gradient(160deg, #2b5ea8, #163a6e); }
+[data-taskbar-style="dock"] .minimized-item .item-icon { color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--kind-color, #4ba3ff) 85%, #fff), color-mix(in srgb, var(--kind-color, #4ba3ff) 70%, #0a1a33)); }
+[data-taskbar-style="dock"] .minimized-item { opacity: .85; }
+[data-taskbar-style="dock"] .menu-trigger svg, [data-taskbar-style="dock"] .item-icon { transition: transform .15s; }
+[data-taskbar-style="dock"] .taskbar-item:hover svg, [data-taskbar-style="dock"] .taskbar-item:hover .item-icon, [data-taskbar-style="dock"] .menu-trigger[aria-expanded="true"] svg { transform: translateY(-3px) scale(1.12); }
+[data-taskbar-style="dock"] .designer-item::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--fg2-text); }
+[data-taskbar-style="dock"] .taskbar-separator { height: 30px; margin: 0 6px; background: color-mix(in srgb, var(--fg2-text) 22%, transparent); }
+[data-taskbar-style="dock"] .overflow-trigger { width: 48px; height: 38px; border-radius: 10px; font-size: 11px; background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="dock"] .taskbar-popup { border-radius: 14px; }
+[data-taskbar-style="dock"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
+@media (prefers-reduced-transparency: reduce) { [data-taskbar-style="dock"] .taskbar-group { backdrop-filter: none; background: var(--fg2-panel); } }
+.taskbar-popup.launchpad { position: fixed; inset: 0; bottom: 0; z-index: 100000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 8%; border: 0; border-radius: 0; box-shadow: none; color: #f2f6fc; background-color: rgba(10, 18, 32, .38); backdrop-filter: blur(26px) saturate(1.4) brightness(.8); -webkit-backdrop-filter: blur(26px) saturate(1.4) brightness(.8); overflow: auto; animation: launchpad-in .2s ease-out; }
+.taskbar-popup.launchpad[data-blur="off"] { backdrop-filter: none; -webkit-backdrop-filter: none; background-color: rgba(6, 12, 24, .82); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .taskbar-popup.launchpad { background-color: rgba(6, 12, 24, .82); } }
+@keyframes launchpad-in { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .taskbar-popup.launchpad { animation: none; } }
+/* Like a real launchpad: one icon grid with no group headings above it. */
+.launch-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 28px 40px; max-width: min(100%, 1048px); }
+.taskbar-popup .launch-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 112px; padding: 6px 0 12px; border: 0; border-radius: 14px; background: transparent; color: inherit; text-align: center; }
+.taskbar-popup .launch-tile:hover { background: transparent; }
+.launch-tile-icon { display: grid; place-items: center; width: 84px; height: 84px; border-radius: 20px; font-size: 34px; color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--card-color, #94a3b8) 85%, #fff), color-mix(in srgb, var(--card-color, #94a3b8) 70%, #0a1a33)); box-shadow: 0 8px 22px #0007, inset 0 1px 0 #fff6; transition: transform .15s; }
+.launch-tile:hover .launch-tile-icon, .launch-tile:focus-visible .launch-tile-icon { transform: scale(1.06); }
+.launch-tile:active .launch-tile-icon { filter: brightness(.75); }
+.launch-tile-name { max-width: 112px; font-size: 13px; color: #f2f6fc; text-shadow: 0 1px 3px #000b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.launch-tile .menu-card-dot { position: absolute; left: 50%; bottom: 0; width: 5px; height: 5px; margin: 0 0 0 -2.5px; background: #fff; box-shadow: none; }
+.launchpad-hint { position: absolute; left: 0; right: 0; bottom: 14px; margin: 0; font-size: 11px; text-align: center; color: rgba(255, 255, 255, .6); pointer-events: none; }
 .start-box { left: 50%; transform: translateX(-50%); width: 440px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; box-sizing: border-box; padding: 18px 22px; }
 .start-group-label { margin: 14px 4px 8px; font-size: 12px; font-weight: 700; color: var(--fg2-text); }
 .start-group-label:first-child { margin-top: 0; }
@@ -200,3 +261,4 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .start-tile-name { max-width: 100%; font-size: 11.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .start-tile .menu-card-dot { position: absolute; top: 8px; right: 12px; margin: 0; }
 </style>
+
