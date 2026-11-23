@@ -149,12 +149,10 @@ def schedule_reply(doc_id, turn):
         return False
     run_id = turn.get("source_run_id")
     # The append service supplies verified worker-token fields, never request body fields.
-    # Remote replies need not wait for a process-local run or its finalize-time DB row.
+    # Bound token fields only fill gaps; non-None run fields take precedence.
     token = turn.get("_naming_context") or {}
     bound_token = bool(run_id and token.get("ai_run_id") == run_id
                        and token.get("doc_ref") == doc_id)
-    if bound_token and token.get("issued_to") and token.get("provider_id"):
-        return _schedule(_reply, doc_id, token["issued_to"], token["provider_id"])
     run = legacy_adapter.get_run_record(run_id) or legacy_adapter.persisted_naming_run(run_id) or {}
     if bound_token:
         run = {**{k: token[k] for k in ("issued_to", "provider_id", "doc_ref") if token.get(k)},
