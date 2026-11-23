@@ -285,6 +285,17 @@ describe('terminal Host', () => {
     expect(flowTerminalUi.openFlows).toEqual({})
   })
 
+  it('says the working folder is missing (not a generic retry) when the server answers terminal_cwd_unavailable', async () => {
+    api.readTerminalStatus.mockResolvedValue(status())
+    api.openTerminalSession.mockRejectedValue(conflict('terminal_cwd_unavailable'))
+    mountHost()
+    flowTerminalUi.open!()
+    await flushPromises()
+    expect(standins()).toHaveLength(0)
+    expect(document.body.textContent).toContain('이 플로우의 작업 폴더가 서버에 없습니다')
+    expect(document.body.textContent).not.toContain('다시 시도해 주세요')
+  })
+
   it('[새로 열기] starts a new session for the same Flow', async () => {
     api.readTerminalStatus.mockResolvedValue(status())
     api.openTerminalSession.mockResolvedValueOnce(session('s1')).mockResolvedValueOnce(session('s2'))
@@ -315,6 +326,7 @@ describe('terminal contract helpers', () => {
     expect(openFailureOf(conflict('terminal_flow_session_exists'))).toBe('exists')
     expect(openFailureOf(conflict('terminal_not_admin'))).toBe('not_admin')
     expect(openFailureOf(conflict('terminal_disabled'))).toBe('disabled')
+    expect(openFailureOf(conflict('terminal_cwd_unavailable'))).toBe('no_cwd')
     expect(openFailureOf(new Error('boom'))).toBe('failed')
   })
 

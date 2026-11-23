@@ -41,12 +41,14 @@ export function terminalSocketUrl(ticket: string, base: string = getBaseUrl(), p
 }
 
 /** Why POST /sessions was refused, by the contract's codes; anything else is `failed`. */
-export type OpenFailure = 'limit' | 'exists' | 'not_admin' | 'disabled' | 'failed'
+export type OpenFailure = 'limit' | 'exists' | 'not_admin' | 'disabled' | 'no_cwd' | 'failed'
 export function openFailureOf(error: unknown): OpenFailure {
   const { code } = normalizeApiError(error)
   if (code === 'terminal_session_limit') return 'limit'
   if (code === 'terminal_flow_session_exists') return 'exists'
   if (code === 'terminal_not_admin') return 'not_admin'
   if (code === 'terminal_disabled') return 'disabled'
+  // 0011-T 할 일 4: no worktree and no branch checkout on the server — retrying will not help, so say so.
+  if (code === 'terminal_cwd_unavailable') return 'no_cwd'
   return 'failed'
 }
