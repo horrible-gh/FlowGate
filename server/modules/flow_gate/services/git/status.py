@@ -223,6 +223,23 @@ def _build_unpushed(
     }
 
 
+def update_conflict_sessions(rows: list) -> dict:
+    """group_id -> its open group_update (받아오기) session, for the registered slots in ``rows``.
+
+    One read of the open sessions serves every slot. Advisory like the rest of the status:
+    a failed read shows no update conflict rather than failing the whole status call.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    groups = {r["group_id"] for r in rows}
+    try:
+        return {s["group_id"]: s for s in _gs.db_git.list_open_sessions()
+                if s.get("group_id") in groups
+                and _gs.db_git.session_kind(s) == _gs.db_git.SESSION_KIND_GROUP_UPDATE}
+    except Exception:
+        _log.warning("open group update sessions unavailable", exc_info=True)
+        return {}
+
+
 def project_git_status(project_id: str) -> dict:
     """GET …/projects/{id}/git/status — status + finalize-pending list + count.
 
@@ -375,15 +392,26 @@ def project_git_status(project_id: str) -> dict:
                         pending_rows.append(ledger)
         except Exception:
             _log.warning('recovery status unavailable for %s', ledger['group_id'])
+    # flowgate.v02test.0068: an open 받아오기 (group_update) conflict never writes the group
+    # status (startup recovery leaves it alone on purpose), so the status filter above cannot
+    # see it and no conflict card showed: a run waiting on it, or a 받아오기 ↓, had no way to
+    # resolve it. It is the group's conflict row here, so the same conflict card (direct / AI
+    # resolve, abort) works on it; the resolve route already commits and records the update.
+    update_sessions = update_conflict_sessions(rows)
+    for ledger in rows:
+        if ledger["group_id"] in update_sessions and ledger not in pending_rows:
+            pending_rows.append(ledger)
     # the AC lookup was the next N+1 in line — batched
     # before pending grows with adoption.
     ac_doc_ids = _gs._group_ac_doc_ids([r["group_id"] for r in pending_rows])
     pending = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
-         "status": r.get("status"), "default_action": default_action,
+         "status": "conflict" if r["group_id"] in update_sessions else r.get("status"),
+         "default_action": default_action,
          # merge_id lets the header panel resolve conflicts inline
          # (no need to open the group's R document / GitFinalizePanel).
-         "merge_id": r.get("merge_id"),
+         "merge_id": (update_sessions[r["group_id"]]["merge_id"] if r["group_id"] in update_sessions
+                      else r.get("merge_id")),
          # pending implies the workflow root is wf_done, so the
          # header [open] button targets the AC document (which hosts the git
          # finalize UI since §3) instead of detouring through the R root.

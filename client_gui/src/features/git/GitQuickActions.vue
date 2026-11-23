@@ -3,11 +3,11 @@
     <section class="one" :class="{ off: !!lockText && !plan }">
       <div class="otop">
         <div class="mseg" role="group" :aria-label="words.scope" data-test="git-scopes">
-          <button v-for="item in scopes" :key="item" type="button" :class="{ on: scope === item }" :disabled="busy || paused" :aria-pressed="scope === item" @click="scope = item">{{ words[item + 'Scope'] }}</button>
+          <button v-for="item in scopes" :key="item" type="button" :class="{ on: scope === item }" :disabled="busy || paused || waiting" :aria-pressed="scope === item" @click="scope = item">{{ words[item + 'Scope'] }}</button>
         </div>
         <button type="button" class="big" data-test="git-execute" :disabled="disabled || paused" @click="execute(false)"><span v-if="busy && plan" class="spin"><GitIcon name="spin" :size="13" /></span>{{ busy && plan ? words.running : words.execute }}</button>
       </div>
-      <template v-if="plan && (busy || paused)">
+      <template v-if="plan && (busy || paused || (waiting && !openSession))">
         <div class="chain" data-test="git-execution-steps">
           <template v-for="(step, index) in plan.steps" :key="index">
             <span v-if="index" class="ar">→</span>
@@ -21,9 +21,16 @@
           <button v-if="plan.error !== 'merge_conflict' || !conflict" type="button" class="tb" data-test="git-retry" :disabled="disabled" @click="execute(true)">{{ plan.error === 'push_rejected' ? words.syncPush : plan.error === 'merge_conflict' ? words.continue : words.retry }}</button>
           <button type="button" class="ib sm gh2" data-test="git-cancel" :title="words.cancelRun" :aria-label="words.cancelRun" @click="wt.clearExecution()"><GitIcon name="x" :size="13" /></button>
         </div>
-        <GitConflictCard v-if="session.groupCard.value === 'conflict' || session.groupCard.value === 'unsupported'" :unsupported="session.groupCard.value === 'unsupported'" />
-        <GitAiResolvingCard v-else-if="session.groupCard.value === 'ai'" />
-        <GitReviewCard v-else-if="session.groupCard.value === 'review'" />
+        <!-- flowgate.v02test.0068: the server run waits on a conflict session (받아오기 or 병합). Say so instead of
+             「멈춤」, and host the conflict card right here: the run goes on by itself once the session is resolved. -->
+        <div v-else-if="waiting" class="bar gq-stop" role="status" data-test="git-execution-waiting">
+          <span class="why">{{ waitText }}</span>
+        </div>
+        <template v-if="hostsCard">
+          <GitConflictCard v-if="session.groupCard.value === 'conflict' || session.groupCard.value === 'unsupported'" :unsupported="session.groupCard.value === 'unsupported'" />
+          <GitAiResolvingCard v-else-if="session.groupCard.value === 'ai'" />
+          <GitReviewCard v-else-if="session.groupCard.value === 'review'" />
+        </template>
       </template>
       <template v-else-if="lockText">
         <div class="ad" role="status" data-test="git-lock-reason">{{ lockText }}</div>
@@ -167,9 +174,9 @@ const emit = defineEmits<{ details: [tab: 'files' | 'merge' | 'status']; setting
 const { worktree: wt } = useGitWorktree()
 const { session } = useGitPanel()
 const { locale, t } = useI18n()
-const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중', files: '파일', message: '커밋 메시지 · 비우면 AI 작성', commitMessage: '커밋 메시지', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '중단', complete: '완료', remaining: '완료 · 남은 변경 있음', stoppedAt: '{step}에서 멈춤', stopped: '알 수 없는 이유', code: '코드', commitFirst: '커밋 필요', commitContinue: '커밋하고 계속', close: '닫기', changedFiles: '변경 파일', noCommit: '커밋할 파일 없음', baseChanged: '베이스 변경', noFetch: '받을 커밋 없음', commits: '커밋', dirtyExcluded: '미커밋 파일 {n} 제외', noMerge: '병합할 커밋 없음', toPush: '푸시할 커밋', noPush: '푸시할 커밋 없음', baseTag: '베이스', just: '방금', lockBusy: '실행 중', lockConflict: '충돌 해결 중', lockUnknown: '지금 Git 작업 불가', sessionOpen: '열린 Git 세션', sessionHint: '이 세션을 끝내야 커밋·받아오기·병합·푸시 가능', sessionAbort: '세션 중단', sessionAbortSure: '중단 확인 · 한 번 더', sessionRefused: '중단 안 됨', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세', updateSkipped: '받아오기 건너뜀' }
-const en: Record<string, string> = { targetSearch: 'Find branches', fileDetails: 'File details', mergeDetails: 'Merge details', syncPush: 'Sync remote and push', scope: 'Scope', commitScope: 'Commit', mergeScope: 'Through merge', pushScope: 'Through push', execute: 'Run', running: 'Running', files: 'Files', message: 'Commit message · AI writes if blank', commitMessage: 'Commit message', target: 'Target', search: 'Find files', all: 'Select all', individual: 'Individual actions', commit: 'Commit', update: 'Update', merge: 'Merge', push: 'Push', continue: 'Continue', retry: 'Retry', cancelRun: 'Stop', complete: 'Done', remaining: 'Done · changes remain', stoppedAt: 'Stopped at {step}', stopped: 'Unknown reason', code: 'Code', commitFirst: 'commit first', commitContinue: 'Commit and continue', close: 'Close', changedFiles: 'Changed files', noCommit: 'Nothing to commit', baseChanged: 'Base changes', noFetch: 'Nothing to update', commits: 'Commits', dirtyExcluded: '{n} uncommitted excluded', noMerge: 'Nothing to merge', toPush: 'To push', noPush: 'Nothing to push', baseTag: 'base', just: 'Just now', lockBusy: 'Running', lockConflict: 'Resolving conflict', lockUnknown: 'Git actions unavailable now', sessionOpen: 'Open Git session', sessionHint: 'End this session to commit, update, merge or push', sessionAbort: 'Abort session', sessionAbortSure: 'Confirm abort · press again', sessionRefused: 'Abort refused', fix_settings: 'Open Git settings', fix_station: 'Open Git station', fix_status: 'View status', fix_files: 'View files', fix_merge: 'Merge details', updateSkipped: 'Update skipped' }
-const ja: Record<string, string> = { targetSearch: 'ブランチを検索', fileDetails: 'ファイル詳細', mergeDetails: 'マージ詳細', syncPush: 'リモートを反映してプッシュ', scope: '実行範囲', commitScope: 'コミットのみ', mergeScope: 'マージまで', pushScope: 'プッシュまで', execute: '実行', running: '実行中', files: 'ファイル', message: 'コミットメッセージ · 空欄なら AI が作成', commitMessage: 'コミットメッセージ', target: '対象', search: 'ファイルを検索', all: 'すべて選択', individual: '個別実行', commit: 'コミット', update: '取り込み', merge: 'マージ', push: 'プッシュ', continue: '続行', retry: '再試行', cancelRun: '中断', complete: '完了', remaining: '完了 · 未反映の変更あり', stoppedAt: '{step}で停止', stopped: '原因不明', code: 'コード', commitFirst: 'コミット必要', commitContinue: 'コミットして続行', close: '閉じる', changedFiles: '変更ファイル', noCommit: 'コミットするファイルなし', baseChanged: 'ベース変更', noFetch: '取り込むコミットなし', commits: 'コミット', dirtyExcluded: '未コミット {n} 件を除外', noMerge: 'マージするコミットなし', toPush: 'プッシュするコミット', noPush: 'プッシュするコミットなし', baseTag: 'ベース', just: 'たった今', lockBusy: '実行中', lockConflict: '競合を解決中', lockUnknown: '今は Git 作業不可', sessionOpen: '開いている Git セッション', sessionHint: 'このセッションを終えるとコミット・取り込み・マージ・プッシュ可能', sessionAbort: 'セッション中断', sessionAbortSure: '中断を確認 · もう一度', sessionRefused: '中断できない', fix_settings: 'Git 設定を開く', fix_station: 'Git ステーションを開く', fix_status: '状態を見る', fix_files: 'ファイルを見る', fix_merge: 'マージ詳細', updateSkipped: '取り込みスキップ' }
+const ko: Record<string, string> = { targetSearch: '브랜치 찾기', fileDetails: '파일 상세', mergeDetails: '병합 상세', syncPush: '원격 반영 후 푸시', scope: '실행 범위', commitScope: '커밋만', mergeScope: '병합까지', pushScope: '푸시까지', execute: '실행', running: '실행 중', files: '파일', message: '커밋 메시지 · 비우면 AI 작성', commitMessage: '커밋 메시지', target: '대상', search: '파일 찾기', all: '전체 선택', individual: '개별 실행', commit: '커밋', update: '받아오기', merge: '병합', push: '푸시', continue: '계속', retry: '다시 시도', cancelRun: '중단', complete: '완료', remaining: '완료 · 남은 변경 있음', stoppedAt: '{step}에서 멈춤', waitConflict: '{step} 충돌 · 아래 카드에서 해결하면 이어서 진행', waitClosed: '{step} 충돌 세션 닫힘 · 실행 상태 확인 중', stopped: '알 수 없는 이유', code: '코드', commitFirst: '커밋 필요', commitContinue: '커밋하고 계속', close: '닫기', changedFiles: '변경 파일', noCommit: '커밋할 파일 없음', baseChanged: '베이스 변경', noFetch: '받을 커밋 없음', commits: '커밋', dirtyExcluded: '미커밋 파일 {n} 제외', noMerge: '병합할 커밋 없음', toPush: '푸시할 커밋', noPush: '푸시할 커밋 없음', baseTag: '베이스', just: '방금', lockBusy: '실행 중', lockConflict: '충돌 해결 중', lockUnknown: '지금 Git 작업 불가', sessionOpen: '열린 Git 세션', sessionHint: '이 세션을 끝내야 커밋·받아오기·병합·푸시 가능', sessionAbort: '세션 중단', sessionAbortSure: '중단 확인 · 한 번 더', sessionRefused: '중단 안 됨', fix_settings: 'Git 설정 열기', fix_station: 'Git 스테이션 열기', fix_status: '상태 보기', fix_files: '파일 보기', fix_merge: '병합 상세', updateSkipped: '받아오기 건너뜀' }
+const en: Record<string, string> = { targetSearch: 'Find branches', fileDetails: 'File details', mergeDetails: 'Merge details', syncPush: 'Sync remote and push', scope: 'Scope', commitScope: 'Commit', mergeScope: 'Through merge', pushScope: 'Through push', execute: 'Run', running: 'Running', files: 'Files', message: 'Commit message · AI writes if blank', commitMessage: 'Commit message', target: 'Target', search: 'Find files', all: 'Select all', individual: 'Individual actions', commit: 'Commit', update: 'Update', merge: 'Merge', push: 'Push', continue: 'Continue', retry: 'Retry', cancelRun: 'Stop', complete: 'Done', remaining: 'Done · changes remain', stoppedAt: 'Stopped at {step}', waitConflict: '{step} conflict · resolve it in the card below and the run continues', waitClosed: '{step} conflict session closed · checking the run', stopped: 'Unknown reason', code: 'Code', commitFirst: 'commit first', commitContinue: 'Commit and continue', close: 'Close', changedFiles: 'Changed files', noCommit: 'Nothing to commit', baseChanged: 'Base changes', noFetch: 'Nothing to update', commits: 'Commits', dirtyExcluded: '{n} uncommitted excluded', noMerge: 'Nothing to merge', toPush: 'To push', noPush: 'Nothing to push', baseTag: 'base', just: 'Just now', lockBusy: 'Running', lockConflict: 'Resolving conflict', lockUnknown: 'Git actions unavailable now', sessionOpen: 'Open Git session', sessionHint: 'End this session to commit, update, merge or push', sessionAbort: 'Abort session', sessionAbortSure: 'Confirm abort · press again', sessionRefused: 'Abort refused', fix_settings: 'Open Git settings', fix_station: 'Open Git station', fix_status: 'View status', fix_files: 'View files', fix_merge: 'Merge details', updateSkipped: 'Update skipped' }
+const ja: Record<string, string> = { targetSearch: 'ブランチを検索', fileDetails: 'ファイル詳細', mergeDetails: 'マージ詳細', syncPush: 'リモートを反映してプッシュ', scope: '実行範囲', commitScope: 'コミットのみ', mergeScope: 'マージまで', pushScope: 'プッシュまで', execute: '実行', running: '実行中', files: 'ファイル', message: 'コミットメッセージ · 空欄なら AI が作成', commitMessage: 'コミットメッセージ', target: '対象', search: 'ファイルを検索', all: 'すべて選択', individual: '個別実行', commit: 'コミット', update: '取り込み', merge: 'マージ', push: 'プッシュ', continue: '続行', retry: '再試行', cancelRun: '中断', complete: '完了', remaining: '完了 · 未反映の変更あり', stoppedAt: '{step}で停止', waitConflict: '{step}の競合 · 下のカードで解決すると続行', waitClosed: '{step}の競合セッション終了 · 実行状態を確認中', stopped: '原因不明', code: 'コード', commitFirst: 'コミット必要', commitContinue: 'コミットして続行', close: '閉じる', changedFiles: '変更ファイル', noCommit: 'コミットするファイルなし', baseChanged: 'ベース変更', noFetch: '取り込むコミットなし', commits: 'コミット', dirtyExcluded: '未コミット {n} 件を除外', noMerge: 'マージするコミットなし', toPush: 'プッシュするコミット', noPush: 'プッシュするコミットなし', baseTag: 'ベース', just: 'たった今', lockBusy: '実行中', lockConflict: '競合を解決中', lockUnknown: '今は Git 作業不可', sessionOpen: '開いている Git セッション', sessionHint: 'このセッションを終えるとコミット・取り込み・マージ・プッシュ可能', sessionAbort: 'セッション中断', sessionAbortSure: '中断を確認 · もう一度', sessionRefused: '中断できない', fix_settings: 'Git 設定を開く', fix_station: 'Git ステーションを開く', fix_status: '状態を見る', fix_files: 'ファイルを見る', fix_merge: 'マージ詳細', updateSkipped: '取り込みスキップ' }
 // Why a run stopped, in words, with what can be done about it on this screen.
 const REASONS: Record<string, { ko: string; en: string; ja: string; fixes?: Fix[] }> = {
   base_dirty: { ko: '베이스에 커밋 안 한 수정 파일 있음', en: 'Base has uncommitted edits', ja: 'ベースに未コミットの変更あり', fixes: ['status'] },
@@ -212,6 +219,8 @@ const REASONS: Record<string, { ko: string; en: string; ja: string; fixes?: Fix[
   commit_message_required: { ko: '커밋 메시지 필요 (AI 작성 꺼짐)', en: 'Commit message required (AI writing off)', ja: 'コミットメッセージが必要 (AI 作成オフ)' },
   queued: { ko: '다른 Git 작업 대기 중', en: 'Waiting for another Git operation', ja: '別の Git 作業を待機中' },
   session_open: { ko: '충돌·받아오기 처리 중 · 위 카드에서 진행', en: 'Conflict / update in progress · continue in the card above', ja: '競合・取り込みの処理中 · 上のカードで進める' },
+  // The run's conflict session (받아오기 or 병합) was aborted instead of resolved.
+  merge_aborted: { ko: '충돌 세션 중단됨 · 다시 실행하면 처음부터 확인', en: 'Conflict session aborted · run again to start over', ja: '競合セッション中断 · 再実行で最初から確認' },
 }
 // flowgate.v02test.0068: the open session's kind (git_merge_session.kind), as the Git tab names it.
 const SESSION_KINDS: Record<string, { ko: string; en: string; ja: string }> = {
@@ -239,6 +248,11 @@ const filteredFiles = computed(() => files.value.filter(f => f.path.toLowerCase(
 const selectedCount = computed(() => files.value.filter(f => !excluded.value.includes(f.path)).length)
 const plan = computed(() => wt.state.execution)
 const paused = computed(() => plan.value?.status === 'stopped')
+// flowgate.v02test.0068: the server run is parked on a conflict session (its merge id) until it is resolved or aborted.
+const waiting = computed(() => plan.value?.status === 'running' && plan.value.mergeId != null)
+// The run box hosts the group's conflict / AI / review card exactly while a run is running or stopped; otherwise the
+// Exception list does (DesignerGitPanel passes the same rule to it as `execution-active`), so it is never shown twice.
+const hostsCard = computed(() => plan.value?.status === 'running' || paused.value)
 const busy = computed(() => !!wt.state.busy || !!session.state.busy)
 const conflict = computed(() => ['conflict', 'ai', 'review', 'unsupported'].includes(session.groupCard.value ?? ''))
 const blocker = computed(() => wt.state.status?.blockers[0]?.code ?? wt.state.merge?.graph?.blocker ?? null)
@@ -316,6 +330,14 @@ const skipTitle = computed(() => {
   const code = plan.value?.skipped?.update
   return code ? `${reasonText(code) ?? code} · ${words.value.code}: ${code}` : undefined
 })
+const waitText = computed(() => {
+  const p = plan.value
+  const step = p?.steps[p.cursor]
+  const name = step ? words.value[step] : '—'
+  // No card left: the session closed and the server stops or goes on within seconds (the run is read again). An open
+  // session no card shows is the lock line's (its kind and [세션 중단]), not this one.
+  return (conflict.value ? words.value.waitConflict : words.value.waitClosed).replace('{step}', name)
+})
 const resultText = computed(() => reasonText(plan.value?.error) ?? (plan.value?.error ? `${words.value.stopped} · ${plan.value.error}` : words.value.stopped))
 const stopFixes = computed<Fix[]>(() => (plan.value?.error && REASONS[plan.value.error]?.fixes) || [])
 // The result of an individual update / merge / push, as the mockup's 「방금 · …」 line.
@@ -333,7 +355,7 @@ function stepClass(index: number): string {
   const p = plan.value
   if (!p) return ''
   if (index < p.cursor) return p.skipped?.[p.steps[index]] ? 'skip' : 'done'
-  if (index === p.cursor) return paused.value ? 'bad' : busy.value ? 'now' : ''
+  if (index === p.cursor) return paused.value || waiting.value ? 'bad' : busy.value ? 'now' : ''
   return ''
 }
 function letter(file: WorktreeFile): string {
