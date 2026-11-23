@@ -30,6 +30,7 @@
       :active-flow-id="center.state.activeFlowId"
       :run-states="tabRunStates"
       :chat-states="tabChatStates"
+      :terminal-states="flowTerminalUi.openFlows"
       :archived="tabArchived"
       :run-ends="tabRunEnds"
       :chat-ends="tabChatEnds"
@@ -122,6 +123,7 @@ import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
 import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
+import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'

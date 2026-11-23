@@ -33,3 +33,8 @@ Unidecode>=1.3.0
 # syntax validator (git_service.py's _validate_review_changed_paths) needs a
 # real strict parser, same footing as the stdlib json/ast it already uses.
 PyYAML==6.0.3
+# flowgate.v02test.0078: the Designer terminal on a Windows server -- ConPTY through
+# pywinpty, and process-tree cleanup / busy detection through psutil. Linux and macOS use
+# the stdlib pty module and need neither.
+pywinpty==2.0.15; sys_platform == "win32"
+psutil>=5.9; sys_platform == "win32"

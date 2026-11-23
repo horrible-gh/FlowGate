@@ -73,6 +73,8 @@ from modules.flow_gate.api.v1.attachment_request_routes import router as _attach
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.voice_routes import router as _voice_router
 from modules.flow_gate.api.v1.voice_stream_routes import router as _voice_stream_router
+# the Designer terminal: admin-only shell on the server PC.
+from modules.flow_gate.api.v1.terminal_routes import router as _terminal_router
 from modules.flow_gate.api.v1.message_audio_routes import router as _message_audio_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.self_check_routes import router as _self_check_router
@@ -134,6 +136,12 @@ async def lifespan(app: FastAPI):
     from modules.flow_gate.services import voice_streams
     await asyncio.to_thread(voice_streams.shutdown)
     await asyncio.to_thread(voice_manager.shutdown)
+    try:
+        # no terminal shell (or anything it started) may outlive the server.
+        from modules.flow_gate.services import terminal_sessions
+        await asyncio.to_thread(terminal_sessions.manager.shutdown)
+    except Exception:
+        logger.warning("terminal session shutdown failed", exc_info=True)
     try:
         from modules.flow_gate.services import snapshot_materialization_service
         snapshot_materialization_service.shutdown()
@@ -285,6 +293,7 @@ app.include_router(_chat_command_router, prefix=f"{CONTEXT}/api/v1", tags=["Chat
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
 app.include_router(_voice_router, prefix=f"{CONTEXT}/api/v1")
 app.include_router(_voice_stream_router, prefix=f"{CONTEXT}/api/v1")
+app.include_router(_terminal_router, prefix=f"{CONTEXT}", tags=["Terminal"])
 app.include_router(_message_audio_router, prefix=f"{CONTEXT}/api/v1")
 app.include_router(_attachment_request_router, prefix=f"{CONTEXT}/api/v1", tags=["AttachmentRequests"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
