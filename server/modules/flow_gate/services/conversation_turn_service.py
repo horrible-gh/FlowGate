@@ -21,6 +21,7 @@ from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.services import encoding_probe, message_image_service, message_audio_service
+from modules.flow_gate.services import conversation_attachment_links
 from modules.flow_gate.services.voice_errors import VoiceError
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -80,9 +81,23 @@ def is_full_body_edit_blocked(doc_type_code: Optional[str], doc_id: str) -> bool
 class ConversationTurnError(Exception):
     status_code: int
     message: str
+    code: Optional[str] = None
+    unknown_keys: Optional[list[str]] = None
+
+    def detail(self):
+        if self.code:
+            return {"code": self.code, "message": self.message, "unknown_keys": self.unknown_keys or []}
+        return self.message
 
     def __str__(self) -> str:
         return self.message
+
+
+def _validate_attachment_links(doc: dict, body: str) -> None:
+    unknown = conversation_attachment_links.unknown_keys(doc, body)
+    if unknown:
+        raise ConversationTurnError(422, "Attachment links must refer to files in this Flow.",
+                                    "attachment_link_unknown", unknown)
 
 
 def normalize_body(raw: str) -> str:
@@ -427,6 +442,7 @@ def _turn_wire(row: dict, *, images=None) -> dict:
         "display_name": row.get("display_name"),
         "locale": row.get("locale"),
         "body": "" if row.get("deleted_at") else row["body"],
+        "attachment_links": conversation_attachment_links.statuses(row.get("doc_id"), "" if row.get("deleted_at") else row["body"]),
         "audio": message_audio_service.for_turn(row),
         "message_version": int(row.get("message_version") or 1),
         "edited_at": row.get("edited_at"),
@@ -759,6 +775,7 @@ def append_turn(
     for attempt in range(SEQ_RETRY_MAX + 1):
         try:
             with get_store().transaction():
+                _validate_attachment_links(doc, body)
                 based = (
                     int(based_on_seq)
                     if based_on_seq is not None
@@ -907,7 +924,8 @@ def dry_run_append(
         body_raw, encoding_probe.probe_for(str(token_rec.get("token_id") or ""))
     )
     body, _key, _body_hash, _idempotency_hash = _validate_input(checked_body, idempotency_key)
-    _validate_document_for_append(doc_id)
+    doc = _validate_document_for_append(doc_id)
+    _validate_attachment_links(doc, body)
 
     limit = _dry_run_limit()
     cnt = int(token_rec.get("dry_run_count") or 0)
@@ -965,6 +983,8 @@ def mutate_user_turn(*, doc_id: str, seq: int, actor: dict, expected_version: in
             if not delete:
                 raise ConversationTurnError(409, "The message has been deleted.")
         else:
+            if not delete:
+                _validate_attachment_links(doc, body)
             now = now_iso()
             affected = get_store()._execute_affected(
                 "UPDATE conversation_turns SET body = ?, body_hash = ?, edited_at = ?, deleted_at = ?, "

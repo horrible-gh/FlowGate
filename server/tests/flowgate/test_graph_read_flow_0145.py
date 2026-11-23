@@ -99,6 +99,9 @@ def test_reads_are_observational_and_isolate_worker_and_foreign_relations(active
     worker_canvas = ok(get(env,worker))
     chat_current = ok(get(env,chat,"runs/current"))
     worker_current = ok(get(env,worker,"runs/current"))
+    expected_flow = {k: groups.get_by_id(FA).get(k) for k in
+                     ("title", "module", "status", "created_at", "updated_at")}
+    assert chat_canvas["flow"] == worker_canvas["flow"] == expected_flow
     assert len(chat_canvas["nodes"]) >= 2
     assert [n["node_key"] for n in worker_canvas["nodes"]] == [key]
     assert [n["node_key"] for n in worker_current["run"]["node_runs"]] == [key]

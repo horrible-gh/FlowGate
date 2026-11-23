@@ -1926,6 +1926,19 @@ tests = [
 ]
 also = []
 
+[area."platform.terminal"]
+source = [
+  "modules/flow_gate/api/input_validation.py",
+  "modules/flow_gate/api/v1/terminal_routes.py",
+  "modules/flow_gate/services/terminal_pty.py",
+  "modules/flow_gate/services/terminal_sessions.py",
+]
+tests = [
+  "tests/modules/flow_gate/test_terminal_server_v02test_0078.py",
+  "tests/modules/flow_gate/test_terminal_integration_v02test_0078.py",
+]
+also = []
+
 [area."platform.api"]
 source = [
   "app.py",

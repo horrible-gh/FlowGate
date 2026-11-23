@@ -19,10 +19,11 @@
  * axios instance: a stub adapter captures the config the interceptor produced, and the
  * timeout actually applied to the request is what gets asserted.
  */
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
 
 import api from '@shared/api'
+import { setConnectionLost } from '@shared/connectionStatus'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const LONG_TIMEOUT_MS = 130_000
@@ -122,6 +123,12 @@ describe('shared/api GET retry keeps the per-path timeout (v02gui.0017 B4)', () 
 
   afterAll(() => {
     api.defaults.adapter = stubAdapter
+  })
+
+  // An exhausted GET marks the connection lost (0060), and while lost the next test's GETs would wait in
+  // shared/connectionGate and not be re-sent; each case here starts on a live connection.
+  afterEach(() => {
+    setConnectionLost(false)
   })
 
   /** Fails the first `failures` calls with `fail(config)`, then answers 200; returns every config seen. */

@@ -452,6 +452,7 @@ def search_documents(
     status: str = None,
     limit: int = 50,
     offset: int = 0,
+    allowed_projects: list[str] = None,
 ) -> tuple[list[dict], int]:
     """Title/doc_id text search with optional metadata facets (Phase 1).
 
@@ -461,6 +462,10 @@ def search_documents(
     """
     clauses: list = []
     params: list = []
+    if allowed_projects is not None:
+        clauses.append("project_id IN (" + ",".join("?" for _ in allowed_projects) + ")"
+                       if allowed_projects else "1 = 0")
+        params.extend(allowed_projects)
     if project:
         clauses.append("project_id = ?")
         params.append(project)
@@ -490,6 +495,7 @@ def search_documents(
 
 def list_documents_for_fulltext(
     project: str = None, doc_type: str = None, status: str = None,
+    allowed_projects: list[str] = None,
 ) -> list[dict]:
     """Return facet-filtered documents (no text predicate) for body full-text search.
 
@@ -502,6 +508,10 @@ def list_documents_for_fulltext(
     """
     clauses: list = []
     params: list = []
+    if allowed_projects is not None:
+        clauses.append("project_id IN (" + ",".join("?" for _ in allowed_projects) + ")"
+                       if allowed_projects else "1 = 0")
+        params.extend(allowed_projects)
     if project:
         clauses.append("project_id = ?")
         params.append(project)

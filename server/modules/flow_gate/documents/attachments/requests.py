@@ -57,7 +57,7 @@ from .constants import (
     ATTACH_DEFAULT_CONTENT_TYPE,
     ATTACH_DOWNLOAD_FORCED_OCTET_TYPES,
     ATTACH_MAX_COUNT_PER_DOC,
-    ATTACH_READ_MAX_BYTES,
+    ATTACH_PREVIEW_MAX_BYTES,
     ATTACH_STREAM_CHUNK_BYTES,
     ATTACH_TEXT_SNIFF_BYTES,
 )
@@ -919,9 +919,10 @@ def preview(request_id: str, user: dict) -> dict:
     if not path.is_file():
         raise RequestError(410, "attachment_request_file_missing", "the staged file is gone")
     with open(path, "rb") as fh:
-        data = fh.read(ATTACH_READ_MAX_BYTES + 1)
-    truncated = len(data) > ATTACH_READ_MAX_BYTES
-    data = data[:ATTACH_READ_MAX_BYTES]
+        data = fh.read(ATTACH_PREVIEW_MAX_BYTES + 1)
+    # Fixed 1 MiB — independent of the attach_read_max_mb system setting.
+    truncated = len(data) > ATTACH_PREVIEW_MAX_BYTES
+    data = data[:ATTACH_PREVIEW_MAX_BYTES]
     base = {"ok": True, "request_id": row["request_id"], "filename": row["filename"], "size": int(row["size"])}
     image = _image_type(data[:16])
     if image is not None:

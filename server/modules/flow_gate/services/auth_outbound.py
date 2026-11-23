@@ -104,3 +104,17 @@ def verify_bearer(request: Request):
         return _fail(403, "You do not have permission to perform this action")
 
     return token_rec
+
+
+def can_read_project(auth: dict, project_id: str) -> bool:
+    """Resolve the requesting user's current permission on the target project."""
+    user_id = auth.get("issued_to")
+    return bool(user_id and project_id and
+                has_permission(user_id, project_id, "perm_document_read"))
+
+
+def readable_projects(auth: dict) -> list[str]:
+    from modules.flow_gate.db.connection import get_store
+    return [r["project_id"] for r in get_store()._fetch_all(
+        "SELECT project_id FROM projects", [])
+        if can_read_project(auth, r["project_id"])]

@@ -154,6 +154,13 @@ def _content_document_access(ctx: dict) -> dict:
             "url": f"{base}/document/{{doc_id}}",
             "example": f"{base}/document/{doc_id}",
         },
+        "flows": {
+            "list": {"method": "GET", "url": f"{base}/list/projects/{{project}}/groups",
+                     "summary": "List flows with their names."},
+            "info": {"method": "GET", "url": f"{base}/list/groups/{{group_id}}",
+                     "summary": "Read flow name, module, status, dates and document_count."},
+            "permission": "The requesting user must have document read permission on the target project. Unreadable and missing targets return 404. Other flow canvases and writes remain restricted.",
+        },
         "answers": _answers_lookup(ctx),
         "path": {"method": "GET", "url": f"{base}/document/{{doc_id}}/path"},
         # Bounded reads. The full-body GET is the expensive one; these

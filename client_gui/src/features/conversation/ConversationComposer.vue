@@ -139,6 +139,24 @@
         :locked="sourceLocked"
         @set="(mode) => emit('set-source-mode', mode)"
       />
+      <!-- Attachments: opens / closes this Flow's attachment window (the container does it). v02test.0074 0011-T (mockup
+           21wdt1cz case 2): a bordered square button drawn like the source mode group next to it (same height, border,
+           corner, surface, hover / focus / pressed rules), the Lucide paperclip line icon at the mode icons' size and
+           stroke, blue while the window is open, and the AI's waiting upload requests as a yellow dot on its top-right
+           corner (absolute, so the button never grows; none at 0, 99+ above 99). -->
+      <button
+        type="button"
+        class="conv-attach"
+        :class="{ 'is-open': attachmentsOpen }"
+        data-test="conv-attachments"
+        :aria-pressed="attachmentsOpen"
+        :title="attachLabel"
+        :aria-label="attachLabel"
+        @click="emit('toggle-attachments')"
+      >
+        <LineIcon name="paperclip" class="conv-attach-icon" />
+        <span v-if="attachmentsPending > 0" class="conv-attach-badge" aria-hidden="true" data-test="conv-attachments-badge">{{ attachBadge }}</span>
+      </button>
       <span class="conv-assist-spacer"></span>
       <ComposerSettings
         :timeout-enabled="chatId !== null"
@@ -163,6 +181,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import LineIcon from '../../components/ui/LineIcon.vue'
 import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
 import ComposerQuickMessages from './ComposerQuickMessages.vue'
@@ -181,9 +200,13 @@ import { installVoiceMessages } from './voice/messages'
 import { useVoiceInput } from './voice/useVoiceInput'
 import { loadVoice } from './voice/voiceStore'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The open chat; null while a new chat is a draft (its first send creates it). */
   chatId: string | null
+  /** The Flow's attachment window is open (the attachments button shows pressed). */
+  attachmentsOpen?: boolean
+  /** AI upload requests of this chat still waiting for a decision (the attachments button badge; none shown at 0). */
+  attachmentsPending?: number
   projectId?: string | null
   groupId?: string | null
   draftIntentId?: string | null
@@ -219,9 +242,10 @@ const props = defineProps<{
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
   onSend: (text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace) => Promise<boolean>
-}>()
+}>(), { attachmentsOpen: false, attachmentsPending: 0 })
 
 const emit = defineEmits<{
+  'toggle-attachments': []
   'select-provider': [providerId: string]
   'retry-ai-pick': []
   'save-settings': [patch: ChatSettingsPatch, done: (ok: boolean) => void]
@@ -235,6 +259,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 installVoiceMessages(useI18n({ useScope: 'global' }))
+/** The corner badge: the waiting count, capped so a large number never widens the dot. */
+const attachBadge = computed(() => (props.attachmentsPending > 99 ? '99+' : String(props.attachmentsPending)))
+const attachLabel = computed(() =>
+  props.attachmentsPending > 0
+    ? t('gui.conversation.composer.attachments_pending', { n: props.attachmentsPending })
+    : t('gui.conversation.composer.attachments'),
+)
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 function currentOwner(): DraftOwner | null {
@@ -362,9 +393,16 @@ function onPaste(event: ClipboardEvent): void {
 
 const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files')
 
+// 0074 TR0014: a file dragged over the input never goes to the browser — also while sending or when the input is
+// locked (the browser would open the image and leave the app). Then nothing is taken (dropEffect none). Drags
+// without `Files` (text, quick message order) keep their default.
 function onDragOver(event: DragEvent): void {
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+    return
+  }
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   dragging.value = true
 }
@@ -376,8 +414,9 @@ function onDragLeave(event: DragEvent): void {
 
 function onDrop(event: DragEvent): void {
   dragging.value = false
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) return
   attach.add(Array.from(event.dataTransfer?.files ?? []))
 }
 
@@ -450,7 +489,7 @@ async function submit(): Promise<void> {
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
   const imageIds = [...attach.readyIds.value]
   const draftBody = draft.value
-  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent.map((item) => item.message)) : text
+  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent) : text
   // With quick messages the snapshot body is the text that went out, so a retried bubble still matches this send.
   const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: quickSent.length ? outgoing : draftBody,
     revision: revisions.get(draftKey(owner)) ?? 0, ...(imageIds.length ? { images: imageIds } : {}) }
@@ -687,6 +726,83 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 .conv-assist-spacer {
   flex: 1;
   min-width: 0;
+}
+
+/* Attachments button (v02test.0074 0011-T): the source mode group's look (ComposerSourceModes .csm) as one square —
+   27px high like the group, 1px --fg2-line-strong border, the small control radius, the flat control surface, muted
+   icon that turns --fg2-text on hover; pressed (window open) takes the mode buttons' "on" rule: info surface, info
+   icon colour, a thicker stroke and the short underline as a non-colour cue. Theme tokens only. */
+.conv-attach {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 27px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface-flat);
+  color: var(--fg2-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.conv-attach:hover {
+  color: var(--fg2-text);
+}
+
+.conv-attach:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+
+.conv-attach .conv-attach-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.conv-attach.is-open {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+}
+
+.conv-attach.is-open .conv-attach-icon {
+  stroke-width: 2.2;
+}
+
+.conv-attach.is-open::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 10px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.conv-attach-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--fg2-control-radius-pill);
+  background: var(--fg2-yellow);
+  color: var(--fg2-bg);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
 }
 </style>
 

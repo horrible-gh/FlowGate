@@ -2,7 +2,7 @@ export default {
   taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "security_window": "My settings · Security"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
-  connection_banner: {"reconnecting": "Connection to the server lost · reconnecting automatically…", "hint": "Lists and chats come back on their own once connected, and unsent messages are sent again."},
+  connection_banner: {"reconnecting": "Connection to the server lost · reconnecting automatically…", "hint": "Lists and chats come back on their own once connected, and unsent messages are sent again.", "unknown_error": "An unknown error occurred", "reload": "Reload"},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // AI attachment upload requests (chat message, flow attachment window, run result, settings).
@@ -11,6 +11,8 @@ export default {
     pending_n: '{n} waiting for approval',
     target: 'Target: {title}',
     by_ai: 'Requested by {name}',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: 'Show in the attachment window: {name}',
     tab_pending: '{n} waiting',
     tab_section: '{n} AI attachment requests waiting',
     run_result_pending: '{n} attachment requests waiting for approval',
@@ -1233,6 +1235,22 @@ export default {
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: 'Deleted',
+        replaced: 'Changed',
+        open: 'Show in the attachment window: {name}',
+        download: 'Download {name}',
+        linked_n: '{n} file(s) linked in this answer',
+        zip: 'Download all (ZIP)',
+        preview: 'Preview',
+        hide_preview: 'Hide preview',
+        download_failed: 'Could not download the file. Try again in a moment.',
+        not_found: 'This file was not found in the attachment window.',
+        preview_loading: 'Loading…',
+        preview_failed: 'Could not load the preview.',
+        preview_none: 'This file cannot be previewed. Download it to check.',
+      },
     },
     command: {
       title: 'Command request',
@@ -1349,6 +1367,8 @@ export default {
       label: 'With',
     },
     composer: {
+      attachments: 'Attachments',
+      attachments_pending: 'Attachments · {n} awaiting approval',
       creating: "Creating conversation…",
       loading: "Loading conversation history…",
       sending: "Sending message… (attempt {attempt})",
@@ -3421,6 +3441,12 @@ export default {
         lower_title_values: 'Repeat limit {from} → {to}',
         lower_impact: 'Repeat choices of saved or paused runs are re-evaluated against the current limit when they run or resume. An existing choice above the limit may be treated as no review or the default restart count.',
         lower_no_rewrite: 'This screen does not change what a run has stored, and it does not resume any run.',
+      },
+      attach_read: {
+        title: 'AI attachment read limit',
+        label: 'Maximum size (MB)',
+        invalid: 'Enter a whole number of MB from {min} to {max}.',
+        hint: 'The largest attachment an AI may read. 1 to 64 MB, default 1 MB. A saved value applies at once without a server restart. The upload-request preview stays at 1 MB.',
       },
       leave: {
         title: 'You have unsaved changes',

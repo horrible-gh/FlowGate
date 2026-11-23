@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from modules.flow_gate.rbac.decorators import require_permission
+from modules.flow_gate.settings import attach_read_limit
 from modules.flow_gate.settings.system_settings_service import get_all, get_system_info, set_values
 from modules.flow_gate.storage.paths import describe_storage_root, get_storage_root_info
 
@@ -27,7 +28,7 @@ class SettingsPatch(BaseModel):
             "Setting key-value pairs. Allowed keys: "
             "storage_root, log_retention_days, log_level, jwt_expiry_minutes, "
             "refresh_token_expiry_days, mail_smtp_host, mail_smtp_port, mail_from, "
-            "ai_repeat_count_max, scratch_ttl_value, scratch_ttl_unit"
+            "ai_repeat_count_max, attach_read_max_mb, scratch_ttl_value, scratch_ttl_unit"
         )
     )
 
@@ -78,6 +79,14 @@ def update_settings(body: SettingsPatch, user=Depends(require_permission("system
             raise HTTPException(
                 status_code=422,
                 detail={"code": "ai_repeat_count_out_of_range", "params": {"min": 1, "max": 30}},
+            )
+        if attach_read_limit.SETTING_KEY in body.updates and str(exc) == attach_read_limit.OUT_OF_RANGE_MESSAGE:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "attach_read_max_out_of_range",
+                    "params": {"min": attach_read_limit.MIN_MB, "max": attach_read_limit.MAX_MB},
+                },
             )
         raise HTTPException(status_code=422, detail=str(exc))
     return {"updated": results}

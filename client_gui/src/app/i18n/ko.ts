@@ -5,7 +5,7 @@ export default {
   taskbar: {"label": "태스크바", "menu": "메뉴", "more": "최소화한 창 {count}개 더 보기", "theme": "테마", "theme_hint": "태스크바와 메뉴, 창 제목줄 모양을 고릅니다.", "style": "태스크바 스타일", "screen": "화면", "theme_window": "내 설정 · 테마", "group_ai": "내 AI 관리", "group_settings": "내 설정", "my_ai": "내 AI", "my_ai_desc": "기본 AI · 순서 · 추가", "my_ai_window": "AI 관리 · 내 AI", "question_policy": "질의 방침", "question_policy_desc": "AI가 내게 물어볼 기준", "question_policy_window": "AI 관리 · 질의 방침", "agents": "에이전트", "agents_desc": "개인 에이전트 목록 · 등록", "account": "계정·화면", "account_window": "내 설정 · 계정·화면", "account_desc": "로그인 정보와 표시 언어", "agents_window": "내 설정 · 에이전트", "security": "보안·세션", "security_desc": "비밀번호 변경 · 로그인 세션", "security_window": "내 설정 · 보안·세션"},
   agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "비어 있으면 작업을 받을 수 없습니다. 에이전트 PC에서 작업 폴더를 만들 위치를 지정하세요. 예: /data/flowgate, C:\\flowgate", "sec_basic": "기본 정보", "sec_run": "실행", "sec_workdir": "작업 폴더", "create_sub": "이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.", "not_connected": "아직 이 PC와 연결되지 않았습니다", "enabled_on": "켜져 있으면 이 에이전트가 작업을 받습니다.", "enabled_off": "작업을 받지 않습니다.", "unit_jobs": "개", "running_now": "지금 {running}개 실행 중", "queued_now": "대기 {count}개", "workdir_label": "작업 폴더 위치", "workdir_preview": "작업마다 {path} 폴더를 새로 만듭니다.", "cleanup_on": "작업이 끝나고 {hours}시간 뒤 폴더를 지웁니다 (1~720).", "cleanup_off": "끄면 작업 폴더를 지우지 않고 그대로 둡니다.", "cli_missing_detail": "이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다. 설치하면 다음 접속부터 자동으로 작업을 받습니다.", "token_title": "등록 토큰", "token_until": "{at}까지", "no_token": "토큰이 없습니다 · 10분간 유효", "no_token_hint": "창을 닫았거나 10분이 지나 토큰이 만료됐습니다. 지우고 다시 등록할 필요 없이 새로 발급하면 됩니다.", "no_changes": "변경 사항 없음", "changes": "저장하지 않은 변경 {count}개", "changes_one": "저장하지 않은 변경 1개", "workdir_shared": "지금은 모든 작업이 {path} 폴더 하나를 같이 씁니다. 이 칸을 고쳐 저장하면 작업마다 폴더를 나눕니다."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
-  connection_banner: {"reconnecting": "서버 연결이 끊겼습니다 · 자동으로 다시 연결하는 중…", "hint": "연결되면 목록과 대화가 저절로 돌아오고, 보내지 못한 메시지도 다시 보냅니다."},
+  connection_banner: {"reconnecting": "서버 연결이 끊겼습니다 · 자동으로 다시 연결하는 중…", "hint": "연결되면 목록과 대화가 저절로 돌아오고, 보내지 못한 메시지도 다시 보냅니다.", "unknown_error": "알 수 없는 오류가 발생했습니다", "reload": "새로 고침"},
   accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
   notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 플로우 첨부파일 창 · 실행 결과 · 설정).
@@ -14,6 +14,8 @@ export default {
     pending_n: '승인 대기 {n}건',
     target: '대상: {title}',
     by_ai: '{name} 요청',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: '첨부파일 창에서 보기: {name}',
     tab_pending: '대기 {n}',
     tab_section: 'AI 첨부 승인 대기 {n}건',
     run_result_pending: '첨부 승인 대기 {n}건',
@@ -1244,6 +1246,22 @@ export default {
       copy: '원문 복사',
       copied: '복사했습니다',
       copy_failed: '복사하지 못했습니다',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: '삭제됨',
+        replaced: '변경됨',
+        open: '첨부파일 창에서 보기: {name}',
+        download: '{name} 다운로드',
+        linked_n: '이 답변에 링크된 파일 {n}개',
+        zip: '모두 받기(ZIP)',
+        preview: '미리보기',
+        hide_preview: '미리보기 닫기',
+        download_failed: '파일을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+        not_found: '첨부파일 창에서 이 파일을 찾지 못했습니다.',
+        preview_loading: '불러오는 중…',
+        preview_failed: '미리보기를 불러오지 못했습니다.',
+        preview_none: '미리 볼 수 없는 파일입니다. 다운로드해서 확인해 주세요.',
+      },
     },
     command: {
       title: '명령 실행 요청',
@@ -1360,6 +1378,8 @@ export default {
       label: '참여',
     },
     composer: {
+      attachments: '첨부파일',
+      attachments_pending: '첨부파일 · 승인 대기 {n}건',
       creating: "대화 생성 중…",
       loading: "대화 이력 확인 중…",
       sending: "메시지 전송 중… (시도 {attempt})",
@@ -3433,6 +3453,12 @@ export default {
         lower_title_values: '반복 상한 {from} → {to}',
         lower_impact: '저장·일시정지된 실행의 반복 선택은 이후 실행/재개 시 현재 상한으로 재평가됩니다. 상한을 넘은 기존 선택은 검수 없음 또는 기본 재시작 횟수로 처리될 수 있습니다.',
         lower_no_rewrite: '이 화면은 실행별 저장값을 바꾸거나 실행을 재개하지 않습니다.',
+      },
+      attach_read: {
+        title: 'AI 첨부 읽기 상한',
+        label: '최대 크기 (MB)',
+        invalid: '{min}~{max} 사이의 정수(MB)를 입력하세요.',
+        hint: 'AI가 첨부 파일을 읽을 수 있는 최대 크기입니다. 1~64MB, 기본값은 1MB입니다. 저장하면 서버 재시작 없이 바로 적용됩니다. 첨부 요청 미리보기는 1MB 그대로입니다.',
       },
       leave: {
         title: '저장하지 않은 변경이 있습니다',
