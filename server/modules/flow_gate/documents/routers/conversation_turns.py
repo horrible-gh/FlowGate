@@ -142,7 +142,7 @@ def list_conversation_turns(
             include_head=bool(include_head),
         )
     except conversation_turn_service.ConversationTurnError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
 
 @router.post("/{doc_id}/conversation/read")
@@ -166,7 +166,7 @@ def mark_conversation_read(
             reason=body.reason,
         )
     except conversation_turn_service.ConversationTurnError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
 
 def _conversation_doc(doc_id: str) -> dict:
@@ -253,7 +253,7 @@ def get_conversation_markdown(
     try:
         rendered = conversation_markdown_service.render_markdown(doc_id)
     except conversation_turn_service.ConversationTurnError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
     return {
         "ok": True,
         "doc_id": doc_id,
@@ -294,7 +294,7 @@ def append_conversation_turn(
         )
     except conversation_turn_service.ConversationTurnError as exc:
         timing.mark("response", exc.status_code)
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
     status = 200 if result["replayed"] else 201
     timing.mark("response", status)
     return JSONResponse(status_code=status, content=result)
@@ -312,4 +312,4 @@ def mutate_conversation_turn(doc_id: str, seq: int, request: Request,
             doc_id=doc_id, seq=seq, actor=_session_actor(request, current_user),
             expected_version=body.get("expected_version"), body_raw=body.get("body"), delete=body.get("delete", False))
     except conversation_turn_service.ConversationTurnError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc

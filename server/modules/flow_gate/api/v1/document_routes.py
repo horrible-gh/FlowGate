@@ -314,7 +314,7 @@ def get_flow_attachments(request: Request, flow_id: str):
     from urllib.parse import quote
     data = rows(flow_id)
     return {"ok": True, "flow_id": flow_id, "attachments": [
-        {"doc_id": row["doc_id"], "filename": row["filename"], "display_name": row["display_name"],
+        {"key": row["key"], "doc_id": row["doc_id"], "filename": row["filename"], "display_name": row["display_name"],
          "size": row["size"], "content_type": row["content_type"], "content_sha256": row["content_sha256"],
          "read_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/read",
          "copy_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/copy"}
