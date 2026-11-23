@@ -57,6 +57,8 @@ export type DesignerTopCommand =
   | 'run.rerun'
   | 'run.validate'
   | 'view.attachments'
+  /** 0078: the toolbar's [터미널] (admins only) — opens the open Flow's terminal window. */
+  | 'view.terminal'
   | 'view.fit'
   | 'view.zoom-in'
   | 'view.zoom-out'

@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # non-loopback request origin (as chat does), else loopback. Not the agent base above.
     FLOWGATE_OPERATOR_API_BASE: str | None = None
 
+    # The Designer terminal -- an administrator-only shell on this server PC, running as
+    # the server's own OS account. Installed default OFF; set TERMINAL_ENABLED=true in
+    # .env to offer it.
+    TERMINAL_ENABLED: bool = False
+
     @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
     @classmethod
     def _blank_int_uses_default(cls, v):
@@ -138,6 +143,15 @@ class Settings(BaseSettings):
         # coerce "" -> int and crash the boot. Treat blank as "unset".
         if isinstance(v, str) and v.strip() == "":
             return 10485760
+        return v
+
+    @field_validator("TERMINAL_ENABLED", mode="before")
+    @classmethod
+    def _blank_terminal_flag_is_off(cls, v):
+        # A present-but-blank `TERMINAL_ENABLED=` must mean the installed default (off),
+        # not a boot failure on "" -> bool.
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return False
         return v
 
     @field_validator(
