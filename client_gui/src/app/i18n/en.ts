@@ -642,7 +642,7 @@ export default {
     project_explorer: {
       title: 'Project',
       refresh: 'Refresh',
-      search_placeholder: 'Search projects, groups, flows',
+      search_placeholder: 'Search projects, groups, flows, F77-12',
       search_clear: 'Clear search',
       loading: 'Loading the project structure...',
       load_failed: 'Could not load the project structure.',
@@ -653,6 +653,11 @@ export default {
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
       reconnecting: 'Reconnecting…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · Name used in IDs: {key}',
+      archived: 'Archived',
+      cards: 'Cards',
+      enter_open: 'Enter to open',
     },
     // Designer File Explorer.
     file_explorer: {

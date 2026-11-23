@@ -646,7 +646,7 @@ export default {
     project_explorer: {
       title: '프로젝트',
       refresh: '새로고침',
-      search_placeholder: '프로젝트, 그룹, 플로우 검색',
+      search_placeholder: '프로젝트, 그룹, 플로우, F77-12 검색',
       search_clear: '검색어 지우기',
       loading: '프로젝트 구조를 불러오는 중...',
       load_failed: '프로젝트 구조를 불러오지 못했습니다.',
@@ -657,6 +657,11 @@ export default {
       group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
       reconnecting: '다시 연결하는 중…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · ID에 쓰는 이름: {key}',
+      archived: '아카이브',
+      cards: '카드',
+      enter_open: 'Enter 열기',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {

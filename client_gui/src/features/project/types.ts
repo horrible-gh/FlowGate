@@ -57,6 +57,8 @@ export interface GroupTreeNode {
   title: string | null
   /** v0.1 group number (e.g. "0023"), when the node carries one. */
   number: string | null
+  /** flowgate.v02test.0077: a group (v0.2 Flow) node's display number (`"F77"`), when the server sent it. Not stored. */
+  flowLabel?: string | null
 }
 
 export interface FetchGroupTreeOptions {
