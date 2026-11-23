@@ -1256,7 +1256,6 @@ export default {
         zip: '모두 받기(ZIP)',
         preview: '미리보기',
         hide_preview: '미리보기 닫기',
-        download_button: '다운로드',
         download_failed: '파일을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
         not_found: '첨부파일 창에서 이 파일을 찾지 못했습니다.',
         preview_loading: '불러오는 중…',

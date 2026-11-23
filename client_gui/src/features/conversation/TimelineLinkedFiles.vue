@@ -29,8 +29,19 @@
         <Button size="sm" variant="ghost" data-test="tl-linked-preview" :aria-expanded="shown === file.key" @click="togglePreview(file)">
           {{ shown === file.key ? t('gui.conversation.message.file.hide_preview') : t('gui.conversation.message.file.preview') }}
         </Button>
-        <Button size="sm" variant="primary" data-test="tl-linked-download" :disabled="busy.includes(file.key)" @click="download(file)">
-          ⬇ {{ t('gui.conversation.message.file.download_button') }}
+        <!-- v02test.0074: icon only, so the file name and size keep their room in the 300px panel; the name stays in the
+             accessible label and the tooltip. -->
+        <Button
+          size="sm"
+          variant="primary"
+          class="tl-lf-download"
+          data-test="tl-linked-download"
+          :aria-label="t('gui.conversation.message.file.download', { name: file.name })"
+          :title="t('gui.conversation.message.file.download', { name: file.name })"
+          :disabled="busy.includes(file.key)"
+          @click="download(file)"
+        >
+          <span aria-hidden="true">⬇</span>
         </Button>
       </div>
       <div v-if="shown === file.key" class="tl-lf-preview" data-test="tl-linked-preview-body">
@@ -212,8 +223,13 @@ onBeforeUnmount(closePreview)
 .tl-lf-sub {
   display: flex;
   gap: 6px;
+  white-space: nowrap;
   font-size: 10.5px;
   color: var(--fg2-muted);
+}
+
+.tl-lf-download {
+  flex: 0 0 auto;
 }
 
 .tl-lf-replaced {

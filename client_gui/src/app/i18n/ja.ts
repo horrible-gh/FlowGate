@@ -1245,7 +1245,6 @@ export default {
         zip: 'すべてダウンロード(ZIP)',
         preview: 'プレビュー',
         hide_preview: 'プレビューを閉じる',
-        download_button: 'ダウンロード',
         download_failed: 'ファイルをダウンロードできませんでした。しばらくしてからもう一度お試しください。',
         not_found: '添付ファイルウィンドウでこのファイルが見つかりませんでした。',
         preview_loading: '読み込み中…',

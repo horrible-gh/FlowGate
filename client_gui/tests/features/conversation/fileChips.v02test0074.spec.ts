@@ -332,9 +332,14 @@ describe('the linked files under an answer', () => {
     expect(files(wrapper).map((file) => file.get('[data-test="tl-linked-name"]').text())).toEqual(['report.md', 'shot.png', 'spec.md'])
     expect(files(wrapper)[0].get('[data-test="tl-linked-size"]').text()).toBe('8.4 KB')
     expect(files(wrapper)[2].get('[data-test="tl-linked-replaced"]').text()).toBe('변경됨')
-    for (const file of files(wrapper)) {
+    for (const [i, file] of files(wrapper).entries()) {
       expect(file.get('[data-test="tl-linked-preview"]').text()).toBe('미리보기')
-      expect(file.get('[data-test="tl-linked-download"]').text()).toContain('다운로드')
+      // Icon only: no visible word, the name stays in the accessible label and the tooltip.
+      const download = file.get('[data-test="tl-linked-download"]')
+      expect(download.text()).toBe('⬇')
+      const label = `${['report.md', 'shot.png', 'spec.md'][i]} 다운로드`
+      expect(download.attributes('aria-label')).toBe(label)
+      expect(download.attributes('title')).toBe(label)
     }
   })
 

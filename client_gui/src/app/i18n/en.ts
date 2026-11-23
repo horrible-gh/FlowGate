@@ -1245,7 +1245,6 @@ export default {
         zip: 'Download all (ZIP)',
         preview: 'Preview',
         hide_preview: 'Hide preview',
-        download_button: 'Download',
         download_failed: 'Could not download the file. Try again in a moment.',
         not_found: 'This file was not found in the attachment window.',
         preview_loading: 'Loading…',
