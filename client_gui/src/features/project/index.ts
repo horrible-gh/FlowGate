@@ -75,6 +75,7 @@ export type {
   FlowCanvasPosition,
   FlowCanvasSlot,
   FlowCanvasTitleState,
+  FlowCardRef,
   FlowCanvasView,
   FlowCanvasViewport,
   FlowChangeSet,
