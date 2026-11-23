@@ -21,6 +21,10 @@ persistent index / dialect-specific FTS (Option B1), tracked separately.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import json
 import re
 import threading
 from collections import OrderedDict
@@ -455,6 +459,8 @@ def search_document_bodies(
     context_lines: int = None,
     hits_per_doc: int = None,
     allowed_projects: list[str] = None,
+    doc_id: str = None,
+    group_id: str = None,
 ) -> tuple[list[dict], int]:
     """Full document search (body + title + doc_id) with optional metadata facets.
 
@@ -480,6 +486,10 @@ def search_document_bodies(
     )
     matches: list[dict] = []
     for doc in rows:
+        if doc_id and doc.get("doc_id") != doc_id:
+            continue
+        if group_id and doc.get("group_id") != group_id:
+            continue
         matched_in: Optional[str] = None
         snippet: Optional[str] = None
         body_preview: Optional[str] = None
@@ -539,7 +549,29 @@ def _turn_snippet(body: str, needle_lower: str) -> Optional[str]:
     return frag
 
 
-def search_conversation_turns(
+def search_conversation_turns(*args, **kwargs) -> list[dict]:
+    """Compatibility list API; use the page API to retrieve the next cursor."""
+    return search_conversation_turns_page(*args, **kwargs)[0]
+
+
+def _decode_turn_cursor(cursor: str, scope: str) -> dict:
+    try:
+        if len(cursor) > 4096:
+            raise ValueError
+        value = json.loads(base64.b64decode(cursor.encode("ascii"), altchars=b"-_", validate=True))
+        if (not isinstance(value, dict) or value.get("v") != 1
+                or value.get("scope") != scope
+                or type(value.get("seq")) is not int
+                or type(value.get("max_seq")) is not int
+                or not 0 < value["seq"] <= value["max_seq"]
+                or not isinstance(value.get("created_at"), str)):
+            raise ValueError
+        return value
+    except (ValueError, TypeError, UnicodeError, binascii.Error) as exc:
+        raise ValueError("invalid cursor or cursor search conditions changed") from exc
+
+
+def search_conversation_turns_page(
     q: str,
     project: str = None,
     status: str = None,
@@ -549,21 +581,27 @@ def search_conversation_turns(
     context_lines: int = None,
     hits_per_doc: int = None,
     allowed_projects: list[str] = None,
-) -> list[dict]:
-    """Conversation-turn body search (T4, the earlier implementation / the plan scenario 16).
+    doc_id: str = None,
+    group_id: str = None,
+    sort: str = "desc",
+    cursor: str = None,
+) -> tuple[list[dict], Optional[str]]:
+    """Search migrated turns, ranking per conversation before the global limit.
 
-    Case-insensitive (``LOWER`` on both sides); a literal ``%``/``_``/``\\`` in the
-    query is escaped so it cannot act as a wildcard. At most ``per_doc`` turns are
-    returned per document (a very active chat must not crowd out every other result),
-    and at most ``SEARCH_TURN_LIMIT`` turns are scanned/returned overall. Only fully
-    migrated conversations participate, so an in-progress migration can never leak a
-    partial turn set. Ordering is the the earlier implementation contract: newest ``created_at`` first,
-    then document id and descending sequence as deterministic tie-breakers.
+    A doc_id removes the per-document cap and enables keyset paging. Cursors
+    bind query/scope/order and retain a sequence high-water mark, so appended
+    turns do not shift subsequent pages. Group/global searches remain bounded.
     """
+    if sort not in {"asc", "desc"}:
+        raise ValueError("sort must be asc or desc")
+    if doc_id and group_id:
+        raise ValueError("doc_id and group_id are mutually exclusive")
+    if cursor is not None and not doc_id:
+        raise ValueError("cursor requires doc_id")
     needle = (q or "").strip()
     effective_limit = max(0, min(int(limit), SEARCH_TURN_LIMIT))
     if not needle or effective_limit == 0:
-        return []
+        return [], None
     store = get_store()
     from modules.flow_gate.db import dialect as _dialect_mod
     # A raw single backslash is a valid one-character ESCAPE literal in SQLite and
@@ -585,34 +623,72 @@ def search_conversation_turns(
     if status:
         clauses.append("d.status = ?")
         params.append(status)
+    if doc_id:
+        clauses.append("t.doc_id = ?")
+        params.append(doc_id)
+    if group_id:
+        clauses.append("d.group_id = ?")
+        params.append(group_id)
     where_sql = " AND ".join(clauses)
-    rows = get_store()._fetch_all(
+    direction = "ASC" if sort == "asc" else "DESC"
+    order = f"created_at {direction}, doc_id ASC, seq {direction}"
+    join_sql = (
+        "FROM conversation_turns t JOIN documents d ON d.doc_id = t.doc_id "
+        "JOIN conversation_docs c ON c.doc_id = t.doc_id "
+        f"WHERE c.migration_state = 'migrated' AND {where_sql} "
+    )
+    scope = hashlib.sha256(json.dumps(
+        [needle, project, status, doc_id, sort], ensure_ascii=True
+    ).encode("ascii")).hexdigest()
+    max_seq = 0
+    if doc_id:
+        if cursor is not None:
+            position = _decode_turn_cursor(cursor, scope)
+            max_seq = position["max_seq"]
+        else:
+            maximum = store._fetch_one("SELECT MAX(t.seq) AS max_seq " + join_sql, params)
+            max_seq = int((maximum or {}).get("max_seq") or 0)
+        join_sql += "AND t.seq <= ? "
+        params.append(max_seq)
+        if cursor is not None:
+            op = ">" if sort == "asc" else "<"
+            join_sql += (f"AND (t.created_at {op} ? OR "
+                         f"(t.created_at = ? AND t.seq {op} ?)) ")
+            params.extend([position["created_at"], position["created_at"], position["seq"]])
+    select_sql = (
         "SELECT t.doc_id AS doc_id, t.seq AS seq, t.speaker AS speaker, "
         "t.display_name AS display_name, t.body AS body, t.created_at AS created_at, "
         "d.title AS title, d.status AS status, d.project_id AS project_id, "
         "d.group_id AS group_id, d.revision_no AS doc_revision_no "
-        "FROM conversation_turns t JOIN documents d ON d.doc_id = t.doc_id "
-        "JOIN conversation_docs c ON c.doc_id = t.doc_id "
-        f"WHERE c.migration_state = 'migrated' AND {where_sql} "
-        "ORDER BY t.created_at DESC, t.doc_id ASC, t.seq DESC LIMIT ?",
-        params + [effective_limit],
     )
+    if doc_id:
+        rows = store._fetch_all(select_sql + join_sql + f"ORDER BY {order} LIMIT ?",
+                                params + [effective_limit + 1])
+    else:
+        ranked_sql = (select_sql.rstrip() + ", ROW_NUMBER() OVER (PARTITION BY t.doc_id "
+                      f"ORDER BY t.created_at {direction}, t.seq {direction}) AS turn_rank "
+                      + join_sql)
+        rows = store._fetch_all(
+            f"SELECT * FROM ({ranked_sql}) ranked WHERE turn_rank <= ? "
+            f"ORDER BY {order} LIMIT ?", params + [max(0, int(per_doc)), effective_limit])
+    next_cursor = None
+    if doc_id and len(rows) > effective_limit:
+        last = rows[effective_limit - 1]
+        next_cursor = base64.urlsafe_b64encode(json.dumps({
+            "v": 1, "scope": scope, "max_seq": max_seq,
+            "created_at": str(last["created_at"]), "seq": int(last["seq"]),
+        }, separators=(",", ":")).encode("ascii")).decode("ascii")
+    rows = rows[:effective_limit]
     needle_lower = needle.lower()
-    per_doc_count: dict[str, int] = {}
     items: list[dict] = []
     for row in rows:
         if len(items) >= effective_limit:
             break
-        doc_id = row["doc_id"]
-        seen = per_doc_count.get(doc_id, 0)
-        if seen >= per_doc:
-            continue
         snippet = _turn_snippet(row.get("body") or "", needle_lower)
         if snippet is None:
             continue
-        per_doc_count[doc_id] = seen + 1
         item = {
-            "doc_id": doc_id,
+            "doc_id": row["doc_id"],
             "type": "CH",
             "title": row.get("title"),
             "status": row.get("status"),
@@ -637,4 +713,4 @@ def search_conversation_turns(
             item["match_total"] = match_total
             item["matches"] = entries
         items.append(item)
-    return items
+    return items, next_cursor
