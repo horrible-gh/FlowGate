@@ -23,6 +23,7 @@ import { useI18n } from 'vue-i18n'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
 import FlowAttachmentWindow from './FlowAttachmentWindow.vue'
 import { FaIcon } from './icons'
+import { registerAttachmentFocus } from './focus'
 import { connectReadOnly, enqueueUpload } from './operations'
 import { flowAttachmentUi } from './state'
 import { wordsFor } from './words'
@@ -58,6 +59,15 @@ async function open(files: File[] = []) {
   const view = refs.get(id)
   view?.reveal()
   if (!files.length && existing) void view?.reload()
+}
+// focusAttachment() (focus.ts, 0074 item 3): the open Flow's window opens (or comes to the front); a Flow that already
+// has a window comes to the front. Any other Flow has no Project known here, so nothing opens and the answer is false.
+async function focusFile(flowId: string, key: string): Promise<boolean> {
+  if (flowId === props.flowId) await open()
+  else if (windows.value.some(x => x.id === flowId)) { focus(flowId); await nextTick(); refs.get(flowId)?.reveal() }
+  else return false
+  const view = refs.get(flowId)
+  return view ? view.focusFile(key) : false
 }
 function close(id: string) {
   windows.value = windows.value.filter(x => x.id !== id)
@@ -99,6 +109,7 @@ function onDrop(event: DragEvent) {
   if (files.length) void open(files)
 }
 function hide() { dropping.value = false }
+const unregisterFocus = registerAttachmentFocus(focusFile)
 const disconnectReadOnly = connectReadOnly((projectId, flowId) => projectId === props.projectId ? props.isArchived?.(flowId) ?? null : null)
 onMounted(() => {
   document.addEventListener('dragenter', onDragOver, true)
@@ -116,6 +127,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('dragend', hide, true)
   window.removeEventListener('blur', hide)
   disconnectReadOnly()
+  unregisterFocus()
   flowAttachmentUi.currentOpen = false
 })
 defineExpose({ open })
@@ -131,3 +143,4 @@ defineExpose({ open })
 .fa-drop-target { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid #3f8fc9; border-radius: 8px; background: #153d60; color: #dbf0ff; font-size: 13px; }
 .fa-drop-target :deep(.fa-icon) { color: #63d5c1; }
 </style>
+
