@@ -452,3 +452,110 @@ def test_turn_search_scopes_projects_before_limit(seed_data, tmp_path, monkeypat
     assert response.status_code == 200
     assert response.json()["turn_total"] > 0
     assert all(item["group_title"] == "Search Group" for item in response.json()["items"])
+
+
+# F82 / #53: scopes, stable keyset pages, and rank-before-limit regression.
+@pytest.fixture
+def many_search_turns(seed_data):
+    from modules.flow_gate.db.connection import get_store
+    first = "testprj.__ALL__.0351search.0001-CH"
+    second = "testprj.__ALL__.0351search.0002-CH"
+    marker = "f82_search_marker"
+    store = get_store()
+    store._execute("UPDATE conversation_docs SET migration_state = 'migrated' WHERE doc_id = ?", [second])
+    _seed_turns(first, [marker] * 70, start=100)
+    _seed_turns(second, [marker], start=100)
+    # Equal timestamps force the keyset's seq tie-breaker on every page.
+    store._execute("UPDATE conversation_turns SET created_at = ? WHERE doc_id = ? AND seq >= 100",
+                   ["2026-11-24T08:00:00+09:00", first])
+    store._execute("UPDATE conversation_turns SET created_at = ? WHERE doc_id = ? AND seq >= 100",
+                   ["2026-11-23T08:00:00+09:00", second])
+    try:
+        yield first, second, marker
+    finally:
+        for doc_id in (first, second):
+            store._execute("DELETE FROM conversation_turns WHERE doc_id = ? AND seq >= 100", [doc_id])
+        store._execute("UPDATE conversation_docs SET migration_state = 'failed' WHERE doc_id = ?", [second])
+
+
+@pytest.mark.parametrize("sort", ["asc", "desc"])
+def test_scoped_cursor_exhausts_without_duplicates_or_gaps(many_search_turns, sort):
+    from modules.flow_gate.services import content_search_service as svc
+    first, _, marker = many_search_turns
+    cursor = None
+    seqs = []
+    while True:
+        page, cursor = svc.search_conversation_turns_page(
+            marker, doc_id=first, sort=sort, cursor=cursor, limit=7, include_matches=False)
+        seqs.extend(item["seq"] for item in page)
+        if cursor is None:
+            break
+        assert len(seqs) <= 70
+    assert seqs == sorted(range(100, 170), reverse=sort == "desc")
+
+
+def test_rank_before_limit_preserves_other_conversation(many_search_turns):
+    from modules.flow_gate.services import content_search_service as svc
+    first, second, marker = many_search_turns
+    for scope in ({}, {"group_id": _GROUP}):
+        page, cursor = svc.search_conversation_turns_page(marker, include_matches=False, **scope)
+        assert [item["doc_id"] for item in page] == [first] * 3 + [second]
+        assert cursor is None
+    assert svc.search_conversation_turns_page(marker, group_id="missing")[0] == []
+    assert svc.search_conversation_turns_page(marker, doc_id=first, allowed_projects=[])[0] == []
+
+
+@pytest.mark.parametrize("sort", ["asc", "desc"])
+def test_cursor_ignores_appended_turns(many_search_turns, sort):
+    from modules.flow_gate.services import content_search_service as svc
+    from modules.flow_gate.db.connection import get_store
+    first, _, marker = many_search_turns
+    page, cursor = svc.search_conversation_turns_page(marker, doc_id=first, sort=sort, limit=50,
+                                                     include_matches=False)
+    _seed_turns(first, [marker], start=170)
+    get_store()._execute("UPDATE conversation_turns SET created_at = ? WHERE doc_id = ? AND seq = 170",
+                        ["2026-11-24T08:00:00+09:00", first])
+    rest, cursor = svc.search_conversation_turns_page(marker, doc_id=first, sort=sort, cursor=cursor,
+                                                     include_matches=False)
+    assert cursor is None
+    assert [i["seq"] for i in page + rest] == sorted(range(100, 170), reverse=sort == "desc")
+
+
+def test_cursor_rejects_changed_conditions_and_malformed_values(many_search_turns):
+    from modules.flow_gate.services import content_search_service as svc
+    first, second, marker = many_search_turns
+    _, cursor = svc.search_conversation_turns_page(marker, doc_id=first, limit=1, include_matches=False)
+    for changed in ({"doc_id": second}, {"sort": "asc"}, {"status": "closed"}, {"q": "other"}):
+        kwargs = dict(q=marker, doc_id=first, cursor=cursor, include_matches=False)
+        kwargs.update(changed)
+        with pytest.raises(ValueError):
+            svc.search_conversation_turns_page(**kwargs)
+    for bad in ("", "%%%", "W10=", "e30=", "x" * 4097):
+        with pytest.raises(ValueError):
+            svc.search_conversation_turns_page(marker, doc_id=first, cursor=bad)
+
+
+def test_scoped_http_cursor_and_validation(many_search_turns, tmp_path):
+    first, second, marker = many_search_turns
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+    url = "/api/v1/search/documents/content"
+    headers = {"Authorization": f"Bearer {raw}"}
+    params = dict(q=marker, doc_id=first, sort="asc", limit=7, include_matches="false")
+    response = client.get(url, params=params, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert [i["seq"] for i in data["items"]] == list(range(100, 107))
+    assert data["next_cursor"] and data["turn_total"] == 7
+    params["cursor"] = data["next_cursor"]
+    response = client.get(url, params=params, headers=headers)
+    assert response.status_code == 200
+    assert [i["seq"] for i in response.json()["items"]] == list(range(107, 114))
+    for bad in ({"sort": "wrong"}, {"doc_id": first, "group_id": _GROUP},
+                {"cursor": "bad"}, {"doc_id": first, "cursor": "bad"},
+                {"doc_id": " "}, {"group_id": " "}):
+        assert client.get(url, params=dict(q=marker, **bad), headers=headers).status_code == 400
+    response = client.get(url, params=dict(q=marker, group_id=_GROUP), headers=headers)
+    assert response.status_code == 200
+    assert {i["doc_id"] for i in response.json()["items"]} == {first, second}
+    assert response.json()["next_cursor"] is None
