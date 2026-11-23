@@ -301,6 +301,13 @@ def issue(
             source_access, claim_deferred = _resolve_chat_source_access(
                 issued_to, project, group_id
             )
+            if ai_run_id:
+                from modules.flow_gate.db import chat_ai_leases
+                if chat_ai_leases.get_by_run_id(ai_run_id) and (source_access != "read" or claim_deferred):
+                    raise HTTPException(status_code=409, detail={
+                        "code": "chat_mode_changed",
+                        "message": "A read-chat run cannot gain write or execute capability; start a new run.",
+                    })
             if source_access == CHAT_EXECUTE:
                 # execute is its own capability, never write access.
                 # Source/document tools keep judging source_access ("read"); only the

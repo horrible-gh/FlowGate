@@ -1,13 +1,13 @@
 <template>
-  <!-- archive and Git reflection, saved immediately. -->
+  <!-- Automatic approval and Git reflection, saved immediately. -->
   <div class="inspector-check-settings" data-test="inspector-check-settings" :data-connected="shown.connected ? 'true' : 'false'">
     <InspectorReadFailure v-if="readFailure" :reason="readFailure" @retry="reload" />
     <template v-else>
-      <InspectorBlock data-test="check-settings-archive">
-        <InspectorControlRow :label="t(k('archive'))" :hint="reasonText">
-          <Toggle :model-value="shown.archive ?? false" :disabled="off" :aria-label="t(k('archive'))" data-test="check-settings-archive-value" @update:model-value="(value: boolean) => onChange('archive', value)" />
-          <InspectorFailureIcon v-if="failureOf('archive')" :name="t(k('failed'))" :reason="failureOf('archive')!" data-field="archive" />
-          <FieldSaveMark :field="'archive'" :state="card.fieldStates.value['archive']" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry('archive')" />
+      <InspectorBlock data-test="check-settings-auto-approve">
+        <InspectorControlRow :label="t(k('auto_approve'))" :hint="reasonText">
+          <Toggle :model-value="shown.autoApprove ?? false" :disabled="off" :aria-label="t(k('auto_approve'))" data-test="check-settings-auto-approve-value" @update:model-value="(value: boolean) => onChange('auto_approve', value)" />
+          <InspectorFailureIcon v-if="failureOf('auto_approve')" :name="t(k('failed'))" :reason="failureOf('auto_approve')!" data-field="auto_approve" />
+          <FieldSaveMark :field="'auto_approve'" :state="card.fieldStates.value['auto_approve']" :saving="t(k('fieldState.saving'))" :saved="t(k('fieldState.saved'))" :retry="t(k('fieldState.retry'))" :disabled="off" @retry="retry('auto_approve')" />
         </InspectorControlRow>
       </InspectorBlock>
 
@@ -18,7 +18,7 @@
         <InspectorControlRow :label="t(k('git.scope'))" :hint="reasonText">
           <InspectorSegment
             class="inspector-check-settings-scope"
-            :model-value="shown.scope"
+            :model-value="shown.scope ?? ''"
             :options="CHECK_SCOPES.map((scope) => ({ value: scope, label: scopeLabel(scope), title: reasonText }))"
             :disabled="off"
             :aria-label="t(k('git.scope'))"
@@ -94,9 +94,9 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import FieldSaveMark from './FieldSaveMark.vue'
 import InspectorBlock from '../../parts/InspectorBlock.vue'
 import InspectorControlRow from '../../parts/InspectorControlRow.vue'
+import InspectorSegment from '../../parts/InspectorSegment.vue'
 import InspectorFailureIcon from '../../parts/InspectorFailureIcon.vue'
 import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
-import InspectorSegment from '../../parts/InspectorSegment.vue'
 import {
   CHECK_SCOPES,
   checkSettingsErrorKey,

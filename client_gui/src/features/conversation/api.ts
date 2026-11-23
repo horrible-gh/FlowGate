@@ -50,6 +50,7 @@ import type {
   ConversationScope,
   ConversationTurn,
   ProviderList,
+  TurnAttachmentLink,
   TurnImage,
   RunFileDiff,
   RunFileDiffSide,
@@ -510,9 +511,13 @@ interface RawTurn {
   body?: string | null
   based_on_seq?: number | null
   stale_since_seq?: number | null
+  /** 0067 #2: an AI answer of a read chat that started while a card of the Flow ran (server `chat_run_observations`). */
+  observed_during_card_run?: boolean | null
   created_at?: string | null
   images?: RawTurnImage[] | null
   audio?: unknown
+  /** v02test.0074: the state of the body's fg-attachment links (server `conversation_attachment_links.statuses`). */
+  attachment_links?: unknown
 }
 
 export interface RawTurnImage {
@@ -549,9 +554,45 @@ export function toTurnImages(raw: readonly RawTurnImage[] | null | undefined): T
     : [])
 }
 
+/**
+ * v02test.0074: the linked files of a turn. Undefined when the server sent no list at all (the chips then draw without a
+ * state); an entry without a key or with a state this screen does not know is left out.
+ */
+export function toTurnAttachmentLinks(raw: unknown): TurnAttachmentLink[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw.flatMap((entry) => {
+    const link = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : null
+    const status = link?.status
+    if (!link || typeof link.key !== 'string' || !link.key) return []
+    if (status !== 'available' && status !== 'replaced' && status !== 'deleted') return []
+    const replacementKey = typeof link.replacement_key === 'string' && link.replacement_key ? link.replacement_key : null
+    // A replaced link without the new key cannot be downloaded: it is shown as deleted rather than guessed.
+    return [{
+      key: link.key,
+      status: status === 'replaced' && !replacementKey ? 'deleted' as const : status,
+      name: typeof link.name === 'string' && link.name ? link.name : null,
+      size: typeof link.size === 'number' && Number.isFinite(link.size) && link.size >= 0 ? link.size : null,
+      replacementKey: status === 'replaced' ? replacementKey : null,
+    }]
+  })
+}
+
+const flowAttachments = (flowId: string) => `/api/v1/flows/${encodeURIComponent(flowId)}/attachments`
+
+/** v02test.0074: one Flow attachment's bytes (the attachment window's own download address, the signed-in user's rights). */
+export async function fetchFlowAttachment(flowId: string, key: string): Promise<Blob> {
+  return (await downloadBlobRequest(`${flowAttachments(flowId)}/${encodeURIComponent(key)}`)).data
+}
+
+/** v02test.0074: several Flow attachments as one ZIP (the attachment window's own ZIP address). */
+export async function fetchFlowAttachmentsZip(flowId: string, keys: readonly string[]): Promise<Blob> {
+  return (await postRequest<Blob>(`${flowAttachments(flowId)}-zip`, { keys: [...keys] }, { responseType: 'blob' })).data
+}
+
 export function toTurn(raw: RawTurn): ConversationTurn {
   const images = toTurnImages(raw.images)
   const audio = toTurnAudio(raw.audio)
+  const attachmentLinks = raw.deleted_at ? undefined : toTurnAttachmentLinks(raw.attachment_links)
   return {
     seq: Number(raw.seq) || 0,
     messageVersion: raw.message_version ?? 1,
@@ -565,6 +606,8 @@ export function toTurn(raw: RawTurn): ConversationTurn {
     sourceRunId: textOrNull(raw.source_run_id),
     basedOnSeq: raw.based_on_seq ?? null,
     staleSinceSeq: raw.stale_since_seq ?? null,
+    ...(raw.observed_during_card_run === true ? { observedDuringCardRun: true } : {}),
+    ...(attachmentLinks ? { attachmentLinks } : {}),
     createdAt: raw.created_at ?? null,
   }
 }
@@ -842,6 +885,17 @@ export async function fetchActiveChatRun(chatId: string): Promise<string | null>
   )
   if (!data?.active || !data.run_id || data.doc_ref !== chatId || data.status === 'finished') return null
   return data.run_id
+}
+
+/**
+ * flowgate.v02test.0067 #2: GET /api/v1/flows/{flow_id}/runs/current — only the status of the Flow's Graph run
+ * (`running` / `paused` / `stopping` / `idle` …), or null when the Flow has no run. The Flow id is the chat's group id
+ * (the server's 409 `graph_run_locked` names it as `flow_id`). A refused or failed read rejects (the caller waits on).
+ */
+export async function fetchFlowRunStatus(flowId: string): Promise<string | null> {
+  const data = await call(() => getRequest<{ run?: { status?: unknown } | null }>(`${API}/flows/${encodeURIComponent(flowId)}/runs/current`))
+  const status = data?.run?.status
+  return typeof status === 'string' && status ? status : null
 }
 
 // ── Chat settings ────────────────────────────────────────────────────────────────────

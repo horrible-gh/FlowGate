@@ -301,13 +301,13 @@ def command_fence(flow_id):
         yield True
 
 
-def _reopen_refusal(ctx, row, attempt_id):
+def _reopen_refusal(ctx, row, attempt_id, *, automatic=False):
     """Why the node's attempt is not replaced now (judged again inside the command's guard, T §4.5), or None."""
     from modules.flow_gate.graph_workflow.services import card_settings_ports, node_dispatch, result_binder, run_apply
     key = row["node_key"]
     if not fencing.exclusive_held(ctx.flow_id):
         return "not_fenced"                                    # the command's entry did not fence: the next one does
-    if node_dispatch.redispatch_kind(ctx, row) != node_dispatch.REOPEN:
+    if not automatic and node_dispatch.redispatch_kind(ctx, row) != node_dispatch.REOPEN:
         return "assignment"                                    # the current stage assignment (held nodes: NONE)
     if key in frozenset(hold.held(ctx.flow_id) or ()):
         return "held"
@@ -326,7 +326,7 @@ def _reopen_refusal(ctx, row, attempt_id):
     return None
 
 
-def reopen_attempt(ctx, row):
+def reopen_attempt(ctx, row, *, automatic=False):
     """(L-2 ``REOPEN_NEW_ATTEMPT``), inside the explicit command's Flow guard, entered under
     the Flow's exclusive Stop gate (``command_fence``): the node's attempt (an assigned one waiting for a setting, an
     unavailable AI, or failed) is invalidated with its tokens, the node reset and opened again as a new attempt, then
@@ -344,7 +344,7 @@ def reopen_attempt(ctx, row):
     attempt_id = run_store.active_attempt_id(ctx.run_id, row["node_key"])
     if not attempt_id:
         return None
-    why = _reopen_refusal(ctx, current, attempt_id)
+    why = _reopen_refusal(ctx, current, attempt_id, automatic=automatic)
     if why is not None:
         log.info("attempt not replaced run=%s node=%s: %s", ctx.run_id, row["node_key"], why)
         return None
@@ -352,7 +352,8 @@ def reopen_attempt(ctx, row):
     # are revoked (a person's write permission of the old assignment), its documents stay the card's
     # (``run_store.REINTERPRET_REASON``)
     verdict = card_settings_ports.stage_needs_dispatch(ctx, current)
-    reason = run_store.REINTERPRET_REASON if verdict == "reinterpret_wait" else "stage_reopen"
+    reason = ("answer_new_attempt" if automatic else
+              run_store.REINTERPRET_REASON if verdict == "reinterpret_wait" else "stage_reopen")
     if not stop.invalidate_attempt(attempt_id, reason):
         return None
     current = next((r for r in run_store.node_runs(ctx.run_id) if r["node_key"] == row["node_key"]), current)
@@ -1197,6 +1198,7 @@ _ACTIONS = {
     "time_machine_refusal": lambda flow_id: _time_machine().require_no_operation(flow_id),
     # a chat's edit / edit-once source access while the Flow's run is locked (``token_service.issue``).
     "chat_source_refusal": editing.chat_source_refusal,
+    "chat_read_observation": editing.chat_read_observation,
     # a card whose run state changed is put back into the Flow's draft when a save left it out.
     "node_state_changed": lambda ctx, node_key, to_status: _draft_restore().on_node_state(ctx, node_key, to_status),
 }

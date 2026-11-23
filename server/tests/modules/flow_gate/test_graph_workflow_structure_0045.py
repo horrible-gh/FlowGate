@@ -41,6 +41,8 @@ ALLOWED_OUTSIDE = {
         "modules.flow_gate.services.ai_start_precheck",
         # T-B4d: the card title port (inbox candidate) and the mention's title request wording.
         "modules.flow_gate.services.node_title_hooks",
+        # card display ids: the draft save numbers new cards, the Canvas read carries their ids.
+        "modules.flow_gate.services.card_numbers",
     ),
     "projection": (
         "modules.flow_gate.db.documents", "modules.flow_gate.db.groups", "modules.flow_gate.db.workflow_sequences",

@@ -30,11 +30,12 @@ from .constants import (
     ATTACH_MAX_REQUEST_BYTES,
     ATTACH_MAX_TARGET_PATH_CHARS,
     ATTACH_MAX_UPLOAD_BYTES,
-    ATTACH_READ_MAX_BYTES,
     ATTACH_STREAM_CHUNK_BYTES,
     ATTACH_TEXT_SNIFF_BYTES,
     WINDOWS_RESERVED_NAMES,
 )
+from modules.flow_gate.settings import attach_read_limit as _attach_read_limit
+
 from .errors import AttachmentError, unexpected
 from .locator import (
     project_branch,
@@ -613,14 +614,17 @@ def read_attachment(doc_id: str, name: str, mode: str = "auto", encoding: str = 
     filename = row.get("filename") or name
 
     # R4 — before R5, so an oversized file is never loaded. '>' so the exact limit passes.
+    # The ceiling is the system setting attach_read_max_mb (System > General, default 1 MB),
+    # read per call so a change on the screen applies without a restart.
+    limit = _attach_read_limit.get_max_bytes()
     size = path.stat().st_size
-    if size > ATTACH_READ_MAX_BYTES:
+    if size > limit:
         raise AttachmentError(
             413, "READ_TOO_LARGE", "Attachment exceeds the read size limit.",
-            filename=filename, size=size, limit_bytes=ATTACH_READ_MAX_BYTES,
+            filename=filename, size=size, limit_bytes=limit,
         )
 
-    data = path.read_bytes()                    # R5 — 1 MiB or less, guaranteed
+    data = path.read_bytes()                    # R5 — at most the ceiling, guaranteed
     meta = _attachment_object(row)
 
     def _binary() -> dict:                      # R6

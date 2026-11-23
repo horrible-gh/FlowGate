@@ -49,7 +49,7 @@ import { cardDocumentButtons, type CardDocumentButton } from './cardDocumentButt
 import { gateApprovalView } from '../../inspector/features/gateCard/useGateApproval'
 import { gateHeaderState, type GateHeaderState } from './gateHeaderState'
 import { cardNodeRun, cardStateView, type CardStateView } from '../graph/cardStateView'
-import { progressedEdgeIds, waitingEdgeIds } from '../graph/edgeProgress'
+import { progressedEdgeIds } from '../graph/edgeProgress'
 import { lineWarns, type FlowGraph } from '../graph/flowGraph'
 import { NO_RUN_MARKS, isEdgeProtected, type FlowRunMarks } from '../run/flowRunLock'
 
@@ -103,6 +103,12 @@ export interface FlowGateNodeData {
   questionWait?: readonly { seq: number; state: string; code: string | null; message: string | null }[]
   bodyUnreadable?: boolean
   /**
+   * flowgate.v02test.0077: the card number in its Flow (`#3`, after the kind name) and its short id (`F74-3`, the hover
+   * text); absent while the card has no number.
+   */
+  cardLocal?: string
+  cardShort?: string
+  /**
    * v02gui.0015 T2: the earlier attempts of the card whose uncommitted changes its attempt did not take
    * (kept, never carried over automatically) — the `미인계` chip; absent when none.
    */
@@ -125,8 +131,6 @@ export type FlowGateVueFlowNode = Node<FlowGateNodeData> & { selected?: boolean 
 
 /** the meaning class of an Edge, drawn as a solid or a dashed line. */
 export interface FlowGateEdgeData {
-  /** Completed input waiting for another known input; visual only. */
-  waiting?: boolean
   edgeClass: string | null
   /** S3: an execution edge of an editable draft (it can be removed). */
   editable?: boolean
@@ -170,6 +174,10 @@ export function toVueFlowNodes(
     data.documents = cardDocumentButtons(node)
     if (node.cardDocuments?.some(lineWarns)) data.bodyUnreadable = true
     if (node.docType) data.docType = node.docType
+    if (node.cardRef) {
+      data.cardLocal = node.cardRef.local
+      data.cardShort = node.cardRef.short
+    }
     if (connectable) data.connectable = true
     if (issues.has(node.id)) {
       data.issue = true
@@ -249,7 +257,6 @@ export function toVueFlowEdges(
 ): Edge[] {
   const nodeIds = new Set(graph.nodes.map((node) => node.id))
   const progressed = progressedEdgeIds(graph)
-  const waiting = waitingEdgeIds(graph)
   const edges: Edge[] = []
   for (const edge of graph.edges) {
     if (edge.edgeClass === 'reference') continue
@@ -264,7 +271,6 @@ export function toVueFlowEdges(
       progressed: isProgressed,
       deletable: edge.editable === true && !isProgressed && !isProtected && marks.lock === null,
     }
-    if (waiting.has(edge.id)) data.waiting = true
     if (isProtected) data.protected = true
     if (edge.edgeClass === 'execution' && marks.activeNodeIds.has(edge.target)) data.running = true
     if (edge.editable === true) data.editable = true

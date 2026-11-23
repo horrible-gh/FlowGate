@@ -57,6 +57,8 @@ export interface GroupTreeNode {
   title: string | null
   /** v0.1 group number (e.g. "0023"), when the node carries one. */
   number: string | null
+  /** flowgate.v02test.0077: a group (v0.2 Flow) node's display number (`"F77"`), when the server sent it. Not stored. */
+  flowLabel?: string | null
 }
 
 export interface FetchGroupTreeOptions {
@@ -257,6 +259,26 @@ export interface FlowAiActivity {
   runId: string | null
   status: string | null
   actionScope: string | null
+  /**
+   * flowgate.v02test.0066 (#36-1): a running conflict resolver's progress — session files with no conflict marker left
+   * over all session files, counted by the server. Only asked with `conflictProgress: true`; null / absent = not known.
+   */
+  conflictProgress?: { done: number; total: number } | null
+}
+
+/**
+ * flowgate.v02test.0068: a Flow's latest durable Git run (GET /groups/{gid}/git/execution), only what the Designer's
+ * Flow tab shows of it. The Git part reads the whole run through its own api.ts.
+ */
+export interface FlowGitExecution {
+  jobId: string
+  status: 'running' | 'stopped' | 'remaining' | 'complete'
+  steps: ('commit' | 'update' | 'merge' | 'push')[]
+  cursor: number
+  /** the server's code of a stop (null otherwise). */
+  error: string | null
+  /** a 받아오기 passed over without stopping the run, with the server's code. */
+  skipped: { update?: string }
 }
 
 /**
@@ -490,6 +512,12 @@ export interface FlowCanvasNode {
    * compared.
    */
   titleState?: FlowCanvasTitleState | null
+  /**
+   * flowgate.v02test.0077: the card's display ids (`card_ref`: `#12`, `F77-12`, `flowgate.v02test.F77-12`). null while
+   * the card has no number yet; absent when an older server sent none. A screen name and lookup alias only — the node
+   * key, document ids and group id stay the stored keys.
+   */
+  cardRef?: FlowCardRef | null
 }
 
 /**
@@ -597,6 +625,20 @@ export interface FlowCanvasGraphNode {
  * a Graph node's own card title state — the title a person (or later the AI)
  * gave it, read with its `version` in one transaction. `version` 0 = no state yet (title null); it only grows.
  */
+/** flowgate.v02test.0077: a card's display ids as the server sends them (`card_ref`). */
+export interface FlowCardRef {
+  /** The card number within its Flow (1, 2, …; never reused). */
+  cardNo: number
+  /** Within the same Flow: `#12`. */
+  local: string
+  /** Another Flow of the same module: `F77-12`. */
+  short: string
+  /** Another module: `v02test.F77-12` (null when not sent). */
+  moduleRef: string | null
+  /** The full id (ID 복사, search, links): `flowgate.v02test.F77-12`. */
+  full: string
+}
+
 export interface FlowCanvasTitleState {
   title: string | null
   /** `human` | `ai` | null (open key). */

@@ -110,6 +110,20 @@ describe('FlowNodeCard — the title is shown only (0070 T#1)', () => {
     expect(find(w, 'title-edit').exists()).toBe(false)
   })
 
+  it.each(['ko', 'en', 'ja'] as const)('hides defaults from every language while switching the screen from %s', async (createdLocale) => {
+    const title = i18n.global.t('gui.designer.center.node_kinds.task', {}, { locale: createdLocale })
+    const w = mountCard({ ...data, title: ` ${title} ` })
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      i18n.global.locale.value = locale
+      await flushPromises()
+      expect(find(w, 'title').exists()).toBe(false)
+      await w.setProps({ data: { ...data, title: '사용자 제목' } })
+      expect(find(w, 'title').text()).toBe('사용자 제목')
+      await w.setProps({ data: { ...data, title: ` ${title} ` } })
+    }
+    i18n.global.locale.value = 'ko'
+  })
+
   // flowgate.v02test.0044: [승인] is the footer's icon button (a confirm card waiting for it); the integration is a head-row icon.
   it('[승인] and the integration mark are still shown', () => {
     const gateState = { key: 'waiting_confirm', labelKey: 'gui.designer.center.card_states.waiting_confirm', tone: 'warning', reason: null }
@@ -391,7 +405,7 @@ describe('InspectorHeader — the card title edit (0070 T#1)', () => {
     expect(input(w).value).toBe('작업')
   })
 
-  it('not editable — the target says no, or no host saver — shows the title only (no entry, no input)', async () => {
+  it('not editable — custom titles stay text and default titles keep a disabled entry', async () => {
     for (const [target, saver] of [[targetOf(card('n_a'), null), vi.fn()], [targetOf(card('n_a')), null]] as const) {
       const w = mountHeader(target, saver)
       const title = get(w, 'title')
@@ -402,10 +416,46 @@ describe('InspectorHeader — the card title edit (0070 T#1)', () => {
       w.unmount()
       wrapper = null
       const repeated = mountHeader(targetOf(card('n_a', '작업'), target.canEditTitle ? OPEN : null), saver)
-      expect(find(repeated, 'title-edit').exists()).toBe(false)
+      expect(get(repeated, 'title-edit').attributes('disabled')).toBeDefined()
+      expect(get(repeated, 'title-edit').attributes('title')).toBe(i18n.global.t('gui.designer.inspector.header.read_only'))
       repeated.unmount()
       wrapper = null
     }
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)('keeps default title editing and running locks consistent for %s titles', async (createdLocale) => {
+    const title = i18n.global.t('gui.designer.center.node_kinds.task', {}, { locale: createdLocale })
+    const save = vi.fn()
+    const w = mountHeader(targetOf(card('n_a', title)), save)
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      i18n.global.locale.value = locale
+      await w.setProps({ target: targetOf(card('n_a', title)) })
+      await flushPromises()
+      expect(find(w, 'title').exists()).toBe(false)
+      expect(get(w, 'title-edit').attributes('disabled')).toBeUndefined()
+      await get(w, 'title-edit').trigger('click')
+      await flushPromises()
+      expect(input(w).value).toBe(title)
+      await w.setProps({ target: targetOf(card('n_a', title), RUNNING) })
+      expect(find(w, 'title-input').exists()).toBe(false)
+      expect(get(w, 'title-edit').attributes('disabled')).toBeDefined()
+      expect(get(w, 'title-edit').attributes('title')).toBe(i18n.global.t('gui.designer.nodeTitle.locked'))
+      await get(w, 'title-edit').trigger('click')
+      expect(find(w, 'title-input').exists()).toBe(false)
+      await w.setProps({ target: targetOf(card('n_a', '사용자 제목'), RUNNING) })
+      expect(get(w, 'title').text()).toBe('사용자 제목')
+      expect(find(w, 'title-edit').exists()).toBe(false)
+      await get(w, 'title').trigger('click')
+      expect(find(w, 'title-input').exists()).toBe(false)
+    }
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('preserves the gate title even when it equals a default kind label', () => {
+    const target = { ...targetOf(card('n_gate', '작업')), nodeType: 'gate' }
+    const w = mountHeader(target)
+    expect(get(w, 'title').text()).toBe('작업')
+    expect(find(w, 'title-edit').exists()).toBe(false)
   })
 
   it('another card selected while a save is answered: the edit closes; the late answer (or refusal) never reaches the new card', async () => {

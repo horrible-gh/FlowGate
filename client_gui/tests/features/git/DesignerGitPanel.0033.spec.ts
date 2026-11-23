@@ -1,3 +1,4 @@
+import checkMessages from '@/features/designer/inspector/features/checkSettings/messages'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'
@@ -8,6 +9,7 @@ import { G, P, conflicts, createFakeGitSource, gitError, resolvingRun, review, r
 // DesignerGitPanel mounted with an in-memory source: cards per state,
 // the public events / expose (0033-D §5.1) and the two modeless windows (§6.2, §6.3).
 registerAppMessages(i18n)
+for (const [locale, messages] of Object.entries(checkMessages)) i18n.global.mergeLocaleMessage(locale, { gui: { inspector: { checkSettings: messages } } })
 
 let wrapper: VueWrapper | null = null
 
@@ -55,14 +57,14 @@ describe('DesignerGitPanel — header and nothing to do', () => {
   it('shows work branch / Base and no card; badge stays null', async () => {
     const w = await mountPanel(createFakeGitSource())
     expect(text('git-work-branch')).toBe('flowgate_v02_0008')
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
     expect(q('git-exceptions')).toBeNull()
     expect(w.emitted('badge-change')).toBeUndefined()
   })
 
   it('an unknown Flow base reads —; Git off reads Git 미사용', async () => {
     await mountPanel(createFakeGitSource({ status: status({ baseBranch: null, enabled: false }) }))
-    expect(text('git-base-branch')).toBe('플로우 베이스 · —')
+    expect(text('git-base-branch')).toBe('flow/0001 ← —')
     expect(text('git-header-line')).toBe('Git 미사용')
   })
 
@@ -88,7 +90,7 @@ describe('DesignerGitPanel — cards', () => {
   it('conflict card: count, three files, more, buttons; badge !', async () => {
     const w = await mountPanel(createFakeGitSource({ status: status({ pending: [row()] }) }))
     // the title says where the apply stopped; the count splits open / resolved.
-    expect(text('git-conflict-card')).toContain('충돌 · main 반영 중단')
+    expect(text('git-conflict-card')).toContain('main 반영 멈춤 · 충돌 해결 필요')
     // flowgate.v02test.0052 0008 task 7: counted from the server's record — "해결 N · 남음 M"
     expect(text('git-conflict-count')).toBe('해결 0 · 남음 5 (서버 기록 기준)')
     expect(qa('[data-test="git-conflict-card"] .gx-file')).toHaveLength(3)

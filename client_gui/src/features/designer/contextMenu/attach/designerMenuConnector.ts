@@ -41,6 +41,7 @@ import { useI18n } from 'vue-i18n'
 import type { DesignerCenterSession } from '../../center/designerCenterSession'
 import type { FlowGraph } from '../../center/graph/flowGraph'
 import { isEdgeProgressed } from '../../center/graph/edgeProgress'
+import { cardCopyId } from '../../center/graph/cardIds'
 import { isEdgeProtected } from '../../center/run/flowRunLock'
 import type { FlowCardMenuItem, FlowCardMenuKey } from '../../center/run/flowCardMenu'
 import {
@@ -170,7 +171,10 @@ export interface DesignerContextMenuDeps {
   readonly selectAll: (flowId: string) => void
   /** File › New Group (the top menu's dialog and create path). */
   readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
-  /** flowgate.v02gui.0003: the card menu's ID 복사 — copies the card's document id (absent: the item is not shown). */
+  /**
+   * flowgate.v02gui.0003: the card menu's ID 복사 (absent: the item is not shown). flowgate.v02test.0077: it is handed the
+   * card's full display id (`flowgate.v02test.F77-12`), or its document id while the card has no number.
+   */
   readonly copyDocumentId?: (docId: string) => void
   readonly projectGitEnabled?: (projectId: string) => boolean | undefined
   readonly archive?: {
@@ -431,7 +435,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
           editable,
           structureEditable: node.structureEditable === true && !marks.protectedNodeIds.has(node.id),
           definitionExists: !!node.definition,
-          hasDocument: !!node.document?.docId,
+          hasCardId: cardCopyId(node.cardRef, node.document?.docId) !== null,
         },
         connected: CANVAS_CONNECTED,
         runItems: target.kind === 'node' ? runItems(entry.flowId, node.id) : [],
@@ -477,9 +481,11 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       } else if (request.command === 'edge.disconnect' && scope.kind === 'edge') {
         center.removeEdge(scope.flowId, scope.edgeId)
       } else if (request.command === 'node.copyId' && scope.kind === 'node') {
-        // flowgate.v02gui.0003: the id the Inspector's ID 복사 copies (the card's document), read from the graph of now.
-        const docId = canvasState(scope.flowId)?.graph.nodes.find((candidate) => candidate.id === scope.nodeId)?.document?.docId
-        if (docId) deps.copyDocumentId?.(docId)
+        // flowgate.v02gui.0003: the id the Inspector's ID 복사 copies, read from the graph of now — flowgate.v02test.0077:
+        // the card's full display id, its document id only while it has no number.
+        const copied = canvasState(scope.flowId)?.graph.nodes.find((candidate) => candidate.id === scope.nodeId)
+        const id = copied ? cardCopyId(copied.cardRef, copied.document?.docId) : null
+        if (id) deps.copyDocumentId?.(id)
       } else if (request.command in RUN_KEYS && scope.kind === 'node') {
         center.chooseCardMenu(scope.flowId, scope.nodeId, RUN_KEYS[request.command as CardRunCommand])
       }

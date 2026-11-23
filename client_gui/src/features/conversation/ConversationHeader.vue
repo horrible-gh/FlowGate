@@ -30,6 +30,13 @@
       @keydown.esc.prevent="revertTitle"
       @blur="commitTitle"
     />
+    <!-- flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart (either, both or none). -->
+    <span v-if="flowRunning" class="conv-head-st conv-head-st--flow" data-test="conv-flow-running" role="status">
+      <span class="conv-head-dot" aria-hidden="true" />{{ t('gui.conversation.header.flow_running') }}
+    </span>
+    <span v-if="chatRunning" class="conv-head-st conv-head-st--chat" data-test="conv-chat-running" role="status">
+      <span class="conv-head-dot" aria-hidden="true" />{{ t('gui.conversation.header.chat_running') }}
+    </span>
     <button
       type="button"
       class="conv-head-btn conv-head-btn--new"
@@ -43,7 +50,8 @@
     </button>
 
     <div v-if="listOpen" class="conv-list-pop" data-test="conv-list-pop" role="listbox" :aria-label="t('gui.conversation.header.list')">
-      <p v-if="chatsStatus === 'loading'" class="conv-list-state">{{ t(reconnecting ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading') }}</p>
+      <!-- 0060: a failed list while the app is reconnecting (the App Shell banner) says so; it reads again by itself. -->
+      <p v-if="chatsStatus === 'loading' || (chatsStatus === 'error' && reconnecting)" class="conv-list-state">{{ t(reconnecting ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading') }}</p>
       <p v-else-if="chatsStatus === 'error'" class="conv-list-state conv-list-state--error">
         {{ t('gui.conversation.header.list_failed') }}
         <button type="button" class="conv-list-retry" @click="emit('reload')">{{ t('gui.conversation.retry') }}</button>
@@ -88,6 +96,10 @@ const props = defineProps<{
   draft?: boolean
   /** The title shown: the open chat's, or the draft's. */
   title: string
+  /** flowgate.v02test.0067 #2: the Flow's Graph run is running / paused / stopping («플로우 실행 중»). */
+  flowRunning?: boolean
+  /** flowgate.v02test.0067 #2: the open chat's AI call is starting or running («채팅 호출 중»). */
+  chatRunning?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -174,6 +186,31 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.conv-head-st {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.conv-head-st--flow {
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+}
+.conv-head-st--chat {
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+}
+.conv-head-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .conv-head {
   position: relative;
   flex: 0 0 auto;

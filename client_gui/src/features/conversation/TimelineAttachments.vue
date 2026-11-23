@@ -5,7 +5,7 @@
        request row component; deciding is open in reading and editing mode alike. -->
   <section class="tl-ar" data-test="tl-attachments" :data-run="activity.runId ?? ''">
     <div class="tl-ar-head">
-      <span aria-hidden="true">📎</span>
+      <LineIcon name="paperclip" class="tl-ar-icon" />
       <span>{{ t('gui.attachment_request.title') }}</span>
       <span v-if="pendingCount" class="tl-ar-pending" data-test="tl-attachments-pending">
         {{ t('gui.attachment_request.pending_n', { n: pendingCount }) }}
@@ -48,6 +48,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch, type Component, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import LineIcon from '../../components/ui/LineIcon.vue'
 import {
   ATTACHMENT_REQUEST_BULK,
   ATTACHMENT_REQUEST_REFRESH,
@@ -134,6 +135,11 @@ function onBulkDecided(summary: { results?: readonly { id: string; request: Conv
   align-items: center;
   font-size: 13px;
   font-weight: 600;
+}
+/* v02test.0074 0011-T: the paperclip line icon (was the 📎 emoji), the size of the chat input's attachments button icon. */
+.tl-ar-icon {
+  width: 14px;
+  height: 14px;
 }
 .tl-ar-pending {
   margin-left: auto;

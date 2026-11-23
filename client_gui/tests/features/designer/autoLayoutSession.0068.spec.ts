@@ -25,7 +25,7 @@ type Answer = 'ok' | 'offline' | 'forbidden' | 'stored-offline' | 'ignore-first'
 const BRANCH: Array<[string, boolean]> = [['R', true], ['NA', false], ['NB', false], ['TA', false], ['TB', false], ['Z', false], ['P', false]]
 const BRANCH_EDGES: Array<[string, string]> = [['R', 'NA'], ['R', 'NB'], ['NA', 'TA'], ['NB', 'TB'], ['TA', 'Z'], ['TB', 'Z']]
 // flowgate.v02test.0063: an unmeasured card is 176 x 108 (lane 108 + 48 = 156; a stage 108 + 84 = 192 where no line asks for more).
-const LAID_H = { R: [0, 0], NA: [260, 0], NB: [260, 156], TA: [520, 0], TB: [520, 156], Z: [780, 0], P: [0, 372] }
+const LAID_H = { R: [0, 78], NA: [260, 0], NB: [260, 156], TA: [520, 0], TB: [520, 156], Z: [780, 78], P: [0, 372] }
 const LAID_V = { R: [0, 0], NA: [0, 228], NB: [224, 228], TA: [0, 420], TB: [224, 420], Z: [0, 648], P: [508, 0] }
 
 function node(id: string, root: boolean, [x, y]: [number, number]): FlowGraphNode {
@@ -165,8 +165,8 @@ describe('0004-D §7 B in the session (flowgate.v02.0068 T#2)', () => {
     s.center.recordNodeSizes('f1', { NA: { width: 176, height: 300 } })
     expect(s.center.activeNodeSizes.value).toEqual({ NA: { width: 176, height: 300 } })
     expect(s.center.autoLayout('f1', 'horizontal')).toBe(true)
-    // NA's lane is 300 high: NB moves down to 348, and stage 1 moves right to 352 so R -> NB still faces right.
-    expect(s.positions()).toMatchObject({ R: [0, 0], NA: [352, 0], NB: [352, 348], TA: [612, 0], TB: [612, 348], Z: [964, 0], P: [0, 564] })
+    // The tall card widens the lane; the fork and join center on their neighbours.
+    expect(s.positions()).toMatchObject({ R: [0, 222], NA: [260, 0], NB: [260, 348], TA: [520, 0], TB: [520, 348], Z: [780, 174], P: [0, 564] })
     expect(s.sides({ NA: { width: 176, height: 300 } }).every((x) => x === 'right')).toBe(true)
   })
 })

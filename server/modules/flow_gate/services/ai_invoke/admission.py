@@ -35,6 +35,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_document_reviews
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
+from modules.flow_gate.db import chat_ai_leases as db_chat_ai_leases
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import user_chat_source_access as db_source_access
 from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -836,6 +837,9 @@ def startup_recover_leases() -> int:
         victims = db_group_ai_leases.reclaim_orphaned(
             before, keep_run_ids=held,
             owns_run_id=lambda run_id: not ai_run_identity.foreign_run_id(run_id))
+        victims += db_chat_ai_leases.reclaim_orphaned(
+            before, keep_run_ids=held,
+            owns_run_id=lambda run_id: not ai_run_identity.foreign_run_id(run_id))
     for row in victims:
         _recover_orphan_group_lease_row(row)
     if victims:
@@ -1624,10 +1628,17 @@ def start_run(
     # release, handoff, update_token) already no-ops on a missing row.
     # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
     project_scoped = _is_project_scoped_run(action_scope, merge_id)
+    read_chat = False
+    if action_scope == "chat" and not graph_exec_id:
+        source_access, deferred = token_service._resolve_chat_source_access(issued_to, project_id, group_id)
+        read_chat = source_access == "read" and not deferred
+        if not read_chat:
+            graph_execution_hooks.call("chat_source_refusal", group_id, continuation_locale)
     if not project_scoped:
         _refuse_frozen_group(group_id)
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
-    active = None if project_scoped else db_group_ai_leases.get_active(group_id)
+    active = (db_chat_ai_leases.get_active(doc_ref) if read_chat else
+              None if project_scoped else db_group_ai_leases.get_active(group_id))
     handoff_allowed = bool(
         active
         and not graph_exec_id
@@ -1636,6 +1647,9 @@ def start_run(
         and active.get("chain_id") == chain_id
     )
     if active is not None and not handoff_allowed:
+        if read_chat:
+            raise _http_error(409, "run_in_progress", "A read chat is already running for this conversation.",
+                              run_id=active["run_id"], doc_ref=doc_ref, lease_scope="conversation")
         _record_lease_admission_rejected(
             group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
             chain_id=chain_id, issued_to=issued_to,
@@ -1669,20 +1683,22 @@ def start_run(
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
     # fallback-branch hint; the guard itself is about the group worktree.
-    graph_source_root = _svc()._require_group_worktree(
-        project_id, module, group_id,
-        (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
-        locale=template_provision.normalize_locale(continuation_locale),
-        action_scope=action_scope,
-        **({"graph_exec_id": graph_exec_id} if graph_exec_id else {}),
-        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
-    )
+    graph_source_root = None
+    if not read_chat:
+        graph_source_root = _svc()._require_group_worktree(
+            project_id, module, group_id,
+            (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
+            locale=template_provision.normalize_locale(continuation_locale),
+            action_scope=action_scope,
+            **({"graph_exec_id": graph_exec_id} if graph_exec_id else {}),
+            **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
+        )
     # force the group worktree to the current
     # configured base HEAD exactly once, before the group's FIRST raw
     # source-capable (read/read_write) AI invocation ever uses it. Placed here
     # — after the worktree is confirmed to exist, before any token/lease is
     # minted — so a sync failure blocks the run with nothing yet to unwind.
-    if not graph_exec_id:
+    if not graph_exec_id and not read_chat:
         _svc()._ensure_initial_source_sync(
             project_id, module, group_id, action_scope, doc_ref,
             locale=continuation_locale,
@@ -1750,9 +1766,14 @@ def start_run(
         claim_identity()
     lease_chain_id = chain_id or run_id
     lease = None
+    def acquire_lease(**kwargs):
+        if read_chat:
+            return db_chat_ai_leases.acquire(doc_id=doc_ref, **kwargs)
+        return graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire, **kwargs)
+
     if not project_scoped and not graph_exec_id:
         try:
-            lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
+            lease = acquire_lease(
                 group_id=group_id,
                 project_id=project_id,
                 run_id=run_id,
@@ -1771,7 +1792,7 @@ def start_run(
             claim_identity()
             lease_chain_id = chain_id or run_id
             try:
-                lease = graph_execution_hooks.call("legacy_acquire", db_group_ai_leases.acquire,
+                lease = acquire_lease(
                     group_id=group_id,
                     project_id=project_id,
                     run_id=run_id,
@@ -1791,7 +1812,11 @@ def start_run(
             # (and null out) the very blocker lease in the window between acquire()'s
             # failure and this line. Only fall back to a fresh lookup for the pathological
             # case where acquire() had no row to snapshot at all.
-            active = lease if lease is not None else (db_group_ai_leases.get_active(group_id) or {})
+            active = lease if lease is not None else (
+                (db_chat_ai_leases.get_active(doc_ref) if read_chat else db_group_ai_leases.get_active(group_id)) or {})
+            if read_chat:
+                raise _http_error(409, "run_in_progress", "A read chat is already running for this conversation.",
+                                  run_id=active.get("run_id"), doc_ref=doc_ref, lease_scope="conversation")
             _record_lease_admission_rejected(
                 group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
                 chain_id=lease_chain_id, issued_to=issued_to,
@@ -1942,6 +1967,18 @@ def start_run(
                     prompt_chars=_mention_chars, limit_chars=CONFLICT_MENTION_MAX_CHARS,
                 )
 
+        if isinstance(issue, dict) and issue.get("token_id"):
+            admission_identity.get()["token_id"] = issue["token_id"]
+        if read_chat:
+            # Settings may change while admission is in progress. Never let that
+            # widen the authority of a run admitted without the group mutation lease.
+            if issue.get("source_access") != "read" or issue.get("command_access") or issue.get("one_shot_claimed"):
+                token_service.revoke(issue["token_id"], reason="chat_mode_changed_during_admission")
+                raise _http_error(409, "chat_mode_changed", "Chat mode changed; retry admission.")
+            card_running = bool(graph_execution_hooks.call("chat_read_observation", group_id))
+            card_running = card_running or bool(db_group_ai_leases.get_active(group_id))
+            db_chat_ai_leases.observe(run_id, doc_ref, group_id, card_running)
+
         lease = (
             db_group_ai_leases.activate(
                 group_id, run_id, issue.get("token_id"), action_scope, issued_to,
@@ -1961,7 +1998,8 @@ def start_run(
         current = None
         if not project_scoped and not graph_exec_id:
             try:
-                current = db_group_ai_leases.get_active(group_id)
+                current = (db_chat_ai_leases.get_by_run_id(run_id) if read_chat
+                           else db_group_ai_leases.get_active(group_id))
             except Exception:
                 logger.warning("admission rollback lease lookup failed run_id=%s group_id=%s",
                                run_id, group_id, exc_info=True)
@@ -2272,6 +2310,8 @@ def start_run(
         # and change rows are anchored after it until the run's reply turn lands, and
         # stay there when the run ends without one. None for every other scope.
         "chat_start_seq": _chat_start_seq(action_scope, doc_ref),
+        "lease_scope": "conversation" if read_chat else "group",
+        "observed_during_card_run": db_chat_ai_leases.observation(run_id) if read_chat else False,
         "api_base_url": api_base_url,
         # ( 2/3.3): operator_api_base is a one-time sanitized snapshot
         # of this same value, taken here at run start. transport_api_base starts empty
@@ -2583,6 +2623,8 @@ def start_run(
         "ok": True,
         "run_id": run_id,
         "status": "running",
+        "lease_scope": run["lease_scope"],
+        "observed_during_card_run": run["observed_during_card_run"],
         "mode": mode,
         "group_id": group_id,
         # (rejection 1) - the run identity keys the browser gates on, on

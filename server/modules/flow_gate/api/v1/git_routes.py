@@ -721,6 +721,29 @@ def post_group_update_from_base(group_id: str, user=Depends(get_current_user)):
         return _guard(exc)
 
 
+@router.post("/groups/{group_id}/git/worktree/update-from-base")
+def post_worktree_update_from_base(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.update_from_base(group_id, require_clean=True)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/worktree/reconstruct")
+def post_worktree_reconstruct(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        from modules.flow_gate.services.git import finalize
+        return finalize.update_from_base(group_id, require_clean=True, reconstruct=True)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
 class GroupUntrackedBody(BaseModel):
     files: list[str] = []
     message: str | None = None
@@ -1922,6 +1945,46 @@ def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = No
     try:
         return {"ok": True, "result": commit_suggest.suggest(
             group_id, provider_id=body.provider_id if body else None)}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+class GitExecutionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    scope: Literal["commit", "merge", "push"]
+    target: str | None = None
+    message: str = ""
+    provider_id: str | None = None
+    paths: list[str] | None = None
+    all: bool = False
+    request_id: str
+    resume_from: str | None = None
+    commit_remaining: bool = False
+
+
+@router.get("/groups/{group_id}/git/execution")
+def get_git_execution(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied is not None:
+        return denied
+    from modules.flow_gate.services.git import execution
+    try:
+        return {"ok": True, "result": {"execution": execution.latest(group_id)}}
+    except GitServiceError as exc:
+        return _manual_guard(exc)
+
+
+@_worktree_mutations.post("/groups/{group_id}/git/execution")
+def post_git_execution(group_id: str, body: GitExecutionBody, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied is not None:
+        return denied
+    if not _UUID_RE.match(body.request_id):
+        return _error_response(422, "invalid_request_id", "request_id must be a UUID")
+    from modules.flow_gate.services.git import execution
+    try:
+        return {"ok": True, "result": {"execution": execution.start(group_id, **body.model_dump())}}
     except GitServiceError as exc:
         return _manual_guard(exc)
 

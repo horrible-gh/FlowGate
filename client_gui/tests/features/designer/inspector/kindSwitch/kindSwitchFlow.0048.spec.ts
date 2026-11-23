@@ -280,6 +280,28 @@ async function switchKind() {
 }
 
 describe('unassigned Flow: the switch, the Canvas and the Inspector agree (D#2 §3.4)', () => {
+
+  it.each(['R', 'B'] as const)('keeps the chosen kind after a fresh Center session (%s -> other)', async (initial) => {
+    server.rootId = initial === 'R' ? ROOT_R : ROOT_B
+    const first = await openFlow()
+    await select(first.center, `doc:${server.rootId}`)
+    await switchKind()
+    const savedId = initial === 'R' ? ROOT_B : ROOT_R
+    const savedType = initial === 'R' ? 'B' : 'R'
+    expect(server.rootId).toBe(savedId)
+    // Discard all client session state and read the saved server answer again.
+    wrapper!.unmount()
+    wrapper = null
+    first.center.dispose()
+    session = null
+    const fresh = await openFlow()
+    expect(canvasNodes(fresh.center)).toEqual([{ id: `doc:${savedId}`, docType: savedType, docId: savedId }])
+    await select(fresh.center, `doc:${savedId}`)
+    expect(find('kind-switch-open').attributes('data-kind')).toBe(savedType)
+    expect(find('kind-switch-open').text()).toContain(savedType === 'B' ? '버그' : '요구사항')
+    expect(convertCall).toHaveBeenCalledTimes(1)
+  })
+
   it('R -> B -> R', async () => {
     const { center, loadFlowCanvas } = await openFlow()
     expect(canvasNodes(center)).toEqual([{ id: `doc:${ROOT_R}`, docType: 'R', docId: ROOT_R }])

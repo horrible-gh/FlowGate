@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 /** D: real 0104 dialog, store, HTTP display boundary and Git panel.
  * Only transport and non-work-base Git answers are fixtures. No real Git writes. */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -103,8 +104,8 @@ async function save() {
   await d.setProps({ open: false }); await flushPromises()
 }
 async function expectBoth(base: string) {
-  await click(document.querySelector('[data-test="git-worktree-entry"][data-tab="status"]'))
-  expect(q('git-base-branch')!.textContent).toContain(`플로우 베이스 · ${base}`)
+  await openGitWindowTab('status')
+  expect(q('git-base-branch')!.textContent).toContain(`← ${base}`)
   expect(q('git-status-base')!.textContent).toBe(base)
 }
 
@@ -139,7 +140,7 @@ describe('D §6.2-4/7 — 0104 save and fresh display', () => {
       expect(q('git-base-branch')?.textContent ?? '').not.toContain(BASE)
       const pending = holdNextRead()
       await restored.w.setProps({ projectId: P, flow: FLOW }); await flushPromises()
-      expect(q('git-base-branch')!.textContent).toContain('플로우 베이스 · —')
+      expect(q('git-base-branch')!.textContent).toContain('← —')
       pending.resolve(response()); await flushPromises()
     }
     await flushPromises(); await expectBoth(SAVED)

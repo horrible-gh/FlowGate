@@ -105,7 +105,9 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         raise _http_error(404, "run_not_found", "Unknown or expired run id.")
     if run["status"] == "finished":
         return {"ok": True, "run_id": run_id, "status": "finished", "mode": run["mode"],
-                **_svc().finished_payload(run)}
+                **_svc().finished_payload(run),
+                "lease_scope": run.get("lease_scope", "group"),
+                "observed_during_card_run": bool(run.get("observed_during_card_run"))}
     # count run-attributed documents (the same oracle filter the
     # final judge uses) instead of the raw group max-seq delta, which inflated the
     # live counter with drafts (auto-created N/T) and documents outside this run.
@@ -127,6 +129,8 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "run_id": run_id,
         "status": status,
         **_execution_status(run),
+        "lease_scope": run.get("lease_scope", "group"),
+        "observed_during_card_run": bool(run.get("observed_during_card_run")),
         "mode": run["mode"],
         "group_id": run["group_id"],
         # the `ai_invoke_started` SSE frame already ships both of
@@ -226,6 +230,8 @@ def get_run_detail(run_id: str) -> dict:
     payload["succeeded"] = ai_run_succeeded(payload)
     payload["source_access"] = chat_source_access(token_id)
     payload["command_access"] = chat_command_access(token_id)
+    from modules.flow_gate.db import chat_ai_leases
+    payload["observed_during_card_run"] = chat_ai_leases.observation(run_id)
     payload["doc_title"] = None
     if payload.get("doc_ref"):
         try:
@@ -520,6 +526,33 @@ def _group_mutation_locked(group_id: str) -> bool:
         return group_ai_leases.get_active(group_id) is not None
     except Exception:
         return False
+
+
+def conflict_progress(status: dict) -> Optional[dict]:
+    """flowgate.v02test.0066 (#36-1, read only): how far a running conflict resolver is, for the
+    Designer's Flow tab tooltip (「AI 해결 중 · n/m」).
+
+    ``status`` is a ``get_active_status`` answer. For a live ``resolve_conflict`` run the result is
+    ``{"done": files with no conflict marker left, "total": session files}`` — the same count the
+    Git panel's AI card makes from the conflicts answer (files whose ``conflict_count`` is 0 over
+    all files). ``None`` for any other run, or when the session cannot be read: the caller then
+    shows no number. Nothing is written and the merge session's TTL is not touched
+    (``list_conflicts`` is not activity)."""
+    if not status.get("active") or status.get("action_scope") != "resolve_conflict":
+        return None
+    try:
+        run = _svc().get_run_record(status.get("run_id"))
+        if not run or run.get("merge_id") is None:
+            return None
+        from modules.flow_gate.services import git_service
+        owner_group, owner_project = git_service.merge_session_owner_args(run["merge_id"], run["group_id"])
+        conflicts = git_service.list_conflicts(
+            owner_group, int(run["merge_id"]), **({"project_id": owner_project} if owner_project else {}),
+        )
+        counts = [int(f.get("conflict_count") or 0) for f in conflicts.get("files") or []]
+    except Exception:
+        return None
+    return {"done": sum(1 for n in counts if n == 0), "total": len(counts)}
 
 
 def get_active_status(group_id: str) -> dict:

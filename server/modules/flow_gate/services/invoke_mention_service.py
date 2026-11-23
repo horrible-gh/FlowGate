@@ -26,6 +26,7 @@ from typing import Optional
 from modules.flow_gate.db import conversation_turns
 from modules.flow_gate.services import chat_doc_settings_service
 from modules.flow_gate.services import chat_settings_service
+from modules.flow_gate.services import display_names
 
 # Mirrors client SECTION_SEPARATOR / MESSAGES_SEPARATOR (mentionMessages.ts).
 SECTION_SEPARATOR = "\n\n"
@@ -170,6 +171,9 @@ def _chat_lookup_sections(
             sections.append(section)
 
     search_lines = [
+        f"List flows with names: GET {base}/list/projects/{project}/groups (flow_label F77, flow_name F77(name))",
+        f"Read flow basic information: GET {base}/list/groups/<group_id> (also takes F77 / F77-12; answers flow_ref, flow_name)",
+        "Flow/document lookup is allowed in projects the requesting user can read; other flow canvases remain restricted.",
         f"Search documents by title/doc id: GET {base}/search/documents?q=<keyword>&project={project}",
         f"List documents in this group: GET {base}/list/groups/{group_name}/documents?limit=5",
         "",
@@ -227,6 +231,18 @@ def _command_section(*, base: str, raw_token: str) -> str:
         "so finish the commands you need before you submit your turn.",
     ]
     return "\n".join(lines)
+
+
+def _conversation_reread_lines(locale: Optional[str]) -> list[str]:
+    if _locale(locale) == "ko":
+        return [
+            "제출 직전에 같은 대화 읽기 주소를 마지막으로 읽은 seq 이후(after_seq)로 다시 조회하되, 최초 범위의 through_seq·limit은 빼고 next_after_seq가 null일 때까지 읽으십시오. 새 사용자 메시지를 답에 반영하고 그때 받은 head_seq를 based_on_seq로 보내십시오.",
+            "작업이 길면 큰 단계를 마칠 때마다 같은 방법으로 새 메시지를 확인하고, 방향이 바뀌면 이후 작업에 반영하십시오.",
+        ]
+    return [
+        "Immediately before submitting, reread the same conversation endpoint after your last read seq (after_seq), without the initial through_seq or limit, following next_after_seq until null. Incorporate new user messages and send the head_seq from that read as based_on_seq.",
+        "For long tasks, check for new messages the same way after each major stage; if they change direction, follow that direction in subsequent work.",
+    ]
 
 
 def _start_paragraph(folded: int) -> list[str]:
@@ -363,6 +379,7 @@ def build_conversation_mention(
         f"Authorization: Bearer {raw_token}",
         "",
         *_start_paragraph(folded),
+        *_conversation_reread_lines(locale),
         "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
     # Right behind the paragraph that named the starting point, and ahead of the reply
@@ -422,7 +439,9 @@ def build_conversation_mention(
     body = "\n".join(lines)
     body = "\n".join(line for line in body.splitlines() if line != auth)
     body = (auth + "\nUse this Authorization for all API calls below; never log the Bearer.\n"
-            + f"Bound flow_id: {group_name}. Read cards/state help to discover node keys when needed.\n\n"
+            + display_names.bound_flow_line(group_name, _group_title(group_name))
+            + " Read cards/state help to discover node keys when needed.\n"
+            + display_names.NAMING_RULE + "\n\n"
             + body)
     text = compose([body], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
@@ -430,6 +449,15 @@ def build_conversation_mention(
         return message_image_delivery.ConversationMention(text, context)
     notice = message_image_delivery.copy_notice(context)
     return terminal_prompt.finalize(text + ("\n\n" + notice if notice else ""))
+
+def _group_title(group_id: str) -> Optional[str]:
+    """The bound Flow's name for the naming line; None when it cannot be read (the line still names F<n>)."""
+    try:
+        from modules.flow_gate.db import groups as db_groups
+        return (db_groups.get_by_id(group_id) or {}).get("title")
+    except Exception:  # a missing table / store must never break the chat mention
+        return None
+
 
 def _single_line(value: Optional[str]) -> str:
     """Collapse stored text to one safe line for a bullet.

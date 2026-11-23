@@ -16,12 +16,14 @@ import type {
 
 /**
  * A: why a send failed, shown briefly on its bubble — a class of the HTTP status (no answer =
- * `network`) and the status itself. The server's own wording is not shown there: it is written for an AI / API caller.
+ * `network`), the status itself and the server's diagnostic when available.
  */
 export type SendFailureReason = 'rejected' | 'forbidden' | 'not_found' | 'conflict' | 'server' | 'network'
 export interface SendFailure {
   reason: SendFailureReason
   status: number | null
+  detail?: string
+  code?: string
 }
 
 /** The bubble's failure of an HTTP status (null = the request got no answer). */

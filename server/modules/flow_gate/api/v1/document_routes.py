@@ -19,7 +19,7 @@ from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.storage.paths import resolve_storage_path
-from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.q_service import get_answers_for_document
 from modules.flow_gate.services import ai_response_slim
@@ -314,7 +314,7 @@ def get_flow_attachments(request: Request, flow_id: str):
     from urllib.parse import quote
     data = rows(flow_id)
     return {"ok": True, "flow_id": flow_id, "attachments": [
-        {"doc_id": row["doc_id"], "filename": row["filename"], "display_name": row["display_name"],
+        {"key": row["key"], "doc_id": row["doc_id"], "filename": row["filename"], "display_name": row["display_name"],
          "size": row["size"], "content_type": row["content_type"], "content_sha256": row["content_sha256"],
          "read_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/read",
          "copy_url": f"/api/v1/document/{quote(row['doc_id'], safe='')}/attachments/{quote(row['filename'], safe='')}/copy"}
@@ -700,7 +700,7 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
         return _fail(422, str(exc)), None, None
 
     doc = db_docs.get_by_id(doc_id)
-    if doc is None:
+    if doc is None or not can_read_project(auth, doc.get("project_id")):
         return _fail(404, f"Document {doc_id} does not exist"), None, None
 
     try:
@@ -906,11 +906,15 @@ def get_document_meta(
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
     # Use the existing lookup if you need answer contents; the point here is to omit bodies, so only counts.
+    from modules.flow_gate.db import groups as db_groups
+    group = db_groups.get_by_id(doc.get("group_id")) if doc.get("group_id") else None
+    resp["group_title"] = (group.get("title") if group and
+                           group.get("project_id") == doc.get("project_id") else None)
     resp["answers_count"] = len(get_answers_for_document(doc_id) or [])
     body["state"] = _content_state(doc, text)
     resp["body"] = body
     resp["content_state"] = body["state"]
-    return JSONResponse(content=ai_response_slim.for_ai(request, resp))
+    return JSONResponse(content=ai_response_slim.for_ai(request, resp, keep=("group_title",)))
 
 
 _RELATIONS_REFERENCED_BY_MAX = 50
@@ -1181,10 +1185,21 @@ def download_document(request: Request, doc_id: str):
 
 @router.get("/document/{doc_id}")
 def get_document(request: Request, doc_id: str):
-    """Retrieve document content and metadata (D021 s.4-2)."""
+    """Retrieve document content and metadata (D021 s.4-2).
+
+    A card display id (``flowgate.v02test.F77-12``, ``F77-12``) opens the card's representative document (its work
+    instruction, else its requirement / bug document); a Flow id (``F77``) its root. The answer then carries
+    ``requested_id`` and the stored ``doc_id``; a stored doc_id is read exactly as before."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+
+    requested = doc_id
+    alias = _resolve_display_id(auth, doc_id)
+    if alias is not None:
+        if not alias:
+            return _fail(404, f"No card or Flow with a document matches {requested}")
+        doc_id = alias["doc_id"]
 
     try:
         _validate_outbound_doc_id(doc_id)
@@ -1193,7 +1208,7 @@ def get_document(request: Request, doc_id: str):
 
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
-        return _fail(404, f"Document {doc_id} does not exist")
+        return _fail(404, f"Document {requested} does not exist")
 
     file_path = doc.get("file_path")
     try:
@@ -1241,4 +1256,21 @@ def get_document(request: Request, doc_id: str):
         resp["answers"] = qa_pairs
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
+    from modules.flow_gate.services import card_numbers
+    card = card_numbers.card_of_document(doc_id, doc.get("group_id"))
+    resp["card_ref"] = card["card_ref"] if card else None
+    if requested != doc_id:
+        resp["requested_id"] = requested
     return JSONResponse(content=resp)
+
+
+def _resolve_display_id(auth, text: str) -> Optional[dict]:
+    """The one Flow / card a display id names among the projects this caller reads (with a document); ``{}`` for
+    a display id naming none (or several); None when ``text`` is no display id (a stored doc_id never is one)."""
+    from modules.flow_gate.services import card_ids, card_numbers
+    if card_ids.parse(text, allow_bare=False, allow_local=False) is None:
+        return None
+    from modules.flow_gate.services.auth_outbound import readable_projects
+    found = [ref for ref in card_numbers.resolve(text, allowed_projects=readable_projects(auth), allow_bare=False)
+             if ref.get("doc_id")]
+    return found[0] if len(found) == 1 else {}

@@ -241,7 +241,7 @@ def _judge(group_id: str, requested: Optional[str], *, collect: bool, readonly: 
     except GitServiceError as exc:
         fail(exc)
         return None, blocked, info
-    info.update(cfg=cfg, state=state, project_id=project_id, base_root=base_root)
+    info.update(cfg=cfg, state=state, project_id=project_id, base_root=base_root, wt_path=wt_path)
     try:                                                                   # 3
         gs.guard_group_branch_merge_free(group_id)
     except GitServiceError as exc:
@@ -375,7 +375,7 @@ def merge_view(group_id: str, target: Optional[str] = None) -> dict:
                      "final_approval_bound": approval_intent.group_is_final_approval_bound(group_id)},
         "default_target": work_base_ref,
         "targets": _target_candidates(project_id, cfg, info.get("base_root"), work_base_ref),
-        "preview": None, "commit_count": None, "floor_error": None,
+        "preview": None, "commit_count": None, "floor_error": None, "work_base_behind": None,
         "ahead_of_target": info.get("ahead"),
         "merge_needed": bool(info.get("ahead")) or info.get("recovery") is not None,
         "recovery": info.get("recovery") is not None,
@@ -394,10 +394,20 @@ def merge_view(group_id: str, target: Optional[str] = None) -> dict:
             result["preview"] = {"error": _public_error(exc)}
     if info.get("state") is not None:
         try:
-            from . import worktree_manual
-            status = worktree_manual.worktree_status(group_id)
-            result["commit_count"] = (status.get("committed") or {}).get("commit_count")
-            result["floor_error"] = (status.get("floor") or {}).get("error")
+            from . import scope_base
+            root = info["wt_path"]
+            head = gs._rev_parse(root, "HEAD")
+            resolved = scope_base.resolve_scope_floor(project_id, group_id, root,
+                state=info["state"], config=cfg, head=head)
+            result["commit_count"] = _count(root, resolved["floor_sha"] + ".." + head)
+            source = gs._worktree_start_point(info["base_root"], work_base_ref)
+            behind = _count(root, head + ".." + source)
+            # Our own integration merge may add a parent without changing the tree.
+            # Do not report that bookkeeping commit as new work to receive.
+            trees = gs._run_git(["diff", "--quiet", head, source, "--"], cwd=root)
+            result["work_base_behind"] = 0 if trees.returncode == 0 else behind if trees.returncode == 1 else None
+            # E8 needs commit counts, not E1's full file content fingerprints and list.
+            # The UI requests E1 separately; avoid hashing every dirty file twice.
         except GitServiceError as exc:
             result["floor_error"] = _public_error(exc)
     return result
@@ -678,7 +688,7 @@ def _result_row(rec: dict, base_root: Optional[Path], base_branch: str, blocker:
     remote, local_contains = _remote_view(base_root, branch, rec["merge_commit"])
     if not remote["measured"]:
         reason = "unmeasured"
-    elif remote["contains_merge_commit"]:
+    elif remote["contains_merge_commit"] and remote["local_ahead_count"] == 0:
         reason = "already_published"
     elif not local_contains:
         reason = "target_moved"
@@ -912,12 +922,6 @@ def _pin_and_push(ctx: store.JobContext, p: dict, base_root: Path, phase: str) -
     if published:
         base_publish._phase(ctx, "pushed", remote_head=h1, already_published=phase == "start")
         return
-    merged = _origin_contains(project_id, base_root, branch, p["merge_commit"])
-    if merged is None:
-        raise base_publish._transient("remote_head_unknown")
-    if merged:
-        base_publish._phase(ctx, "pushed", remote_head=None, already_published=True)
-        return
     cfg = gs.db_git.get_config(project_id) or {}
     store.ensure_lease(ctx)
     proc = gs._run_git(["push", "origin", f"{h1}:refs/heads/{branch}"], cwd=base_root,
@@ -928,8 +932,14 @@ def _pin_and_push(ctx: store.JobContext, p: dict, base_root: Path, phase: str) -
         if landed is None:
             raise base_publish._transient("push_result_unknown")
         if not landed:
+            diagnostic = (proc.stderr or "").lower()
+            code = "push_rejected"
+            if any(word in diagnostic for word in ("protected branch", "pre-receive hook declined", "branch policy")):
+                code = "push_protected_branch"
+            elif any(word in diagnostic for word in ("authentication failed", "permission denied", "access denied", "403", "could not read username", "publickey", "not allowed to push")):
+                code = "push_authentication_required"
             raise finalize_publish._fail(GitServiceError(
-                500, "push_rejected", "Git push was rejected", diagnostic=gs._last_line(proc.stderr)))
+                500, code, "Git push was rejected", diagnostic=gs._last_line(proc.stderr)))
     base_publish._phase(ctx, "pushed", remote_head=h1, already_published=False)
 
 

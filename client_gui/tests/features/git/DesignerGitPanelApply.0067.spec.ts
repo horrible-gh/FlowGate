@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -53,7 +54,7 @@ async function openMerge(t: ReturnType<typeof setup>) {
     global: { plugins: [i18n] },
   })
   await flushPromises()
-  await click(document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="merge"]'))
+  await openGitWindowTab('merge')
 }
 
 const q = (sel: string) => document.body.querySelector<HTMLElement>(`[data-test="${sel}"]`)

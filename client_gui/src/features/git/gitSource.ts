@@ -22,6 +22,7 @@ import type {
   ProjectGitStatus,
 } from '@/features/project'
 import * as api from './api'
+import type { GitExecution, GitExecutionRequest } from './gitExecution'
 import type {
   GitApproveResult,
   GitBaseCommitResult,
@@ -62,6 +63,12 @@ import type {
  * actions, apart from the Base checkout ones of GitSource (baseCommit / baseRevert / …).
  */
 export interface GitWorktreeSource {
+  startExecution?(groupId: string, input: GitExecutionRequest): Promise<GitExecution>
+  loadExecution?(groupId: string): Promise<GitExecution | null>
+  reconstruct?(groupId: string): Promise<{ status: string; mergeId: number | null }>
+  syncRemote?(groupId: string, target: string): Promise<{ status: string; mergeId: number | null }>
+  updateFromBase?(groupId: string): Promise<{ status: string; mergeId: number | null }>
+
   /** E1 — files split into Stage / working changes, tokens, floor, ownership and blockers. */
   loadStatus(groupId: string): Promise<WorktreeStatus>
   /** E2 / E3 — `worktreeToken` is the E1 token the screen showed (null = no check). */
@@ -184,6 +191,11 @@ export function createHttpGitSource(): GitSource {
     provisionGit: api.provisionGit,
     fetchGitProvision: api.fetchGitProvision,
     worktree: {
+      updateFromBase: api.updateWorktreeFromBase,
+      startExecution: api.startGitExecution,
+      loadExecution: api.fetchGitExecution,
+      reconstruct: api.reconstructWorktree,
+      syncRemote: api.syncWorktreeRemote,
       loadStatus: api.fetchWorktreeStatus,
       stage: api.stageWorktree,
       unstage: api.unstageWorktree,

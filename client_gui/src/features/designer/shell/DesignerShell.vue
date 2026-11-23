@@ -22,6 +22,9 @@
       :flow-id="center.state.activeFlowId" :project-id="projectId"
       :title="center.state.tabs.find(tab => tab.flowId === center.state.activeFlowId)?.name ?? ''"
       :is-read-only="id => center.isFlowReadOnly(id)" :is-archived="id => center.isFlowArchived?.(id) ?? null" />
+    <!-- 0078: the Flow terminal windows (admins only; the toolbar's [터미널]). -->
+    <FlowTerminalHost ref="terminalHost" :key="`terminal:${projectStore.designerSessionOwner ?? ''}`"
+      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" :fill-target="terminalFillTarget" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"
@@ -108,6 +111,7 @@
           :unselected="!hasWorkTarget"
           :selected-palette-id="selectedPalette?.itemId ?? null"
           :source-locked="sourceLocked"
+          :flow-running="flowRunning"
           @update:tool="layout.activeRightTool = $event"
           @palette-select="selectedPalette = $event"
           @palette-drag-start="selectedPalette = null"
@@ -265,7 +269,7 @@ import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
 import { createFirstRunAiSetup } from '@/features/ai'
 import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRunResultWatch, runWaitText } from '@/features/ai'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import DesignerTaskbar from './DesignerTaskbar.vue'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
@@ -320,6 +324,7 @@ import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
 import FlowAttachmentHost from '../flowAttachments/FlowAttachmentHost.vue'
+import FlowTerminalHost from '../flowTerminal/FlowTerminalHost.vue'
 import {
   DESIGNER_LAYOUT_DEFAULTS,
   DESIGNER_LEFT_MODES,
@@ -504,6 +509,16 @@ const center = createDesignerCenterSession({
 const activeFlowRef = center.activeFlowRef
 // the Flow attachment windows; the host also owns the full-screen file drop.
 const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
+// 0078: the Flow terminal windows.
+const terminalHost = ref<InstanceType<typeof FlowTerminalHost> | null>(null)
+// 0078 · 0015-T A: 모달리스 ↔ 디자이너. A terminal can fill the whole Designer area under the Flow tab strip (the Canvas
+// and the bottom Inspector · Minimap places). The Center column gives that place and shows it through this bridge
+// (it injects the same key and imports nothing of the terminal).
+const terminalFillTarget = shallowRef<HTMLElement | null>(null)
+provide(Symbol.for('flowgate.designer.terminalFill'), {
+  active: (flowId: string | null) => terminalHost.value?.designerActive(flowId) ?? false,
+  setTarget: (el: HTMLElement | null) => { terminalFillTarget.value = el },
+})
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 
@@ -609,6 +624,8 @@ const runBand = computed(() => (hasWorkTarget.value ? runBandView(center.activeR
 // WP answer 2: the Conversation's source access mode waits while the open Flow's run is locked — the earlier implementation: and while
 // its run status is not confirmed (the session's `unknown` lock). Messages, viewing, panning and zooming go on.
 const sourceLocked = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock !== null)
+// Archive and unknown locks restrict editing but do not indicate an active Flow run.
+const flowRunning = computed(() => hasWorkTarget.value && center.activeRunMarks.value.lock === 'run')
 
 // a toast keeps what it says as meaning — the refusal, the notice, the menu's own words —
 // and its sentence is built in the current language each time it renders, so a toast still on screen (a refused
@@ -999,6 +1016,7 @@ const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
   if (command === 'view.attachments') { void attachmentHost.value?.open(); return }
+  if (command === 'view.terminal') { void terminalHost.value?.open(); return }
   if (command === 'header.notifications') {
     notificationsOpen.value = !notificationsOpen.value
     return
@@ -1585,7 +1603,10 @@ async function refreshArchiveTree(pid: string) {
     const flows = new Map(nodes.filter((n) => n.kind === 'group').map((n) => [n.id, n]))
     for (const tab of [...center.state.tabs]) {
       const flow = flows.get(tab.flowId)
-      if (flow) center.setFlowArchived(tab.flowId, !!flow.archivedAt)
+      if (flow) {
+        center.setFlowArchived(tab.flowId, !!flow.archivedAt)
+        renameFlowTab(pid, tab.flowId, flow.title || flow.label)
+      }
       else {
         center.closeFlow(tab.flowId)
         projectStore.forgetRecentFlow(tab.flowId)

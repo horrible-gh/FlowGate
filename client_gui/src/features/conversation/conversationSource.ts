@@ -67,6 +67,12 @@ export interface ConversationSource {
    */
   cancelChatStart?(chatId: string, clientRequestId: string): Promise<api.ChatStartCancel>
   fetchActiveChatRun(chatId: string): Promise<string | null>
+  /**
+   * flowgate.v02test.0067 #2: the status of the Flow's (group's) current Graph run — `running` / `paused` / `stopping` /
+   * `idle` …, or null without a run. Read while an edit / edit-once / execute call waits for the Flow. Optional: a
+   * source without it lets the waiting call try again on every wait tick.
+   */
+  fetchFlowRunStatus?(flowId: string): Promise<string | null>
 
   fetchChatSettings(scope?: ConversationScope): Promise<ChatSettings>
   saveChatSettings(patch: ChatSettingsPatch, scope?: ConversationScope): Promise<ChatSettings>
@@ -102,6 +108,7 @@ export function createHttpConversationSource(): ConversationSource {
     cancelRun: api.cancelRun,
     cancelChatStart: api.cancelChatStart,
     fetchActiveChatRun: api.fetchActiveChatRun,
+    fetchFlowRunStatus: api.fetchFlowRunStatus,
     fetchChatSettings: api.fetchChatSettings,
     saveChatSettings: api.saveChatSettings,
     issueChatMention: api.issueChatMention,

@@ -97,6 +97,7 @@ export function worktreeStatus(overrides: Partial<WorktreeStatus> = {}): Worktre
 /** An E8 view: the work base is the default target and the merge is admitted. */
 export function manualMergeView(overrides: Partial<ManualMergeView> = {}): ManualMergeView {
   return {
+    workBaseBehind: 0,
     canMerge: true,
     blocked: [],
     admissionBasis: 'wf_done',

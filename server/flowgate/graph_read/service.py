@@ -8,6 +8,7 @@ from modules.flow_gate.graph_workflow.services.flow_guard import with_read_snaps
 from modules.flow_gate.graph_workflow.services.identity_keeper import IdentityResult, keys_from_record, sequence_tag_of
 from modules.flow_gate.graph_workflow.projection.flow_snapshot import read_snapshot, protected_ids
 from modules.flow_gate.graph_workflow.store import layout_store, run_store
+from modules.flow_gate.services import display_names
 from . import authz
 
 NODE_RUN_FIELDS = ("node_key", "status", "opened_at", "finished_at", "root_bound", "stage",
@@ -74,6 +75,8 @@ def _read(scope, group, resource, view):
         row = run_store.current_run(scope.flow_id)
         payload = run_service.get_run(row["run_id"])["run"] if row else None
         return {**meta, "run": run_view(payload, scope, allowed)}
+    meta["flow"] = {key: group.get(key) for key in
+                    ("title", "module", "status", "created_at", "updated_at")}
     protected = protected_ids(snap.rows)
     ident = IdentityResult(snap, keys_from_record(snap.rows, layout_store.identity_record(scope.flow_id), protected),
                            protected, sequence_tag_of(snap))
@@ -85,6 +88,8 @@ def _read(scope, group, resource, view):
         if scope.node_key and row["node_key"] != scope.node_key:
             continue
         out = scalar_fields(row, NODE_FIELDS)
+        out["card_ref"] = row.get("card_ref")       # display id (F77-12 forms) as stored; this read assigns none
+        out["card_name"] = display_names.card_name(out["card_ref"], out.get("title"))   # F77-12(card title)
         out["document"] = document(row.get("document"), allowed)
         out["node_run"] = node_run(row.get("node_run"), allowed)
         out["card_documents"] = [scalar_fields(line, LINE_FIELDS) for line in row.get("card_documents", [])
@@ -96,7 +101,8 @@ def _read(scope, group, resource, view):
     keys = {n["node_key"] for n in nodes}
     edges = [{**scalar_fields(e, ("edge_id", "edge_class", "origin", "source", "target", "relation")), "editable": False}
              for e in raw["edges"] if e.get("source") in keys and e.get("target") in keys]
-    return {**meta, "projection": raw["projection"], "view": raw["view"],
+    return {**meta, "flow_ref": raw.get("flow_ref"), "flow_name": display_names.flow_name(scope.flow_id, group.get("title")),
+            "naming": display_names.NAMING_RULE, "projection": raw["projection"], "view": raw["view"],
             "graph": {"latest_revision_no": raw["graph"].get("latest_revision_no")} if not scope.node_key else None,
             "nodes": nodes, "edges": edges, "external_relations": [],
             "run": run_view(raw.get("run"), scope, allowed)}

@@ -58,7 +58,7 @@ export function useGateDecision(target: () => InspectorTarget | null) {
       const receipt = c?.gate.value?.decision
       return receipt && (c?.gate.value?.decision_in_progress || receipt.attempt_id === c?.node.value?.attemptId || receipt.attempt_id === null) ? receipt : null
     }),
-    errorCode: computed(() => context.value?.gate.value?.recovery?.error_code ?? context.value?.gate.value?.job?.last_error_code ?? null),
+    errorCode: computed(() => context.value?.gate.value?.auto_approval_error ?? context.value?.gate.value?.recovery?.error_code ?? context.value?.gate.value?.job?.last_error_code ?? null),
   }
 }
 export type GateDecisionState = ReturnType<typeof useGateDecision>

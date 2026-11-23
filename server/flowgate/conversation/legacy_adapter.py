@@ -37,6 +37,13 @@ def get_run_record(run_id: Optional[str]) -> Optional[dict]:
         return None
 
 
+def persisted_naming_run(run_id):
+    if not run_id:
+        return None
+    from modules.flow_gate.db import ai_invoke_runs
+    return ai_invoke_runs.get(str(run_id))
+
+
 def now_mono() -> float:
     """The engine's monotonic clock (the one its watchdog reads)."""
     return float(_ai_invoke()._now_mono())
@@ -185,6 +192,11 @@ def get_project(project_id: str) -> Optional[dict]:
     from modules.flow_gate.db import projects as db_projects
 
     return db_projects.get_by_id(project_id)
+
+
+def has_graph_definition(flow_id: str) -> bool:
+    from modules.flow_gate.graph_workflow.store import definition_store
+    return bool(definition_store.draft(flow_id) or definition_store.latest_revision_no(flow_id))
 
 
 def get_group(group_id: str) -> Optional[dict]:

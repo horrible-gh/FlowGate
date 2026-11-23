@@ -38,6 +38,22 @@
     <!-- Voice input: live partial text, "transcribing…" with 취소, and the last voice notice. -->
     <ComposerVoiceNotice :voice="voice" />
 
+    <!-- flowgate.v02test.0072: quick message buttons right above the input; ＋ 추가 / ✎ 편집 / right-click edit are
+         the row's own (only with project.settings.edit). -->
+    <ComposerQuickMessages
+      :items="quick.items.value"
+      :visible="quick.visible.value"
+      :is-on="quick.isOn"
+      :disabled="!!readOnly"
+      :can-edit="quick.canEdit.value"
+      :editing="quick.editing.value"
+      :save="(input, id) => (id === null ? quick.create(input) : quick.update(id, input))"
+      :remove="quick.remove"
+      :move="quick.move"
+      @toggle="quick.toggle"
+      @update:editing="quick.setEditing"
+    />
+
     <div class="conv-pill" :class="{ 'has-side-stop': sendWhileRunning && stopMode !== null }">
       <textarea
         ref="inputEl"
@@ -50,6 +66,7 @@
         :disabled="disabled || readOnly || sending"
         @input="onInput"
         @paste="onPaste"
+        @keydown="onQuickKey"
         @keydown.enter.exact.prevent="submit"
       ></textarea>
       <!-- Voice input: recording pill and mic (always rendered so the row keeps its grid columns). -->
@@ -78,7 +95,7 @@
         data-test="conv-send"
         :title="sendTitle"
         :aria-label="sendTitle"
-        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || draft.trim() === '' || attach.blocked.value"
+        :disabled="isStop ? stopMode === 'requested' : disabled || readOnly || sending || aiPending || (draft.trim() === '' && !hasQuick) || attach.blocked.value"
         @click="isStop && emit('stop')"
       >
         <!-- T: a stop under way is a muted spinning ring instead of ■ (… with reduced motion), so a
@@ -122,6 +139,24 @@
         :locked="sourceLocked"
         @set="(mode) => emit('set-source-mode', mode)"
       />
+      <!-- Attachments: opens / closes this Flow's attachment window (the container does it). v02test.0074 0011-T (mockup
+           21wdt1cz case 2): a bordered square button drawn like the source mode group next to it (same height, border,
+           corner, surface, hover / focus / pressed rules), the Lucide paperclip line icon at the mode icons' size and
+           stroke, blue while the window is open, and the AI's waiting upload requests as a yellow dot on its top-right
+           corner (absolute, so the button never grows; none at 0, 99+ above 99). -->
+      <button
+        type="button"
+        class="conv-attach"
+        :class="{ 'is-open': attachmentsOpen }"
+        data-test="conv-attachments"
+        :aria-pressed="attachmentsOpen"
+        :title="attachLabel"
+        :aria-label="attachLabel"
+        @click="emit('toggle-attachments')"
+      >
+        <LineIcon name="paperclip" class="conv-attach-icon" />
+        <span v-if="attachmentsPending > 0" class="conv-attach-badge" aria-hidden="true" data-test="conv-attachments-badge">{{ attachBadge }}</span>
+      </button>
       <span class="conv-assist-spacer"></span>
       <ComposerSettings
         :timeout-enabled="chatId !== null"
@@ -146,8 +181,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
+import LineIcon from '../../components/ui/LineIcon.vue'
 import ComposerImageStrip from './ComposerImageStrip.vue'
 import ComposerModelPicker from './ComposerModelPicker.vue'
+import ComposerQuickMessages from './ComposerQuickMessages.vue'
 import ComposerSettings from './ComposerSettings.vue'
 import ComposerSourceModes from './ComposerSourceModes.vue'
 import ComposerToolsMenu from './ComposerToolsMenu.vue'
@@ -155,6 +192,7 @@ import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import ComposerVoiceNotice from './ComposerVoiceNotice.vue'
 import { createComposerImages, isImageFile } from './composerImages'
 import { draftKey, draftUserId, loadDraft, saveDraft, type DraftOwner, type DraftSendSnapshot } from './drafts'
+import { buildOutgoingText, useQuickMessages } from './quickMessages/useQuickMessages'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SourceAccessMode } from './types'
 import { deleteMessageAudio, type TurnAudio } from './voice/api'
@@ -162,9 +200,13 @@ import { installVoiceMessages } from './voice/messages'
 import { useVoiceInput } from './voice/useVoiceInput'
 import { loadVoice } from './voice/voiceStore'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The open chat; null while a new chat is a draft (its first send creates it). */
   chatId: string | null
+  /** The Flow's attachment window is open (the attachments button shows pressed). */
+  attachmentsOpen?: boolean
+  /** AI upload requests of this chat still waiting for a decision (the attachments button badge; none shown at 0). */
+  attachmentsPending?: number
   projectId?: string | null
   groupId?: string | null
   draftIntentId?: string | null
@@ -200,9 +242,10 @@ const props = defineProps<{
   manualCopyText: string | null
   /** Sends one message; resolves true when the server accepted it (the draft clears then). */
   onSend: (text: string, snapshot?: DraftSendSnapshot, trace?: SubmissionTrace) => Promise<boolean>
-}>()
+}>(), { attachmentsOpen: false, attachmentsPending: 0 })
 
 const emit = defineEmits<{
+  'toggle-attachments': []
   'select-provider': [providerId: string]
   'retry-ai-pick': []
   'save-settings': [patch: ChatSettingsPatch, done: (ok: boolean) => void]
@@ -216,6 +259,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 installVoiceMessages(useI18n({ useScope: 'global' }))
+/** The corner badge: the waiting count, capped so a large number never widens the dot. */
+const attachBadge = computed(() => (props.attachmentsPending > 99 ? '99+' : String(props.attachmentsPending)))
+const attachLabel = computed(() =>
+  props.attachmentsPending > 0
+    ? t('gui.conversation.composer.attachments_pending', { n: props.attachmentsPending })
+    : t('gui.conversation.composer.attachments'),
+)
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 function currentOwner(): DraftOwner | null {
@@ -231,7 +281,8 @@ const attach = createComposerImages(() => ownerRef.value)
 attach.restore(visibleOwner)
 const draft = ref(loadDraft(visibleOwner))
 const revisions = new Map<string, number>()
-const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[] }>()
+// `draftBody` = what the input held at the press (the snapshot body also carries the quick messages sent with it).
+const pending = new Set<{ snapshot: DraftSendSnapshot; owners: DraftOwner[]; draftBody?: string }>()
 const sameScope = (a: DraftOwner, b: DraftOwner) => a.userId === b.userId && a.projectId === b.projectId && a.groupId === b.groupId && a.intentId === b.intentId
 
 watch(
@@ -256,6 +307,20 @@ watch(
     void nextTick(autoGrow)
   },
 )
+
+// ── flowgate.v02test.0072: quick messages — the row above the input and the text a send carries ──────────────
+const quick = useQuickMessages({ projectId: () => props.projectId, userId: draftUserId })
+watch(() => [props.projectId, draftUserId()] as const, () => { void quick.load() }, { immediate: true })
+/** An on quick message lets an empty input be sent (the quick messages alone go out). */
+const hasQuick = computed(() => quick.active.value.length > 0)
+
+/** Alt+1..9 in the input turns the row's 1st..9th button on / off. */
+function onQuickKey(event: KeyboardEvent): void {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return
+  const digit = /^Digit([1-9])$/.exec(event.code ?? '')?.[1] ?? /^[1-9]$/.exec(event.key ?? '')?.[0]
+  if (!digit || props.readOnly) return
+  if (quick.toggleAt(Number(digit) - 1)) event.preventDefault()
+}
 
 // null = no stop button (the send button shows).
 const stopMode = computed<'available' | 'requested' | null>(() => {
@@ -328,9 +393,16 @@ function onPaste(event: ClipboardEvent): void {
 
 const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files')
 
+// 0074 TR0014: a file dragged over the input never goes to the browser — also while sending or when the input is
+// locked (the browser would open the image and leave the app). Then nothing is taken (dropEffect none). Drags
+// without `Files` (text, quick message order) keep their default.
 function onDragOver(event: DragEvent): void {
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'
+    return
+  }
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
   dragging.value = true
 }
@@ -342,8 +414,9 @@ function onDragLeave(event: DragEvent): void {
 
 function onDrop(event: DragEvent): void {
   dragging.value = false
-  if (!canAttach.value || !carriesFiles(event)) return
+  if (!carriesFiles(event)) return
   event.preventDefault()
+  if (!canAttach.value) return
   attach.add(Array.from(event.dataTransfer?.files ?? []))
 }
 
@@ -408,31 +481,38 @@ async function submit(): Promise<void> {
   trace.mark('submit')
   const text = draft.value.trim()
   const owner = visibleOwner
-  if (!owner || !text || props.disabled || props.readOnly || props.sending || aiPending.value) return
+  // the on quick messages (row order) go after the typed text; a hidden row (load failed) adds nothing.
+  const quickSent = quick.active.value
+  if (!owner || (!text && !quickSent.length) || props.disabled || props.readOnly || props.sending || aiPending.value) return
   // An image still uploading, failed or gone holds the send: it would otherwise be left out without a word.
   if (attach.blocked.value) return
   if ([...pending].some((p) => draftKey(p.snapshot.owner) === draftKey(owner))) return
   const imageIds = [...attach.readyIds.value]
-  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: draft.value, revision: revisions.get(draftKey(owner)) ?? 0,
-    ...(imageIds.length ? { images: imageIds } : {}) }
-  const send = { snapshot, owners: [snapshot.owner] }
+  const draftBody = draft.value
+  const outgoing = quickSent.length ? buildOutgoingText(text, quickSent) : text
+  // With quick messages the snapshot body is the text that went out, so a retried bubble still matches this send.
+  const snapshot: DraftSendSnapshot = { owner: { ...owner }, body: quickSent.length ? outgoing : draftBody,
+    revision: revisions.get(draftKey(owner)) ?? 0, ...(imageIds.length ? { images: imageIds } : {}) }
+  const send = { snapshot, owners: [snapshot.owner], draftBody }
   // Persist before the first await, even if this owner is hidden by the time it fails.
-  saveDraft(owner, snapshot.body)
+  saveDraft(owner, draftBody)
   pending.add(send)
   let ok = false
   try {
-    ok = await props.onSend(text, snapshot, trace)
+    ok = await props.onSend(outgoing, snapshot, trace)
   } finally {
     pending.delete(send)
   }
   if (!ok) return
+  // accepted: the once (1회) buttons that went with it turn off; a failed send keeps them on.
+  quick.consume(quickSent)
   // The server linked the images to the message: they leave the composer (they are not deleted).
   if (imageIds.length) attach.sent(send.owners, imageIds)
   for (const target of send.owners) {
     const key = draftKey(target)
-    if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== snapshot.body) continue
+    if ((revisions.get(key) ?? 0) !== snapshot.revision || loadDraft(target) !== draftBody) continue
     saveDraft(target, '')
-    if (!visibleOwner || draftKey(visibleOwner) !== key || draft.value !== snapshot.body) continue
+    if (!visibleOwner || draftKey(visibleOwner) !== key || draft.value !== draftBody) continue
     draft.value = ''
     await nextTick()
     if (visibleOwner && draftKey(visibleOwner) === key) {
@@ -647,4 +727,82 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   flex: 1;
   min-width: 0;
 }
+
+/* Attachments button (v02test.0074 0011-T): the source mode group's look (ComposerSourceModes .csm) as one square —
+   27px high like the group, 1px --fg2-line-strong border, the small control radius, the flat control surface, muted
+   icon that turns --fg2-text on hover; pressed (window open) takes the mode buttons' "on" rule: info surface, info
+   icon colour, a thicker stroke and the short underline as a non-colour cue. Theme tokens only. */
+.conv-attach {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 27px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid var(--fg2-line-strong);
+  border-radius: var(--fg2-control-radius-sm);
+  background: var(--fg2-control-surface-flat);
+  color: var(--fg2-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.conv-attach:hover {
+  color: var(--fg2-text);
+}
+
+.conv-attach:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+
+.conv-attach .conv-attach-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+.conv-attach.is-open {
+  border-color: var(--fg2-status-info-border);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+}
+
+.conv-attach.is-open .conv-attach-icon {
+  stroke-width: 2.2;
+}
+
+.conv-attach.is-open::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 10px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.conv-attach-badge {
+  position: absolute;
+  top: -6px;
+  right: -7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--fg2-control-radius-pill);
+  background: var(--fg2-yellow);
+  color: var(--fg2-bg);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
 </style>
+

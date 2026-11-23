@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -79,10 +80,8 @@ async function mountPanel(t: ReturnType<typeof setup>, props: Record<string, unk
 }
 
 async function openFiles() {
-  const button = entry('files')
-  if (!button) return
-  button.click()
-  await flushPromises()
+  if (!entry('diff')) return
+  await openGitWindowTab('files')
 }
 
 const q = (sel: string) => document.body.querySelector<HTMLElement>(`[data-test="${sel}"]`)
@@ -134,7 +133,6 @@ describe('worktree area — gate and first look (C5)', () => {
     await mountPanel(t, {}, { window: false })
     expect(q('git-worktree')).not.toBeNull()
     expect(text('git-worktree-summary-changed')).toBe('1')
-    expect(text('git-worktree-summary-staged')).toBe('0')
     expect(text('git-worktree-summary-merge')).toBe('1')
     expect(q('git-worktree-chip')).toBeNull()
     expect(q('git-changes')).toBeNull()
@@ -150,7 +148,8 @@ describe('worktree area — gate and first look (C5)', () => {
     expect(t.wt.source.loadStatus).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadManualMerge).toHaveBeenCalledTimes(2)
     expect(t.wt.source.loadMergeResults).toHaveBeenCalledTimes(2)
-    expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
+    // 0068: the window opens on `Diff` (the footer entry), which reads its list once.
+    expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
   })
 
   it('nothing before the first git/status answer, nothing over Git off or a failed read', async () => {

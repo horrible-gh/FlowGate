@@ -644,6 +644,72 @@ def test_read_at_exactly_the_limit_is_allowed(env):
     assert read_attachment(DOC_ID, "exact.txt", mode="base64")["kind"] == "binary"
 
 
+# ── read ceiling as a system setting (attach_read_max_mb, System > General) ─────
+# Only the AI/worker read ceiling follows the setting; the upload-request preview stays 1 MiB.
+
+@pytest.fixture
+def read_limit_mb(env):
+    """Set attach_read_max_mb in the real system_settings table; the row is removed afterwards."""
+    from modules.flow_gate.db import system_settings as db_settings
+    from modules.flow_gate.settings.attach_read_limit import SETTING_KEY
+
+    def _set(value):
+        db_settings.set_value(SETTING_KEY, str(value), "integer")
+
+    yield _set
+    db_settings.delete(SETTING_KEY)
+
+
+def test_read_ceiling_follows_the_system_setting_without_a_restart(env, read_limit_mb):
+    from modules.flow_gate.documents.attachments import AttachmentError, read_attachment
+
+    mib = 1048576
+    upload([FakePart("demo.mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x01" * (4 * mib))])
+    with pytest.raises(AttachmentError) as excinfo:
+        read_attachment(DOC_ID, "demo.mp4")
+    assert excinfo.value.details["limit_bytes"] == mib            # no row -> 1 MB default
+
+    read_limit_mb(8)
+    assert read_attachment(DOC_ID, "demo.mp4")["kind"] == "binary"   # same process, applied at once
+
+    read_limit_mb(2)
+    with pytest.raises(AttachmentError) as excinfo:
+        read_attachment(DOC_ID, "demo.mp4")
+    assert (excinfo.value.status_code, excinfo.value.details["limit_bytes"]) == (413, 2 * mib)
+
+
+@pytest.mark.parametrize("stored", ["", "abc", "0", "65", "-3", "2.5"])
+def test_a_bad_stored_read_ceiling_means_the_1_mb_default(env, read_limit_mb, stored):
+    from modules.flow_gate.settings import attach_read_limit
+
+    read_limit_mb(stored)
+    assert attach_read_limit.get_max_bytes() == 1048576
+
+
+def test_read_ceiling_save_range_is_1_to_64_mb(env, read_limit_mb):
+    from modules.flow_gate.settings import system_settings_service as svc
+
+    for bad in ["0", "65", "", "abc", "1.5", None]:
+        with pytest.raises(ValueError, match="attach_read_max_mb must be an integer between 1 and 64"):
+            svc.set_values({"attach_read_max_mb": bad})
+    saved = svc.set_values({"attach_read_max_mb": "08"})
+    assert saved[0]["setting_value"] == "8"                         # stored canonical
+    assert svc.get_one("attach_read_max_mb")["setting_value"] == "8"
+    assert svc.set_values({"attach_read_max_mb": "64"})[0]["setting_value"] == "64"
+
+
+def test_settings_list_always_carries_the_read_ceiling_row(env, read_limit_mb):
+    from modules.flow_gate.db import system_settings as db_settings
+    from modules.flow_gate.settings import system_settings_service as svc
+
+    db_settings.delete("attach_read_max_mb")
+    rows = {r["setting_key"]: r["setting_value"] for r in svc.get_all()}
+    assert rows["attach_read_max_mb"] == "1"
+    read_limit_mb(16)
+    rows = {r["setting_key"]: r["setting_value"] for r in svc.get_all()}
+    assert rows["attach_read_max_mb"] == "16"
+
+
 def test_an_unknown_encoding_is_422_not_500(env):
     """codec lookup failure is a bad request, not a crash."""
     from modules.flow_gate.documents.attachments import AttachmentError, read_attachment

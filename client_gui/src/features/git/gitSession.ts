@@ -185,6 +185,12 @@ export interface GitSession {
   abortForReapproval(): Promise<boolean>
   abortMerge(): Promise<void>
   /**
+   * flowgate.v02test.0068: aborts the Flow's open Git session that no card shows (git/status has no conflict row for it —
+   * a branch merge, a graph attempt merge …), the one worktree status names with `session_open`. null = the server closed
+   * it; otherwise why not (the code, and git's own reason line when it gave one). Both status reads follow.
+   */
+  abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null>
+  /**
    * (task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
    * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
    * the session. `target` names another group's session (the admin list); default is the shown group's conflict.
@@ -227,7 +233,8 @@ export interface GitSessionOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
+/** A conflict resolver run owns the group. Exported: the Flow tabs judge 「AI 해결 중」 by this same rule (v02test.0066 #36-1). */
+export const isResolving = (ai: FlowAiActivity | null): boolean => !!ai?.active && ai.actionScope === 'resolve_conflict'
 
 // the AI last pinned for a conflict in a project, kept in this browser so
 // the picker starts on it next time. Storage failures (private mode, quota) only lose the hint.
@@ -311,7 +318,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     const row = pendingRow.value
     if (!row || state.statusLoad === 'error') return null
     if (row.status === 'waiting') return 'hold'
-    if (row.status !== 'conflict' || row.mergeId === null) return null
+    if (row.status !== 'conflict') return null
+    if (row.mergeId === null) return 'conflict'
     // a Graph card result's merge is handled in its card — the conflict card only points there.
     if (state.conflict?.mergeId === row.mergeId && state.conflict.graphMerge) return 'unsupported'
     // A running resolver wins over any review state (§3.3).
@@ -779,6 +787,26 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId), { forceConflicts: true })
   }
 
+  async function abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null> {
+    // Not a notice code: the Git tab words it (GitQuickActions REASONS.git_busy).
+    const busyCode = 'git_busy'
+    if (!canAct.value || disposed) return { code: busyCode, reason: null }
+    const myCtx = ctx
+    let refused: { code: string; reason: string | null } | null = null
+    state.busy = 'abort'
+    try {
+      await src().abortMerge(target.groupId, target.mergeId)
+    } catch (error) {
+      const err = gitErrorOf(error)
+      if (err.status === 403 || err.code === 'forbidden') state.forbidden = true
+      refused = { code: err.network ? 'network' : err.code ?? String(err.status ?? 'failed'), reason: gitReasonOf(err) }
+    } finally {
+      state.busy = null
+    }
+    if (myCtx === ctx && !disposed) await load({ forceConflicts: true })
+    return refused
+  }
+
   async function forceCleanupPreview(target?: ForceCleanupTarget): Promise<GitForceCleanupPreview | null> {
     const wanted = target ?? activeConflict()
     const read = src().fetchForceCleanupPreview
@@ -1122,6 +1150,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     resolveFile,
     abortForReapproval,
     abortMerge,
+    abortOpenSession,
     forceCleanupPreview,
     forceCleanup,
     loadAbortFailures,

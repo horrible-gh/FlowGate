@@ -182,6 +182,14 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_retired_terminal_env(cls, values):
+        # A leftover TERMINAL_ENABLED in .env must not block boot.
+        if isinstance(values, dict):
+            values = {k: v for k, v in values.items() if k.lower() != "terminal_enabled"}
+        return values
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()

@@ -1,6 +1,8 @@
 export default {
   taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "security_window": "My settings · Security"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
+  // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
+  connection_banner: {"reconnecting": "Connection to the server lost · reconnecting automatically…", "hint": "Lists and chats come back on their own once connected, and unsent messages are sent again.", "unknown_error": "An unknown error occurred", "reload": "Reload"},
   accountMenu: {"settings": "My settings", "profile": "My profile", "password": "Change password", "logout": "Log out", "confirmLogout": "Log out?"},
   notification_ai: {"detail": "View details", "provider": "Provider", "finished": "Finished", "reason": "Stop reason", "success": "Succeeded", "failure": "Failed", "stopped": "Stopped", "unknown": "Status unavailable"},
   // AI attachment upload requests (chat message, flow attachment window, run result, settings).
@@ -9,6 +11,8 @@ export default {
     pending_n: '{n} waiting for approval',
     target: 'Target: {title}',
     by_ai: 'Requested by {name}',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: 'Show in the attachment window: {name}',
     tab_pending: '{n} waiting',
     tab_section: '{n} AI attachment requests waiting',
     run_result_pending: '{n} attachment requests waiting for approval',
@@ -357,6 +361,8 @@ export default {
       // a tab's run mark (its accessible name).
       tab_run: { running: 'Running', paused: 'Paused', stopping: 'Stopping' },
       tab_chat: 'Chat AI responding',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AI resolving', resolving_progress: 'AI resolving · {done}/{total}' },
       // an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: 'Archived',
       tab_run_end: { completed: 'Run completed', ended: 'Run ended' },
@@ -636,7 +642,7 @@ export default {
     project_explorer: {
       title: 'Project',
       refresh: 'Refresh',
-      search_placeholder: 'Search projects, groups, flows',
+      search_placeholder: 'Search projects, groups, flows, F77-12',
       search_clear: 'Clear search',
       loading: 'Loading the project structure...',
       load_failed: 'Could not load the project structure.',
@@ -647,6 +653,11 @@ export default {
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
       reconnecting: 'Reconnecting…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · Name used in IDs: {key}',
+      archived: 'Archived',
+      cards: 'Cards',
+      enter_open: 'Enter to open',
     },
     // Designer File Explorer.
     file_explorer: {
@@ -756,6 +767,10 @@ export default {
         more: 'More',
         copy_id: 'Copy ID',
         copied: 'ID copied',
+        card_id_copy: 'Click to copy {id}',
+        card_id_copied: 'Copied',
+        copy_doc_id: 'Copy document ID',
+        doc_id_copied: 'Document ID copied',
         kind_bug: 'Bug',
         state_tip: 'Document status: {doc} / Run status: {run}',
       },
@@ -1011,6 +1026,7 @@ export default {
         blocked_rejected: 'Stopped by a rejection',
         error: 'Stopped by an error',
         stopped: 'Stopped',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'Merge conflict',
         hold: 'Waiting on Hold',
         step_done: 'Next step done',
@@ -1174,6 +1190,9 @@ export default {
       list_loading: 'Loading chats...',
       list_failed: 'Could not load the chat list.',
       list_empty: 'This flow has no chats.',
+      // flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart.
+      flow_running: 'Flow running',
+      chat_running: 'Chat AI running',
     },
     timeline: {
       loading: 'Loading the conversation...',
@@ -1219,9 +1238,28 @@ export default {
       // a message sent while the AI answered.
       waiting: 'Queued',
       waiting_title: 'When the current answer ends, the AI reads this message and answers it.',
+      // flowgate.v02test.0067 #2: a read chat's answer written while a card of the flow ran.
+      seen_during_card_run: 'Read while a card ran',
+      seen_during_card_run_title: 'Read while a card of the flow was running. Files the card was changing may have changed since.',
       copy: 'Copy original text',
       copied: 'Copied',
       copy_failed: 'Could not copy',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: 'Deleted',
+        replaced: 'Changed',
+        open: 'Show in the attachment window: {name}',
+        download: 'Download {name}',
+        linked_n: '{n} file(s) linked in this answer',
+        zip: 'Download all (ZIP)',
+        preview: 'Preview',
+        hide_preview: 'Hide preview',
+        download_failed: 'Could not download the file. Try again in a moment.',
+        not_found: 'This file was not found in the attachment window.',
+        preview_loading: 'Loading…',
+        preview_failed: 'Could not load the preview.',
+        preview_none: 'This file cannot be previewed. Download it to check.',
+      },
     },
     command: {
       title: 'Command request',
@@ -1303,6 +1341,17 @@ export default {
     },
     status: {
       run_running: 'AI is replying…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: 'Will answer next, once the current reply ends',
+      follow_up_waiting_count: '{n} waiting message(s)',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: 'Stop now and answer again',
+      follow_up_reply_now_stopping: 'Stopping…',
+      follow_up_reply_now_edit_warning: 'An edit in progress may be left half done',
+      // flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card run of the flow; [중지] cancels the wait only.
+      follow_up_flow_waiting: 'Will answer once the card run ends',
+      follow_up_flow_cancel: 'Stop',
+      follow_up_flow_cancel_title: 'Cancels the wait only. The card keeps running.',
       run_timeout: 'The AI call reached its time limit.',
       run_cancelled: 'AI call stopped',
       run_no_reply: 'AI call ended without a reply',
@@ -1327,6 +1376,8 @@ export default {
       label: 'With',
     },
     composer: {
+      attachments: 'Attachments',
+      attachments_pending: 'Attachments · {n} awaiting approval',
       creating: "Creating conversation…",
       loading: "Loading conversation history…",
       sending: "Sending message… (attempt {attempt})",
@@ -1452,6 +1503,9 @@ export default {
   git: {
     gate_job: {"job": "Job", "decision": "Decision","title": "Git operation failed", "phase": "Phase", "retry": "Retry", "cancel": "Cancel", "reviewed": "I reviewed the phase evidence and remaining effects", "reason": "Resolution reason", "confirm_effects": "Confirm effects", "abandon": "Abandon recovery", "retry_same": "Retry was accepted but failed again for the same reason", "retry_changed": "Retry was accepted but failed for a different reason", "retry_blocked": "Checking the apply job status. Open [!] details to see the current phase.", "retry_blocked_conflict": "Waiting for conflict resolution review to finish. The job then resumes automatically; status is checked every 5 seconds.", "retry_blocked_cancel": "Cannot retry now · cancel from the [!] details", "cancel_approval": "Cancel this approval", "closed_note": "This approval cannot be applied again. Its merge session is already closed.", "closed_next": "After [Cancel this approval], press [Approve] on the check card → applies the current commit", "retry_blocked_closed": "Why retry is off: it only re-reads the closed merge session, so the result is always the same.", "goto_gate": "Go to the check card", "retry_same_next": "The cause is unchanged, so pressing it again gives the same result. Check the cause in the [!] details, or [Cancel] and approve again on the check card.", "retry_changed_next": "It is blocked for another reason this time. Check the new cause in the [!] details.", "retry_closed_next": "The merge session is closed, so trying again gives the same result. After [Cancel this approval], press [Approve] on the check card to apply the current commit."},
     header: {
+      station: 'Git station',
+      reconstruct: 'Reconstruct on latest base',
+      reconstruct_message: 'Cancel this resolution and reapply the work commits on the latest base.',
       base: 'Project base',
       flow_base: 'Flow base',
       none: '—',
@@ -1469,7 +1523,7 @@ export default {
     files_more: 'Show {n} more',
     files_count: '{n} files',
     conflict: {
-      title_target: 'Conflict · apply to {target} stopped',
+      title_target: 'Apply to {target} paused · resolve conflicts',
       count: 'Resolved {done} · left {open} (server record)',
       ai_again: 'Run again',
       ai_other: 'Another AI',
@@ -1482,6 +1536,9 @@ export default {
       ai_server_default: 'server default AI',
       ai_ended: 'AI resolve ended ({status}) · {name} · {n} conflicts left',
       blocked: {
+        missing_merge: 'Merge ID missing · refresh Git status',
+        load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',
+        unavailable: 'Conflict details unavailable · refresh Git status',
         read_only: 'Read only',
         forbidden: 'No permission',
         busy: 'Another Git action is running',
@@ -1490,6 +1547,7 @@ export default {
       ai: 'Resolve with AI',
       manual: 'Resolve manually',
       abort: 'Abort merge',
+      abort_hint: 'Closes the merge and cancels its linked approval. Records are kept.',
       abort_title: 'Abort merge',
       abort_message: 'Puts the workspace back to before the merge. The group branch is kept.',
       abort_cancel_approval: 'This approval (pinned at {sha}) is cancelled too. Its record is kept.',
@@ -1530,6 +1588,8 @@ export default {
       lines_hidden: '{n} lines hidden',
     },
     reapprove: {
+      restart: 'Restart approval',
+      new_commit: 'New commit since approval · {from} → {to}',
       pinned: 'Approved commit {sha}',
       pinned_unknown: 'Approved commit unknown',
       head: 'current HEAD {sha}',
@@ -1546,6 +1606,7 @@ export default {
       reason: {
         merge_conflict_open: 'the conflict review is open',
         gate_conflict: 'conflict while applying',
+        updated: 'Updated from the base branch.',
         merge_conflict: 'conflict while applying',
         gate_decision_not_cancelable: 'the earlier approval cannot be cancelled',
         gate_job_active: 'Git work is still running',
@@ -1880,7 +1941,9 @@ export default {
         merged_pushed: 'Merged into {target} and pushed.',
         recovered: 'Recorded the earlier merge ({target}).',
         recovered_pushed: 'Recorded and pushed the earlier merge ({target}).',
-        merge_conflict: 'Conflict — resolve it in the card above.',
+        updated: 'Updated',
+        update_no_change: 'Already up to date',
+        merge_conflict: 'Conflict · resolve in the card above',
         judgment_changed: 'The judgment changed. Check again.',
         merge_push_rejected: "Remote update rejected",
         nothing_to_merge: 'There are no commits to merge.',
@@ -1888,7 +1951,7 @@ export default {
         already_recorded: 'Already merged — publish it with Push below.',
         uncommitted_changes: '{n} uncommitted changes — commit or revert them first.',
         uncommitted_protected: '{n} uncommitted changes — commit or revert them first. Ask an operator or administrator to clean up the {protected} protected files the Git tab cannot handle.',
-        queued: 'Runs after another Git operation. Refresh to see the result.',
+        queued: 'Waiting for another Git operation · refresh to check',
         merge_target_unavailable: 'Merge target unavailable ({code}). Read again.',
         graph_execution_active: 'A Graph run is working; no merge now.',
         merge_conflict_open: 'A conflict of another group holds the Base.',
@@ -3288,6 +3351,7 @@ export default {
       agents: 'System agents',
       projects: 'All projects',
       voice: 'Voice input',
+      terminal: 'Web terminal',
     },
     me_nav: {
       account: 'Account · display',
@@ -3387,6 +3451,12 @@ export default {
         lower_title_values: 'Repeat limit {from} → {to}',
         lower_impact: 'Repeat choices of saved or paused runs are re-evaluated against the current limit when they run or resume. An existing choice above the limit may be treated as no review or the default restart count.',
         lower_no_rewrite: 'This screen does not change what a run has stored, and it does not resume any run.',
+      },
+      attach_read: {
+        title: 'AI attachment read limit',
+        label: 'Maximum size (MB)',
+        invalid: 'Enter a whole number of MB from {min} to {max}.',
+        hint: 'The largest attachment an AI may read. 1 to 64 MB, default 1 MB. A saved value applies at once without a server restart. The upload-request preview stays at 1 MB.',
       },
       leave: {
         title: 'You have unsaved changes',

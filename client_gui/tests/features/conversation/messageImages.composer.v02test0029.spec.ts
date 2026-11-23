@@ -169,7 +169,8 @@ describe('paste and drop', () => {
   it('does not attach while the composer cannot take input (sending)', async () => {
     const w = mountComposer({ sending: true })
     expect(paste(w, [file()]).defaultPrevented).toBe(false)
-    expect(drop(w, [file()]).defaultPrevented).toBe(false)
+    // 0074 TR0014: the drop is still prevented so the browser never opens the file; nothing is attached.
+    expect(drop(w, [file()]).defaultPrevented).toBe(true)
     await flushPromises()
     expect(net.upload).not.toHaveBeenCalled()
   })

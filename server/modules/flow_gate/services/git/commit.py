@@ -61,7 +61,7 @@ BOILERPLATE_BLACKLIST = frozenset({
 # the TR commit point's ASCII fail-closed fallback. The
 # TR's own draft failed every check (missing / non-ASCII / oversized); this keeps the
 # document identifiable without a translate round-trip.
-TR_FALLBACK_SUBJECT = "chore: approve {doc_code}"
+TR_FALLBACK_SUBJECT = "{commit_type}: approve {doc_code} (group {group_code})"
 
 
 # a conventional-commit type prefix, e.g. "fix(git): " or

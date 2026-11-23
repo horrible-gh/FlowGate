@@ -4,6 +4,8 @@
 export default {
   taskbar: {"label": "태스크바", "menu": "메뉴", "more": "최소화한 창 {count}개 더 보기", "theme": "테마", "theme_hint": "태스크바와 메뉴, 창 제목줄 모양을 고릅니다.", "style": "태스크바 스타일", "screen": "화면", "theme_window": "내 설정 · 테마", "group_ai": "내 AI 관리", "group_settings": "내 설정", "my_ai": "내 AI", "my_ai_desc": "기본 AI · 순서 · 추가", "my_ai_window": "AI 관리 · 내 AI", "question_policy": "질의 방침", "question_policy_desc": "AI가 내게 물어볼 기준", "question_policy_window": "AI 관리 · 질의 방침", "agents": "에이전트", "agents_desc": "개인 에이전트 목록 · 등록", "account": "계정·화면", "account_window": "내 설정 · 계정·화면", "account_desc": "로그인 정보와 표시 언어", "agents_window": "내 설정 · 에이전트", "security": "보안·세션", "security_desc": "비밀번호 변경 · 로그인 세션", "security_window": "내 설정 · 보안·세션"},
   agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "비어 있으면 작업을 받을 수 없습니다. 에이전트 PC에서 작업 폴더를 만들 위치를 지정하세요. 예: /data/flowgate, C:\\flowgate", "sec_basic": "기본 정보", "sec_run": "실행", "sec_workdir": "작업 폴더", "create_sub": "이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.", "not_connected": "아직 이 PC와 연결되지 않았습니다", "enabled_on": "켜져 있으면 이 에이전트가 작업을 받습니다.", "enabled_off": "작업을 받지 않습니다.", "unit_jobs": "개", "running_now": "지금 {running}개 실행 중", "queued_now": "대기 {count}개", "workdir_label": "작업 폴더 위치", "workdir_preview": "작업마다 {path} 폴더를 새로 만듭니다.", "cleanup_on": "작업이 끝나고 {hours}시간 뒤 폴더를 지웁니다 (1~720).", "cleanup_off": "끄면 작업 폴더를 지우지 않고 그대로 둡니다.", "cli_missing_detail": "이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다. 설치하면 다음 접속부터 자동으로 작업을 받습니다.", "token_title": "등록 토큰", "token_until": "{at}까지", "no_token": "토큰이 없습니다 · 10분간 유효", "no_token_hint": "창을 닫았거나 10분이 지나 토큰이 만료됐습니다. 지우고 다시 등록할 필요 없이 새로 발급하면 됩니다.", "no_changes": "변경 사항 없음", "changes": "저장하지 않은 변경 {count}개", "changes_one": "저장하지 않은 변경 1개", "workdir_shared": "지금은 모든 작업이 {path} 폴더 하나를 같이 씁니다. 이 칸을 고쳐 저장하면 작업마다 폴더를 나눕니다."},
+  // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
+  connection_banner: {"reconnecting": "서버 연결이 끊겼습니다 · 자동으로 다시 연결하는 중…", "hint": "연결되면 목록과 대화가 저절로 돌아오고, 보내지 못한 메시지도 다시 보냅니다.", "unknown_error": "알 수 없는 오류가 발생했습니다", "reload": "새로 고침"},
   accountMenu: {"settings": "내 설정", "profile": "내 프로필", "password": "비밀번호 변경", "logout": "로그아웃", "confirmLogout": "로그아웃하시겠습니까?"},
   notification_ai: {"detail": "상세보기", "provider": "제공자", "finished": "종료 시간", "reason": "종료 사유", "success": "성공", "failure": "실패", "stopped": "중단", "unknown": "상태 확인 필요"},
   // flowgate.chat.0017 CH0002 — AI 첨부 승인 요청 (채팅 메시지 하단 · 플로우 첨부파일 창 · 실행 결과 · 설정).
@@ -12,6 +14,8 @@ export default {
     pending_n: '승인 대기 {n}건',
     target: '대상: {title}',
     by_ai: '{name} 요청',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: '첨부파일 창에서 보기: {name}',
     tab_pending: '대기 {n}',
     tab_section: 'AI 첨부 승인 대기 {n}건',
     run_result_pending: '첨부 승인 대기 {n}건',
@@ -360,6 +364,8 @@ export default {
       // flowgate.v02gui.0001: a tab's run mark (its accessible name).
       tab_run: { running: '실행 중', paused: '일시정지', stopping: '중지 중' },
       tab_chat: '채팅 AI 응답 중',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AI 해결 중', resolving_progress: 'AI 해결 중 · {done}/{total}' },
       // flowgate.v02test.0035: an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: '아카이브됨',
       tab_run_end: { completed: '실행 완료', ended: '실행 끝남' },
@@ -640,7 +646,7 @@ export default {
     project_explorer: {
       title: '프로젝트',
       refresh: '새로고침',
-      search_placeholder: '프로젝트, 그룹, 플로우 검색',
+      search_placeholder: '프로젝트, 그룹, 플로우, F77-12 검색',
       search_clear: '검색어 지우기',
       loading: '프로젝트 구조를 불러오는 중...',
       load_failed: '프로젝트 구조를 불러오지 못했습니다.',
@@ -651,6 +657,11 @@ export default {
       group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
       reconnecting: '다시 연결하는 중…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · ID에 쓰는 이름: {key}',
+      archived: '아카이브',
+      cards: '카드',
+      enter_open: 'Enter 열기',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
@@ -763,6 +774,11 @@ export default {
         more: '더보기',
         copy_id: 'ID 복사',
         copied: 'ID 복사됨',
+        // flowgate.v02test.0077 — the card id chip (F74-1) and the bound document's own id in the ⋯ menu.
+        card_id_copy: '누르면 {id} 복사',
+        card_id_copied: '복사됨',
+        copy_doc_id: '문서 ID 복사',
+        doc_id_copied: '문서 ID 복사됨',
         kind_bug: '버그',
         // flowgate.v02.0052 묶음 A — the status pill tooltip: the server values behind the one label.
         state_tip: '문서 상태: {doc} / 실행 상태: {run}',
@@ -1022,6 +1038,7 @@ export default {
         blocked_rejected: '반려로 멈춤',
         error: '오류로 멈춤',
         stopped: '중지됨',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '병합 충돌',
         hold: 'Hold로 대기',
         step_done: '다음 단계 완료',
@@ -1185,6 +1202,9 @@ export default {
       list_loading: '채팅 목록을 불러오는 중...',
       list_failed: '채팅 목록을 불러오지 못했습니다.',
       list_empty: '이 플로우에 채팅이 없습니다.',
+      // flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart.
+      flow_running: '플로우 실행 중',
+      chat_running: '채팅 호출 중',
     },
     timeline: {
       loading: '대화를 불러오는 중...',
@@ -1230,9 +1250,28 @@ export default {
       // flowgate.v02test.0029: a message sent while the AI answered.
       waiting: '대기',
       waiting_title: '지금 답변이 끝나면 AI가 이 메시지까지 읽고 이어서 답합니다.',
+      // flowgate.v02test.0067 #2: a read chat's answer written while a card of the flow ran.
+      seen_during_card_run: '카드 실행 중 조회',
+      seen_during_card_run_title: '카드가 실행되는 동안 읽은 내용입니다. 카드가 고치는 중인 파일은 바뀌었을 수 있습니다.',
       copy: '원문 복사',
       copied: '복사했습니다',
       copy_failed: '복사하지 못했습니다',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: '삭제됨',
+        replaced: '변경됨',
+        open: '첨부파일 창에서 보기: {name}',
+        download: '{name} 다운로드',
+        linked_n: '이 답변에 링크된 파일 {n}개',
+        zip: '모두 받기(ZIP)',
+        preview: '미리보기',
+        hide_preview: '미리보기 닫기',
+        download_failed: '파일을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+        not_found: '첨부파일 창에서 이 파일을 찾지 못했습니다.',
+        preview_loading: '불러오는 중…',
+        preview_failed: '미리보기를 불러오지 못했습니다.',
+        preview_none: '미리 볼 수 없는 파일입니다. 다운로드해서 확인해 주세요.',
+      },
     },
     command: {
       title: '명령 실행 요청',
@@ -1314,6 +1353,17 @@ export default {
     },
     status: {
       run_running: 'AI가 답하는 중…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: '이어 답변 대기',
+      follow_up_waiting_count: '{n}개',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: '멈추고 재답변',
+      follow_up_reply_now_stopping: '멈추는 중…',
+      follow_up_reply_now_edit_warning: '하던 수정이 중간까지 남을 수 있음',
+      // flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card run of the flow; [중지] cancels the wait only.
+      follow_up_flow_waiting: '카드 종료 후 답변',
+      follow_up_flow_cancel: '중지',
+      follow_up_flow_cancel_title: '기다림만 취소합니다. 카드 실행은 계속됩니다.',
       run_timeout: '설정한 시간이 지나 AI 호출이 종료되었습니다.',
       run_cancelled: 'AI 호출을 중지했습니다',
       run_no_reply: 'AI 호출이 답변 없이 끝났습니다',
@@ -1338,6 +1388,8 @@ export default {
       label: '참여',
     },
     composer: {
+      attachments: '첨부파일',
+      attachments_pending: '첨부파일 · 승인 대기 {n}건',
       creating: "대화 생성 중…",
       loading: "대화 이력 확인 중…",
       sending: "메시지 전송 중… (시도 {attempt})",
@@ -1463,6 +1515,9 @@ export default {
   git: {
     gate_job: {"job": "작업", "decision": "결정","title": "Git 작업 실패", "phase": "처리 단계", "retry": "재시도", "cancel": "취소", "reviewed": "단계별 증거와 남은 효과를 확인했습니다", "reason": "해결 사유", "confirm_effects": "효과 확정", "abandon": "복구 포기", "retry_same": "재시도는 수락됐지만 같은 이유로 다시 실패했습니다", "retry_changed": "재시도는 수락됐지만 다른 이유로 실패했습니다", "retry_blocked": "반영 작업 상태를 확인하고 있습니다. [!] 상세에서 현재 단계를 확인하세요.", "retry_blocked_conflict": "충돌 해결 검토 완료 대기 · 완료되면 자동으로 이어집니다. 상태는 5초마다 확인합니다.", "retry_blocked_cancel": "지금은 재시도할 수 없음 · [!] 상세에서 취소 가능", "cancel_approval": "이 승인 취소", "closed_note": "이 승인은 다시 반영할 수 없습니다. 병합 세션이 이미 닫혔습니다.", "closed_next": "[이 승인 취소] 뒤 확인 카드에서 [승인] → 현재 커밋으로 반영", "retry_blocked_closed": "재시도가 꺼진 이유: 닫힌 병합 세션을 다시 읽기만 해서 항상 같은 결과가 나옵니다.", "goto_gate": "확인 카드로 이동", "retry_same_next": "원인이 그대로라 다시 눌러도 같습니다. [!] 상세에서 원인을 확인하거나, [취소] 뒤 확인 카드에서 다시 승인하세요.", "retry_changed_next": "이번에는 다른 이유로 막혔습니다. [!] 상세에서 새 원인을 확인하세요.", "retry_closed_next": "병합 세션이 닫혀 있어 다시 해도 같습니다. [이 승인 취소] 뒤 확인 카드에서 [승인]을 눌러 현재 커밋으로 다시 반영하세요."},
     header: {
+      station: 'Git 스테이션',
+      reconstruct: '최신 베이스로 재구성',
+      reconstruct_message: '현재 충돌 해결을 취소하고, 작업 커밋을 최신 베이스에 다시 반영합니다.',
       base: '프로젝트 베이스',
       flow_base: '플로우 베이스',
       none: '—',
@@ -1480,7 +1535,7 @@ export default {
     files_more: '외 {n}개 보기',
     files_count: '{n}개 파일',
     conflict: {
-      title_target: '충돌 · {target} 반영 중단',
+      title_target: '{target} 반영 멈춤 · 충돌 해결 필요',
       count: '해결 {done} · 남음 {open} (서버 기록 기준)',
       ai_again: '다시 실행',
       ai_other: '다른 AI로',
@@ -1493,6 +1548,9 @@ export default {
       ai_server_default: '서버 기본 AI',
       ai_ended: 'AI 해결 종료({status}) · {name} · 남은 충돌 {n}개',
       blocked: {
+        missing_merge: '충돌 번호 없음 · Git 상태를 새로고침하세요',
+        load_failed: '충돌 파일을 불러오지 못해 해결할 수 없음 · 아래 오류를 확인하세요',
+        unavailable: '충돌 정보를 확인할 수 없음 · Git 상태를 새로고침하세요',
         read_only: '읽기 전용이라 조작할 수 없음',
         forbidden: '권한 없음',
         busy: '다른 Git 작업 처리 중',
@@ -1501,6 +1559,7 @@ export default {
       ai: 'AI 해결',
       manual: '직접 해결',
       abort: '병합 중단',
+      abort_hint: '병합을 닫고 연결된 승인도 취소합니다. 기록은 남습니다.',
       abort_title: '병합 중단',
       abort_message: '작업공간을 병합 전으로 되돌립니다. 그룹 브랜치는 그대로 남습니다.',
       abort_cancel_approval: '이 승인({sha} 기준)도 취소합니다. 기록은 남습니다.',
@@ -1541,6 +1600,8 @@ export default {
       lines_hidden: '{n}줄 생략',
     },
     reapprove: {
+      restart: '처음부터 다시 승인',
+      new_commit: '승인한 뒤 새 커밋 있음 · {from} → {to}',
       pinned: '승인한 커밋 {sha}',
       pinned_unknown: '승인한 커밋 확인 불가',
       head: '현재 HEAD {sha}',
@@ -1557,6 +1618,7 @@ export default {
       reason: {
         merge_conflict_open: '충돌 검토가 열려 있음',
         gate_conflict: '반영 중 충돌',
+        updated: '베이스 변경을 받아왔습니다.',
         merge_conflict: '반영 중 충돌',
         gate_decision_not_cancelable: '이전 승인을 취소할 수 없음',
         gate_job_active: 'Git 작업이 아직 진행 중',
@@ -1891,6 +1953,8 @@ export default {
         merged_pushed: '{target}에 머지하고 Push했습니다.',
         recovered: '앞서 머지된 결과를 기록했습니다({target}).',
         recovered_pushed: '앞서 머지된 결과를 기록하고 Push했습니다({target}).',
+        updated: '받아오기 완료',
+        update_no_change: '이미 최신',
         merge_conflict: '충돌 — 위 카드에서 해결하세요.',
         judgment_changed: '판정이 바뀌었습니다. 다시 확인하세요.',
         merge_push_rejected: "원격 갱신 거절",
@@ -1899,7 +1963,7 @@ export default {
         already_recorded: '이미 머지된 결과입니다 — 아래 Push로 반영하세요.',
         uncommitted_changes: '미커밋 변경 {n}개 — 먼저 커밋하거나 되돌리세요.',
         uncommitted_protected: '미커밋 변경 {n}개 — 먼저 커밋하거나 되돌리세요. Git 탭에서 처리할 수 없는 보호 파일 {protected}개는 작업자 또는 관리자에게 정리를 요청하세요.',
-        queued: '다른 Git 작업 뒤에 실행됩니다. 새로고침으로 결과를 확인하세요.',
+        queued: '다른 Git 작업 대기 중 · 새로고침으로 확인',
         merge_target_unavailable: '머지 대상 사용 불가 ({code}). 다시 읽었습니다.',
         graph_execution_active: 'Graph 실행 중이라 지금은 머지할 수 없습니다.',
         merge_conflict_open: '다른 그룹의 충돌이 Base를 점유 중입니다.',
@@ -3300,6 +3364,7 @@ export default {
       agents: '시스템 에이전트',
       projects: '전체 프로젝트',
       voice: '음성 입력',
+      terminal: '웹 터미널',
     },
     me_nav: {
       account: '계정 · 화면',
@@ -3399,6 +3464,12 @@ export default {
         lower_title_values: '반복 상한 {from} → {to}',
         lower_impact: '저장·일시정지된 실행의 반복 선택은 이후 실행/재개 시 현재 상한으로 재평가됩니다. 상한을 넘은 기존 선택은 검수 없음 또는 기본 재시작 횟수로 처리될 수 있습니다.',
         lower_no_rewrite: '이 화면은 실행별 저장값을 바꾸거나 실행을 재개하지 않습니다.',
+      },
+      attach_read: {
+        title: 'AI 첨부 읽기 상한',
+        label: '최대 크기 (MB)',
+        invalid: '{min}~{max} 사이의 정수(MB)를 입력하세요.',
+        hint: 'AI가 첨부 파일을 읽을 수 있는 최대 크기입니다. 1~64MB, 기본값은 1MB입니다. 저장하면 서버 재시작 없이 바로 적용됩니다. 첨부 요청 미리보기는 1MB 그대로입니다.',
       },
       leave: {
         title: '저장하지 않은 변경이 있습니다',

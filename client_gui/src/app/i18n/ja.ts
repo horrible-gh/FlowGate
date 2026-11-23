@@ -1,6 +1,8 @@
 export default {
   taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "security_window": "自分の設定 · セキュリティ"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
+  // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
+  connection_banner: {"reconnecting": "サーバーとの接続が切れました · 自動で再接続しています…", "hint": "接続が戻ると一覧と会話は自動で戻り、送れなかったメッセージも再送します。", "unknown_error": "不明なエラーが発生しました", "reload": "再読み込み"},
   accountMenu: {"settings": "自分の設定", "profile": "プロフィール", "password": "パスワード変更", "logout": "ログアウト", "confirmLogout": "ログアウトしますか？"},
   notification_ai: {"detail": "詳細を見る", "provider": "プロバイダー", "finished": "終了時刻", "reason": "終了理由", "success": "成功", "failure": "失敗", "stopped": "中断", "unknown": "状態を確認"},
   // AI添付の承認依頼(チャットのメッセージ下・カードの添付タブ・実行結果・設定)。
@@ -9,6 +11,8 @@ export default {
     pending_n: '承認待ち {n}件',
     target: '対象: {title}',
     by_ai: '{name} の依頼',
+    // v02test.0074: the name of an approved request goes to its file in the attachment window.
+    open_in_window: '添付ファイルウィンドウで表示: {name}',
     tab_pending: '待ち {n}',
     tab_section: 'AI添付の承認待ち {n}件',
     run_result_pending: '添付の承認待ち {n}件',
@@ -357,6 +361,8 @@ export default {
       // a tab's run mark (its accessible name).
       tab_run: { running: '実行中', paused: '一時停止', stopping: '停止中' },
       tab_chat: 'チャットAI応答中',
+      // flowgate.v02test.0066 #36-1: a tab whose merge conflict an AI is resolving (with the counted files when known).
+      tab_conflict: { resolving: 'AIが解決中', resolving_progress: 'AIが解決中 · {done}/{total}' },
       // an archived Flow's tab, and the ends seen while another tab was active.
       tab_archived: 'アーカイブ済み',
       tab_run_end: { completed: '実行完了', ended: '実行終了' },
@@ -636,7 +642,7 @@ export default {
     project_explorer: {
       title: 'プロジェクト',
       refresh: '再読み込み',
-      search_placeholder: 'プロジェクト・グループ・フローを検索',
+      search_placeholder: 'プロジェクト・グループ・フロー・F77-12 を検索',
       search_clear: '検索をクリア',
       loading: 'プロジェクト構造を読み込んでいます...',
       load_failed: 'プロジェクト構造を読み込めませんでした。',
@@ -647,6 +653,11 @@ export default {
       group_menu: 'グループメニュー',
       no_results: '一致するプロジェクト・グループ・フローがありません。',
       reconnecting: '再接続中…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · ID に使う名前: {key}',
+      archived: 'アーカイブ済み',
+      cards: 'カード',
+      enter_open: 'Enter で開く',
     },
     // Designer File Explorer.
     file_explorer: {
@@ -756,6 +767,10 @@ export default {
         more: 'その他',
         copy_id: 'IDをコピー',
         copied: 'IDをコピーしました',
+        card_id_copy: 'クリックで {id} をコピー',
+        card_id_copied: 'コピーしました',
+        copy_doc_id: '文書IDをコピー',
+        doc_id_copied: '文書IDをコピーしました',
         kind_bug: 'バグ',
         state_tip: 'ドキュメント状態: {doc} / 実行状態: {run}',
       },
@@ -1011,6 +1026,7 @@ export default {
         blocked_rejected: '差し戻しで停止',
         error: 'エラーで停止',
         stopped: '停止済み',
+        updated: 'ベースブランチの変更を取り込みました。',
         merge_conflict: 'マージ競合',
         hold: 'Hold で待機',
         step_done: '次のステップ完了',
@@ -1174,6 +1190,9 @@ export default {
       list_loading: 'チャット一覧を読み込み中...',
       list_failed: 'チャット一覧を読み込めませんでした。',
       list_empty: 'このフローにはチャットがありません。',
+      // flowgate.v02test.0067 #2: the Flow's card run and the chat's own AI call, told apart.
+      flow_running: 'フロー実行中',
+      chat_running: 'チャット呼び出し中',
     },
     timeline: {
       loading: '会話を読み込み中...',
@@ -1219,9 +1238,28 @@ export default {
       // a message sent while the AI answered.
       waiting: '待機',
       waiting_title: '現在の回答が終わると、AI がこのメッセージまで読んで続けて回答します。',
+      // flowgate.v02test.0067 #2: a read chat's answer written while a card of the flow ran.
+      seen_during_card_run: 'カード実行中に見た内容',
+      seen_during_card_run_title: 'カードの実行中に読んだ内容です。カードが修正中のファイルは変わっている可能性があります。',
       copy: '原文をコピー',
       copied: 'コピーしました',
       copy_failed: 'コピーできませんでした',
+      // v02test.0074: a message's linked Flow attachments (file chips, the linked file list).
+      file: {
+        deleted: '削除済み',
+        replaced: '変更済み',
+        open: '添付ファイルウィンドウで表示: {name}',
+        download: '{name} をダウンロード',
+        linked_n: 'この回答にリンクされたファイル {n}件',
+        zip: 'すべてダウンロード(ZIP)',
+        preview: 'プレビュー',
+        hide_preview: 'プレビューを閉じる',
+        download_failed: 'ファイルをダウンロードできませんでした。しばらくしてからもう一度お試しください。',
+        not_found: '添付ファイルウィンドウでこのファイルが見つかりませんでした。',
+        preview_loading: '読み込み中…',
+        preview_failed: 'プレビューを読み込めませんでした。',
+        preview_none: 'プレビューできないファイルです。ダウンロードして確認してください。',
+      },
     },
     command: {
       title: 'コマンド実行リクエスト',
@@ -1303,6 +1341,17 @@ export default {
     },
     status: {
       run_running: 'AIが回答中…',
+      // flowgate.v02test.0067 #46: messages sent while the AI answered wait for the answer after it.
+      follow_up_waiting: '前の回答が終わると続けて回答します',
+      follow_up_waiting_count: '待機中のメッセージ {n}件',
+      // flowgate.v02test.0067 card 3: stop the running answer now and answer again.
+      follow_up_reply_now: '今すぐ止めてもう一度回答',
+      follow_up_reply_now_stopping: '停止中…',
+      follow_up_reply_now_edit_warning: '作業中の修正が途中まで残る場合があります',
+      // flowgate.v02test.0067 #2: an edit / edit-once / execute call waits for the card run of the flow; [중지] cancels the wait only.
+      follow_up_flow_waiting: 'カードの実行が終わったら続けて回答します',
+      follow_up_flow_cancel: '中止',
+      follow_up_flow_cancel_title: '待機だけを取り消します。カードの実行は続きます。',
       run_timeout: '設定した制限時間に達したためAI呼び出しを終了しました。',
       run_cancelled: 'AI 呼び出しを停止しました',
       run_no_reply: 'AI 呼び出しが返信なしで終了しました',
@@ -1327,6 +1376,8 @@ export default {
       label: '参加',
     },
     composer: {
+      attachments: '添付ファイル',
+      attachments_pending: '添付ファイル · 承認待ち {n}件',
       creating: "会話を作成中…",
       loading: "会話履歴を確認中…",
       sending: "送信中…（試行 {attempt}）",
@@ -1452,6 +1503,9 @@ export default {
   git: {
     gate_job: {"job": "処理", "decision": "判断","title": "Git 処理失敗", "phase": "処理段階", "retry": "再試行", "cancel": "キャンセル", "reviewed": "各段階の証拠と残る影響を確認しました", "reason": "解決理由", "confirm_effects": "効果を確定", "abandon": "復旧を断念", "retry_same": "再試行は受理されましたが、同じ理由で再び失敗しました", "retry_changed": "再試行は受理されましたが、別の理由で失敗しました", "retry_blocked": "反映処理の状態を確認しています。[!] 詳細で現在の段階を確認してください。", "retry_blocked_conflict": "競合解決のレビュー完了待ち · 完了すると自動で再開します。状態は5秒ごとに確認します。", "retry_blocked_cancel": "今は再試行できません · [!] 詳細から取消可能", "cancel_approval": "この承認を取消", "closed_note": "この承認は再び反映できません。マージセッションはすでに閉じています。", "closed_next": "[この承認を取消] のあと、確認カードで [承認] → 現在のコミットで反映", "retry_blocked_closed": "再試行が無効な理由: 閉じたマージセッションを読み直すだけで、結果は常に同じです。", "goto_gate": "確認カードへ移動", "retry_same_next": "原因が変わらないため、再度押しても同じです。[!] 詳細で原因を確認するか、[キャンセル] のあと確認カードで再承認してください。", "retry_changed_next": "今回は別の理由で止まりました。[!] 詳細で新しい原因を確認してください。", "retry_closed_next": "マージセッションが閉じているため、やり直しても同じです。[この承認を取消] のあと、確認カードで [承認] を押して現在のコミットで再び反映してください。"},
     header: {
+      station: 'Git ステーション',
+      reconstruct: '最新ベースで再構成',
+      reconstruct_message: '現在の競合解決を中止し、作業コミットを最新ベースに再適用します。',
       base: 'プロジェクトベース',
       flow_base: 'フローベース',
       none: '—',
@@ -1469,7 +1523,7 @@ export default {
     files_more: '他 {n} 件を表示',
     files_count: '{n} ファイル',
     conflict: {
-      title_target: '競合 · {target} への反映停止',
+      title_target: '{target} への反映を一時停止 · 競合の解決が必要',
       count: '解決 {done} · 残り {open}（サーバー記録基準）',
       ai_again: '再実行',
       ai_other: '別の AI で',
@@ -1482,6 +1536,9 @@ export default {
       ai_server_default: 'サーバー既定 AI',
       ai_ended: 'AI 解決終了({status}) · {name} · 残り競合 {n} 件',
       blocked: {
+        missing_merge: '競合番号なし · Git 状態を更新してください',
+        load_failed: '競合ファイルを読み込めないため解決できません · 下のエラーを確認してください',
+        unavailable: '競合情報を確認できません · Git 状態を更新してください',
         read_only: '読み取り専用のため操作不可',
         forbidden: '権限なし',
         busy: '他の Git 処理中',
@@ -1490,6 +1547,7 @@ export default {
       ai: 'AI で解決',
       manual: '手動で解決',
       abort: 'マージを中断',
+      abort_hint: 'マージを閉じ、関連する承認も取り消します。記録は残ります。',
       abort_title: 'マージを中断',
       abort_message: '作業スペースをマージ前に戻します。グループブランチはそのまま残ります。',
       abort_cancel_approval: 'この承認（{sha} 固定）も取り消します。記録は残ります。',
@@ -1530,6 +1588,8 @@ export default {
       lines_hidden: '{n} 行省略',
     },
     reapprove: {
+      restart: '最初から承認し直す',
+      new_commit: '承認後に新しいコミットあり · {from} → {to}',
       pinned: '承認したコミット {sha}',
       pinned_unknown: '承認したコミット不明',
       head: '現在の HEAD {sha}',
@@ -1546,6 +1606,7 @@ export default {
       reason: {
         merge_conflict_open: '競合レビューが開いている',
         gate_conflict: '反映中の競合',
+        updated: 'ベースブランチの変更を取り込みました。',
         merge_conflict: '反映中の競合',
         gate_decision_not_cancelable: '前回の承認を取り消せない',
         gate_job_active: 'Git 処理がまだ進行中',
@@ -1880,7 +1941,9 @@ export default {
         merged_pushed: '{target} にマージして Push しました。',
         recovered: '先にマージされた結果を記録しました({target})。',
         recovered_pushed: '先にマージされた結果を記録して Push しました({target})。',
-        merge_conflict: '競合 — 上のカードで解決してください。',
+        updated: '取り込み完了',
+        update_no_change: 'すでに最新',
+        merge_conflict: '競合 · 上のカードで解決',
         judgment_changed: '判定が変わりました。もう一度確認してください。',
         merge_push_rejected: "リモート更新拒否",
         nothing_to_merge: 'マージするコミットがありません。',
@@ -1888,7 +1951,7 @@ export default {
         already_recorded: 'すでにマージ済みの結果です — 下の Push で反映してください。',
         uncommitted_changes: '未コミットの変更 {n} 件 — 先にコミットするか元に戻してください。',
         uncommitted_protected: '未コミットの変更 {n} 件 — 先にコミットするか元に戻してください。Git タブで処理できない保護ファイル {protected} 件は担当者または管理者に整理を依頼してください。',
-        queued: '別の Git 作業の後に実行されます。再読み込みで結果を確認してください。',
+        queued: '別の Git 作業を待機中 · 再読み込みで確認',
         merge_target_unavailable: 'マージ対象を使用できません({code})。再読み込みしました。',
         graph_execution_active: 'Graph 実行中のため、今はマージできません。',
         merge_conflict_open: '別グループの競合が Base を占有しています。',
@@ -3289,6 +3352,7 @@ export default {
       agents: 'システム Agent',
       projects: '全プロジェクト',
       voice: '音声入力',
+      terminal: 'Web ターミナル',
     },
     me_nav: {
       account: 'アカウント · 画面',
@@ -3388,6 +3452,12 @@ export default {
         lower_title_values: '繰り返し上限 {from} → {to}',
         lower_impact: '保存・一時停止された実行の繰り返し選択は、以後の実行/再開時に現在の上限で再評価されます。上限を超えた既存の選択は「レビューなし」または既定の再開回数として扱われることがあります。',
         lower_no_rewrite: 'この画面は実行ごとの保存値を変更したり、実行を再開したりしません。',
+      },
+      attach_read: {
+        title: 'AI 添付読み取り上限',
+        label: '最大サイズ (MB)',
+        invalid: '{min}〜{max} の整数（MB）を入力してください。',
+        hint: 'AI が添付ファイルを読み取れる最大サイズです。1〜64MB、既定値は 1MB です。保存するとサーバーを再起動せずにすぐ適用されます。添付リクエストのプレビューは 1MB のままです。',
       },
       leave: {
         title: '保存していない変更があります',

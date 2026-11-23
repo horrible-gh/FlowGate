@@ -41,7 +41,7 @@ export interface MergeTargetCache {
   readonly at: number
 }
 /** the settings a card lets the Inspector change one value at a time. */
-const CHANGEABLE_FIELDS = ['archive', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch']
+const CHANGEABLE_FIELDS = ['auto_approve', 'merge_mode', 'merge_target_branch', 'push', 'keep_branch']
 /** How long a field shows `saved` after the server's answer carried its requested value. */
 export const FIELD_SAVED_MS = 2000
 /** A field's own save state: queued / on its way, confirmed by the answer, or refused (the shown value is back to the confirmed one). */

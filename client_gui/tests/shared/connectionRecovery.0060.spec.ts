@@ -22,9 +22,13 @@ beforeEach(() => {
   Stream.all = []
 })
 afterEach(async () => {
-  // A normal success ends the module singleton even after a failed assertion.
+  // A normal success ends the module singleton even after a failed assertion. While the connection is lost a GET
+  // waits in shared/connectionGate, so the probe answers too and the held GET goes out once it does.
+  vi.spyOn(axios, 'get').mockResolvedValue({ data: {} })
   api.defaults.adapter = async config => ({ data: {}, status: 200, statusText: 'OK', headers: {}, config })
-  await api.get('/cleanup')
+  const cleanup = api.get('/cleanup').catch(() => {})
+  await vi.advanceTimersByTimeAsync(30000)
+  await cleanup
   stops.splice(0).forEach(stop => stop())
   api.defaults.adapter = original
   vi.restoreAllMocks()
@@ -84,10 +88,15 @@ describe('0060 connection recovery', () => {
     await vi.advanceTimersByTimeAsync(15500); await requests
     expect(probe).toHaveBeenCalledTimes(1)
     api.defaults.adapter = async config => ({ data: {}, status: 200, statusText: 'OK', headers: {}, config })
-    await api.get('/ok')
+    // 0060 (22:09): while lost, GETs wait (shared/connectionGate); the one sent 30 s after the loss ends it.
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(probe).toHaveBeenCalledTimes(2)
+    const ok = api.get('/ok')
+    await vi.advanceTimersByTimeAsync(10000)
+    await ok
     expect(resync).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(100000)
-    expect(probe).toHaveBeenCalledTimes(1)
+    expect(probe).toHaveBeenCalledTimes(2)
   })
   it.each(['online', 'focus', 'visibilitychange'])('keeps probing after %s until an actual response succeeds', async name => {
     const resync = subscriber(); Stream.all[0].open()
@@ -161,12 +170,16 @@ describe('0060 connection recovery', () => {
     await request
     expect(probe).toHaveBeenCalledTimes(1)
   })
-  it.each(['post', 'patch', 'delete'] as const)('never starts for %s', async method => {
-    const probe = vi.spyOn(axios, 'get')
+  it.each(['post', 'patch', 'delete'] as const)('probes after %s fails without replaying the write', async method => {
+    const probe = vi.spyOn(axios, 'get').mockResolvedValue({ data: {} })
     fail(503)
+    const adapter = vi.fn(api.defaults.adapter as any)
+    api.defaults.adapter = adapter
     await api.request({ method, url: '/write' }).catch(() => {})
-    await vi.advanceTimersByTimeAsync(100000)
-    expect(probe).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(adapter).toHaveBeenCalledTimes(1)
+    expect(probe.mock.calls[0][0]).toMatch(/auth\/connection-check$/)
   })
   it('uses 5,10,20,30,30 second delays and ignores a late completion after stop', async () => {
     const probe = vi.fn().mockRejectedValue(new Error('down'))

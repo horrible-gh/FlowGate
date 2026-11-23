@@ -2,4 +2,6 @@
 // (the attachments button stays lit, final mockup `.haswindow`).
 import { reactive } from 'vue'
 
-export const flowAttachmentUi = reactive({ currentOpen: false })
+// `toggle` is set by the Host while it is mounted: opens the current Flow's window, or closes it when it is open (the
+// 📎 button of the chat input uses it; the Host's own `open` is still what the toolbar button calls).
+export const flowAttachmentUi = reactive<{ currentOpen: boolean; toggle: (() => void) | null }>({ currentOpen: false, toggle: null })

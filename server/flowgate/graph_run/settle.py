@@ -365,6 +365,8 @@ def _end_cleanup(ctx) -> None:
 
 def settle_run(ctx) -> None:
     """``run_state_ports.settle``, inside the step's Flow guard after its decision."""
+    from flowgate.gate_decisions import automatic
+    automatic.schedule(ctx)
     plan = settle_plan(ctx)
     if plan is None:
         return

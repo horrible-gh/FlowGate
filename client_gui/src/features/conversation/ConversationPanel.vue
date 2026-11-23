@@ -14,7 +14,7 @@
     <ConversationHeader
       :chats="state.chats"
       :chats-status="state.chatsStatus"
-      :reconnecting="listReconnecting"
+      :reconnecting="listReconnecting || offline"
       :active-chat="activeChat"
       :has-scope="state.scope !== null"
       :creating="state.creatingChat"
@@ -22,6 +22,8 @@
       :read-only="readOnly"
       :draft="start.isDraft.value"
       :title="headerTitle"
+      :flow-running="flowRunning || session.flowRunning.value"
+      :chat-running="session.running.value"
       @select="session.selectChat"
       @rename="start.rename"
       @create="onCreate"
@@ -41,7 +43,7 @@
     </Alert>
     <ConversationTimeline
       :items="session.timeline.value"
-      :status="state.turnsStatus"
+      :status="state.turnsStatus === 'error' && offline ? 'loading' : state.turnsStatus"
       :has-more-before="state.hasMoreBefore"
       :loading-older="state.loadingOlder"
       :deciding="state.deciding"
@@ -53,7 +55,10 @@
       :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
       :checkpoint-busy="state.savingCheckpoint"
       :my-participant-key="state.myParticipantKey"
+      :reply-now="replyNowView"
       @mutate="session.mutateTurn"
+      @reply-now="session.replyNow"
+      @cancel-wait="session.cancelFlowWait"
       @retry-history="session.recover({ history: true })"
       @dismiss-history="session.dismissHistoryWarning"
       @load-older="session.loadOlder"
@@ -103,6 +108,9 @@
       :copying-mention="state.copyingMention"
       :manual-copy-text="state.manualCopyText"
       :on-send="start.send"
+      :attachments-open="attachmentsOpen"
+      :attachments-pending="attachmentsPending"
+      @toggle-attachments="emit('toggle-attachments')"
       @select-provider="session.selectProvider"
       @retry-ai-pick="session.retryChatProvider"
       @save-settings="onSaveSettings"
@@ -118,6 +126,8 @@
 
 <script setup lang="ts">
 import { useRequestRecovery } from '@shared/requestRecovery'
+import { useSelfHeal } from '@shared/selfHeal'
+import { connectionLost } from '@shared/connectionStatus'
 // The panel is handed its scope (the current Project and the active Flow's v0.1 group id)
 // and creates one Conversation session for its own lifetime. A container that already has a
 // session-wide data source (or a test) passes `source`; otherwise the HTTP source of the
@@ -138,7 +148,7 @@ import RunChangeWindow from './RunChangeWindow.vue'
 import { REVISIT_CATCHUP_MIN_MS, createConversationSession } from './conversationSession'
 import { useChatEvents, type SubscribeChatEvents } from './conversationEvents'
 import { createHttpConversationSource, type ConversationSource } from './conversationSource'
-import { ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST_ROW, type ChatSettingsPatch, type ChatSummary, type WorkChangeActivity } from './types'
+import { ATTACHMENT_LINK_CONTEXT, ATTACHMENT_REQUEST_BULK, ATTACHMENT_REQUEST_REFRESH, ATTACHMENT_REQUEST_ROW, type AttachmentLinkContext, type ChatSettingsPatch, type ChatSummary, type WorkChangeActivity } from './types'
 
 const props = withDefaults(
   defineProps<{
@@ -149,6 +159,8 @@ const props = withDefaults(
     readOnly?: boolean
     /** the Flow's Graph run locks the AI source access mode. */
     sourceLocked?: boolean
+    /** Confirmed Flow run activity, separate from archive / unknown edit locks. */
+    flowRunning?: boolean
     /** the project event stream; without it the chat hears no server event. */
     subscribeEvents?: SubscribeChatEvents
     /** the AI attachment request row the container draws requests with. */
@@ -157,17 +169,33 @@ const props = withDefaults(
     attachmentRequestBulk?: Component
     /** the container shows this part (false while another Dock tab is shown). */
     active?: boolean
+    /** the Flow's attachment window is open (the 📎 button of the input shows it pressed). */
+    attachmentsOpen?: boolean
+    /** Waiting AI attachment requests of the whole Flow (every chat and card), for the badge of the 📎 button; the container reads it. */
+    attachmentsPending?: number
+    /**
+     * v02test.0074: shows one file of a Flow in that Flow's attachment window (the container's `focusAttachment`); the
+     * name of a message's file chip calls it. Resolves false when the file or the window is not there.
+     */
+    focusAttachment?: (flowId: string, key: string) => Promise<boolean>
   }>(),
-  { source: undefined, readOnly: false, sourceLocked: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined },
+  { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined, attachmentsOpen: false, attachmentsPending: 0, focusAttachment: undefined },
 )
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
+  /** the 📎 button of the input: the container opens / closes the Flow's attachment window. */
+  'toggle-attachments': []
 }>()
 
 // the attachment request blocks of the timeline draw their rows with the container's component.
 provide(ATTACHMENT_REQUEST_ROW, computed(() => props.attachmentRequestRow ?? null))
 provide(ATTACHMENT_REQUEST_BULK, computed(() => props.attachmentRequestBulk ?? null))
+// v02test.0074: a message's file chips download from this chat's Flow and go to the attachment window through the container.
+provide<AttachmentLinkContext>(ATTACHMENT_LINK_CONTEXT, {
+  flowId: () => props.groupId,
+  focus: (flowId, key) => props.focusAttachment?.(flowId, key) ?? Promise.resolve(false),
+})
 
 const { t, te } = useI18n()
 
@@ -256,9 +284,35 @@ const listReconnecting = useRequestRecovery(
     notice.groupId === props.groupId && notice.typeCode === 'CH',
 )
 
+// 0060: while the server is unreachable the App Shell shows one banner; this part says it is reconnecting instead of
+// showing its own failures, and reads again by itself.
+const offline = computed(() => connectionLost.value)
+
+// 0060: a failed chat list and a chat whose read failed read again by themselves (5 s, 10 s, 20 s, then every 30 s)
+// instead of waiting for the event stream's resync, which may never come.
+useSelfHeal({
+  failed: () => state.scope !== null && state.chatsStatus === 'error',
+  busy: () => state.chatsStatus === 'loading',
+  reload: () => void session.recoverChatList(),
+})
+useSelfHeal({
+  failed: () => state.activeChatId !== null && state.turnsStatus === 'error',
+  busy: () => state.turnsStatus === 'loading',
+  reload: () => void session.recover(),
+})
+
+// 0060: a message whose send was cut off (no answer, 5xx) goes out again by itself once the server answers: when the
+// connection is back and whenever the open chat has been read again. Same idempotency key — never stored twice.
+function resendInterrupted(): void {
+  void session.resendInterrupted()
+}
+watch(() => state.turnsStatus, (status, before) => {
+  if (status === 'ready' && before !== 'ready') resendInterrupted()
+})
+
 const emptyText = computed(() => {
   if (!state.scope) return t('gui.conversation.timeline.no_flow')
-  if (state.chatsStatus === 'loading') return t(listReconnecting.value ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading')
+  if (state.chatsStatus === 'loading' || (state.chatsStatus === 'error' && offline.value)) return t(listReconnecting.value || offline.value ? 'gui.conversation.header.reconnecting' : 'gui.conversation.header.list_loading')
   if (state.chatsStatus === 'error') return t('gui.conversation.header.list_failed')
   return t('gui.conversation.timeline.empty')
 })
@@ -286,6 +340,15 @@ function reloadChat(): void {
 const stopState = computed(() => {
   const own = session.startStop.value
   return own !== 'none' ? own : start.stopState.value
+})
+// flowgate.v02test.0067 card 3: [지금 멈추고 다시 답하기] sits on the follow-up line, only while a message waits.
+const replyNowView = computed(() => {
+  const view = session.followUp.value
+  return view && view.reason === 'run' && !props.readOnly ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
+})
+// flowgate.v02test.0067 #2: the Designer saw the Flow's run lock go off — a call waiting for the Flow looks again now.
+watch(() => props.sourceLocked, (locked, was) => {
+  if (was && !locked) session.wakeFlowWait()
 })
 function onStop(): void {
   if (session.startStop.value !== 'none') void session.stopRun()
@@ -363,11 +426,15 @@ function onVisibilityChange(): void {
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('focus', onRevisit)
+  window.addEventListener('fg:connection_recovered', resendInterrupted)
+  window.addEventListener('online', resendInterrupted)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('focus', onRevisit)
+  window.removeEventListener('fg:connection_recovered', resendInterrupted)
+  window.removeEventListener('online', resendInterrupted)
 })
 
 onBeforeUnmount(() => session.dispose())

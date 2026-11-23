@@ -32,6 +32,7 @@
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
 import { readFlowArchive, changeFlowArchive, type FlowArchiveState } from './flowArchiveApi'
+import { findCardRefs } from './cardRefApi'
 import {
   readDesignerDockSizes,
   saveDesignerDockSizes as saveDesignerDockSizesApi,
@@ -56,6 +57,7 @@ import type {
   FlowChangeSet,
   FlowFileDiff,
   FlowFileTree,
+  FlowGitExecution,
   GroupTreeNode,
   FlowCanvas,
   FlowCanvasLayoutInput,
@@ -94,6 +96,7 @@ import {
   fetchFlowChangeSet,
   fetchFlowFileDiff,
   fetchFlowFileTree,
+  fetchFlowGitExecution,
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchWorkBaseOptions,
@@ -704,8 +707,13 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowFileDiff(projectId, groupId, path, options)
   }
 
-  function loadFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
-    return fetchFlowAiActivity(groupId)
+  function loadFlowAiActivity(groupId: string, options?: { conflictProgress?: boolean }): Promise<FlowAiActivity> {
+    return fetchFlowAiActivity(groupId, options)
+  }
+
+  // flowgate.v02test.0068: the Designer's Flow tab reads each open Flow's durable Git run through this.
+  function loadFlowGitExecution(groupId: string): Promise<FlowGitExecution | null> {
+    return fetchFlowGitExecution(groupId)
   }
 
   // the Designer Git part's file reads. A conflict / uncommitted file is a
@@ -870,6 +878,8 @@ export const useProjectStore = defineStore('project', () => {
     readFlowArchive,
     setFlowArchived,
     archiveBusy,
+    // flowgate.v02test.0077: the card a display id (`F77-12`) names — a stateless pass-through like readFlowArchive.
+    findCardRefs,
     getCachedGroupTree,
     invalidateGroupTree,
     fetchGroupTree,
@@ -891,6 +901,7 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowChanges,
     loadFlowFileDiff,
     loadFlowAiActivity,
+    loadFlowGitExecution,
     loadBaseFileDiff,
     loadMergeReviewFileDiff,
     loadFlowCanvas,

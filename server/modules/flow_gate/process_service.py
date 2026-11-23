@@ -2346,6 +2346,9 @@ def update_group(
 
     def write():
         require_writable(group_id)
+        if "title" in updates:
+            from .graph_workflow.services.first_names_store import mark_flow_manual
+            mark_flow_manual(group_id)
         return db_groups.update(group_id, updates)
 
     updated = with_flow_guard(group_id, write)
@@ -5610,6 +5613,8 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
         tail = group_id.rsplit(".", 1)[-1]
         return tail if tail and tail.isdigit() else None
 
+    from modules.flow_gate.services.card_ids import flow_label as _flow_label   # F77: display id, not stored
+
     def _build_doc_node(doc_row, parent_id: str) -> dict[str, Any]:
         doc = dict(doc_row)
         doc_id = doc["doc_id"]
@@ -5666,6 +5671,7 @@ def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None, *
             "node_type": "group",
             "type_code": None,
             "number": _group_number(group_id),
+            "flow_label": _flow_label(group_id),
             "filename": None,
             "label": group.get("title", group_id),
             "has_md": False,

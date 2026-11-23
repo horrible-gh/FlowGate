@@ -170,6 +170,9 @@ export function useGateOperations(project: () => string | null, flow: () => stri
   const reapproval = ref<{ decisionId: string; code: string | null; nodeKey?: string } | null>(null)
   /** Accepted retries by decision id: the decision version and error code they were sent at (see `retryOutcomeOf`). */
   const retried = ref<Record<string, { version: number; code: string | null }>>({})
+  const autoFailures = computed<GateOperation[]>(() => (run.value?.nodes ?? []).flatMap(node =>
+    node.status === 'open' && node.gate?.auto_approval_error
+      ? [{ runId: run.value!.runId, nodeKey: node.nodeKey, gate: node.gate }] : []))
   const operations = computed<GateOperation[]>(() => (run.value?.nodes ?? []).flatMap(node => {
     const gate = node.gate
     return gate?.decision_in_progress && gate.recovery && (gate.recovery.error_code || ['failed', 'recovery_required'].includes(gate.recovery.status))
@@ -295,7 +298,7 @@ export function useGateOperations(project: () => string | null, flow: () => stri
     select({ runId: run.value!.runId, nodeKey: node.nodeKey, gate })
     return await act('cancel') ? null : notice.value ?? 'gate_decision_not_cancelable'
   }
-  return { operations, conflictOperation, selected, busy, notice, reapproval, select, act, reload, readOnly, retryOutcomeOf, cancelAfterAbort }
+  return { autoFailures, operations, conflictOperation, selected, busy, notice, reapproval, select, act, reload, readOnly, retryOutcomeOf, cancelAfterAbort }
 }
 export type GateOperations = ReturnType<typeof useGateOperations>
 export const GATE_OPERATIONS_CONTEXT: InjectionKey<GateOperations> = Symbol('flowgate.gitGateOperations')

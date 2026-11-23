@@ -77,6 +77,7 @@
       :nodes-connectable="editable"
       :is-valid-connection="isValidConnection"
       :edges-updatable="false"
+      :elevate-edges-on-select="false"
       :elements-selectable="selectMode"
       :nodes-focusable="false"
       :edges-focusable="false"
@@ -130,14 +131,14 @@
           :source-position="edgeProps.sourcePosition"
           :target-position="edgeProps.targetPosition"
           :source-node="edgeProps.sourceNode"
-          :obstacle-nodes="flow?.getNodes?.value ?? []"
+          :routed-edge="routedEdges.get(edgeProps.id)"
           :target-node="edgeProps.targetNode"
           :edge-class="edgeProps.data?.edgeClass ?? null"
           :editable="edgeProps.data?.editable === true"
           :issue="edgeProps.data?.issue === true"
           :issue-text="edgeProps.data?.issueText ?? ''"
+          :target-state="edgeProps.targetNode?.data?.state ?? null"
           :progressed="edgeProps.data?.progressed === true"
-          :waiting="edgeProps.data?.waiting === true"
           :selected="edgeProps.data?.selected === true"
           :deletable="edgeProps.data?.deletable === true"
           :protected-target="edgeProps.data?.protected === true"
@@ -238,6 +239,8 @@ import type { CanvasViewRequest } from '../designerCenterSession'
 import type { FlowGraph } from '../graph/flowGraph'
 import type { FlowDraftIssue } from '../graph/flowGraphSource'
 import FlowEdgePath from './FlowEdgePath.vue'
+import { routeEdges } from './edgeRouting'
+import { nodeRect } from './edgeGeometry'
 import FlowNodeCard from './FlowNodeCard.vue'
 import { toVueFlowEdges, toVueFlowNodes } from './vueFlowMapping'
 import { NO_RUN_MARKS, type FlowRunMarks } from '../run/flowRunLock'
@@ -407,6 +410,9 @@ const initialViewport: CanvasViewport = props.viewport ?? DEFAULT_CANVAS_VIEWPOR
 /** The Viewport on screen = the last one reported to the session. */
 const liveViewport = ref<CanvasViewport>(initialViewport)
 const flow = shallowRef<VueFlowStore | null>(null)
+const routedEdges = computed(() => routeEdges(edges.value,
+  new Map((flow.value?.getNodes?.value ?? []).map(node => [node.id, nodeRect(node)])),
+))
 let fitted = props.viewport !== null
 let nodesMeasured = false
 

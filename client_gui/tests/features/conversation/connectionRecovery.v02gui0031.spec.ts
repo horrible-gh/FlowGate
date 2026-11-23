@@ -13,7 +13,8 @@ import { createFakeSource, httpError, turn } from './fakeConversationSource'
 // ③ a chat whose first read failed (turnsStatus 'error') was skipped by every automatic recovery (session.recover
 //    returned for anything not 'ready', the panel's return to view too) and waited for its [다시 시도].
 // Now online recovers the open chat like a reconnect, and a failed chat is opened again through its [다시 시도] path
-// on online, a reconnect and a return to the panel. Nothing is sent again: recovery only reads.
+// on online, a reconnect and a return to the panel. 0060: a message cut off by the outage (no answer, 5xx) is sent again
+// by itself once the connection is back, under its own idempotency key; nothing else is sent.
 registerAppMessages(i18n)
 
 const SCOPE = { projectId: 'p', groupId: 'p.m.0001' }
@@ -78,6 +79,26 @@ async function mountPanel(firstReadFails: boolean) {
 }
 
 describe('v02gui.0031 T0005 ② online recovers the open chat', () => {
+  it('recovers the screen after an outage and retries the failed message without F5 or an SSE reconnect', async () => {
+    const { session, source, data } = await mountPanel(false)
+    source.postTurn.mockRejectedValueOnce(httpError(503, 'database unavailable'))
+      .mockRejectedValueOnce(httpError(503, 'database unavailable'))
+      .mockRejectedValueOnce(httpError(503, 'database unavailable'))
+    expect(await session.send('held during outage')).toBe(false)
+    const failed = session.state.pending[0]
+    expect(wrapper!.get('[data-test="tl-failure"]').text()).toContain('database unavailable')
+    data.turns[A].push(turn(3, 'ai', 'arrived during outage'))
+    window.dispatchEvent(new Event('online'))
+    await coalesce()
+    await flushPromises()
+    expect(bodies(session)).toContain('arrived during outage')
+    // 0060: sent again by itself on online — no [다시 시도] — under the same key.
+    expect(source.postTurn).toHaveBeenCalledTimes(4)
+    expect(source.postTurn.mock.calls[3][1].idempotencyKey).toBe(failed.idempotencyKey)
+    expect(session.state.pending).toHaveLength(0)
+    expect(data.turns[A].filter(t => t.body === 'held during outage')).toHaveLength(1)
+  })
+
   it('online reads the open chat again (turns, active run, activities, history) without a stream reconnect', async () => {
     const { session, source, data } = await mountPanel(false)
     const before = { turns: source.fetchTurns.mock.calls.length, active: source.fetchActiveChatRun.mock.calls.length,

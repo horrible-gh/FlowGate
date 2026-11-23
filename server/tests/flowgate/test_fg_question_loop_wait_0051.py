@@ -596,11 +596,15 @@ def test_an_idle_run_is_woken_for_the_resume(parked):
     assert parked["state"]["run_status"] == ("running", None) and len(parked["ledger"].requests) == 1
 
 
-def test_an_answer_that_requires_a_new_attempt_never_resumes_the_old_one(parked):
+def test_new_attempt_answer_falls_back_to_loop_when_replacement_unavailable(parked, monkeypatch):
+    # 0071 T6: a parked review has a result, so it cannot be replaced. Resume
+    # its ordinary review path instead of waiting for a person's Stop command.
+    from flowgate.card_settings import action_guard
+    monkeypatch.setattr(action_guard, "_automatic_retry", lambda *a: False)
     parked["state"]["requirements"] = ["new_attempt"]
     _answer(parked, "human")
-    assert parked["ledger"].requests == [] and parked["wait"]()["status"] == "waiting"
-    assert parked["state"]["held"][0][4:] == ("loop_wait", "action_required:new_attempt", "stop_then_command")
+    assert len(parked["ledger"].requests) == 1
+    assert parked["wait"]()["status"] == "resuming"
 
 
 def test_several_questions_are_answered_one_by_one_before_the_loop_goes_on(parked):

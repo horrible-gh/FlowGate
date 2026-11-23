@@ -17,7 +17,9 @@ ATTACH_MAX_UPLOAD_BYTES = 20971520          # 20 MiB — one uploaded file
 ATTACH_MAX_REQUEST_BYTES = 104857600        # 100 MiB — one upload request body
 ATTACH_MAX_FILES_PER_REQUEST = 20           # `file` parts accepted per request
 ATTACH_MAX_COUNT_PER_DOC = 200              # registered attachments per document
-ATTACH_READ_MAX_BYTES = 1048576             # 1 MiB — read() content ceiling
+ATTACH_READ_MAX_BYTES = 1048576             # 1 MiB — read() ceiling DEFAULT; the live value is the
+                                            # system setting attach_read_max_mb (settings/attach_read_limit.py)
+ATTACH_PREVIEW_MAX_BYTES = 1048576          # 1 MiB — upload-request preview text cut (fixed, not a setting)
 ATTACH_MAX_FILENAME_BYTES = 200             # UTF-8 bytes of the sanitized filename
 ATTACH_MAX_TARGET_PATH_CHARS = 1024         # copy target_path total length
 ATTACH_MAX_PATH_SEGMENT_BYTES = 255         # UTF-8 bytes of one path segment

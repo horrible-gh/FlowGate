@@ -225,6 +225,11 @@ const hidden = (el: HTMLElement | null) => !!el && el.style.display === 'none'
 // the Git tab entries open the Git modeless on their tab; its top tabs switch.
 async function openGitWindow(tab: string) {
   const selector = `[data-test="git-worktree-entry"][data-tab="${tab}"], [data-test="git-window-tab"][data-tab="${tab}"]`
+  // 0068 v16: only the footer `Diff` entry opens the window; its top tabs reach the others.
+  if (!document.body.querySelector(selector)) {
+    document.body.querySelector<HTMLElement>('[data-test="git-worktree-entry"][data-tab="diff"]')!.click()
+    await settle()
+  }
   document.body.querySelector<HTMLElement>(selector)!.click()
   await settle()
 }

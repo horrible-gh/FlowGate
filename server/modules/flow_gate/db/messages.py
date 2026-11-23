@@ -10,10 +10,10 @@ from typing import Optional
 from .connection import get_store, now_iso
 
 
-def list_by_project(project: str) -> list[dict]:
+def list_by_project(project: str, usage: str = "document") -> list[dict]:
     """All messages for the management screen (P0006 §4.1)."""
     store = get_store()
-    return store._fetch_all(store._sql("messages.list_messages_by_project"), [project])
+    return store._fetch_all(store._sql("messages.list_messages_by_project"), [project, usage])
 
 
 def list_for_dialog(project: str, doc_type: str) -> list[dict]:
@@ -33,7 +33,8 @@ def get_by_id(message_id: int) -> Optional[dict]:
     return store._fetch_one(store._sql("messages.get_message_by_id"), [message_id])
 
 
-def create(project: str, doc_type: str, message: str) -> dict:
+def create(project: str, doc_type: str, message: str, *, usage: str = "document",
+           title: str = "", kind: str = "once", sort_order: int = 0) -> dict:
     """Insert a message and return the created row (P0006 §4.2).
 
     INSERT + last_insert_rowid() recovery must share one connection, so they are wrapped
@@ -43,33 +44,36 @@ def create(project: str, doc_type: str, message: str) -> dict:
     store = get_store()
     now = now_iso()
     with store.transaction() as s:
-        s._execute(store._sql("messages.insert_message"), [project, doc_type, message, now])
+        s._execute(store._sql("messages.insert_message"), [project, doc_type, message, now, usage, title, kind, sort_order])
         row = s._fetch_one("SELECT last_insert_rowid() AS rid")
         new_id = row["rid"] if row else None
         return s._fetch_one(store._sql("messages.get_message_by_id"), [new_id])
 
 
-def update(message_id: int, updates: dict) -> Optional[dict]:
+def update(message_id: int, updates: dict, project: str | None = None) -> Optional[dict]:
     """Read-modify-write the row, return the updated row, or None if absent (P0006 §4.3).
 
     `updates` may carry a subset of {doc_type, message}; unspecified fields keep their value.
     """
     store = get_store()
     current = get_by_id(message_id)
-    if current is None:
+    if current is None or (project is not None and current["project"] != project):
         return None
     doc_type = updates.get("doc_type", current["doc_type"])
     message = updates.get("message", current["message"])
     store._execute(
-        store._sql("messages.update_message"), [doc_type, message, now_iso(), message_id]
+        store._sql("messages.update_message"), [doc_type, message, now_iso(),
+         updates.get("title", current["title"]), updates.get("kind", current["kind"]),
+         updates.get("sort_order", current["sort_order"]), message_id, current["project"]]
     )
     return get_by_id(message_id)
 
 
-def delete(message_id: int) -> bool:
+def delete(message_id: int, project: str | None = None) -> bool:
     """Delete by PK. Returns True when the row existed (router maps False -> 404)."""
     store = get_store()
-    if get_by_id(message_id) is None:
+    current = get_by_id(message_id)
+    if current is None or (project is not None and current["project"] != project):
         return False
-    store._execute(store._sql("messages.delete_message"), [message_id])
+    store._execute(store._sql("messages.delete_message"), [message_id, current["project"]])
     return True

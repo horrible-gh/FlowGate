@@ -36,7 +36,7 @@ def settings_of(flow_id: str, node_key: str) -> tuple[dict, int]:
 
     stored = repository.values(flow_id, node_key)
     view = fields.view(fields.CHECK, stored, ())
-    shown = {name: view[name]["value"] for name in ("merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch", "archive")
+    shown = {name: view[name]["value"] for name in ("merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch", "auto_approve")
              if name in view}
     return shown, repository.settings_version(flow_id, node_key)
 
@@ -45,7 +45,7 @@ def effective(shown: dict) -> dict:
     """What the settings make a confirm do (hold / unset: no remote, push or keep branch)."""
     mode = shown.get("merge_mode")
     git = mode in GIT_MODES
-    return {"merge_mode": mode if git else (mode or None), "git_apply": git, "archive": bool(shown.get("archive")),
+    return {"merge_mode": mode if git else (mode or None), "git_apply": git, "archive": False,
             "merge_target": shown.get("merge_target") if git else None,
             "merge_target_branch": shown.get("merge_target_branch") if mode == "merge" else None,
             "push": bool(shown.get("push")) if git else False,

@@ -207,3 +207,52 @@ def test_the_chat_card_api_places_the_start_card_whatever_the_draft_holds(env, d
     card, gate = placed["cards"][0]["node_key"], placed["gate"]["node_key"]
     assert sorted((e["source"], e["target"]) for e in _draft()["edges"]) == sorted([(start, card), (card, gate)])
     assert sum(1 for x in _draft()["nodes"] if x["doc_type"] == "R") == 1
+
+@pytest.mark.parametrize("doc_type,label,palette", [("R", "요구사항", "requirement"), ("B", "버그", "bug")])
+def test_new_root_names_persist_and_existing_labels_stay(env, doc_type, label, palette):
+    # The document's own title is deliberately unrelated: identity is its type.
+    _doc(FB, 1, doc_type)
+    key = _ensure(FB)
+    saved = _draft(FB)
+    root = next(n for n in saved["nodes"] if n["node_key"] == key)
+    assert (root["doc_type"], root["label"], root["palette_item_id"]) == (doc_type, label, palette)
+    assert _ensure(FB) is None
+    assert _draft(FB) == saved
+    # An existing person's title is never reset by another ensure/read.
+    root["label"] = "직접 정한 제목"
+    from modules.flow_gate.graph_workflow.services import root_start, graph_service
+    from modules.flow_gate.graph_workflow.domain import draft_request as request
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    nodes = [root_start._node_input(i, n) for i, n in enumerate(saved["nodes"])]
+    with_flow_guard(FB, lambda: graph_service.write_draft(_group(FB), "u_kim", request.DraftRequest(
+        draft_version=saved["draft_version"], nodes=nodes, edges=[]), None, {"R", "B", "T"}, "ko"))
+    assert _ensure(FB) is None
+    assert _draft(FB)["nodes"][0]["label"] == "직접 정한 제목"
+
+
+def test_first_run_default_classification_preserves_custom_titles():
+    from modules.flow_gate.graph_workflow.services.flow_default_names import default_title, is_default_title
+    assert default_title("flow") == "새 플로우"
+    assert default_title("chat") == "새 대화"
+    for target, doc_type, text in [("flow", None, "새 플로우"), ("chat", None, "새 대화"),
+                                  ("root", "R", "요구사항"), ("root", "B", "버그")]:
+        assert is_default_title(text, target, doc_type=doc_type)
+        for custom in (None, "", "직접 정한 제목", text + " "):
+            assert not is_default_title(custom, target, doc_type=doc_type)
+    assert not is_default_title("버그", "root", doc_type="R")
+    assert not is_default_title("요구사항", "root", doc_type="B")
+
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_default_titles_match_client_i18n_contract(locale):
+    """Both runtimes may retain native resources, but cannot silently drift."""
+    import re
+    from pathlib import Path
+    from modules.flow_gate.graph_workflow.services.flow_default_names import default_title
+
+    root = Path(__file__).resolve().parents[3]
+    source = (root / "client_gui" / "src" / "app" / "i18n" / f"{locale}.ts").read_text(encoding="utf-8")
+    for target, key in (("flow", "flow_new_title"), ("chat", "new_title")):
+        matches = re.findall(r"^\s*" + key + r":\s*'([^']*)',?\s*$", source, re.MULTILINE)
+        assert matches == [default_title(target, locale)], (locale, target, matches)

@@ -32,6 +32,7 @@
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
+import { executeGit, newExecution, type GitExecution, type GitExecutionScope } from './gitExecution'
 import type { GitCenterDiffSession } from './gitCenterDiff'
 import { createHttpGitSource, type GitSource, type GitWorktreeSource } from './gitSource'
 import type { GitConfirmRequest, GitSession } from './gitSession'
@@ -138,6 +139,7 @@ export interface WorktreeSuggestion {
 }
 
 export interface WorktreeState {
+  execution: GitExecution | null
   status: WorktreeStatus | null
   statusLoad: Load
   // Why the last E1 read failed: network keeps the last answer, forbidden / failed show a line.
@@ -267,6 +269,10 @@ export interface GitWorktreeSession {
   /** The 0033 session's git/status (Base remote state for the `상태` pane and the push dialog). */
   readonly projectGit: ComputedRef<DeepReadonly<ProjectGitStatus> | null>
 
+  clearExecution(): void
+  execute(scope: GitExecutionScope, selection?: WorktreeSelection, resume?: boolean, commitRemaining?: boolean): Promise<void>
+  updateFromBase(): Promise<void>
+  reconstruct(): Promise<void>
   refresh(): void
   /** The current context while the gate is open; null otherwise. */
   ticket(): WorktreeTicket | null
@@ -353,6 +359,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   const wsrc = (): GitWorktreeSource | null => src().worktree ?? null
 
   const state = reactive<WorktreeState>({
+    execution: null,
     status: null,
     statusLoad: 'idle',
     statusError: null,
@@ -542,7 +549,41 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 
   // ── Context and gate ───────────────────────────────────────────────────────────────
 
+  let executionTimer: ReturnType<typeof setTimeout> | null = null
+  let executionRead = 0
+  function stopExecutionPoll(): void {
+    ++executionRead
+    if (executionTimer !== null) clearTimeout(executionTimer)
+    executionTimer = null
+  }
+
+  async function readExecution(): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    if (!held || !api?.loadExecution) return
+    stopExecutionPoll()
+    const seq = executionRead
+    try {
+      const execution = await api.loadExecution(held.groupId)
+      if (!isCurrent(held) || seq !== executionRead) return
+      const wasRunning = state.execution?.status === 'running'
+      state.execution = execution
+      if (execution?.status === 'running' && !execution.mergeId) state.busy = 'execution'
+      else if (state.busy === 'execution') state.busy = null
+      if (wasRunning && execution?.status !== 'running') afterRemote({ e1: true, e8: true, e10: true })
+    } catch (error) {
+      if (!isCurrent(held) || seq !== executionRead) return
+      // A disconnected browser cannot declare a server job stopped.
+      reportError('apply', error)
+    } finally {
+      if (isCurrent(held) && seq === executionRead && !state.forbidden) {
+        executionTimer = setTimeout(() => { void readExecution() }, 2500)
+      }
+    }
+  }
+
   function clearServer(): void {
+    stopExecutionPoll()
     nextGeneration()
     appliedSeq = 0
     pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = pendingReads.list = false
@@ -564,6 +605,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     state.busy = null
     state.selected = []
     state.notices = {}
+    state.execution = null
   }
 
   // A project / Flow switch: every screen state goes back to its first look (§3-2-1).
@@ -801,7 +843,110 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   // An open `Diff` pane reads its list again with the rest.
+  async function execute(scope: GitExecutionScope, selection: WorktreeSelection = { all: true }, resume = false, commitRemaining = false): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    if (!held || !api || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+    if (SESSION_CARDS.includes(git.groupCard.value ?? '')) return
+    if (api.startExecution) {
+      if (state.execution?.status === 'running') return
+      stopExecutionPoll()
+      state.busy = 'execution'
+      try {
+        const execution = await api.startExecution(held.groupId, {
+          scope, target: state.mergeTarget, message: state.message, provider_id: state.providerId,
+          ...selection, request_id: crypto.randomUUID(),
+          ...(resume && state.execution?.jobId ? { resume_from: state.execution.jobId } : {}),
+          commit_remaining: commitRemaining,
+        })
+        if (isCurrent(held)) state.execution = execution
+      } catch (error) {
+        if (isCurrent(held)) reportError('apply', error)
+      } finally {
+        if (isCurrent(held)) {
+          state.busy = null
+          void readExecution()
+          afterRemote({ e1: true, e8: true, e10: true })
+        }
+      }
+      return
+    }
+    const plan = resume && state.execution?.status === 'stopped'
+      ? state.execution : newExecution(scope, state.mergeTarget)
+    if (resume && commitRemaining && plan.error === 'uncommitted_changes') plan.steps.splice(plan.cursor, 0, 'commit')
+    state.execution = plan
+    state.busy = 'execution'
+    ++e1Seq
+    try {
+      await executeGit(state.execution, api, { ...held, message: state.message,
+        providerId: state.providerId, selection, current: () => isCurrent(held) })
+    } finally {
+      if (isCurrent(held)) {
+        state.busy = null
+        afterRemote({ e1: true, e8: true, e10: true })
+      }
+    }
+  }
+
+  async function reconstruct(): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    const row = git.pendingRow.value
+    if (!held || !api?.reconstruct || !row || typeof row.mergeId !== 'number' || row.finalApprovalBound || git.state.conflict?.graphMerge
+      || !git.conflictActionable.value || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+    state.busy = 'execution'
+    ++e1Seq
+    let resume = false
+    try {
+      await src().abortMerge(held.groupId, row.mergeId)
+      if (!isCurrent(held)) return
+      const result = await api.reconstruct(held.groupId)
+      if (!isCurrent(held)) return
+      if (state.execution) {
+        // Reconstruction changes the work HEAD, so its merge must be checked again.
+        // The original commit step remains complete.
+        const plan = state.execution
+        const update = plan.steps.indexOf('update')
+        if (update >= 0) {
+          plan.cursor = update
+          plan.completed = plan.steps.slice(0, update)
+        }
+        plan.status = 'stopped'
+        plan.error = result.status === 'conflict' ? 'merge_conflict' : null
+        resume = result.status === 'updated'
+      }
+      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : 'updated'
+      setNotice('apply', { code: noticeCode })
+    } catch (error) {
+      if (!isCurrent(held)) return
+      const code = worktreeErrorOf(error).code ?? 'request_failed'
+      if (state.execution) { state.execution.status = 'stopped'; state.execution.error = code }
+      setNotice('apply', { code: WORKTREE_NOTICE_CODES.includes(code) ? code : 'failed' })
+    } finally {
+      if (isCurrent(held)) {
+        state.busy = null
+        await git.refresh()
+        afterRemote({ e1: true, e8: true, e10: true })
+      }
+    }
+    if (resume && isCurrent(held) && state.execution) await execute(state.execution.scope, { all: true }, true)
+  }
+
+  async function updateFromBase(): Promise<void> {
+    if (git.state.readOnly || state.forbidden || SESSION_CARDS.includes(git.groupCard.value ?? '')) return
+    if ((state.status?.counts.changed ?? 1) > 0) return
+    return write('apply', 'update', async (api, gid) => {
+      if (!api.updateFromBase) throw new Error('update_unavailable')
+      return api.updateFromBase(gid)
+    }, result => {
+      const noticeCode = result.status === 'conflict' ? 'merge_conflict' : result.status === 'no_change' ? 'update_no_change' : 'updated'
+      setNotice('apply', { code: noticeCode })
+      afterRemote({ e1: true, e8: true, e10: true })
+    })
+  }
+
   function refresh(): void {
+    if (gateOpen.value) void readExecution()
     if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
 
@@ -914,6 +1059,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
         if (open && (contextChanged || !prevOpen)) {
           requestReads({ e1: true, e8: true, e10: true })
           void loadProviders()
+          void readExecution()
         }
       },
       { immediate: true },
@@ -1436,6 +1582,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   function dispose(): void {
+    stopExecutionPoll()
     disposed = true
     nextGeneration()
     voidWorkBase()
@@ -1454,6 +1601,10 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     pushCandidates,
     pushRow,
     projectGit,
+    clearExecution: () => { if (!state.busy) state.execution = null },
+    execute,
+    updateFromBase,
+    reconstruct,
     refresh,
     ticket,
     isCurrent,

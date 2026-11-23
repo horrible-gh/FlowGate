@@ -508,6 +508,9 @@ describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
           spec === '../shared/ExplorerIcon.vue' ||
           // The shared "reconnecting…" signal of a re-sent GET (as the File tab).
           spec === '@shared/requestRecovery' ||
+          // 0060: the self-healing re-read of a failed tree and the app-wide "server unreachable" state.
+          spec === '@shared/selfHeal' ||
+          spec === '@shared/connectionStatus' ||
           spec.startsWith('./')
         expect(allowed, `${file}: ${spec}`).toBe(true)
       }

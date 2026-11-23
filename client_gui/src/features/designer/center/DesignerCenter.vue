@@ -30,10 +30,12 @@
       :active-flow-id="center.state.activeFlowId"
       :run-states="tabRunStates"
       :chat-states="tabChatStates"
+      :terminal-states="flowTerminalUi.openFlows"
       :archived="tabArchived"
       :run-ends="tabRunEnds"
       :chat-ends="tabChatEnds"
-      :conflicts="tabConflicts"
+      :conflicts="tabConflictMarks"
+      :git-activity="gitTabActivity"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -113,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
@@ -122,8 +124,11 @@ import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
 import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
+import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
+import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
+import { clearGitTabResult, gitTabActivity, observeGitTabActivity, pruneGitTabActivity } from './gitTabActivity'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
 import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
@@ -197,6 +202,16 @@ const tabConflicts = computed(() => {
   }
   return conflicts
 })
+/**
+ * flowgate.v02test.0066 #36-1: what the tabs show — 병합 충돌 or AI 해결 중 · n/m — from the Git panel's own answers
+ * (the Project's git/status rows, and the AI run of the tabs that have a conflict), for every open tab. The Graph's
+ * answer above still decides a tab Git has no conflict row for.
+ */
+const tabConflictMarks = useFlowTabConflicts({
+  projectId: () => props.center.state.projectId,
+  flows: () => props.center.state.tabs.map((tab) => tab.flowId),
+  graphConflicts: () => tabConflicts.value,
+})
 const tabRunStates = computed(() => {
   const states: Record<string, FlowTabRunState> = {}
   for (const tab of props.center.state.tabs) {
@@ -249,6 +264,13 @@ const tabChatEnds = computed(() => {
   for (const [flowId, mark] of Object.entries(tabMarks.marks)) if (mark.chat) ends[flowId] = mark.chat
   return ends
 })
+// flowgate.v02test.0068: a Git result mark stays on its tab until the tab is activated again (left and come back) or closed.
+watch(() => props.center.state.activeFlowId, (flowId) => { if (flowId) clearGitTabResult(flowId) })
+watch(() => props.center.state.tabs.map((tab) => tab.flowId).join('\n'), () => {
+  pruneGitTabActivity(new Set(props.center.state.tabs.map((tab) => tab.flowId)))
+})
+// A run goes on in the server after the Git panel lets go of it: the open tabs read it until the Center goes.
+onUnmounted(observeGitTabActivity(() => props.center.state.tabs.map((tab) => tab.flowId)))
 const timeMachine = props.center.timeMachine
 /** the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {

@@ -43,6 +43,8 @@ function setup(extra: Parameters<typeof createFakeSource>[0] = {}) {
 }
 
 describe('v02test.0029: sending while the AI answers', () => {
+  // 0067 #46: the waiting marks are kept per chat in localStorage now; each case starts without the last one's.
+  beforeEach(() => localStorage.clear())
   it('stores the message at once, marks it 대기 and starts no second run while the first runs', async () => {
     const { session, source } = setup()
     await session.setScope(SCOPE)

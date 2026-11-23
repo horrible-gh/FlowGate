@@ -154,6 +154,13 @@ def _content_document_access(ctx: dict) -> dict:
             "url": f"{base}/document/{{doc_id}}",
             "example": f"{base}/document/{doc_id}",
         },
+        "flows": {
+            "list": {"method": "GET", "url": f"{base}/list/projects/{{project}}/groups",
+                     "summary": "List flows with their names."},
+            "info": {"method": "GET", "url": f"{base}/list/groups/{{group_id}}",
+                     "summary": "Read flow name, module, status, dates and document_count."},
+            "permission": "The requesting user must have document read permission on the target project. Unreadable and missing targets return 404. Other flow canvases and writes remain restricted.",
+        },
         "answers": _answers_lookup(ctx),
         "path": {"method": "GET", "url": f"{base}/document/{{doc_id}}/path"},
         # Bounded reads. The full-body GET is the expensive one; these
@@ -507,6 +514,8 @@ def _content_submit(ctx: dict) -> dict:
             "body_chars": "<optional: character count of content>",
             "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
+        if str(doc_type).upper() == "TR":
+            body["commit_message"] = "<TR edit: English (ASCII) single line, max 200 characters; type(scope): summary recommended. Omit only to retain a valid saved message; otherwise 422 invalid_commit_message.>"
     else:
         body = {
             "action": "new",
@@ -528,9 +537,10 @@ def _content_submit(ctx: dict) -> dict:
                     "<This TR's own approval commit subject, used verbatim. Conventional "
                     "commit format: type(scope): summary — e.g. "
                     "'fix(git): preserve finalized commit subject' or "
-                    "'feat(workflow): add TR commit point'. Must be plain English (ASCII); "
-                    "non-English text is ignored and a fixed fallback is used instead. "
-                    "Leave empty and the commit becomes 'chore: approve <doc-code>'.>"
+                    "'feat(workflow): add TR commit point'. Must be one line of plain English (ASCII) "
+                    "(at most 200 characters). Recommended format: type(scope): summary; "
+                    "any non-empty ASCII single line is accepted. Missing, empty, non-ASCII, "
+                    "multi-line or overlong messages are rejected with 422 before registration.>"
                 )
 
     is_work_plan = str(doc_type).upper() == WORK_PLAN_TYPE

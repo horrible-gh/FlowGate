@@ -30,6 +30,7 @@
 // server `message` is never surfaced (0033-D §4.5).
 import { getRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeGitError, type NormalizedGitError } from '@shared/gitErrors'
+import type { GitExecution, GitExecutionRequest } from './gitExecution'
 import type {
   GitApproveResult,
   GitBaseCommitResult,
@@ -108,6 +109,26 @@ export function gitErrorOf(error: unknown): NormalizedGitError {
   if (error instanceof GitRequestError) return error.error
   const cause = (error as { cause?: unknown } | null)?.cause
   return normalizeGitError(cause ?? error)
+}
+
+export interface StationBranch {
+  name: string
+  kind: string
+  canBeSource: boolean
+  ahead: number | null
+  behind: number | null
+}
+export async function fetchStationBranches(projectId: string): Promise<StationBranch[]> {
+  const data = await call<Envelope & { branches?: Array<Record<string, unknown>> }>(() => getRequest(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`))
+  if (!Array.isArray(data.branches) || data.branches.some(row => typeof row.name !== 'string' || typeof row.kind !== 'string')) throw new Error('invalid_branch_response')
+  return data.branches.map(row => ({ name: row.name as string, kind: row.kind as string, canBeSource: row.can_be_create_source === true,
+    ahead: typeof row.ahead_of_base === 'number' ? row.ahead_of_base : null, behind: typeof row.behind_base === 'number' ? row.behind_base : null }))
+}
+export async function createStationBranch(projectId: string, name: string, sourceBranch: string): Promise<void> {
+  await call(() => postRequest<Envelope>(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`, { name, source_branch: sourceBranch }))
+}
+export async function importStationBranch(projectId: string, name: string): Promise<void> {
+  await call(() => postRequest<Envelope>(`/api/v1/projects/${encodeURIComponent(projectId)}/git/branches/import`, { name }))
 }
 
 interface Envelope {
@@ -702,6 +723,25 @@ async function resultOf(request: () => Promise<{ data: ResultEnvelope; status?: 
   return isRecord(data.result) ? data.result : {}
 }
 
+function executionOf(raw: Record<string, unknown>): GitExecution | null {
+  const value = raw.execution
+  if (!isRecord(value) || typeof value.jobId !== 'string' || !Array.isArray(value.steps)
+    || !Array.isArray(value.completed) || typeof value.cursor !== 'number'
+    || !['commit', 'merge', 'push'].includes(String(value.scope))
+    || !['running', 'stopped', 'remaining', 'complete'].includes(String(value.status))) return null
+  return value as unknown as GitExecution
+}
+
+export async function fetchGitExecution(groupId: string): Promise<GitExecution | null> {
+  return executionOf(await resultOf(() => getRequest<ResultEnvelope>(`${groupGit(groupId)}/execution`)))
+}
+
+export async function startGitExecution(groupId: string, input: GitExecutionRequest): Promise<GitExecution> {
+  const result = executionOf(await resultOf(() => postRequest<ResultEnvelope>(`${groupGit(groupId)}/execution`, input)))
+  if (!result) throw new Error('Invalid Git execution response')
+  return result
+}
+
 const STAGE_LETTERS: readonly string[] = ['A', 'M', 'D', 'T', 'U']
 const WORK_LETTERS: readonly string[] = ['M', 'D', 'T']
 
@@ -773,7 +813,13 @@ function toWorktreeStatus(raw: Record<string, unknown>, groupId: string): Worktr
     },
     ownership: { available: flag(ownership.available), reason: str(ownership.reason) },
     blockers: records(raw.blockers)
-      .map((b) => ({ code: str(b.code), operations: strings(b.operations) }))
+      .map((b) => ({
+        code: str(b.code),
+        operations: strings(b.operations),
+        // session_open (flowgate.v02test.0068): carried only when the server names the session.
+        ...(str(b.session_kind) !== null ? { sessionKind: str(b.session_kind) } : {}),
+        ...(num(b.merge_id) !== null ? { mergeId: num(b.merge_id) } : {}),
+      }))
       .filter((b): b is WorktreeBlocker => b.code !== null),
   }
 }
@@ -785,6 +831,21 @@ function statusAfter(raw: Record<string, unknown>, groupId: string): WorktreeSta
 }
 
 /** E1 — the worktree files split into Stage / working changes, tokens, floor and blockers. */
+export async function syncWorktreeRemote(groupId: string, target: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${groupGit(groupId)}/remote-sync`, { target_branch: target }))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
+export async function updateWorktreeFromBase(groupId: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${worktreePath(groupId)}/update-from-base`, {}))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
+export async function reconstructWorktree(groupId: string): Promise<{ status: string; mergeId: number | null }> {
+  const raw = await resultOf(() => postRequest<ResultEnvelope>(`${worktreePath(groupId)}/reconstruct`, {}))
+  return { status: str(raw.status) ?? '', mergeId: int(raw.merge_id) }
+}
+
 export async function fetchWorktreeStatus(groupId: string): Promise<WorktreeStatus> {
   const raw = await resultOf(() => getRequest<ResultEnvelope>(`${worktreePath(groupId)}/status`))
   return toWorktreeStatus(raw, groupId)
@@ -952,6 +1013,7 @@ export async function fetchManualMerge(groupId: string, target: string | null): 
     preview: toManualMergePreview(raw.preview),
     commitCount: num(raw.commit_count),
     floorError: bodyError(raw.floor_error),
+    ...('work_base_behind' in raw ? { workBaseBehind: num(raw.work_base_behind) } : {}),
     aheadOfTarget: num(raw.ahead_of_target),
     mergeNeeded: flag(raw.merge_needed),
     recovery: flag(raw.recovery),

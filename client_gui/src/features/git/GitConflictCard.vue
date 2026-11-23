@@ -46,19 +46,8 @@
           {{ t('gui.git.files_more', { n: files.length - preview.length }) }}
         </button>
       </div>
-      <p v-else-if="session.state.conflictLoad === 'loading'" class="gx-desc">{{ t('gui.git.conflict.loading') }}</p>
       <p v-if="outcome" class="gx-reason" data-test="git-conflict-ai-outcome">{{ outcomeText }}</p>
       <div class="gx-actions">
-        <button
-          v-if="outcome"
-          type="button"
-          class="gx-btn ai"
-          :disabled="!actionable"
-          data-test="git-conflict-ai-again"
-          @click="session.startAi('conflict', outcome.providerId)"
-        >
-          {{ t('gui.git.conflict.ai_again') }}
-        </button>
         <div class="gx-ai-pick">
           <button
             ref="pickButton"
@@ -67,15 +56,18 @@
             :disabled="!actionable"
             :aria-expanded="pickerOpen ? 'true' : 'false'"
             aria-haspopup="dialog"
+            :title="outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai')"
+            :aria-label="outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai')"
             data-test="git-conflict-ai"
             @click="togglePicker"
           >
-            {{ outcome ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai') }} ▾
+            ✦ ▾
           </button>
           <div v-if="pickerOpen" ref="picker" class="gx-popover" :style="pickerShift" role="dialog" :aria-label="t('gui.git.conflict.ai_pick')" data-test="git-conflict-ai-picker">
             <div class="gx-kicker">{{ t('gui.git.conflict.ai_pick') }}</div>
-            <div v-if="providers.length" class="gx-pick-list">
-              <label v-for="provider in providers" :key="provider.id" class="gx-pick-item" :data-selected="picked === provider.id">
+            <input v-if="providers.length > 8" v-model="providerSearch" class="gx-input" type="search" :aria-label="t('gui.git.conflict.ai_pick')" :placeholder="t('gui.git.conflict.ai_pick')" />
+            <div v-if="providers.length" class="gx-pick-list" style="max-height:240px;overflow:auto">
+              <label v-for="provider in filteredProviders" :key="provider.id" class="gx-pick-item" :data-selected="picked === provider.id">
                 <input v-model="picked" type="radio" name="gx-conflict-ai" :value="provider.id" />
                 <span>{{ provider.name }}</span>
                 <small v-if="provider.id === session.defaultProviderId.value">{{ t('gui.git.conflict.ai_default') }}</small>
@@ -90,12 +82,13 @@
             </div>
           </div>
         </div>
-        <button type="button" class="gx-btn" :disabled="!actionable" data-test="git-conflict-manual" @click="openResolver(null)">
-          {{ t('gui.git.conflict.manual') }}
+        <button type="button" class="gx-btn" :disabled="!actionable" :title="t('gui.git.conflict.manual')" :aria-label="t('gui.git.conflict.manual')" data-test="git-conflict-manual" @click="openResolver(null)">
+          ◉
         </button>
-        <button type="button" class="gx-btn ghost" :disabled="!actionable" data-test="git-conflict-abort" @click="askAbort">
-          {{ t('gui.git.conflict.abort') }}
+        <button type="button" class="gx-btn ghost" :disabled="!actionable" :title="t('gui.git.conflict.abort_hint')" :aria-label="t('gui.git.conflict.abort')" data-test="git-conflict-abort" @click="askAbort">
+          ↶
         </button>
+        <button v-if="canRebuild" type="button" class="gx-btn" :disabled="!actionable || !!worktree?.state.busy" :title="rebuildLabel" :aria-label="rebuildLabel" data-test="git-conflict-reconstruct" @click="rebuild">⟳</button>
         <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
         <button v-if="canForce" type="button" class="gx-btn danger" :disabled="!actionable" data-test="git-conflict-force" @click="askForceCleanup()">
           {{ t('gui.git.conflict.force_cleanup') }}
@@ -109,9 +102,9 @@
         <span data-test="git-conflict-abort-next">{{ t(isAdmin ? 'gui.git.conflict.abort_failure_admin' : 'gui.git.conflict.abort_failure_user') }}</span>
       </div>
       <p v-if="blockedText" class="gx-reason" data-test="git-conflict-blocked">{{ blockedText }}</p>
-      <GitReapproveBlock />
+      <GitReapproveBlock :blocked-text="blockedText" />
     </template>
-    <p v-if="noticeText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
+    <p v-if="noticeText && noticeText !== blockedText" class="gx-notice" data-test="git-notice">{{ noticeText }}</p>
   </section>
 </template>
 
@@ -120,9 +113,10 @@
 // unknown) conflict this screen does not process: title and one line, no buttons (§3.7).
 // the one place a conflict is worked on: file states, a file
 // opens the direct resolver, [AI 해결 ▾] picks the AI right under the button before it starts,
-// an AI run that ended with conflicts left offers [다시 실행] / [다른 AI로 ▾] / [직접 해결], and
+// an AI run that ended with conflicts left offers [다른 AI로 ▾] / [직접 해결], and
 // the §B re-approval path sits below when a held approval is parked on this conflict.
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { GIT_WORKTREE_CONTEXT } from './gitWorktreeSession'
 import { useI18n } from 'vue-i18n'
 import GitFileRow from './GitFileRow.vue'
 import GitReapproveBlock from './GitReapproveBlock.vue'
@@ -133,6 +127,21 @@ defineProps<{ unsupported?: boolean }>()
 const { t } = useI18n()
 const ctx = useGitPanel()
 const session = ctx.session
+const worktree = inject(GIT_WORKTREE_CONTEXT, null)?.worktree
+const rebuildLabel = computed(() => t('gui.git.header.reconstruct'))
+const canRebuild = computed(() => !!worktree && !session.pendingRow.value?.finalApprovalBound && !graphMerge.value)
+function rebuild(): void {
+  const held = worktree?.ticket()
+  const mergeId = session.pendingRow.value?.mergeId
+  ctx.confirm({
+    title: rebuildLabel.value,
+    message: t('gui.git.header.reconstruct_message'),
+    confirmLabel: t('gui.git.header.reconstruct'),
+    run: () => {
+      if (held && worktree?.isCurrent(held) && session.pendingRow.value?.mergeId === mergeId) void worktree.reconstruct()
+    },
+  })
+}
 
 const files = computed(() => session.state.conflict?.files ?? null)
 // the conflicts answer of this row's merge says it is a Graph card result's merge.
@@ -162,13 +171,16 @@ const target = computed(() => {
 })
 // No action before the conflicts answer says this is an ordinary merge, not a TR conflict;
 // readOnly / 403 / busy turn all three off, `직접 해결` included (0033-D §5.1).
-const actionable = computed(() => session.canAct.value && session.conflictActionable.value)
+const actionable = computed(() => session.canAct.value && session.conflictActionable.value && !worktree?.state.busy)
 const blockedText = computed(() => {
   if (actionable.value) return null
   if (session.state.readOnly) return t('gui.git.conflict.blocked.read_only')
   if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
   if (session.state.busy) return t('gui.git.conflict.blocked.busy')
-  return t('gui.git.conflict.loading')
+  if (session.pendingRow.value?.mergeId == null) return t('gui.git.conflict.blocked.missing_merge')
+  if (session.state.conflictLoad === 'loading') return t('gui.git.conflict.loading')
+  if (session.state.conflictLoad === 'error') return t('gui.git.conflict.blocked.load_failed')
+  return t('gui.git.conflict.blocked.unavailable')
 })
 
 // A source that only sends ids still offers them (the id is the name then).
@@ -190,6 +202,10 @@ const noticeText = computed(() => {
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
 })
 
+const providerSearch = ref('')
+const filteredProviders = computed(() => [...providers.value]
+  .sort((a, b) => Number(b.id === session.preferredProviderId.value) - Number(a.id === session.preferredProviderId.value))
+  .filter(p => p.name.toLowerCase().includes(providerSearch.value.toLowerCase())))
 const pickerOpen = ref(false)
 // Pulled left (arrow kept on the button) only when the panel edge would cut the popover.
 const pickerShift = ref<Record<string, string>>({})

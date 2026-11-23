@@ -603,8 +603,12 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
     root = _gs.src_root(project_name, branch) if (project_name and branch) else None
     if root is None or not root.is_dir():
         return
+    from .reconstruct import restore
+    if context.get("reconstruct_head") and not _ttl_expired(session.get("touched_at") or session.get("created_at")):
+        return
     merge_head = _gs._run_git(["rev-parse", "--verify", "MERGE_HEAD"], cwd=root)
     if merge_head.returncode != 0:
+        restore(root, context)
         _gs.db_git.close_session(merge_id, "aborted")
         return
     if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
@@ -613,6 +617,7 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
     # other session abort (``ref_operations[].stderr_tail`` on failure).
     proc = _gs._abort_merge(root, merge_id=merge_id, reason="group_update_sweep_abort")
     if proc.returncode == 0:
+        restore(root, context)
         _gs.db_git.close_session(merge_id, "aborted")
         _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
     else:

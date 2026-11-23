@@ -173,12 +173,12 @@
         "update_result_status": "UPDATE workflow_item_results SET status = ?, reviewed_at = ?, reviewed_by = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
     },
     "messages": {
-        "list_messages_by_project": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE project = ? ORDER BY doc_type, updated_at DESC, id ASC",
-        "get_messages_for_dialog": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE project = ? AND doc_type IN (?, '*')",
-        "get_message_by_id": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE id = ?",
-        "insert_message": "INSERT INTO project_messages (project, doc_type, message, updated_at) VALUES (?, ?, ?, ?)",
-        "update_message": "UPDATE project_messages SET doc_type = ?, message = ?, updated_at = ? WHERE id = ?",
-        "delete_message": "DELETE FROM project_messages WHERE id = ?"
+        "list_messages_by_project": "SELECT id, project, doc_type, message, updated_at, message_usage, title, kind, sort_order FROM project_messages WHERE project = ? AND message_usage = ? ORDER BY CASE WHEN message_usage = 'chat' THEN sort_order END, CASE WHEN message_usage = 'document' THEN doc_type END, CASE WHEN message_usage = 'document' THEN updated_at END DESC, id ASC",
+        "get_messages_for_dialog": "SELECT id, project, doc_type, message, updated_at, message_usage, title, kind, sort_order FROM project_messages WHERE project = ? AND message_usage = 'document' AND doc_type IN (?, '*')",
+        "get_message_by_id": "SELECT id, project, doc_type, message, updated_at, message_usage, title, kind, sort_order FROM project_messages WHERE id = ?",
+        "insert_message": "INSERT INTO project_messages (project, doc_type, message, updated_at, message_usage, title, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_message": "UPDATE project_messages SET doc_type = ?, message = ?, updated_at = ?, title = ?, kind = ?, sort_order = ? WHERE id = ? AND project = ?",
+        "delete_message": "DELETE FROM project_messages WHERE id = ? AND project = ?"
     },
     "engine_recipes": {
         "list_active": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE status = 'active' ORDER BY engine ASC LIMIT 50",

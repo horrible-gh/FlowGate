@@ -767,6 +767,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
             json={
                 "project": PROJECT, "module": MODULE, "group": "0370",
                 "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+                "commit_message": "test(inbox): verify TR edit change summary",
                 "content": after_body,
             },
             headers={"Authorization": "Bearer dummy-token"},
@@ -833,6 +834,7 @@ def test_inbox_edit_summary_failure_does_not_fail_the_save(tmp_path, storage_roo
             json={
                 "project": PROJECT, "module": MODULE, "group": "0370",
                 "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+                "commit_message": "test(inbox): verify TR edit change summary",
                 "content": "## A\n\n나\n",
             },
             headers={"Authorization": "Bearer dummy-token"},
@@ -873,6 +875,7 @@ def test_inbox_new_tr_response_carries_worktree_untracked(tmp_path):
                 "project": PROJECT, "module": MODULE, "group_name": GROUP,
                 "prev_doc_id": DOC_R, "action": "new", "doc_type": "TR",
                 "title": "0370 신규 TR 미추적 요약 확인", "content": content,
+                "commit_message": "test(inbox): verify TR untracked summary",
             },
             headers={"Authorization": "Bearer dummy-token"},
         )

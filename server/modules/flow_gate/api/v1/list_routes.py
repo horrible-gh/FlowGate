@@ -17,7 +17,8 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services import card_ids, display_names
+from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project, readable_projects
 from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundList"])
@@ -68,23 +69,11 @@ def list_projects(
             return _fail(400, "status/is_active must be active, inactive, or all")
 
     store = get_store()
-    count_sql = "SELECT COUNT(*) as cnt FROM projects"
-    count_params: list = []
-    data_sql = "SELECT * FROM projects"
-    data_params: list = []
-
-    if active_filter is not None:
-        count_sql += " WHERE is_active = ?"
-        data_sql += " WHERE is_active = ?"
-        count_params.append(active_filter)
-        data_params.append(active_filter)
-
-    total_row = store._fetch_one(count_sql, count_params)
-    total = total_row["cnt"] if total_row else 0
-
-    data_sql += " ORDER BY project_id LIMIT ? OFFSET ?"
-    data_params += [limit, offset]
-    rows = store._fetch_all(data_sql, data_params)
+    rows = store._fetch_all("SELECT * FROM projects ORDER BY project_id", [])
+    rows = [r for r in rows if can_read_project(auth, r["project_id"])
+            and (active_filter is None or r.get("is_active", 1) == active_filter)]
+    total = len(rows)
+    rows = rows[offset:offset + limit]
 
     items = [
         {
@@ -119,7 +108,7 @@ def list_modules(
         return err
 
     project = db_projects.get_by_id(p)
-    if project is None:
+    if project is None or not can_read_project(auth, p):
         return _fail(404, f"Project {p} does not exist")
 
     # modules: distinct module values from groups
@@ -176,7 +165,7 @@ def list_groups(
         )
 
     project = db_projects.get_by_id(p)
-    if project is None:
+    if project is None or not can_read_project(auth, p):
         return _fail(404, f"Project {p} does not exist")
 
     store = get_store()
@@ -212,6 +201,8 @@ def list_groups(
                 "module": r.get("module"),
                 "status": r.get("status"),
                 "seq": None,
+                "flow_label": card_ids.flow_label(r["group_id"]),
+                "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
                 "created_at": r.get("created_at"),
             }
             for r in rows
@@ -249,6 +240,8 @@ def list_groups(
             "module": r.get("module"),
             "status": r.get("status"),
             "seq": None,  # groups table has no seq column
+            "flow_label": card_ids.flow_label(r["group_id"]),
+            "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
             "created_at": r.get("created_at"),
         }
         for r in rows
@@ -297,7 +290,7 @@ def list_documents(
         return _fail(400, f"Invalid sort value: {sort}")
 
     group = db_groups.get_by_id(gid)
-    if group is None:
+    if group is None or not can_read_project(auth, group.get("project_id")):
         return _fail(404, f"Group {gid} does not exist")
 
     store = get_store()
@@ -330,6 +323,8 @@ def list_documents(
         items = [
             {
                 "doc_id": r["doc_id"],
+                "group_title": group.get("title"),
+            "group_title": group.get("title"),
                 "doc_type": r.get("type_code"),
                 "title": r.get("title"),
                 "status": r.get("status"),
@@ -373,6 +368,7 @@ def list_documents(
     items = [
         {
             "doc_id": r["doc_id"],
+            "group_title": group.get("title"),
             "type": r.get("type_code"),
             "title": r.get("title"),
             "status": r.get("status"),
@@ -403,7 +399,11 @@ def search_documents(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    flow: Optional[str] = None,
 ):
+    """Title / doc_id search. A Flow or card display id (``F77-12``, ``flowgate.v02test.F77``, ``#12`` with
+    ``flow``) also matches exactly: those items come first on the first page, ``match`` = card / flow, with
+    ``card`` telling what opens it. ``flow`` (a group id) is the context a module-less id is read in."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -417,9 +417,13 @@ def search_documents(
     if not query:
         return _fail(400, "q is required")
 
+    if project and not can_read_project(auth, project):
+        return _fail(404, f"Project {project} does not exist")
+    ref_items = _ref_items(auth, query, project, flow)
+    allowed_projects = [project] if project else readable_projects(auth)
     rows, total = db_docs.search_documents(
         q=query, project=project, doc_type=type, status=status,
-        limit=limit, offset=offset,
+        limit=limit, offset=offset, allowed_projects=allowed_projects,
     )
     # Attach a brief body preview to every result so the default explorer search
     # (the one that runs when "search inside contents" is off) shows the document's simplified
@@ -445,6 +449,12 @@ def search_documents(
         }
         for r in rows
     ]
+    if ref_items:
+        exact = {(i["doc_id"], i["group_id"]) for i in ref_items}
+        kept = [i for i in items if (i["doc_id"], i["group_id"]) not in exact]
+        total += len(ref_items) - (len(items) - len(kept))
+        items = ref_items + kept if offset == 0 else kept
+    _add_group_titles(items)
     return JSONResponse(content={
         "ok": True, "query": query, "total": total,
         "offset": offset, "limit": limit, "items": items,
@@ -513,17 +523,23 @@ def search_documents_content(
     )
     per_doc_hits = max(1, min(int(per_doc_hits), outline_svc.HITS_PER_DOC_MAX))
 
+    if project and not can_read_project(auth, project):
+        return _fail(404, f"Project {project} does not exist")
+    allowed_projects = [project] if project else readable_projects(auth)
     items, total = content_search_service.search_document_bodies(
         q=query, project=project, doc_type=type, status=status,
         limit=limit, offset=offset,
         include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+        allowed_projects=allowed_projects,
     )
     turn_items: list = []
     if not type or "CH".startswith(type.strip().upper()):
         turn_items = content_search_service.search_conversation_turns(
             q=query, project=project, status=status,
             include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+            allowed_projects=allowed_projects,
         )
+    _add_group_titles(items + turn_items)
     return JSONResponse(content={
         "ok": True, "query": query, "scope": "content", "total": total,
         "offset": offset, "limit": limit,
@@ -572,3 +588,83 @@ def list_doc_types(
     return JSONResponse(content={
         "ok": True, "total": total, "offset": offset, "limit": limit, "items": items,
     })
+
+
+def _add_group_titles(items):
+    groups = {}
+    for item in items:
+        gid = item.get("group_id")
+        if gid not in groups:
+            groups[gid] = db_groups.get_by_id(gid) if gid else None
+        group = groups[gid]
+        item["group_title"] = (group.get("title") if group and
+                               group.get("project_id") == item.get("project_id") else None)
+
+
+@router.get("/list/groups/{group_id}")
+def get_group(request: Request, group_id: str):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    requested = group_id
+    group = db_groups.get_by_id(group_id)
+    card = None
+    if group is None:
+        # A Flow / card display id (F77, flowgate.v02test.F77, F77-12): the stored group id is still the key.
+        found = _readable_refs(auth, group_id)
+        if len(found) == 1:
+            group_id, card = found[0]["group_id"], found[0] if found[0]["kind"] == "card" else None
+            group = db_groups.get_by_id(group_id)
+    if group is None or not can_read_project(auth, group.get("project_id")):
+        return _fail(404, f"Group {requested} does not exist")
+    count = get_store()._fetch_one(
+        "SELECT COUNT(*) AS cnt FROM documents WHERE group_id = ?", [group_id])
+    body = {
+        "ok": True,
+        **{key: group.get(key) for key in (
+            "group_id", "title", "module", "status", "parent_id",
+            "created_at", "updated_at", "closed_at")},
+        "document_count": count["cnt"] if count else 0,
+        "flow_ref": card_ids.flow_ref(group_id),
+        # How AI text names this Flow to the user (F77(name)); API calls keep group_id.
+        "flow_name": display_names.flow_name(group_id, group.get("title")),
+    }
+    if requested != group_id:
+        body["requested_id"] = requested
+    if card is not None:
+        body["card"] = {key: card[key] for key in ("node_key", "card_ref", "doc_id")}
+    return JSONResponse(content=body)
+
+
+def _readable_refs(auth, text: str, context_flow_id: Optional[str] = None, *, allow_bare: bool = True) -> list:
+    """The Flows / cards a typed display id names, limited to the projects this caller reads."""
+    from modules.flow_gate.services import card_numbers
+    return card_numbers.resolve(text, context_flow_id=context_flow_id, allowed_projects=readable_projects(auth),
+                                allow_bare=allow_bare)
+
+
+def _ref_items(auth, query: str, project: Optional[str], flow: Optional[str]) -> list:
+    """Search items for an exact Flow / card id match (they come first): the representative document plus
+    ``match`` (card / flow) and ``card`` (what opens the card: group_id, node_key, its display ids)."""
+    items = []
+    for ref in _readable_refs(auth, query, flow):
+        if project and ref["project_id"] != project:
+            continue
+        doc = db_docs.get_by_id(ref["doc_id"]) if ref.get("doc_id") else None
+        items.append({
+            "doc_id": ref.get("doc_id"),
+            "type": (doc or {}).get("type_code"),
+            "title": (doc or {}).get("title"),
+            "status": (doc or {}).get("status"),
+            "project_id": ref["project_id"],
+            "group_id": ref["group_id"],
+            "revision_no": (doc or {}).get("revision_no", 0),
+            "owner_id": (doc or {}).get("owner_id"),
+            "created_at": (doc or {}).get("created_at"),
+            "updated_at": (doc or {}).get("updated_at"),
+            "snippet": None,
+            "match": ref["kind"],
+            "card": {"group_id": ref["group_id"], "node_key": ref.get("node_key"),
+                     "flow_ref": ref["flow_ref"], "card_ref": ref.get("card_ref")},
+        })
+    return items

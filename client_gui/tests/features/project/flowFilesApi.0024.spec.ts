@@ -253,6 +253,19 @@ describe('fetchFlowAiActivity', () => {
     await expect(fetchFlowAiActivity('g')).resolves.toEqual(idle)
   })
 
+  // flowgate.v02test.0066 #36-1: the Flow tabs ask the resolver's progress with the same read (opt-in).
+  it('asks and carries the conflict progress only when asked', async () => {
+    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'running', run_id: 'r1', action_scope: 'resolve_conflict', conflict_progress: { done: 1, total: 46 } } })
+    await expect(fetchFlowAiActivity('g', { conflictProgress: true })).resolves.toEqual(
+      { active: true, runId: 'r1', status: 'running', actionScope: 'resolve_conflict', conflictProgress: { done: 1, total: 46 } })
+    expect(getRequest).toHaveBeenLastCalledWith('/api/v1/ai-invoke/active', { group_id: 'g', conflict_progress: 1 })
+    // No count from the server (other run, unreadable session, older server) reads as "not known".
+    getRequest.mockResolvedValueOnce({ data: { ok: true, active: true, status: 'running', run_id: 'r1', action_scope: 'resolve_conflict', conflict_progress: null } })
+    await expect(fetchFlowAiActivity('g', { conflictProgress: true })).resolves.toMatchObject({ active: true, conflictProgress: null })
+    getRequest.mockResolvedValueOnce({ data: { ok: true, active: false, conflict_progress: { done: 1, total: 2 } } })
+    await expect(fetchFlowAiActivity('g', { conflictProgress: true })).resolves.toMatchObject({ active: false, conflictProgress: null })
+  })
+
   it('normalizes errors', async () => {
     getRequest.mockRejectedValue(new Error('down'))
     await expect(fetchFlowAiActivity('g')).rejects.toThrow('Failed to load the Flow AI activity.')

@@ -4,7 +4,9 @@
        default, overwrite only when chosen) or rejects. Available in reading and editing screens alike; the server
        decides who may (perm_document_update). A changed target is never followed silently: the person confirms it.
        Two lines per request: the name with its state, then size · AI · target with the actions; the AI's note under them.
-       `disabled` (the list's bulk call or reject confirm) locks the decisions and the tick box, not preview / download. -->
+       `disabled` (the list's bulk call or reject confirm) locks the decisions and the tick box, not preview / download.
+       Preview / download stay after the approval (v02test.0074): a waiting request reads its staged copy, an approved
+       one the attachment it became (registeredFile.ts); a rejected / expired / failed one has no file, so no buttons. -->
   <div class="ar-item" :data-status="current.status" data-test="ar-item" :data-request="current.id">
     <div class="ar-head">
       <input
@@ -17,7 +19,24 @@
         :aria-label="t('gui.attachment_request.bulk.select_one', { name: current.filename })"
         @change="onSelect"
       />
-      <span class="ar-name" :title="current.originalFilename ?? current.filename" data-test="ar-name">{{ current.filename }}</span>
+      <!-- data-attachment-key: the file key of the approved attachment in the Flow attachment window. An approved request's
+           name is a button (v02test.0074 · 1·3): it opens that window on the file's row and lights it (focusAttachment),
+           in the chat card and in the window's own waiting band alike. Any other state has no file: a plain name. -->
+      <button
+        v-if="fileKey"
+        type="button"
+        class="ar-name ar-name-link"
+        :title="t('gui.attachment_request.open_in_window', { name: registered?.name ?? current.filename })"
+        data-test="ar-name"
+        :data-attachment-key="fileKey"
+        @click="showInWindow"
+      >{{ current.filename }}</button>
+      <span
+        v-else
+        class="ar-name"
+        :title="current.originalFilename ?? current.filename"
+        data-test="ar-name"
+      >{{ current.filename }}</span>
       <span class="ar-state" data-test="ar-state">{{ t(`gui.attachment_request.status.${statusKey}`) }}</span>
     </div>
     <div class="ar-foot">
@@ -26,11 +45,11 @@
         <span v-if="current.providerName">{{ t('gui.attachment_request.by_ai', { name: current.providerName }) }}</span>
         <span v-if="showTarget" data-test="ar-target">{{ t('gui.attachment_request.target', { title: targetText }) }}</span>
       </span>
-      <div v-if="open || (pending && !choosing && !retarget)" class="ar-actions">
-        <Button v-if="open" size="sm" variant="ghost" data-test="ar-preview" :aria-expanded="previewOpen" @click="togglePreview">
+      <div v-if="hasFile || (pending && !choosing && !retarget)" class="ar-actions">
+        <Button v-if="hasFile" size="sm" variant="ghost" data-test="ar-preview" :aria-expanded="previewOpen" @click="togglePreview">
           {{ previewOpen ? t('gui.attachment_request.actions.hide_preview') : t('gui.attachment_request.actions.preview') }}
         </Button>
-        <Button v-if="open" size="sm" variant="ghost" data-test="ar-download" :disabled="downloading" @click="download">
+        <Button v-if="hasFile" size="sm" variant="ghost" data-test="ar-download" :disabled="downloading" @click="download">
           {{ t('gui.attachment_request.actions.download') }}
         </Button>
         <template v-if="pending && !choosing && !retarget">
@@ -112,6 +131,8 @@ import {
   type AttachmentRequestConflictMode,
   type AttachmentRequestPreview,
 } from '@/features/document/api/attachmentRequests'
+import { focusAttachment } from '@/features/designer/flowAttachments/focus'
+import { attachmentFileKey, registeredFileContent, registeredFilePreview } from './registeredFile'
 
 const props = defineProps<{
   request: AttachmentRequest
@@ -143,6 +164,22 @@ watch(
 const current = computed<AttachmentRequest>(() => local.value ?? props.request)
 const open = computed(() => attachmentRequestIsOpen(current.value))
 const pending = computed(() => current.value.status === 'pending')
+/** The attachment an approved request became (its staged copy is gone); null for every other state. */
+const registered = computed(() => {
+  const r = current.value
+  return r.status === 'approved' && r.finalDocId && r.finalFilename ? { docId: r.finalDocId, name: r.finalFilename } : null
+})
+/** There is a real file to look at: the staged copy while open, the registered attachment once approved. */
+const hasFile = computed(() => open.value || registered.value !== null)
+const fileKey = computed(() => (registered.value ? attachmentFileKey(registered.value.docId, registered.value.name) : null))
+/**
+ * The approved file's row in the Flow attachment window (opened if needed, the row scrolled to and lit). Nothing happens
+ * when the window cannot show it (focusAttachment resolves false: no Designer, another Flow, the file is gone).
+ */
+function showInWindow(): void {
+  const flowId = current.value.flowId
+  if (flowId && fileKey.value) void focusAttachment(flowId, fileKey.value)
+}
 const expected = computed(() => props.expectedDocId ?? current.value.targetDocId ?? null)
 const conflict = computed<AttachmentRequestConflict | null>(() => props.existing ?? current.value.conflict)
 const statusKey = computed(() =>
@@ -256,9 +293,12 @@ async function togglePreview(): Promise<void> {
   if (!previewOpen.value || previewState.value === 'ready' || previewState.value === 'loading') return
   previewState.value = 'loading'
   try {
-    const read = await attachmentRequestPreview(current.value.id)
+    const file = registered.value
+    const read = file
+      ? await registeredFilePreview(file.docId, file.name, current.value.preview)
+      : await attachmentRequestPreview(current.value.id)
     if (read.kind === 'image') {
-      const blob = await attachmentRequestContent(current.value.id, true)
+      const blob = file ? await registeredFileContent(file.docId, file.name) : await attachmentRequestContent(current.value.id, true)
       dropImage()
       imageUrl.value = URL.createObjectURL(blob)
     }
@@ -276,11 +316,12 @@ async function download(): Promise<void> {
   downloading.value = true
   errorText.value = ''
   try {
-    const blob = await attachmentRequestContent(current.value.id)
+    const file = registered.value
+    const blob = file ? await registeredFileContent(file.docId, file.name) : await attachmentRequestContent(current.value.id)
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = current.value.filename
+    anchor.download = file ? file.name : current.value.filename
     anchor.rel = 'noopener'
     document.body.appendChild(anchor)
     anchor.click()
@@ -329,6 +370,21 @@ onBeforeUnmount(dropImage)
   white-space: nowrap;
   min-width: 0;
   flex: 1 1 auto;
+}
+/* The approved name as a button: the same look as the plain name, a link on hover / keyboard focus. */
+.ar-name-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ar-name-link:hover,
+.ar-name-link:focus-visible {
+  color: var(--fg2-blue);
+  text-decoration: underline;
 }
 .ar-state {
   flex: none;

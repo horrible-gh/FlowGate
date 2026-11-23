@@ -1,9 +1,14 @@
 <template>
   <div v-if="visible" class="gx-exceptions" data-test="git-exceptions">
-    <GitConflictCard v-if="card === 'conflict' || card === 'unsupported'" :unsupported="card === 'unsupported'" />
-    <GitAiResolvingCard v-else-if="card === 'ai'" />
-    <GitReviewCard v-else-if="card === 'review'" />
-    <GitHoldCard v-else-if="card === 'hold'" />
+    <GitConflictCard v-if="!executionActive && (card === 'conflict' || card === 'unsupported')" :unsupported="card === 'unsupported'" />
+    <GitAiResolvingCard v-else-if="!executionActive && card === 'ai'" />
+    <GitReviewCard v-else-if="!executionActive && card === 'review'" />
+    <GitHoldCard v-if="card === 'hold' && !worktree.gateOpen.value" />
+    <section v-for="operation in autoFailures" :key="operation.nodeKey" class="gx-card danger" data-test="git-auto-approval-failure">
+      <div class="gx-title" :title="operation.gate.auto_approval_error ?? undefined">{{ autoFailureLabel }}</div>
+      <p class="gx-reason">{{ operation.gate.auto_approval_error }}</p>
+      <button type="button" class="gx-btn" :title="t('gui.git.reapprove.goto_gate')" :aria-label="t('gui.git.reapprove.goto_gate')" @click="openGateCard(session.state.flow?.groupId, operation.nodeKey)">→</button>
+    </section>
     <GitDirtyCard v-if="session.dirtyView.value" />
     <GitPushFailureCard v-if="session.state.pushFailure" />
     <GitPushFailureCard v-for="operation in jobCards" :key="operation.gate.recovery!.decision_id" :operation="operation" />
@@ -29,13 +34,18 @@ import GitAiResolvingCard from './GitAiResolvingCard.vue'
 import GitConflictCard from './GitConflictCard.vue'
 import GitDirtyCard from './GitDirtyCard.vue'
 import GitHoldCard from './GitHoldCard.vue'
+import { useGitWorktree } from './gitWorktreeSession'
 import GitPushFailureCard from './GitPushFailureCard.vue'
 import GitReviewCard from './GitReviewCard.vue'
 import { isConflictOperation, openGateCard, useGitGateOperations } from './gateOperations'
 import { useGitPanel } from './gitSession'
 
+defineProps<{ executionActive?: boolean }>()
 const gateJobs = useGitGateOperations()
-const { t, te } = useI18n()
+const { worktree } = useGitWorktree()
+const { t, te, locale } = useI18n()
+const autoFailures = computed(() => gateJobs?.autoFailures?.value ?? [])
+const autoFailureLabel = computed(() => locale.value.startsWith('ko') ? '자동 승인 실패' : 'Automatic approval stopped')
 const reapproval = computed(() => gateJobs?.reapproval.value ?? null)
 const reapprovalReason = computed(() => {
   const code = reapproval.value?.code ?? ''
@@ -48,5 +58,5 @@ const card = computed(() => session.groupCard.value)
 // the held decision parked on that same conflict is part of it, not a second "Git 작업 실패" card.
 const conflictShown = computed(() => card.value === 'conflict' || card.value === 'ai' || card.value === 'review' || card.value === 'unsupported')
 const jobCards = computed(() => (gateJobs?.operations.value ?? []).filter((operation) => !(conflictShown.value && isConflictOperation(operation.gate))))
-const visible = computed(() => !!card.value || !!session.dirtyView.value || !!session.state.pushFailure || !!jobCards.value.length || !!reapproval.value)
+const visible = computed(() => !!autoFailures.value.length || !!card.value || !!session.dirtyView.value || !!session.state.pushFailure || !!jobCards.value.length || !!reapproval.value)
 </script>

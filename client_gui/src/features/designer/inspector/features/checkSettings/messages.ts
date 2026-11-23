@@ -47,6 +47,7 @@ export default {
       parked: "복구 대기",
     },
     archive: '아카이브',
+    auto_approve: '자동 승인',
     usage: {
       label: '용도',
       mid: '중간 승인',
@@ -166,6 +167,7 @@ export default {
       parked: "Waiting for recovery",
     },
     archive: 'Archive',
+    auto_approve: 'Automatic approval',
     usage: {
       label: 'Usage',
       mid: 'Mid approval',
@@ -283,6 +285,7 @@ export default {
       parked: "復旧待ち",
     },
     archive: 'アーカイブ',
+    auto_approve: '自動承認',
     usage: {
       label: '用途',
       mid: '中間承認',

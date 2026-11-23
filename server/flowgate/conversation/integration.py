@@ -133,6 +133,12 @@ def on_chat_run_cancel(run: dict, announce) -> None:
 
 def on_conversation_reply_appended(doc_id: str, turn: dict) -> None:
     activity.on_turn_appended(doc_id, turn)
+    # A reply can arrive after its composer/tab was closed. Use the same durable claim.
+    try:
+        from .first_names_triggers import schedule_reply
+        schedule_reply(doc_id, turn)
+    except Exception as exc:
+        logger.warning("flow naming reply exception_type=%s", type(exc).__name__)
 
 
 def accept_chat_call(run: dict, call: dict):
@@ -155,11 +161,18 @@ HANDLERS = {
 
 def register() -> None:
     """Connect every Conversation handler to its port (idempotent)."""
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    from .first_names_triggers import schedule_run, schedule_completed
+    first_names_hooks.register(schedule_run)
+    first_names_hooks.register_completion(schedule_completed)
     for name, handler in HANDLERS.items():
         hooks.register(name, handler)
 
 
 def unregister() -> None:
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    first_names_hooks.register(None)
+    first_names_hooks.register_completion(None)
     for name in HANDLERS:
         hooks.unregister(name)
 

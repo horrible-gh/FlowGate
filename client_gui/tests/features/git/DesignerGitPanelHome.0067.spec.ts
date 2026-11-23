@@ -1,3 +1,4 @@
+import { openGitWindowTab } from './openGitWindow'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -107,29 +108,28 @@ async function typeMessage(value: string) {
 const staged = (path: string) => worktreeFile(path, { staged: 'M', unstaged: null, canStage: false, canUnstage: true })
 
 describe('Git tab home (0067-R §2)', () => {
-  it('a summary of real counts and four entries — 파일 관리 / Base 반영 / Diff / 상태 — nothing else of the worktree', async () => {
+  it('scope execution, collapsed individual actions and detailed windows with real counts', async () => {
     const files = [worktreeFile('src/a.ts'), worktreeFile('src/b.ts'), staged('src/c.ts')]
     const t = setup({ status: worktreeStatus({ files }), merge: manualMergeView({ aheadOfTarget: 4 }) })
     await mountPanel(t)
-    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['3', '1', '4'])
-    expect(entries().map((e) => e.dataset.tab)).toEqual(['files', 'merge', 'diff', 'status'])
-    expect(entries().map((e) => e.querySelector('.gw-entry-title')?.textContent)).toEqual(['파일 관리', 'Base 반영', 'Diff', '상태'])
-    // 파일 관리: changed files; Base 반영: commits not in the target; Diff / 상태: no count.
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['3개', '4개 대기', '', ''])
-    // Every entry has the same columns: icon, label, count, arrow.
-    for (const e of entries()) {
-      expect([...e.children].map((c) => c.getAttribute('class'))).toEqual(['gw-entry-icon', 'gw-entry-title', 'gw-entry-count', 'gw-entry-arrow'])
-    }
+    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-merge')]).toEqual(['3', '4'])
+    // 0068 v16 mockup: the footer keeps the Git station and the `Diff` entry only.
+    expect(entries().map((e) => e.dataset.tab)).toEqual(['diff'])
+    expect(q('git-open-station')).not.toBeNull()
+    expect(q('git-quick-actions')).not.toBeNull()
+    expect(text('git-execute')).toBe('실행')
+    expect(q('git-individual-rows')!.style.display).toBe('none')
+    for (const e of entries()) expect(e.getAttribute('aria-label')).toBeTruthy()
     // No list, commit line, merge target, Diff body or detailed state in the tab.
     for (const sel of ['git-changes', 'git-commit-bar', 'git-apply', 'git-apply-info', 'git-status', 'git-window']) expect(q(sel), sel).toBeNull()
-    expect(q('git-worktree')!.querySelector('input, select')).toBeNull()
+    expect(q('git-worktree')!.querySelector('input, select')).not.toBeNull()
   })
 
   it('0 everywhere: numbers only, no repeated "nothing" lines, Diff still without a count', async () => {
     const t = setup({ status: worktreeStatus({ files: [] }), merge: manualMergeView({ aheadOfTarget: 0, mergeNeeded: false }) })
     await mountPanel(t)
-    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['0', '0', '0'])
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['0개', '0개 대기', '', ''])
+    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-merge')]).toEqual(['0', '0'])
+    expect(text('git-worktree-summary-changed')).toBe('0')
     expect(text('git-worktree')).not.toMatch(/Stage된 파일 없음|반영할 커밋 없음|변경 없음|0개$/)
   })
 
@@ -147,9 +147,10 @@ describe('Git tab home (0067-R §2)', () => {
     const t = setup({ status: worktreeStatus({ worktreeAvailable: false, files: [], worktreeToken: null, indexToken: null }) })
     await mountPanel(t)
     expect(text('git-worktree-unavailable')).toBe('작업 공간 없음(정리된 그룹)')
-    expect(entries()).toHaveLength(4)
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['', '', '', ''])
-    await click(entry('files'))
+    expect(entries()).toHaveLength(2)
+    expect(q('git-quick-actions')).toBeNull()
+    await openGitWindowTab('merge')
+    await click(windowTab('files'))
     expect(panel('files')!.querySelector('[data-test="git-window-unavailable"]')).not.toBeNull()
     expect(q('git-commit-bar')).toBeNull()
     await click(windowTab('merge'))
@@ -163,7 +164,7 @@ describe('Git modeless (0067-R §3)', () => {
     const w = await mountPanel(t)
     const sizes: string[] = []
     for (const tab of ['files', 'merge', 'diff', 'status']) {
-      await click(entry(tab))
+      await openGitWindowTab(tab)
       expect(qa('[data-test="git-window"]')).toHaveLength(1)
       expect(q('git-window')!.dataset.tab).toBe(tab)
       expect(shown(panel(tab))).toBe(true)
@@ -179,7 +180,7 @@ describe('Git modeless (0067-R §3)', () => {
       ['diff', 'false', false],
       ['status', 'false', false],
     ])
-    expect(entry('merge')!.getAttribute('aria-pressed')).toBe('true')
+    expect(windowTab('merge')!.getAttribute('aria-selected')).toBe('true')
     // Never the Center canvas: opening and switching raise no open-diff intent.
     expect(w.emitted('open-diff')).toBeUndefined()
   })
@@ -187,7 +188,7 @@ describe('Git modeless (0067-R §3)', () => {
   it('a switch keeps the tab context — the selection, the typed message and the search', async () => {
     const t = setup({ status: worktreeStatus({ files: [worktreeFile('src/a.ts'), staged('src/b.ts')] }) })
     await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     const search = q('git-changes-search-input') as HTMLInputElement
     search.value = 'src/'
     search.dispatchEvent(new Event('input'))
@@ -209,7 +210,7 @@ describe('Git modeless (0067-R §3)', () => {
   it('←/→ on the tabs move between them', async () => {
     const t = setup()
     await mountPanel(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     windowTab('status')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     await flushPromises()
     expect(q('git-window')!.dataset.tab).toBe('files')
@@ -221,9 +222,10 @@ describe('Git modeless (0067-R §3)', () => {
   it('the `Diff` tab reads the target list when shown, not before; closing lets the pane go', async () => {
     const t = setup()
     await mountPanel(t)
-    await click(entry('files'))
-    await click(windowTab('status'))
     expect(t.wt.source.loadTargetChanges).not.toHaveBeenCalled()
+    // 0068: the footer `Diff` entry opens the window on `Diff`, which reads the list then.
+    await openGitWindowTab('status')
+    expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
     await click(windowTab('diff'))
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
     await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
@@ -236,10 +238,10 @@ describe('Git modeless (0067-R §3)', () => {
   it('minimize keeps the window and its tab; an entry brings it back on that entry\'s tab', async () => {
     const t = setup()
     await mountPanel(t)
-    await click(entry('merge'))
+    await openGitWindowTab('merge')
     await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     expect(shell()!.classList.contains('is-minimized')).toBe(true)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
     expect(q('git-window')!.dataset.tab).toBe('status')
   })
@@ -247,11 +249,11 @@ describe('Git modeless (0067-R §3)', () => {
   it('a Flow switch closes the window; the gate closing takes it away', async () => {
     const t = setup()
     const w = await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     await w.setProps({ flow: { groupId: 'p.m.0002', name: 'B' } })
     await flushPromises()
     expect(q('git-window')).toBeNull()
-    await click(entry('files'))
+    await openGitWindowTab('files')
     expect(q('git-window')).not.toBeNull()
     await w.setProps({ flow: null })
     await flushPromises()
@@ -263,7 +265,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
   it('closed and opened again, it reads the worktree again: files, counts, merge judgment and follow-up Push are the server values now', async () => {
     const t = setup({ status: worktreeStatus({ files: [worktreeFile('src/a.ts')] }), merge: manualMergeView({ aheadOfTarget: 1 }) })
     await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     await click(windowTab('merge'))
     expect(text('git-apply-ahead')).toBe('1')
     expect(disabled('git-apply-merge')).toBe(false)
@@ -284,10 +286,10 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     t.wt.db.results = mergeResults({ results: [mergeResultRow()] })
     const before = reads(t)
 
-    await click(entry('files'))
+    await openGitWindowTab('files')
     reads(t).forEach((n, i) => expect(n).toBeGreaterThan(before[i]))
-    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-staged'), text('git-worktree-summary-merge')]).toEqual(['2', '1', '2'])
-    expect(entries().map((e) => e.querySelector('[data-test="git-worktree-entry-count"]')?.textContent)).toEqual(['2개', '2개 대기', '', ''])
+    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-merge')]).toEqual(['2', '2'])
+    expect([text('git-worktree-summary-changed'), text('git-worktree-summary-merge')]).toEqual(['2', '2'])
     expect(qa('[data-test="git-row"]').map((r) => r.dataset.path).sort()).toEqual(['src/a.ts', 'src/b.ts'])
     await click(windowTab('merge'))
     // The merge is blocked now and a merge result waits for its Push.
@@ -308,23 +310,23 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
   it('opened again on `Diff`, the comparison list is read once more with the rest', async () => {
     const t = setup()
     await mountPanel(t)
-    await click(entry('diff'))
+    await openGitWindowTab('diff')
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(1)
     await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
-    await click(entry('diff'))
+    await openGitWindowTab('diff')
     expect(t.wt.source.loadTargetChanges).toHaveBeenCalledTimes(2)
   })
 
   it('asked again by any entry, or restored, it comes in front of another modeless window', async () => {
     const t = setup()
     await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     other = mount(ModelessShell, { props: { open: true, title: 'other' }, attachTo: document.body })
     await flushPromises()
     for (const tab of ['files', 'merge', 'diff', 'status']) {
       await pressOther()
       expect(z(shell()), tab).toBeLessThan(z(otherShell()))
-      await click(entry(tab))
+      await openGitWindowTab(tab)
       expect(z(shell()), tab).toBeGreaterThan(z(otherShell()))
       expect(q('git-window')!.dataset.tab).toBe(tab)
     }
@@ -338,7 +340,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     // …or from an entry.
     await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="minimize"]'))
     await pressOther()
-    await click(entry('merge'))
+    await openGitWindowTab('merge')
     expect(shell()!.classList.contains('is-minimized')).toBe(false)
     expect(z(shell())).toBeGreaterThan(z(otherShell()))
   })
@@ -347,7 +349,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     setViewport(640, 480)
     const t = setup()
     await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     const b = box(shell()!)
     expect([b.left >= 0, b.top >= 0, b.right <= 640, b.bottom <= 480]).toEqual([true, true, true, true])
     expect(b.width).toBeLessThan(700)
@@ -367,7 +369,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     // the message opens once something is staged.
     const t = setup({ status: worktreeStatus({ files: [staged('src/a.ts')] }) })
     await mountPanel(t)
-    await click(entry('files'))
+    await openGitWindowTab('files')
     expect(box(shell()!)).toMatchObject({ left: 200, top: 88, width: 700, height: 560 })
     await typeMessage('wip')
 
@@ -388,7 +390,7 @@ describe('Git modeless — opened again, in front, on screen (0067-R §3)', () =
     // Closed and opened again on a normal screen: the v27 size and place again.
     await click(shell()!.querySelector<HTMLElement>('button[data-modeless-action="close"]'))
     setViewport(1280, 800)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expect(box(shell()!)).toMatchObject({ left: 200, top: 88, width: 700, height: 560 })
   })
 })
@@ -398,7 +400,7 @@ describe('`상태` tab (0067-R §7)', () => {
     const status: WorktreeStatus = worktreeStatus({ branch: 'flowgate_v02_0042', files: [worktreeFile('a.ts'), staged('b.ts')] })
     const t = setup({ status, merge: manualMergeView({ aheadOfTarget: 0, mergeNeeded: false }) })
     await mountPanel(t)
-    await click(entry('status'))
+    await openGitWindowTab('status')
     expect([text('git-status-changed'), text('git-status-staged'), text('git-status-ahead')]).toEqual(['2', '1', '0'])
     expect(text('git-status-worktree')).toBe('flowgate_v02_0042')
     expect(text('git-status-target')).toBe('v0.2 (기본)')

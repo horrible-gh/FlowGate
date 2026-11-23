@@ -2743,7 +2743,7 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 _REGISTER_MODEL_FIELDS = {
     "new": ("doc_type", "title", "content", "node_title"),
     "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
-             "rejection_review_id", "node_title"),
+             "rejection_review_id", "node_title", "commit_message"),
     # force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
     "review": ("verdict", "findings", "comment", "body_sha256", "body_chars"),

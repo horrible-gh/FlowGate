@@ -1,18 +1,7 @@
-"""(NR the earlier change, B the earlier change) — an answer is never the
-action it asked for: the common guard of the three re-invocations after a card AI's questions are answered
-(``flowgate.card_settings.action_guard``).
-
-On the real SQLite DB, routes and fixtures of ``test_fg_question_pending_0111`` (the Graph engine, its execution ledger, the
-card stage ports, the run-end port, the question wait and the run read are the real ones; the asked questions and the
-responder's start are its stand-ins). What the latest answers selected (``legacy.answered_requirements``) is a stand-in in
-the Graph tests and read from the real ``question_items`` / ``answers`` rows in its own tests.
-
-incident form (Q2·Q3 "a person or the system makes a new attempt on the right base, then call again", nothing
-made, the same attempt called again): with an option requiring ``new_attempt`` selected and the node's active attempt still
-the asker's, the instruction / work / no_result step takes nothing — no execution request, no AI start, no approval, no
-new attempt — the card is ``needs_intervention`` (``action_required:new_attempt``) with one ``action_required`` run event
-however often the answers are told, the run read's reconciliation takes nothing, and the person's explicit command opens
-the open card again as a new attempt (never the same attempt dispatched again).
+"""0071 T6 replaces the old 'answer is never the action' contract.
+Answered new_attempt requests continue automatically: bounded fenced replacement
+when possible, otherwise ordinary review/approval. Human pause/stop remains final.
+Real SQLite Graph/stage fixtures; only questions and provider starts are fakes.
 """
 from __future__ import annotations
 
@@ -57,24 +46,6 @@ def _active(env, key):
     return [a["attempt_id"] for a in _attempts(env, key) if a["status"] == "active"]
 
 
-def _held(env, key, *, asker, phase, execs, attempts):
-    """Nothing called, approved or opened; the card ``needs_intervention`` with the guard's reason on the wire and the
-    run's idle reason; exactly one ``action_required`` record of the asker."""
-    assert env["jobs"] == []
-    assert len(_executions(env)) == execs
-    assert _attempts(env, key) == attempts
-    run = _current(env)                         # the run read: its reconciliation + settle take nothing either
-    wire = next(n for n in run["node_runs"] if n["node_key"] == key)
-    assert wire["intervention"] == {"kind": "needs_intervention", "reason": REASON}
-    assert (run["status"], run["idle_reason"]) == ("idle", "needs_intervention")
-    assert env["jobs"] == [] and len(_executions(env)) == execs
-    [(reason, payload)] = _events(env)
-    assert reason == REASON
-    assert (payload["asker_ai_run_id"], payload["phase"], payload["node_key"]) == (asker, phase, key)
-    assert payload["attempt_id"] == _active(env, key)[0]
-    return run
-
-
 def _written_result_asked(env, monkeypatch, questions, settings=()):
     """A result writer (``WORK_RUN``) that registered its result and asked question 905 before its clean end: the
     result's step (its review start or automatic approval) waits for the answer. -> (node key, result)."""
@@ -92,83 +63,113 @@ def _written_result_asked(env, monkeypatch, questions, settings=()):
     return key, result
 
 
-# ── instruction phase ────────────────────────────────────────────────────────
+def test_answer_replaces_attempt_under_callers_shared_gate(env, decided, monkeypatch, questions, requires):
+    from flowgate.graph_run import fencing
 
-@pytest.mark.parametrize("how", ["human", "ai", "both", "chat"])
-def test_an_instruction_stage_answered_with_a_new_attempt_required_is_not_written_again(env, decided, monkeypatch,
-                                                                                       questions, requires, how):
-    key, _line_doc, _exec = _asked_instruction(env, monkeypatch, questions)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    requires[INSTRUCTION_RUN] = {"new_attempt"}
-
-    _answer(questions, INSTRUCTION_RUN, how)
-
-    _held(env, key, asker=INSTRUCTION_RUN, phase="instruction", execs=execs, attempts=attempts)
-    _answer(questions, INSTRUCTION_RUN, "both")                         # told again: still nothing, one record
-    _held(env, key, asker=INSTRUCTION_RUN, phase="instruction", execs=execs, attempts=attempts)
-
-
-def test_a_written_instruction_answered_with_a_new_attempt_required_is_neither_approved_nor_followed(
-        env, decided, monkeypatch, questions, requires):
-    key, line_doc, _exec = _asked_instruction(env, monkeypatch, questions, stop_code=None,
-                                              body="## 작업\n\n지시서\n")
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    requires[INSTRUCTION_RUN] = {"new_attempt"}
-
-    _answer(questions, INSTRUCTION_RUN, "human")
-
-    _held(env, key, asker=INSTRUCTION_RUN, phase="instruction", execs=execs, attempts=attempts)
-    assert _review_status(line_doc) != "approved"
-    assert _row(env, key)["stage"] == "instruction"
-
-
-def test_the_chat_outlook_tells_the_held_card_and_its_next_action(env, decided, monkeypatch, questions, requires):
-    from flowgate.card_settings import question_wait
-
-    _key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
-    requires[INSTRUCTION_RUN] = {"new_attempt"}
-    questions["asked"][INSTRUCTION_RUN] = []
-    assert question_wait.chat_answer_outlook(FA, INSTRUCTION_RUN) == {
-        "state": "action_required", "reason": REASON, "next_action": "explicit_command_opens_new_attempt"}
-    requires[INSTRUCTION_RUN] = set()
-    assert question_wait.chat_answer_outlook(FA, INSTRUCTION_RUN)["state"] == "resumes_after_chat_run"
-
-
-def test_the_explicit_command_opens_the_held_card_as_a_new_attempt(env, decided, monkeypatch, questions, requires):
-    """The next action: the person's command replaces the held attempt (``reopen_new_attempt``) — the old one
-    invalidated, a new one active and dispatched — instead of dispatching the same attempt again; the new attempt is no
-    longer held."""
-    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions)
-    requires[INSTRUCTION_RUN] = {"new_attempt"}
-    _answer(questions, INSTRUCTION_RUN, "human")
+    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions, settings=(("restart", 1),))
     [old] = _active(env, key)
-    assert env["jobs"] == []
-
-    _resume(env)
-
-    statuses = {a["attempt_id"]: a["status"] for a in _attempts(env, key)}
-    assert statuses[old] == "invalidated"
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    with fencing.shared(FA):
+        _answer(questions, INSTRUCTION_RUN, "human")
     [new] = _active(env, key)
     assert new != old
-    assert len(env["jobs"]) == 1 and env["jobs"][0]["stage"] == "instruction"
+    assert len(env["jobs"]) == 1
+    assert len(_attempts(env, key)) == 2
+    assert _row(env, key)["status"] == "open"
+
+
+@pytest.mark.parametrize("how", ["human", "ai", "both", "chat"])
+def test_answer_automatically_replaces_attempt_once(env, decided, monkeypatch, questions, requires, how):
+    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions, settings=(("restart", 1),))
+    [old] = _active(env, key)
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    _answer(questions, INSTRUCTION_RUN, how)
+    [new] = _active(env, key)
+    assert new != old
+    assert len(env["jobs"]) == 1
+    assert {a["attempt_id"]: a["status"] for a in _attempts(env, key)}[old] == "invalidated"
+    _answer(questions, INSTRUCTION_RUN, "both")
+    assert _active(env, key) == [new] and len(env["jobs"]) == 1
     assert _node_run(env, key)["intervention"] is None
 
 
-# ── no_result phase ──────────────────────────────────────────────────────────
+def test_restart_budget_is_consumed_across_asking_runs(env, decided, monkeypatch, questions, requires):
+    from test_fg_card_settings_review import _start_ai
+    from test_fg_question_pending_0111 import _ended
+    key, doc, _exec = _asked_instruction(env, monkeypatch, questions, settings=(("restart", 1),))
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    _answer(questions, INSTRUCTION_RUN, "human")
+    [new] = _active(env, key)
+    [job] = env["jobs"]
+    env["jobs"].clear()
+    asker = "air_second_asking"
+    _start_ai(monkeypatch, job, asker)
+    questions["asked"][asker] = [dict(QUESTION)]
+    _ai_run_finished(env, asker, job["graph_exec_id"], stop_code="question_pending", doc_ref=doc)
+    _ended(env, asker, job["graph_exec_id"], stop_code="question_pending", doc_ref=doc)
+    requires[asker] = {"new_attempt"}
+    _answer(questions, asker, "both")
+    assert _active(env, key) == [new] and len(_attempts(env, key)) == 2
+    assert len(env["jobs"]) == 1  # same-attempt continuation; no third attempt
 
-def test_a_result_writer_answered_with_a_new_attempt_required_is_not_run_again(env, decided, monkeypatch, questions,
-                                                                              requires):
+
+def test_result_writer_automatically_retries_in_new_attempt(env, decided, monkeypatch, questions, requires):
     key, _exec = _asked_result(env, monkeypatch, questions)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    requires[WORK_RUN] = {"new_attempt"}
-
-    _answer(questions, WORK_RUN, "both")
-
-    _held(env, key, asker=WORK_RUN, phase="no_result", execs=execs, attempts=attempts)
+    setting(env, FA, key, "restart", 1)
     [old] = _active(env, key)
-    _resume(env)                                                        # before T3: the same attempt dispatched again
-    assert {a["attempt_id"]: a["status"] for a in _attempts(env, key)}[old] == "invalidated"
-    assert len(_active(env, key)) == 1 and _active(env, key) != [old]
+    requires[WORK_RUN] = {"new_attempt"}
+    _answer(questions, WORK_RUN, "both")
+    assert _active(env, key) != [old] and len(env["jobs"]) == 1
+
+
+def test_spent_budget_continues_on_same_attempt(env, decided, monkeypatch, questions, requires):
+    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions, settings=(("restart", 0),))
+    [old] = _active(env, key)
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    _answer(questions, INSTRUCTION_RUN, "both")
+    assert _active(env, key) == [old] and len(env["jobs"]) == 1
+    assert _node_run(env, key)["intervention"] is None
+
+
+@pytest.mark.parametrize("review_count,budget", [(0, 0), (2, 0), (0, 1)])
+def test_answer_with_result_continues_to_approval_or_review(env, decided, monkeypatch, questions, requires, review_count, budget):
+    from flowgate.card_settings import legacy_adapter as legacy
+    starts = []
+    monkeypatch.setattr(legacy, "start_review_loop", lambda *a, **kw: starts.append(a) or {"run_id": "air_review"})
+    key, result = _written_result_asked(env, monkeypatch, questions,
+        (("restart", budget), ("review_count", review_count), ("review_ai", "aip_review")))
+    attempts = _attempts(env, key)
+    requires[WORK_RUN] = {"new_attempt"}
+    _answer(questions, WORK_RUN, "both")
+    if review_count:
+        # The fake provider leaves its execution unacquired, so replay may ask it
+        # again. Durable intent, rather than fake start calls, must be unique.
+        assert starts and _review_status(result) == "pending_review"
+        assert len(_sql(env["db"], "SELECT exec_id FROM graph_attempt_runs WHERE kind = 'review'")) == 1
+    else:
+        assert _review_status(result) == "approved"
+        assert _row(env, key)["status"] == "done"
+    assert len(_attempts(env, key)) == len(attempts)
+
+
+@pytest.mark.parametrize("status,reason", [("paused", None), ("idle", "stopped"), ("stopping", None)])
+def test_answer_never_wakes_person_stopped_run(env, decided, monkeypatch, questions, requires, status, reason):
+    key, _doc, _exec = _asked_instruction(env, monkeypatch, questions, settings=(("restart", 1),))
+    before = _attempts(env, key)
+    _sql(env["db"], "UPDATE graph_runs SET status = ?, idle_reason = ? WHERE run_id = ?",
+         (status, reason, _run_id(env)))
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    _answer(questions, INSTRUCTION_RUN, "both")
+    assert _attempts(env, key) == before and env["jobs"] == []
+    assert _sql(env["db"], "SELECT status FROM graph_runs WHERE run_id = ?", (_run_id(env),))[0]["status"] == status
+
+
+def test_chat_outlook_predicts_automatic_continuation(env, decided, monkeypatch, questions, requires):
+    from flowgate.card_settings import question_wait
+    _asked_instruction(env, monkeypatch, questions)
+    requires[INSTRUCTION_RUN] = {"new_attempt"}
+    questions["asked"][INSTRUCTION_RUN] = []
+    assert question_wait.chat_answer_outlook(FA, INSTRUCTION_RUN)["state"] == "resumes_after_chat_run"
 
 
 def test_answers_that_require_nothing_still_retry_the_writer_once(env, decided, monkeypatch, questions, requires):
@@ -194,39 +195,6 @@ def test_an_unreadable_answer_holds_nothing(env, decided, monkeypatch, questions
     execs = len(_executions(env))
     _answer(questions, WORK_RUN, "human")
     assert len(env["jobs"]) == 1 and len(_executions(env)) == execs + 1 and _events(env) == []
-
-
-# ── work phase ───────────────────────────────────────────────────────────────
-
-def test_a_written_result_answered_with_a_new_attempt_required_is_not_approved(env, decided, monkeypatch, questions,
-                                                                              requires):
-    """``_after_work`` with no review: the automatic approval is not made, the run read's reconciliation approves
-    nothing either; the card in review stays (never reopened)."""
-    key, result = _written_result_asked(env, monkeypatch, questions)
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    requires[WORK_RUN] = {"new_attempt"}
-
-    _answer(questions, WORK_RUN, "both")
-
-    _held(env, key, asker=WORK_RUN, phase="work", execs=execs, attempts=attempts)
-    _current(env)
-    assert (_row(env, key)["status"], _review_status(result)) == ("review", "pending_review")
-
-
-def test_a_written_result_answered_with_a_new_attempt_required_starts_no_review(env, decided, monkeypatch, questions,
-                                                                               requires):
-    from flowgate.card_settings import legacy_adapter as legacy
-
-    starts: list = []
-    monkeypatch.setattr(legacy, "start_review_loop", lambda *a, **kw: starts.append(a) or {"run_id": "air_review"})
-    key, result = _written_result_asked(env, monkeypatch, questions, (("review_count", 2), ("review_ai", "aip_review")))
-    attempts, execs = _attempts(env, key), len(_executions(env))
-    requires[WORK_RUN] = {"new_attempt"}
-
-    _answer(questions, WORK_RUN, "human")
-
-    _held(env, key, asker=WORK_RUN, phase="work", execs=execs, attempts=attempts)
-    assert starts == []
 
 
 # ── the requirement as stored: options and answers ───────────────────────────

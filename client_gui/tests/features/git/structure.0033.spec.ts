@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as GitFeature from '@/features/git'
+import { REVIEW_STATES } from '@/features/git/gitSession'
+import { TAB_REVIEW_STATES } from '@/features/designer/center/flowTabConflicts'
 import { APP_MESSAGES } from '@/app/i18n'
 
 // source-level guards for the Designer Git part.
@@ -49,12 +51,15 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitChangesAccordion.vue',
         'GitCommitBar.vue',
         'GitWorktreePanel.vue',
+        'GitQuickActions.vue',
+        'gitExecution.ts',
         // flowgate.v02.0067 T#1 — the Git modeless and its `상태` tab.
         'GitWorktreeStatus.vue',
         'GitWorktreeWindow.vue',
         'GitConflictCard.vue',
         'GitConflictWindow.vue',
         'GitConnectWindow.vue',
+        'GitStationWindow.vue',
         'GitStatusErrorCard.vue',
         'GitUnlinkedCard.vue',
         'GitDirtyCard.vue',
@@ -62,6 +67,7 @@ describe('features/git structure (flowgate.v02.0033)', () => {
         'GitFileRow.vue',
         'GitHeader.vue',
         'GitHoldCard.vue',
+        'GitIcon.vue',
         'GitPushErrorWindow.vue',
         'GitPushFailureCard.vue',
         'GitReviewCard.vue',
@@ -90,6 +96,10 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     expect(Object.keys(GitFeature)).toEqual(['DesignerGitPanel'])
   })
 
+  it('keeps the Flow tab\'s own copy of the merge review states equal to the panel\'s', () => {
+    expect(TAB_REVIEW_STATES).toEqual(REVIEW_STATES)
+  })
+
   it('reaches the server only through api.ts (actions) and features/project (reads)', () => {
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) {
@@ -109,6 +119,8 @@ describe('features/git structure (flowgate.v02.0033)', () => {
     const allowed = [
       /^vue$/,
       /^vue-i18n$/,
+      /^\.\.\/designer\/inspector\/features\/gateCard\/GateSettingsSummary\.vue$/,
+      /^\.\.\/designer\/resources\/useGateRecoveryRefresh$/,
       /^\.\/[A-Za-z]+(\.vue|\.css)?$/,
       /^\.\.\/\.\.\/components\/ui\/[A-Za-z]+\.vue$/,
       /^@\/features\/project$/,
