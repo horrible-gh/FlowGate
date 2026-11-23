@@ -33,11 +33,21 @@
       :minimap="minimap"
       @minimap-viewport="onMiniMapViewport"
     />
+    <!-- 0078 · 0015-T A-2: the Flow terminal in 디자이너 mode fills everything under the Flow tab strip — the Canvas and
+         the Inspector · Minimap places — as one area (no split, no height bar). It lies over them; they stay mounted and
+         come back as they were. The terminal's screen is moved in here by its window (Teleport). -->
+    <div
+      v-show="terminalFillActive"
+      ref="terminalFillPlace"
+      class="designer-terminal-fill"
+      :style="{ top: `${tabBarBottom}px` }"
+      data-test="designer-terminal-fill"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { toInspectorTarget } from '../inspector/inspectorTarget'
 import { openMergeWindow } from '../inspector/features/merge/mergeWindows'
 import { OPEN_CARD_EVENT } from '../inspector/features/verification/verificationModel'
@@ -242,7 +252,28 @@ let columnObserver: ResizeObserver | null = null
 
 function measureColumn(): void {
   measuredHeight.value = columnRef.value?.clientHeight ?? 0
+  measureTabBar()
 }
+
+// 0078 · 0015-T A: the place a Flow terminal fills in 디자이너 mode, under the Flow tab strip. The bridge is the Shell's
+// (null when the column is mounted without it: no place is given).
+interface TerminalFillBridge {
+  readonly active: (flowId: string | null) => boolean
+  readonly setTarget: (el: HTMLElement | null) => void
+}
+const terminalFill = inject<TerminalFillBridge | null>(Symbol.for('flowgate.designer.terminalFill'), null)
+const terminalFillPlace = ref<HTMLElement | null>(null)
+const terminalFillActive = computed(() => terminalFill?.active(props.center.state.activeFlowId) ?? false)
+/** Where the Flow tab strip ends, from the column's top (0 while it is not drawn). */
+const tabBarBottom = ref(0)
+function measureTabBar(): void {
+  const column = columnRef.value
+  const bar = column?.querySelector<HTMLElement>('[data-test="designer-flow-tab-bar"]')
+  tabBarBottom.value = column && bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom - column.getBoundingClientRect().top)) : 0
+}
+watch(terminalFillActive, (on) => { if (on) void nextTick(measureTabBar) })
+onMounted(() => terminalFill?.setTarget(terminalFillPlace.value))
+onBeforeUnmount(() => terminalFill?.setTarget(null))
 
 onMounted(() => {
   measureColumn()
@@ -283,8 +314,22 @@ function onMiniMapViewport(viewport: CanvasViewport, commit: boolean) {
 
 <style scoped>
 .designer-center-column {
+  position: relative;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 0015-T A-2: the Flow terminal's 디자이너 place — everything under the Flow tabs, over the Canvas and the bottom Dock. */
+.designer-terminal-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  /* above the Canvas (Vue Flow layers), the resize handle and the bottom Dock; floating windows stay above it. */
+  z-index: 30;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
