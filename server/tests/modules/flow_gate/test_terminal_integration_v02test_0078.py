@@ -435,7 +435,8 @@ class FakePsProc:
 def fake_windows(monkeypatch):
     FakeWinProc.spawned.clear()
     FakePsProc.killed.clear()
-    monkeypatch.setitem(sys.modules, "winpty", types.SimpleNamespace(PtyProcess=FakeWinProc))
+    from modules.flow_gate.services import terminal_bundle
+    monkeypatch.setattr(terminal_bundle, "load_winpty", lambda directory=None: types.SimpleNamespace(PtyProcess=FakeWinProc))
     grandchild = FakePsProc(7)
     child = FakePsProc(6, [grandchild])
     waited = []

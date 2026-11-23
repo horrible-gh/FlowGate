@@ -132,6 +132,20 @@ describe('시스템 › 웹 터미널', () => {
     expect(q('terminal-install-cancelled')).not.toBeNull()
   })
 
+  it('missing dependencies after an earlier install offer repair and allow turning off', async () => {
+    net.system.mockResolvedValue(sys({ installed: false, enabled: true, install: job({ status: 'done' }) }))
+    net.start.mockResolvedValue(job())
+    open()
+    await flushPromises()
+    expect(q('terminal-state')!.textContent).toBe('설치 안 됨')
+    expect(switchInput().disabled).toBe(false)
+    expect((q('terminal-install') as HTMLButtonElement).disabled).toBe(false)
+    q('terminal-install')!.click()
+    await flushPromises()
+    expect(net.start).toHaveBeenCalledTimes(1)
+    expect(q('terminal-state')!.textContent).toBe('설치 중')
+  })
+
   it('an installation that ends reads the setting again: installed, switch available', async () => {
     vi.useFakeTimers()
     net.system.mockResolvedValueOnce(sys({ install: job({ stage: 'apply', progress: 0.95 }) }))
