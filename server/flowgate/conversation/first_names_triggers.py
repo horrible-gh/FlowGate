@@ -149,7 +149,7 @@ def schedule_reply(doc_id, turn):
         return False
     run_id = turn.get("source_run_id")
     # The append service supplies verified worker-token fields, never request body fields.
-    # Token fields only fill gaps; the live or persisted run record wins when present.
+    # Bound token fields only fill gaps; non-None fields from the live or persisted run record win when present.
     token = turn.get("_naming_context") or {}
     bound_token = bool(run_id and token.get("ai_run_id") == run_id
                        and token.get("doc_ref") == doc_id)
