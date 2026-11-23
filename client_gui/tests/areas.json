@@ -177,6 +177,7 @@
         "tests/features/designer/flowTabOverflowList.0023.spec.ts",
         "tests/features/designer/flowTabs.0026.spec.ts",
         "tests/features/designer/flowTabStripMarks.0035.spec.ts",
+        "tests/features/designer/flowTerminal.v02test0078.spec.ts",
         "tests/features/designer/graphEdit.0045.spec.ts",
         "tests/features/designer/graphTimeMachineDialog.test0001.spec.ts",
         "tests/features/designer/groupArchive.0027.spec.ts",

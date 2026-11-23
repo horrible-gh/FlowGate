@@ -94,6 +94,9 @@
         <span v-if="conflictOf(tab.flowId)" class="flow-tab-conflict" :class="{ 'is-resolving': conflictOf(tab.flowId)!.state === 'resolving' }" role="img"
           :aria-label="conflictLabel(tab.flowId)" :title="conflictLabel(tab.flowId)" :data-conflict-state="conflictOf(tab.flowId)!.state"
           data-test="designer-flow-tab-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+        <!-- 0078: the Flow has an open terminal (the chat bubble's place; both show when both apply). -->
+        <span v-if="terminalStates?.[tab.flowId]" class="flow-tab-terminal" role="img" :aria-label="terminalMark"
+          :title="terminalMark" data-test="designer-flow-tab-terminal">&gt;_</span>
         <!-- flowgate.v02gui.0020: the right dock's '대화' icon itself, at its 14px size, never rotating. -->
         <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"
           :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>
@@ -172,6 +175,8 @@
                 data-test="designer-flow-tab-list-run-end"
                 :data-tone="runEndOf(tab.flowId)!.tone"
               ><svg v-if="isCheckTone(runEndOf(tab.flowId)!.tone)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M3.6 6.2l1.6 1.6 3.2-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg><svg v-else viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5.6" fill="currentColor" /><path d="M6 3.2v3.4" stroke="var(--fg2-panel, #0d1a28)" stroke-width="1.5" stroke-linecap="round" /><circle cx="6" cy="8.7" r="0.85" fill="var(--fg2-panel, #0d1a28)" /></svg></span>
+              <span v-if="terminalStates?.[tab.flowId]" class="flow-tab-terminal" role="img" :aria-label="terminalMark"
+                data-test="designer-flow-tab-list-terminal">&gt;_</span>
               <span v-if="chatStates?.[tab.flowId]" class="flow-tab-chat" role="img" :aria-label="t('gui.designer.center.tab_chat')"><ChatBubbleIcon :size="14" /></span>
               <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
                 :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" data-test="designer-flow-tab-list-chat-end"
@@ -199,6 +204,7 @@ import LineIcon from '../../../components/ui/LineIcon.vue'
 import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 import type { FlowTabConflict } from './flowTabConflicts'
+import { wordsFor as terminalWordsFor } from '../flowTerminal/words'
 
 export interface FlowTabStripItem {
   readonly flowId: string
@@ -218,6 +224,8 @@ const props = withDefaults(
      */
     conflicts?: Readonly<Record<string, boolean | FlowTabConflict | undefined>>
     chatStates?: Readonly<Record<string, boolean>>
+    /** 0078: Flows with an open terminal window (`>_` before the name). Not a notice: the list button gets no dot. */
+    terminalStates?: Readonly<Record<string, boolean>>
     /** a tab's run state by flow id; a tab not in it (or unknown) shows no mark. */
     runStates?: Readonly<Record<string, FlowTabRunState | undefined>>
     /** Flows shown as archived (dimmed, archive icon); absent / false = not archived. */
@@ -237,7 +245,8 @@ const emit = defineEmits<{
   reorder: [flowId: string, toIndex: number]
 }>()
 
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
+const terminalMark = computed(() => terminalWordsFor(locale.value).tabMark)
 
 /** the Designer context menu's tab side, provided by the Designer Shell; null elsewhere. */
 interface TabContextMenu {
@@ -563,7 +572,7 @@ onMounted(() => {
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
     JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
-    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), props.activeFlowId],
+    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), props.activeFlowId],
   () => nextTick(updateOverflow),
 )
 
@@ -897,6 +906,10 @@ function pickFromList(flowId: string, close: () => void) {
 }
 
 /* the run mark — running spins, stopping spins dimmed, paused shows two bars. */
+/* 0078: an open terminal — a small `>_`, the chat bubble's size and place. */
+.flow-tab-terminal { display: inline-flex; align-items: center; justify-content: center; height: 14px; padding: 0 2px; margin-right: 6px;
+  vertical-align: -2px; border-radius: 3px; background: #173a35; color: #7fe6cc; font: 700 9px/14px ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: -0.5px; }
 .flow-tab-chat { position: relative; display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: -3px; }
 .flow-tab-chat :deep(svg) { display: block; }
 

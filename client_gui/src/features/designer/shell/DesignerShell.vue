@@ -22,6 +22,9 @@
       :flow-id="center.state.activeFlowId" :project-id="projectId"
       :title="center.state.tabs.find(tab => tab.flowId === center.state.activeFlowId)?.name ?? ''"
       :is-read-only="id => center.isFlowReadOnly(id)" :is-archived="id => center.isFlowArchived?.(id) ?? null" />
+    <!-- 0078: the Flow terminal windows (admins only; the toolbar's [터미널]). -->
+    <FlowTerminalHost ref="terminalHost" :key="`terminal:${projectStore.designerSessionOwner ?? ''}`"
+      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"
@@ -321,6 +324,7 @@ import DesignerLeftDock from './DesignerLeftDock.vue'
 import DesignerRightDock from './DesignerRightDock.vue'
 import DesignerTop from './DesignerTop.vue'
 import FlowAttachmentHost from '../flowAttachments/FlowAttachmentHost.vue'
+import FlowTerminalHost from '../flowTerminal/FlowTerminalHost.vue'
 import {
   DESIGNER_LAYOUT_DEFAULTS,
   DESIGNER_LEFT_MODES,
@@ -505,6 +509,8 @@ const center = createDesignerCenterSession({
 const activeFlowRef = center.activeFlowRef
 // the Flow attachment windows; the host also owns the full-screen file drop.
 const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
+// 0078: the Flow terminal windows.
+const terminalHost = ref<InstanceType<typeof FlowTerminalHost> | null>(null)
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
 
@@ -1002,6 +1008,7 @@ const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
 function onTopCommand(command: DesignerTopCommand) {
   if (command === 'view.attachments') { void attachmentHost.value?.open(); return }
+  if (command === 'view.terminal') { void terminalHost.value?.open(); return }
   if (command === 'header.notifications') {
     notificationsOpen.value = !notificationsOpen.value
     return
