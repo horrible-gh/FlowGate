@@ -1,7 +1,8 @@
-"""System settings and durable, cancellable terminal bundle installation."""
+"""Terminal system settings and shell bundle installation."""
 from __future__ import annotations
 
 import atexit
+from contextlib import ExitStack
 import copy
 import json
 import os
@@ -12,47 +13,69 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 import urllib.error
+import uuid
 
 from modules.flow_gate.db import system_settings
 from . import terminal_bundle as bundle, terminal_download as download, terminal_sessions
 from .terminal_errors import BundleError
 from .terminal_lock import installation_lock
 
-
-def atomic_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        temporary.write_text(json.dumps(value), encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def shell_test(directory=None, cancel=None):
-    """Test in a child interpreter so staging DLLs never stay loaded in the server."""
-    from . import terminal_pty
-    argv = terminal_pty.default_shell_argv()
-    script = '''import sys
-from modules.flow_gate.services import terminal_pty
+SHELL_TEST_SECONDS = 15
+SHELL_TEST_SCRIPT = '''import sys
+from modules.flow_gate.services import terminal_pty as pty
+bundle_path, cwd = sys.argv[1], sys.argv[2]
+argv, env = pty.default_shell_argv(), pty.shell_env()
 p = None
 try:
-    if terminal_pty.IS_WINDOWS:
-        p = terminal_pty.WindowsPty(terminal_pty.default_shell_argv(), sys.argv[2], terminal_pty.shell_env(), 80, 24, bundle_path=sys.argv[1])
+    if pty.IS_WINDOWS:
+        p = pty.WindowsPty(argv, cwd, env, 80, 24, bundle_path=bundle_path)
     else:
-        p = terminal_pty.open_pty(terminal_pty.default_shell_argv(), sys.argv[2], terminal_pty.shell_env(), 80, 24)
+        p = pty.open_pty(argv, cwd, env, 80, 24)
     if not p.pid:
         raise RuntimeError("Shell did not start")
 finally:
     if p is not None:
         p.terminate()
 '''
-    server = Path(__file__).resolve().parents[3]
-    proc = subprocess.Popen([sys.executable, "-c", script, str(directory or bundle.active_path() or ""), str(bundle.root())],
-                            cwd=server, env=terminal_pty.shell_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    deadline = time.monotonic() + 15
+
+
+def atomic_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        temp.write_text(json.dumps(value), encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def job_path(job_id, suffix=".json"):
+    return bundle.root() / "jobs" / (job_id + suffix)
+
+
+def kill_tree(proc):
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=10)
+    else:
+        import psutil
+        for child in psutil.Process(proc.pid).children(recursive=True):
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+        proc.kill()
+    proc.wait(timeout=10)
+
+
+def shell_test(directory=None, cancel=None):
+    """Run in a child interpreter so staged DLLs are never loaded by the server."""
+    from . import terminal_pty
+    bundle_path = str(directory or bundle.active_path() or "")
+    proc = subprocess.Popen([sys.executable, "-c", SHELL_TEST_SCRIPT, bundle_path, str(bundle.root())],
+                            cwd=Path(__file__).resolve().parents[3], env=terminal_pty.shell_env(),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + SHELL_TEST_SECONDS
     try:
         while proc.poll() is None:
             if cancel is not None:
@@ -62,21 +85,27 @@ finally:
             time.sleep(0.05)
         if proc.returncode:
             raise BundleError("terminal_shell_test_failed", "Shell test failed", 422)
-        return {"ok": True, "shell": Path(argv[0]).name}
+        return {"ok": True, "shell": Path(terminal_pty.default_shell_argv()[0]).name}
     finally:
         if proc.poll() is None:
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=10)
-            else:
-                import psutil
-                parent = psutil.Process(proc.pid)
-                for child in parent.children(recursive=True):
-                    try:
-                        child.kill()
-                    except psutil.Error:
-                        pass
-                proc.kill()
-            proc.wait(timeout=10)
+            kill_tree(proc)
+
+
+def failure(exc):
+    if isinstance(exc, BundleError):
+        return exc.code, exc.message
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return "terminal_download_failed", "Installation failed: " + type(exc).__name__
+    return "terminal_install_failed", "Installation failed: " + type(exc).__name__
+
+
+class Cancellation:
+    def __init__(self, job_id, event):
+        self.marker = job_path(job_id, ".cancel")
+        self.event = event
+
+    def is_set(self):
+        return self.event.is_set() or self.marker.exists()
 
 
 class Manager:
@@ -89,7 +118,7 @@ class Manager:
     def _update(self, job_id, **values):
         with self.lock:
             self.jobs[job_id].update(values)
-            atomic_json(bundle.root() / "jobs" / (job_id + ".json"), self.jobs[job_id])
+            atomic_json(job_path(job_id), self.jobs[job_id])
 
     def job(self, job_id):
         if not re.fullmatch(r"ti_[0-9a-f]{32}", job_id):
@@ -98,15 +127,15 @@ class Manager:
             row = self.jobs.get(job_id)
             if row is None:
                 try:
-                    row = json.loads((bundle.root() / "jobs" / (job_id + ".json")).read_text(encoding="utf-8"))
+                    row = json.loads(job_path(job_id).read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     raise BundleError("terminal_install_not_found", "Unknown install", 404)
-                # A CLI may currently own this job; only mark it interrupted when the
-                # shared OS lock is free. Reads never change its stored state.
+                # The CLI may own this job; it is interrupted only if the lock is free.
                 if row["status"] in ("queued", "running"):
                     try:
                         with installation_lock(bundle.root()):
-                            row.update(status="failed", error_code="terminal_install_interrupted", message="Retry to resume partial download")
+                            row.update(status="failed", error_code="terminal_install_interrupted",
+                                       message="Retry to resume partial download")
                     except BundleError:
                         pass
             return copy.deepcopy(row)
@@ -118,40 +147,43 @@ class Manager:
         return self.job(max(files, key=lambda p: p.stat().st_mtime_ns).stem)
 
     def status(self):
-        spec = None
-        if bundle.required():
+        required = bundle.required()
+        info = None
+        if required:
             try:
-                spec = bundle.specification()
+                size = bundle.specification()["size_bytes"]
             except BundleError:
-                pass
-        return {"platform": "windows" if bundle.required() else sys.platform,
-                "bundle_required": bundle.required(), "installed": bundle.installed(),
+                size = 0
+            info = {"name": bundle.CATALOG["name"], "version": bundle.CATALOG["version"], "size_bytes": size}
+        return {"platform": "windows" if required else sys.platform,
+                "bundle_required": required,
+                "installed": bundle.installed(),
                 "enabled": terminal_sessions.terminal_enabled(),
                 "open_sessions": terminal_sessions.manager.open_count(),
-                "bundle": ({"name": bundle.CATALOG["name"], "version": bundle.CATALOG["version"],
-                            "size_bytes": spec["size_bytes"] if spec else 0} if bundle.required() else None),
+                "bundle": info,
                 "install": self.latest()}
 
     def install(self, from_dir=None):
         if not bundle.required():
             raise BundleError("terminal_bundle_not_required", "No bundle is required on this OS", 409)
         spec = bundle.specification()
-        with self.lock:
-            lock = installation_lock(bundle.root())
-            lock.__enter__()  # Acquired before 202; web and CLI conflict synchronously.
+        with self.lock, ExitStack() as stack:
+            # Taken before 202 so a running CLI install conflicts immediately.
+            stack.enter_context(installation_lock(bundle.root()))
+            if terminal_sessions.terminal_enabled():
+                raise BundleError("terminal_enabled", "Turn off the terminal before installing", 409)
+            job_id = "ti_" + uuid.uuid4().hex
+            self.jobs[job_id] = dict(install_id=job_id, status="queued", stage="download", progress=0.0,
+                                     bytes_done=0, bytes_total=spec["size_bytes"], error_code=None, message=None)
+            self.events[job_id] = threading.Event()
+            self._update(job_id)
+            held = stack.pop_all()
+            worker = threading.Thread(target=self._worker, args=(job_id, spec, from_dir, held), name=job_id, daemon=True)
+            self.threads[job_id] = worker
             try:
-                if terminal_sessions.terminal_enabled():
-                    raise BundleError("terminal_enabled", "Turn off the terminal before installing", 409)
-                job_id = "ti_" + uuid.uuid4().hex
-                self.jobs[job_id] = dict(install_id=job_id, status="queued", stage="download", progress=0.0,
-                                         bytes_done=0, bytes_total=spec["size_bytes"], error_code=None, message=None)
-                self.events[job_id] = threading.Event()
-                self._update(job_id)
-                worker = threading.Thread(target=self._worker, args=(job_id, spec, from_dir, lock), daemon=True, name=job_id)
-                self.threads[job_id] = worker
                 worker.start()
             except BaseException:
-                lock.__exit__(*sys.exc_info())
+                held.close()
                 raise
             return self.job(job_id)
 
@@ -159,26 +191,25 @@ class Manager:
         with self.lock:
             row = self.job(job_id)
             if row["status"] in ("queued", "running"):
-                atomic_json(bundle.root() / "jobs" / (job_id + ".cancel"), True)
+                atomic_json(job_path(job_id, ".cancel"), True)
                 if job_id in self.events:
                     self.events[job_id].set()
             return row
 
-    def _worker(self, job_id, spec, from_dir, lock):
+    def _worker(self, job_id, spec, from_dir, held_lock):
         staging = bundle.root() / "staging" / job_id
-        event = self.events[job_id]
-        class Cancellation:
-            def is_set(self):
-                return event.is_set() or (bundle.root() / "jobs" / (job_id + ".cancel")).exists()
-        cancel = Cancellation()
+        cancel = Cancellation(job_id, self.events[job_id])
+        reported = 0.0
+
+        def progress(done, total):
+            nonlocal reported
+            now = time.monotonic()
+            if done == total or now - reported > 0.25:
+                self._update(job_id, bytes_done=done, progress=min(0.6, done / total * 0.6))
+                reported = now
+
         try:
             self._update(job_id, status="running")
-            last = [0.0]
-            def progress(done, total):
-                now = time.monotonic()
-                if done == total or now - last[0] > 0.25:
-                    self._update(job_id, bytes_done=done, progress=min(0.6, done / total * 0.6))
-                    last[0] = now
             archive = download.fetch(spec, bundle.root() / "downloads", cancel, progress,
                                      Path(from_dir).resolve() if from_dir else None)
             self._update(job_id, stage="verify", progress=0.65)
@@ -191,8 +222,6 @@ class Manager:
             download.extract(archive, staging, cancel)
             self._update(job_id, stage="test", progress=0.85)
             shell_test(staging, cancel)
-            download.check_cancel(cancel)
-            # Cancellation and apply linearize on the same manager lock.
             with self.lock:
                 download.check_cancel(cancel)
                 self._update(job_id, stage="apply", progress=0.95)
@@ -200,28 +229,29 @@ class Manager:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if not destination.exists():
                     os.replace(staging, destination)
-                atomic_json(bundle.root() / "installed.json", {"sha256": spec["sha256"], "version": bundle.CATALOG["version"]})
+                atomic_json(bundle.root() / "installed.json",
+                            {"sha256": spec["sha256"], "version": bundle.CATALOG["version"]})
                 self._update(job_id, status="done", progress=1.0)
         except Exception as exc:
             if cancel.is_set():
-                code, message, status = "terminal_install_cancelled", "Installation cancelled", "cancelled"
+                self._update(job_id, status="cancelled", error_code="terminal_install_cancelled",
+                             message="Installation cancelled")
             else:
-                code = exc.code if isinstance(exc, BundleError) else ("terminal_download_failed" if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)) else "terminal_install_failed")
-                message = exc.message if isinstance(exc, BundleError) else "Installation failed: " + type(exc).__name__
-                status = "failed"
-            self._update(job_id, status=status, error_code=code, message=message)
+                code, message = failure(exc)
+                self._update(job_id, status="failed", error_code=code, message=message)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-            lock.__exit__(None, None, None)
+            held_lock.close()
 
     def enable(self, enabled, user_id=None):
         with self.lock, installation_lock(bundle.root()):
             if enabled and not bundle.installed():
                 raise BundleError("terminal_not_installed", "Install shell components first", 409)
-            mgr = terminal_sessions.manager
-            with mgr._lock:
-                system_settings.set_value("terminal.enabled", json.dumps(enabled), value_type="boolean", updated_by=user_id)
-            closed = 0 if enabled else mgr.disable_all()
+            sessions = terminal_sessions.manager
+            with sessions._lock:
+                system_settings.set_value("terminal.enabled", json.dumps(enabled), value_type="boolean",
+                                          updated_by=user_id)
+            closed = 0 if enabled else sessions.disable_all()
             return {"enabled": enabled, "closed_sessions": closed}
 
     def remove(self):
@@ -231,7 +261,6 @@ class Manager:
             if not bundle.required():
                 raise BundleError("terminal_bundle_not_required", "No bundle is required on this OS", 409)
             bundle.prune_runtime()
-            # Remove only downloaded components. Keep job history and the OS lock file.
             (bundle.root() / "installed.json").unlink(missing_ok=True)
             for name in ("bundles", "downloads", "staging"):
                 path = bundle.root() / name

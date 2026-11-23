@@ -30,7 +30,6 @@ def check_cancel(cancel):
 
 
 def fetch(spec, directory: Path, cancel, progress, from_dir: Path | None = None):
-    """Keep .part on interruption; a hash mismatch is never promoted or reused."""
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / spec["filename"]
     if verify(target, spec):
@@ -39,12 +38,9 @@ def fetch(spec, directory: Path, cancel, progress, from_dir: Path | None = None)
     partial = target.with_name(target.name + ".part")
     check_cancel(cancel)
     if from_dir is not None:
-        # Offline mode never silently downloads; originals are opened read-only.
         candidates = list(from_dir.rglob(spec["filename"]))
         source = next((p for p in candidates if verify(p, spec)), None)
         if source is None and spec.get("expanded"):
-            # The manifest pins the extracted executable/DLL hashes too, so an
-            # unpacked offline bundle has the same integrity checks as downloads.
             expanded = directory / (spec["filename"] + ".expanded")
             for member in spec["expanded"]:
                 check_cancel(cancel)
@@ -85,7 +81,7 @@ def fetch(spec, directory: Path, cancel, progress, from_dir: Path | None = None)
                 if not content_range.startswith(f"bytes {offset}-") or not content_range.endswith(f"/{spec['size_bytes']}"):
                     raise BundleError("terminal_download_range_invalid", "Invalid download range", 502)
             elif response.status == 200:
-                offset = 0  # Server ignored Range: replace, never append.
+                offset = 0
             else:
                 raise BundleError("terminal_download_failed", "Unexpected download response", 502)
             with partial.open("ab" if offset else "wb") as dst:
@@ -105,14 +101,13 @@ def fetch(spec, directory: Path, cancel, progress, from_dir: Path | None = None)
 
 
 def extract(archive: Path, destination: Path, cancel):
-    """Only regular files/directories; reject absolute paths, links and zip bombs."""
     if archive.name.endswith(".tar.bz2"):
         import tarfile
         with tarfile.open(archive, "r:bz2") as source:
             total = 0
             for item in source:
                 check_cancel(cancel)
-                name = PurePosixPath(item.name.replace(chr(92), "/"))
+                name = PurePosixPath(item.name.replace("\\", "/"))
                 total += item.size
                 if (name.is_absolute() or ".." in name.parts or ":" in item.name
                         or not (item.isfile() or item.isdir()) or total > 2 * 1024 ** 3):

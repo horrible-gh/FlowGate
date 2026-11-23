@@ -1,10 +1,9 @@
-"""Pinned terminal bundle paths and imports; never install into site-packages."""
+"""Pinned terminal bundle paths and imports, kept out of site-packages."""
 import importlib
 import json
-from pathlib import Path
 import os
+from pathlib import Path
 import shutil
-import platform
 import sys
 import sysconfig
 import threading

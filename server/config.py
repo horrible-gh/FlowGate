@@ -185,7 +185,7 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _ignore_retired_terminal_env(cls, values):
-        # Retired .env keys must not prevent an existing installation from booting.
+        # A leftover TERMINAL_ENABLED in .env must not block boot.
         if isinstance(values, dict):
             values = {k: v for k, v in values.items() if k.lower() != "terminal_enabled"}
         return values

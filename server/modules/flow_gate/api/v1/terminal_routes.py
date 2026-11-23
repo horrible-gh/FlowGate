@@ -7,14 +7,15 @@ Paths (under ``/flowgate/api/v1/terminal``), fixed with the screen card:
   30-second ticket for the WebSocket so the login token never appears in a URL.
 * ``WS /ws?ticket=`` -- the terminal stream.
 * ``DELETE /sessions/{session_id}`` -- ends the session and its whole process tree.
+* ``/system/...`` -- administrators only; bundle install, removal, on/off and shell test.
 
 Handlers are plain ``def`` (FastAPI's worker pool) except the WebSocket, whose blocking
 steps run through ``anyio.to_thread`` inside ``terminal_sessions.serve_websocket``.
 """
 from __future__ import annotations
 
-from typing import Optional
 from functools import wraps
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, WebSocket
 from fastapi.responses import JSONResponse, Response
@@ -32,6 +33,11 @@ class CreateSessionBody(BaseModel):
     flow_id: str = Field(min_length=1, max_length=255)
     cols: int = Field(default=80, ge=1, le=terminal_sessions.MAX_DIMENSION)
     rows: int = Field(default=24, ge=1, le=terminal_sessions.MAX_DIMENSION)
+
+
+class EnabledBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: StrictBool
 
 
 def _refused(exc: TerminalError) -> JSONResponse:
@@ -66,12 +72,7 @@ async def terminal_socket(websocket: WebSocket, ticket: str = Query(default="", 
     await terminal_sessions.serve_websocket(websocket, ticket)
 
 
-class EnabledBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: StrictBool
-
-
-def system_guard(handler):
+def admin_only(handler):
     @wraps(handler)
     def wrapped(*args, **kwargs):
         try:
@@ -84,42 +85,42 @@ def system_guard(handler):
 
 
 @router.get("/system")
-@system_guard
+@admin_only
 def terminal_system(user: dict = Depends(get_current_user)):
     return terminal_service.manager.status()
 
 
 @router.post("/system/installs", status_code=202)
-@system_guard
+@admin_only
 def install_terminal(user: dict = Depends(get_current_user)):
     return terminal_service.manager.install()
 
 
 @router.get("/system/installs/{install_id}")
-@system_guard
+@admin_only
 def terminal_install_status(install_id: str, user: dict = Depends(get_current_user)):
     return terminal_service.manager.job(install_id)
 
 
 @router.delete("/system/installs/{install_id}", status_code=202)
-@system_guard
+@admin_only
 def cancel_terminal_install(install_id: str, user: dict = Depends(get_current_user)):
     return terminal_service.manager.cancel(install_id)
 
 
 @router.delete("/system/bundle")
-@system_guard
+@admin_only
 def remove_terminal_bundle(user: dict = Depends(get_current_user)):
     return terminal_service.manager.remove()
 
 
 @router.put("/system/enabled")
-@system_guard
+@admin_only
 def enable_terminal(body: EnabledBody, user: dict = Depends(get_current_user)):
     return terminal_service.manager.enable(body.enabled, user.get("user_id"))
 
 
 @router.post("/system/test")
-@system_guard
+@admin_only
 def test_terminal_shell(user: dict = Depends(get_current_user)):
     return terminal_service.manager.test()

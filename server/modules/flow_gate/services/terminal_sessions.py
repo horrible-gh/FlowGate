@@ -67,7 +67,7 @@ class TerminalError(Exception):
 
 
 def terminal_enabled() -> bool:
-    """Read the system setting every time; missing/unreadable means off."""
+    """``terminal.enabled`` system setting; missing or unreadable means off."""
     try:
         from modules.flow_gate.db import system_settings
         return json.loads(system_settings.get_value("terminal.enabled", "false")) is True
@@ -417,8 +417,10 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
     if session is None or not mgr.enabled():
         if session is not None:
             await anyio.to_thread.run_sync(mgr.end, session, "error")
-        await websocket.close(code=4403 if session is not None else 1008,
-                              reason="terminal_disabled" if session is not None else "")
+        if session is None:
+            await websocket.close(code=1008)
+        else:
+            await websocket.close(code=4403, reason="terminal_disabled")
         return
     await websocket.accept()
     loop = asyncio.get_running_loop()
