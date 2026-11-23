@@ -23,7 +23,14 @@ def env(tmp_path, monkeypatch):
     values = {}
     monkeypatch.setattr(bundle, "root", lambda: tmp_path / "terminal")
     monkeypatch.setattr(service.system_settings, "get_value", lambda k, default=None: values.get(k, default))
-    monkeypatch.setattr(service.system_settings, "set_value", lambda k, v, **kw: values.update({k: v}))
+    def set_value(key, value, *, value_type, updated_by=None):
+        # Match the DB contract so invalid setting types cannot pass silently.
+        assert value_type in {"string", "integer", "boolean", "json"}
+        if key == "terminal.enabled":
+            assert value_type == "boolean"
+            assert value in {"true", "false"}
+        values[key] = value
+    monkeypatch.setattr(service.system_settings, "set_value", set_value)
     mgr = service.Manager()
     monkeypatch.setattr(service, "manager", mgr)
     session_mgr = sessions.TerminalManager(flow_resolver=lambda f: ("project", str(tmp_path)), recorder=lambda *a: None)

@@ -220,7 +220,7 @@ class Manager:
                 raise BundleError("terminal_not_installed", "Install shell components first", 409)
             mgr = terminal_sessions.manager
             with mgr._lock:
-                system_settings.set_value("terminal.enabled", json.dumps(enabled), value_type="bool", updated_by=user_id)
+                system_settings.set_value("terminal.enabled", json.dumps(enabled), value_type="boolean", updated_by=user_id)
             closed = 0 if enabled else mgr.disable_all()
             return {"enabled": enabled, "closed_sessions": closed}
 
