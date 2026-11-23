@@ -793,7 +793,13 @@ function toWorktreeStatus(raw: Record<string, unknown>, groupId: string): Worktr
     },
     ownership: { available: flag(ownership.available), reason: str(ownership.reason) },
     blockers: records(raw.blockers)
-      .map((b) => ({ code: str(b.code), operations: strings(b.operations) }))
+      .map((b) => ({
+        code: str(b.code),
+        operations: strings(b.operations),
+        // session_open (flowgate.v02test.0068): carried only when the server names the session.
+        ...(str(b.session_kind) !== null ? { sessionKind: str(b.session_kind) } : {}),
+        ...(num(b.merge_id) !== null ? { mergeId: num(b.merge_id) } : {}),
+      }))
       .filter((b): b is WorktreeBlocker => b.code !== null),
   }
 }

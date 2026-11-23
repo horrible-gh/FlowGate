@@ -104,6 +104,7 @@ import { createHttpGitSource, type GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
 import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, WORKTREE_REFRESH_EVENTS, type WorktreeTicket } from './gitWorktreeSession'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
+import type { GitExecutionStep, GitTabActivity } from './gitExecution'
 import type {
   GitBadge,
   GitConfigSave,
@@ -142,6 +143,8 @@ const emit = defineEmits<{
   'open-diff': [intent: GitDiffIntent]
   'open-confirm-settings': [intent: GitConfirmSettingsIntent]
   'windows-change': [windows: GitWindowDescriptor[]]
+  /** flowgate.v02test.0068: the shown Flow's Git run for its Flow tab (null = no mark). */
+  'git-activity': [flowId: string, activity: GitTabActivity | null]
 }>()
 
 const { t } = useI18n()
@@ -292,6 +295,48 @@ function openTargetDiff(path: string, letter: string, target: string): void {
 }
 
 provide(GIT_WORKTREE_CONTEXT, { worktree, diff, openFileDiff, openTargetDiff, confirm: askConfirm })
+
+// flowgate.v02test.0068: the shown Flow's Git run (실행) or individual 받아오기 / 병합 / 푸시, for its Flow tab — a turning
+// mark while it goes on, then done / update skipped / stopped with the step and code (`git-activity`). A Flow switch
+// stops the old Flow's run on this side, so its running mark goes without a result.
+const TAB_BUSY: readonly string[] = ['execution', 'update', 'merge', 'push']
+function tabResultOf(kind: string): GitTabActivity | null {
+  if (kind === 'execution') {
+    const plan = worktree.state.execution
+    if (!plan) return null
+    if (plan.status === 'stopped') return { state: 'failed', step: plan.steps[plan.cursor] ?? null, code: plan.error }
+    const skipped = plan.skipped?.update ?? null
+    return { state: skipped ? 'skipped' : 'done', step: skipped ? 'update' : null, code: skipped }
+  }
+  const step = kind as GitExecutionStep
+  const notice = worktree.state.notices[kind === 'push' ? 'push' : 'apply']
+  if (notice?.tone === 'error' || notice?.code === 'merge_conflict') {
+    return { state: 'failed', step, code: notice.code === 'failed' ? String(notice.params?.code ?? 'failed') : notice.code }
+  }
+  return { state: 'done', step, code: null }
+}
+watch(
+  () => [session.state.flow?.groupId ?? null, worktree.state.busy, worktree.state.execution?.cursor ?? null] as const,
+  ([groupId, busy], previous) => {
+    const [prevGroup, prevBusy] = previous ?? [null, null, null]
+    const wasRunning = !!prevBusy && TAB_BUSY.includes(prevBusy)
+    if (prevGroup && prevGroup !== groupId && wasRunning) tabActivity(prevGroup, null)
+    if (!groupId) return
+    if (busy && TAB_BUSY.includes(busy)) {
+      const plan = worktree.state.execution
+      const step = busy === 'execution' ? plan?.steps[plan.cursor] ?? null : (busy as GitExecutionStep)
+      tabActivity(groupId, { state: 'running', step, code: null })
+      return
+    }
+    if (prevGroup === groupId && wasRunning) tabActivity(groupId, tabResultOf(prevBusy as string))
+  },
+)
+let runningTab: string | null = null
+function tabActivity(flowId: string, activity: GitTabActivity | null): void {
+  runningTab = activity?.state === 'running' ? flowId : runningTab === flowId ? null : runningTab
+  emit('git-activity', flowId, activity)
+}
+onBeforeUnmount(() => { if (runningTab) emit('git-activity', runningTab, null) })
 
 // Another project or Flow group closes the open diff (it opens only intents of the current one).
 watch(

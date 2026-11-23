@@ -17,6 +17,12 @@ export interface GitExecution {
   // A step passed over without stopping the run (only 받아오기), with the server's code.
   skipped?: Partial<Record<GitExecutionStep, string>>
 }
+/** flowgate.v02test.0068: what the Git panel tells the Designer's Flow tab about the shown Flow's run (`git-activity`). */
+export interface GitTabActivity {
+  readonly state: 'running' | 'done' | 'skipped' | 'failed'
+  readonly step: GitExecutionStep | null
+  readonly code: string | null
+}
 export function executionSteps(scope: GitExecutionScope): GitExecutionStep[] {
   return scope === 'commit' ? ['commit'] : scope === 'merge'
     ? ['commit', 'update', 'merge'] : ['commit', 'update', 'merge', 'push']
