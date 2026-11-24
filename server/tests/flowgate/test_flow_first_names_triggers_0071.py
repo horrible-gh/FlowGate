@@ -133,6 +133,29 @@ def test_real_run_context_reads_bound_body_and_selected_provider(naming, monkeyp
     assert not _real_run_context(FA, 1)[1].strip()
 
 
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("body", ["# Library seat reservation requirements\n\nReserve seats.", ""])
+def test_chat_names_unexecuted_root_from_real_document(naming, monkeypatch, tmp_path, remote, body):
+    from modules.flow_gate.graph_workflow.store import assignment_store
+    from modules.flow_gate.storage import paths
+    from flowgate.conversation import first_names_ports as ports
+    assert not assignment_store.root_binding(FA)
+    assert ports.targets(FA, None)[1]["root"]["id"] == naming["key"]
+    root = tmp_path / "unexecuted-root.md"
+    root.write_text("---\ntitle: metadata is not a body\n---\n" + body, encoding="utf-8")
+    monkeypatch.setattr(paths, "locate_storage_path", lambda *args, **kwargs: (root, "readable"))
+    monkeypatch.setattr(t, "run_context", _real_run_context)
+    monkeypatch.setattr(t, "_schedule", lambda fn, *args: fn(*args) or True)
+    monkeypatch.setattr(legacy_adapter, "naming_remote_provider", lambda *args: remote)
+    assert _real_run_context(FA, 0, "provider")[1].strip() == body
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      CHAT_T, naming["chat"], flow_title=FLOW_T)
+    expected = ("Library seat reservation requ…" if remote else CARD_T) if body else None
+    assert titles(naming) == (FLOW_T, expected, CHAT_T)
+    assert naming["calls"] == (1 if body and not remote else 0)
+    assert not assignment_store.root_binding(FA)  # Naming must not confirm or execute the card.
+
+
 def test_reply_hook_uses_run_provider_without_waiting_for_worker(wired, monkeypatch):
     from concurrent.futures import Future
     queued = []
