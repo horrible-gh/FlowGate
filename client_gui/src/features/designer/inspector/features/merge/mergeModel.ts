@@ -52,6 +52,48 @@ export function mergeReasonKey(reason: string | null): string {
   return known.includes(reason) ? reason : 'other'
 }
 
+/** One try of the server's automatic resolution as the window draws it (the card merge API's attempt, read structurally). */
+export interface MergeAutoAttempt {
+  readonly no: number
+  readonly mode: string | null
+  readonly provider: { readonly name: string } | null
+  readonly result: string | null
+  readonly reason: string | null
+}
+
+/** The server's automatic resolution as the window draws it (the card merge API's `autoResolve`, read structurally). */
+export interface MergeAuto {
+  readonly state: string
+  readonly attempt: number
+  readonly maxAttempts: number
+  readonly attempts: readonly MergeAutoAttempt[]
+  readonly unresolved: readonly { readonly path: string; readonly hunks: readonly { readonly startLine: number; readonly endLine: number }[] }[]
+}
+
+/** The server is resolving the conflict by itself right now (the merge state stays `catching_up`). */
+export function mergeAutoRunning(auto: Pick<MergeAuto, 'state'> | null | undefined): boolean {
+  return auto?.state === 'running'
+}
+
+/** The try to show as current: the one still running, else the one the server counts, else the last one. */
+export function mergeAutoCurrent<A extends Pick<MergeAutoAttempt, 'no' | 'result'>>(auto: { readonly attempt: number; readonly attempts: readonly A[] } | null | undefined): A | null {
+  if (!auto || !auto.attempts.length) return null
+  return auto.attempts.find((attempt) => attempt.result === 'running')
+    ?? auto.attempts.find((attempt) => attempt.no === auto.attempt)
+    ?? auto.attempts[auto.attempts.length - 1]
+}
+
+/** The try number shown as `n/max`: the server's, kept inside 1..max. */
+export function mergeAutoProgress(auto: Pick<MergeAuto, 'attempt' | 'maxAttempts'>): { n: number; max: number } {
+  const max = Math.max(1, auto.maxAttempts)
+  return { n: Math.min(Math.max(1, auto.attempt), max), max }
+}
+
+/** `3` / `3–9` for a conflict hunk's lines. */
+export function mergeHunkRange(hunk: { startLine: number; endLine: number }): string {
+  return hunk.endLine > hunk.startLine ? `${hunk.startLine}–${hunk.endLine}` : `${hunk.startLine}`
+}
+
 /** The selection key of a card. */
 export function mergeCardKey(flowId: string, nodeId: string): string {
   return `${flowId}\u0000${nodeId}`
