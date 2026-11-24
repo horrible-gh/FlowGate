@@ -475,6 +475,10 @@ def search_documents_content(
     context_lines: Optional[int] = None,
     hits_per_doc: Optional[int] = None,
     include_matches: bool = True,
+    doc_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+    sort: str = "desc",
+    cursor: Optional[str] = None,
 ):
     """Full document search incl. body text (Phase 2). Same auth/validation/paging
     as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
@@ -491,11 +495,14 @@ def search_documents_content(
     schema/migration, multi-dialect safe. A migrated CH conversation's turns (T4,
     L0004 §2-15) are searched separately and appended after the document-body page:
     ``total``/``offset``/``limit`` keep their original document-body-only meaning
-    (paging contract preserved for existing callers), and the bounded conversation-turn
-    matches (at most ``content_search_service.SEARCH_TURN_LIMIT``, capped per document
-    at ``SEARCH_TURNS_PER_DOC``) ride along uncounted and unpaged — the same fixed
-    bound applies to every page rather than needing a second cursor. They are omitted
-    entirely when an explicit ``type`` facet rules out CH."""
+    (paging contract preserved for existing callers). Turn results rank per document
+    before the global cap. doc_id/group_id restrict both result kinds; sort controls
+    turn ordering (desc by default). doc_id lifts the per-document turn cap and uses
+    limit (up to SEARCH_TURN_LIMIT) and next_cursor for keyset paging. Pass a cursor
+    back with the same search conditions; document-body rows are omitted on subsequent
+    cursor pages, with total set to 0. A group/global search remains capped and has
+    no next cursor.
+    """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -508,6 +515,23 @@ def search_documents_content(
     query = (q or "").strip()
     if not query:
         return _fail(400, "q is required")
+
+    if doc_id is not None:
+        doc_id = doc_id.strip()
+        if not doc_id:
+            return _fail(400, "doc_id must not be empty")
+    if group_id is not None:
+        group_id = group_id.strip()
+        if not group_id:
+            return _fail(400, "group_id must not be empty")
+    if doc_id and group_id:
+        return _fail(400, "doc_id and group_id are mutually exclusive")
+    if sort not in {"asc", "desc"}:
+        return _fail(400, "sort must be asc or desc")
+    if cursor is not None and not doc_id:
+        return _fail(400, "cursor requires doc_id")
+    if cursor is not None and type and not "CH".startswith(type.strip().upper()):
+        return _fail(400, "cursor requires a conversation type")
 
     from modules.flow_gate.services import content_search_service
 
@@ -530,15 +554,24 @@ def search_documents_content(
         q=query, project=project, doc_type=type, status=status,
         limit=limit, offset=offset,
         include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
-        allowed_projects=allowed_projects,
+        allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
     )
+    if cursor is not None:
+        items = []
+        total = 0
+    next_cursor = None
     turn_items: list = []
     if not type or "CH".startswith(type.strip().upper()):
-        turn_items = content_search_service.search_conversation_turns(
-            q=query, project=project, status=status,
-            include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
-            allowed_projects=allowed_projects,
-        )
+        try:
+            turn_items, next_cursor = content_search_service.search_conversation_turns_page(
+                q=query, project=project, status=status,
+                limit=limit if doc_id else content_search_service.SEARCH_TURN_LIMIT,
+                include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+                allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
+                sort=sort, cursor=cursor,
+            )
+        except ValueError as exc:
+            return _fail(400, str(exc))
     _add_group_titles(items + turn_items)
     return JSONResponse(content={
         "ok": True, "query": query, "scope": "content", "total": total,
@@ -546,6 +579,7 @@ def search_documents_content(
         "context_lines": ctx, "hits_per_doc": per_doc_hits,
         "items": items + turn_items,
         "turn_total": len(turn_items),
+        "next_cursor": next_cursor,
     })
 
 

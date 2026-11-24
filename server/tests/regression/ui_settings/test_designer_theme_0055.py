@@ -41,7 +41,7 @@ def test_round_trip_preserves_other_settings_and_user(settings):
     assert response.status_code == 200
     assert c.get('/me/ui-settings').json()['settings'] == before
     assert response.json()['defaults'][FIELD] == 'flowgate'
-    assert response.json()['domain'][FIELD] == ['flowgate', 'modern']
+    assert response.json()['domain'][FIELD] == ['flowgate', 'modern', 'dock']
     assert rows == {'u1': {'taskbar_style': 'flowgate'}}
     assert client('u2').get('/me/ui-settings').json()['settings'][FIELD] == 'flowgate'
     assert 'u2' not in rows
@@ -61,6 +61,20 @@ def test_modern_is_saved_alone_and_read_back(settings):
     assert not retention.writes and not layout.writes
     after = c.get('/me/ui-settings').json()['settings']
     assert after[FIELD] == 'modern'
+    assert {k: v for k, v in after.items() if k != FIELD} == {k: v for k, v in before.items() if k != FIELD}
+    assert client('u2').get('/me/ui-settings').json()['settings'][FIELD] == 'flowgate'
+
+def test_dock_is_saved_alone_and_read_back(settings):
+    rows, retention, layout = settings
+    c = client()
+    before = c.get('/me/ui-settings').json()['settings']
+    response = c.patch('/me/ui-settings', json={FIELD: 'dock'})
+    assert response.status_code == 200
+    assert response.json()['settings'][FIELD] == 'dock'
+    assert rows == {'u1': {'taskbar_style': 'dock'}}
+    assert not retention.writes and not layout.writes
+    after = c.get('/me/ui-settings').json()['settings']
+    assert after[FIELD] == 'dock'
     assert {k: v for k, v in after.items() if k != FIELD} == {k: v for k, v in before.items() if k != FIELD}
     assert client('u2').get('/me/ui-settings').json()['settings'][FIELD] == 'flowgate'
 

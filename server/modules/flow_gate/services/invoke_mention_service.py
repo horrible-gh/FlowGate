@@ -376,6 +376,7 @@ def build_conversation_mention(
         "",
         "Read the conversation context selected for this invocation:",
         f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1{window_query}",
+        f"Search within this conversation: GET {api_base}/search/documents/content?q=<keyword>&doc_id={doc_id}&sort=desc (asc for oldest first; continue with cursor=<next_cursor> using the same query until next_cursor is null).",
         f"Authorization: Bearer {raw_token}",
         "",
         *_start_paragraph(folded),
