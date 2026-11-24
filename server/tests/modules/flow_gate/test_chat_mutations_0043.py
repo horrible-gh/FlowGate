@@ -60,7 +60,11 @@ def test_settings_preserve_legacy_counts_and_hybrid_limit(store):
     assert settings["checkpoint_max_turns"] == 7
     assert css.domain()["context_turns_presets"] == [5, 10, 15]
     assert css.defaults()["context_turns"] == 20
-    assert css.defaults()["checkpoint_max_turns"] == 10
+    assert css.defaults()["checkpoint_max_turns"] == 5
+    initial, is_default = css.resolve_chat_settings("new-user")
+    assert is_default is True
+    assert initial["context_mode"] == "checkpoint_recent"
+    assert initial["checkpoint_max_turns"] == 5
 
 
 @pytest.mark.parametrize("cp,include,expected", [(3, True, 30), (38, True, 37), (38, False, 38), (None, True, 35)])

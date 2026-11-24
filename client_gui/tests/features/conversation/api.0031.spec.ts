@@ -259,7 +259,7 @@ describe('chat settings / mention', () => {
       sendAction: 'invoke_ai',
       contextMode: 'all',
       contextTurns: 15,
-      checkpointMaxTurns: 10,
+      checkpointMaxTurns: 5,
       sourceAccessMode: 'edit_once',
       sourceAccessScope: null,
       contextTurnsPresets: [10, 20],
