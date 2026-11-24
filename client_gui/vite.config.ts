@@ -2,6 +2,7 @@ import { dirname, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import thirdPartyNotices from './scripts/third-party-notices'
 
 const require = createRequire(import.meta.url)
 // Alias target = the package DIRECTORY, never `require.resolve(name)`. The latter returns
@@ -29,7 +30,7 @@ const BUILD_STAMP = [
 // (the /app SPA) and login.html (the sign-in page the server returns for / and /login).
 export default defineConfig({
   base: '/app/',
-  plugins: [vue()],
+  plugins: [vue(), thirdPartyNotices(resolve(__dirname, '..'))],
   define: {
     __FG_GUI_BUILD__: JSON.stringify(BUILD_STAMP),
   },
