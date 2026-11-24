@@ -1186,6 +1186,9 @@ def _register_run(run: dict, chain: list[dict]) -> None:
                 except Exception:
                     logger.warning("review-loop token rollback failed for %s", run_id, exc_info=True)
                 raise _http_error(500, "document_review_loop_persist_failed", "Could not persist document review loop state.")
+        if run.get("action_scope") == "resolve_conflict":
+            from flowgate.card_merge import auto_resolve
+            auto_resolve.bind_run(run)
         _svc()._runs[run_id] = run
 
 

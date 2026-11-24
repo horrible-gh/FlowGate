@@ -26,6 +26,9 @@ from modules.flow_gate.services.git import branches
 from modules.flow_gate.services.git.credentials import GitServiceError
 
 
+REAL_IN_PROGRESS = result_merge.in_progress
+
+
 def approval(node="node"):
     t = Transition(node, "review", "done", "review_approved", "doc", "doc")
     return Decision(node_transitions=[t])
@@ -40,6 +43,7 @@ def merge_db(result_db, monkeypatch):
     monkeypatch.setattr(result_merge, "_note", Mock())
     monkeypatch.setattr(workspace, "_mode", lambda row: {"mode": "worktree"})
     monkeypatch.setattr(result_merge, "_after", Mock())
+    monkeypatch.setattr(result_merge, "in_progress", REAL_IN_PROGRESS)
     return result_db
 
 
@@ -81,6 +85,7 @@ def pending_with_result(db, result=RESULT):
 
 def test_no_source_change_finishes_without_merge(merge_db, monkeypatch):
     pending_with_result(merge_db, BASE)
+    monkeypatch.setattr(result_merge, "_in_group", lambda row: True)
     monkeypatch.setattr(result_merge.result_commit, "commit_result", Mock(return_value={"result_commit": BASE}))
     merge = Mock(side_effect=AssertionError("no merge for an unchanged result"))
     monkeypatch.setattr(result_merge, "_merge", merge)
@@ -97,11 +102,18 @@ def test_no_source_change_finishes_without_merge(merge_db, monkeypatch):
     (("failed", "group_worktree_dirty"), ("failed", "group_worktree_dirty")),
 ])
 def test_merge_outcomes_are_recorded_not_raised(merge_db, monkeypatch, merged, expected):
+    from flowgate.card_merge import auto_resolve
+    monkeypatch.setattr(result_merge, "_session_open", lambda mid: True)
+    automatic = Mock()
+    monkeypatch.setattr(auto_resolve, "start", automatic)
     pending_with_result(merge_db)
     monkeypatch.setattr(result_merge.result_commit, "commit_result", Mock(return_value={"result_commit": RESULT}))
     monkeypatch.setattr(result_merge, "_merge", Mock(return_value=merged))
     assert result_merge.integrate(merge_db.attempt) == merged[0]
     assert status(merge_db) == expected
+    if merged[0] == "conflict":
+        automatic.assert_called_once()
+        assert automatic.call_args.args[1] == 7
 
 
 def test_stopping_run_starts_no_integration(merge_db, monkeypatch):
@@ -200,7 +212,7 @@ def test_session_close_notice_waits_for_the_threads_git_locks(monkeypatch):
     result_merge.on_session_closed(7, "done")
     taken.assert_not_called()                                   # still under G
     held.held = []
-    result_merge.on_lock_released(None)
+    result_merge.on_lock_released(SimpleNamespace(domain="R"))
     taken.assert_called_once_with("flow", 7)
 
 
@@ -222,6 +234,10 @@ def event(db, seq, from_status, to_status, cause, reason=None):
 
 
 def test_hold_lasts_until_its_end_or_the_run_leaves_running(merge_db):
+    # The execution fixture intentionally omits events; this test exercises the hold ledger.
+    merge_db.db.execute("CREATE TABLE graph_run_events (run_id TEXT, event_seq INTEGER, event_type TEXT, "
+                        "node_key TEXT, from_status TEXT, to_status TEXT, cause TEXT, reason TEXT, "
+                        "payload_json TEXT, created_at TEXT)")
     event(merge_db, 901, "idle", "running", result_merge.HOLD_CAUSE, result_merge.HOLD_IDLE)
     event(merge_db, 902, "running", "running", result_merge.CAUSE, "integrating")
     assert result_merge.hold_of("run") == result_merge.HOLD_IDLE

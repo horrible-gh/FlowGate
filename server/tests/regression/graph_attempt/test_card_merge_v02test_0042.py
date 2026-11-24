@@ -99,7 +99,8 @@ def test_integrate_records_the_deferred_conflict_and_its_files(merge_db, monkeyp
     monkeypatch.setattr(result_merge, "_merge", merge)
     assert result_merge.integrate(merge_db.attempt) == result_merge.CONFLICT
     assert status(merge_db) == ("conflict", result_merge.CONFLICT_DEFERRED)
-    assert merge.call_args.args[1] is False                             # no session kept
+    assert merge.call_args.args[1] is True                              # automatic session requested
+    assert merge.call_args.kwargs["automatic"] is True
     note = result_merge._note.call_args_list[-1]
     assert note.args[1:] == ("conflict", result_merge.CONFLICT_DEFERRED) and note.kwargs["files"] == ["a.txt", "b.txt"]
     assert note.kwargs["file_kinds"] == {"a.txt": "both", "b.txt": "deleted_latest"}

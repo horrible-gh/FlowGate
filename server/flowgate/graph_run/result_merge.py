@@ -105,12 +105,9 @@ RUNNING, IDLE, STOPPING = "running", "idle", "stopping"
 HOLD_CAUSE, HOLD_END_CAUSE = "integration_hold", "integration_hold_end"
 HOLD_FAILED_CAUSE = "integration_hold_failed"            # a hold released by ``_release_hold``
 HOLD_IDLE, HOLD_RESUME, HOLD_COMMAND = "idle", "resume", "command:"
-# a conflict the merge finds is not kept as the group's session any more (one open session per
-# group, so a kept session held every other card's merge, silently ``session_busy``, until a person came). The merge
-# is undone at once and the attempt waits in ``conflict`` with ``CONFLICT_DEFERRED`` (no session, the group free; its
-# overlapping files on the run event's ``files``). A person's choice on the card (``request_resolution``) asks the
-# merge again with ``RESOLVE_REQUESTED``: that merge keeps its conflict as the group's session (the earlier path:
-# resolve, commit or abort, then ``session_closed``).
+# Legacy deferred conflicts remain readable and manually resumable. New integrations keep
+# a session and run the bounded card_merge.auto_resolve coordinator. Explicit human resolution
+# uses RESOLVE_REQUESTED and never restarts the automatic budget.
 CONFLICT_DEFERRED = "conflict_deferred"
 RESOLVE_REQUESTED = "resolve_requested"
 DEFERRED = "deferred"                                       # a ``_merge`` outcome only, never recorded
@@ -147,7 +144,8 @@ def _any(run_id: str, statuses) -> bool:
 
 
 def in_progress(run_id: str) -> bool:
-    return _any(run_id, IN_PROGRESS)
+    from flowgate.card_merge import auto_resolve
+    return _any(run_id, IN_PROGRESS) or auto_resolve.working(run_id)
 
 
 def held(run_id: str) -> bool:
@@ -434,7 +432,7 @@ _opened_lock = threading.Lock()
 _left_open: dict[str, tuple[str, int]] = {}
 
 
-def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
+def _merge(row: dict, keep_session: bool = False, *, automatic: bool = False) -> tuple[str, object]:
     """(d) under G: ``(INTEGRATED, merge commit)``, ``(DEFERRED, files)``, ``(CONFLICT, merge_id)``, ``(PENDING,
     reason)`` or ``(FAILED, reason)``. The lock is held for this one merge only. the earlier change: a conflict is
     undone and deferred (no session, ``CONFLICT_DEFERRED``) unless ``keep_session`` (a person asked for its
@@ -495,7 +493,7 @@ def _merge(row: dict, keep_session: bool = False) -> tuple[str, object]:
             doc_id=doc.get("doc_id") or "", doc_code=tr_commit_service.doc_code(doc) if doc else "",
             target_sha=result, original_sha=None, subject=subject, body=_trailer(row),
             extra_context={"attempt_id": row["attempt_id"], "node_key": row["node_key"], "run_id": row["run_id"],
-                           "result_commit": result})
+                           "result_commit": result, "auto_resolve_requested": automatic})
         if session is None:
             proc = git._abort_merge(root)
             if proc.returncode != 0 or git._rev_parse(root, "MERGE_HEAD") is not None:
@@ -661,12 +659,13 @@ def integrate(attempt_id: str) -> str:
         elif not _begin(attempt_id, row["group_id"]):
             return SKIPPED
         else:
-            keep_session = row.get("integration_reason") == RESOLVE_REQUESTED   # read before ``_begin`` cleared it
+            automatic = row.get("integration_reason") != RESOLVE_REQUESTED
+            keep_session = True  # card conflicts now keep a session for bounded automatic resolution
             with _opened_lock:
                 _left_open.pop(attempt_id, None)                # a new integration: no earlier session is its
             recorded = False
             try:
-                status, value = _merge(workspace.attempt(attempt_id), keep_session)         # (d)
+                status, value = _merge(workspace.attempt(attempt_id), keep_session, automatic=automatic)         # (d)
             except Exception as exc:  # noqa: BLE001 — the merge ends as failed, never stays integrating
                 log.exception("Graph attempt merge failed attempt=%s", attempt_id)
                 status, value = FAILED, type(exc).__name__
@@ -676,6 +675,9 @@ def integrate(attempt_id: str) -> str:
                 elif status == CONFLICT:
                     _set(attempt_id, CONFLICT, SESSION_REASON + str(value), (INTEGRATING,))
                     recorded = True
+                    if automatic and _session_open(int(value)):
+                        from flowgate.card_merge import auto_resolve
+                        auto_resolve.start(workspace.attempt(attempt_id), int(value))
                     # A session closed before its conflict was recorded: its close found the attempt integrating
                     # (``session_closed``); one closed in between is settled here. Never lost, never twice.
                     current = workspace.attempt(attempt_id)
@@ -1307,6 +1309,8 @@ def recover() -> None:
     hold (pending ones only: a failed one waits for its trigger), which ends the hold it finds."""
     if not run_store.available():
         return
+    from flowgate.card_merge import auto_resolve
+    auto_resolve.recover()
     for r in run_store._all("SELECT a.attempt_id FROM graph_node_attempts a WHERE a.status = 'active' "
                             "AND a.integration_status = 'integrating' ORDER BY a.created_at, a.attempt_id", []):
         try:
