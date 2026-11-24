@@ -144,6 +144,33 @@ describe('running', () => {
     expect(api.read).toHaveBeenCalledTimes(1)
   })
 
+  it('allows a human pick during automatic resolution, stopping only on submit', async () => {
+    api.read.mockResolvedValue(await state(running({ actions: ['ai_resolve', 'pick'], integration_status: 'conflict' })))
+    api.act.mockResolvedValue(await state({ auto_resolve: { state: 'stopped_by_person' } }))
+    const w = await mountTab()
+    expect(q(w, 'merge-ai').exists()).toBe(true)
+    expect(api.act).not.toHaveBeenCalled()
+    await q(w, 'merge-pick-open').trigger('click')
+    expect(w.find('[data-test="merge-window"]').attributes('data-screen')).toBe('pick')
+    expect(api.act).not.toHaveBeenCalled()
+    await q(w, 'merge-pick-latest').trigger('click')
+    await q(w, 'merge-pick-submit').trigger('click')
+    await flushPromises()
+    expect(api.act).toHaveBeenCalledWith(FLOW, 'gn_4', {
+      action: 'pick', expectedAttemptId: 'att_4', files: [{ path: 'a.ts', side: 'latest' }], providerId: null,
+    })
+    expect(q(w, 'merge-auto-note').text()).toBe(t('gui.inspector.merge.auto.states.stopped_by_person'))
+  })
+
+  it('allows an explicit manual AI call during automatic resolution', async () => {
+    api.read.mockResolvedValue(await state(running({ actions: ['ai_resolve', 'pick'] })))
+    api.act.mockResolvedValue(await state({ state: 'catching_up', actions: [], auto_resolve: { state: 'stopped_by_person' } }))
+    const w = await mountTab()
+    await q(w, 'merge-ai').trigger('click')
+    await flushPromises()
+    expect(api.act).toHaveBeenCalledWith(FLOW, 'gn_4', { action: 'ai_resolve', expectedAttemptId: 'att_4', providerId: null })
+  })
+
   it('falls back to the card AI while the first try has no AI yet', async () => {
     api.read.mockResolvedValue((await import('@/features/document/api/cardMerge')).toCardMergeState(running({
       auto_resolve: { state: 'running', attempt: 1, max_attempts: 3, attempts: [] },

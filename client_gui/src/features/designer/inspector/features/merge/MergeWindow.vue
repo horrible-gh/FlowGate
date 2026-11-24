@@ -48,6 +48,14 @@
       <div v-else class="mz-log" data-test="merge-log">
         <div v-for="step in steps" :key="step.key" :data-step="step.state"><span :class="`mz-log-${step.state}`">{{ STEP_MARKS[step.state] }}</span> {{ step.text }}</div>
       </div>
+      <div v-if="autoInBox" class="mz-btns">
+        <button v-if="can('ai_resolve')" type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
+        </button>
+        <button v-if="can('pick') && openFiles.length" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
+        </button>
+      </div>
     </div>
 
     <!-- ② could not reconcile (red) -->
