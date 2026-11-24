@@ -474,34 +474,16 @@ def search_documents_content(
     offset: int = 0,
     context_lines: Optional[int] = None,
     hits_per_doc: Optional[int] = None,
-    include_matches: bool = True,
+    include_matches: Optional[bool] = None,
     doc_id: Optional[str] = None,
     group_id: Optional[str] = None,
     sort: str = "desc",
     cursor: Optional[str] = None,
 ):
-    """Full document search incl. body text (Phase 2). Same auth/validation/paging
-    as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
-    (body|title|doc_id), and ``match_kind`` (``document_body``|``conversation_turn``).
-
-    0370 set 2 (P0002 scenarios 9-11): each item additionally carries ``match_total`` and
-    ``matches`` — where in the document each hit is (a locator identical in shape to the
-    one ``/outline`` and ``/section`` return) plus the matched line and its neighbours. The
-    pre-existing keys keep their meaning *and their values*, so a screen reading this
-    response today needs no change; ``include_matches=false`` drops the two new keys
-    entirely for callers that want the old payload byte for byte.
-
-    Reads document bodies from the filesystem via a self-healing mtime cache — no
-    schema/migration, multi-dialect safe. A migrated CH conversation's turns (T4,
-    L0004 §2-15) are searched separately and appended after the document-body page:
-    ``total``/``offset``/``limit`` keep their original document-body-only meaning
-    (paging contract preserved for existing callers). Turn results rank per document
-    before the global cap. doc_id/group_id restrict both result kinds; sort controls
-    turn ordering (desc by default). doc_id lifts the per-document turn cap and uses
-    limit (up to SEARCH_TURN_LIMIT) and next_cursor for keyset paging. Pass a cursor
-    back with the same search conditions; document-body rows are omitted on subsequent
-    cursor pages, with total set to 0. A group/global search remains capped and has
-    no next cursor.
+    """Search bodies and turns. A single CH doc defaults to compact turn results
+    with a snapshot-bounded total across cursor pages. Explicit include_matches=true
+    restores detailed matches. Other searches preserve document-body paging and
+    default detailed results, with turns ranked per conversation before the cap.
     """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -550,37 +532,62 @@ def search_documents_content(
     if project and not can_read_project(auth, project):
         return _fail(404, f"Project {project} does not exist")
     allowed_projects = [project] if project else readable_projects(auth)
-    items, total = content_search_service.search_document_bodies(
-        q=query, project=project, doc_type=type, status=status,
-        limit=limit, offset=offset,
-        include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
-        allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
-    )
-    if cursor is not None:
-        items = []
-        total = 0
+    scoped_doc = db_docs.get_by_id(doc_id) if doc_id else None
+    is_conversation = bool(scoped_doc and scoped_doc.get("type_code") == "CH")
+    if cursor is not None and not is_conversation:
+        return _fail(400, "cursor requires a conversation document")
+    from modules.flow_gate.db import conversation_turns
+
+    # Only migrated conversations have searchable seq-based turns. Legacy files
+    # (pending, in progress, failed, or no migration row) retain body/title/id
+    # search and its original response contract until migration completes.
+    conversation_scope = is_conversation and conversation_turns.migration_state(doc_id) == "migrated"
+    detailed = include_matches if include_matches is not None else not conversation_scope
+    compact = conversation_scope and not detailed
+    items, total = [], 0
+    if not conversation_scope:
+        items, total = content_search_service.search_document_bodies(
+            q=query, project=project, doc_type=type, status=status,
+            limit=limit, offset=offset,
+            include_matches=detailed, context_lines=ctx, hits_per_doc=per_doc_hits,
+            allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
+        )
     next_cursor = None
     turn_items: list = []
+    page_info: dict = {}
     if not type or "CH".startswith(type.strip().upper()):
         try:
             turn_items, next_cursor = content_search_service.search_conversation_turns_page(
                 q=query, project=project, status=status,
                 limit=limit if doc_id else content_search_service.SEARCH_TURN_LIMIT,
-                include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
+                include_matches=detailed, context_lines=ctx, hits_per_doc=per_doc_hits,
                 allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
-                sort=sort, cursor=cursor,
+                sort=sort, cursor=cursor, compact=compact,
+                page_info=page_info if conversation_scope else None,
             )
         except ValueError as exc:
             return _fail(400, str(exc))
-    _add_group_titles(items + turn_items)
-    return JSONResponse(content={
+    if conversation_scope:
+        total = page_info.get("total", 0)
+    if not compact:
+        _add_group_titles(items + turn_items)
+    response = {
         "ok": True, "query": query, "scope": "content", "total": total,
         "offset": offset, "limit": limit,
-        "context_lines": ctx, "hits_per_doc": per_doc_hits,
         "items": items + turn_items,
         "turn_total": len(turn_items),
         "next_cursor": next_cursor,
-    })
+    }
+    if not conversation_scope or detailed:
+        response.update(context_lines=ctx, hits_per_doc=per_doc_hits)
+    if conversation_scope:
+        response.update(
+            doc_id=doc_id,
+            turn_read=(f"GET /flowgate/api/v1/conversation/{doc_id}/turns"
+                       "?after_seq=<seq-1>&through_seq=<seq>&limit=1"),
+        )
+    return JSONResponse(content=response)
+
 
 
 # ── 3-5. GET /list/doc-types ─────────────────────────────────────────────────

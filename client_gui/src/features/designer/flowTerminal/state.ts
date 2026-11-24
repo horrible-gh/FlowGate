@@ -13,10 +13,10 @@ export const flowTerminalUi = reactive<{
   open: (() => void) | null
 }>({ status: null, openFlows: {}, currentOpen: false, open: null })
 
-/** hidden = not an admin, not known, or the system setting is off (0015-T C-1: no button and no gap, for admins too);
- *  ready = can open; on = the open Flow's terminal is open (floating or filling the Designer). */
+/** hidden = not an admin or not known (no button and no gap). There is no on/off setting (F85): an administrator
+ *  always gets the button. ready = can open; on = the open Flow's terminal is open (floating or filling the Designer). */
 export type TerminalButtonState = 'hidden' | 'ready' | 'on'
 export function terminalButtonState(status: TerminalStatus | null, currentOpen: boolean): TerminalButtonState {
-  if (!status || status.reason || !status.enabled || !status.allowed) return 'hidden'
+  if (!status || status.reason || !status.allowed) return 'hidden'
   return currentOpen ? 'on' : 'ready'
 }

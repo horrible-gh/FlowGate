@@ -291,7 +291,7 @@ describe('V01 (시스템 부분) — 일반 joins the menus', () => {
     expect(net.requests).toEqual(['GET /api/v1/system/agents']) // the overview's 확인 필요 read (0077)
     hub.unmount()
     const page = await open('/settings/system/general')
-    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'terminal', 'users', 'projects'])
+    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'users', 'projects'])
     expect(page.get('.subnav [data-subnav="general"]').attributes('aria-current')).toBe('page')
     expect(page.find('.disabled, [aria-disabled="true"]').exists()).toBe(false)
     expect(page.text()).not.toContain('준비 중')

@@ -36,5 +36,8 @@ PyYAML==6.0.3
 # flowgate.v02test.0078: the Designer terminal on a Windows server -- ConPTY through
 # pywinpty, and process-tree cleanup / busy detection through psutil. Linux and macOS use
 # the stdlib pty module and need neither.
-pywinpty==2.0.15; sys_platform == "win32"
+# flowgate.v02test.0085: this file is the only install path (no separate System Settings
+# installer). 3.1.2 ships CPython 3.10-3.15 wheels (x64/ARM64); 2.0.15 had none for 3.14+.
+# An already-installed server picks it up with `pip install -r server/requirements.txt`.
+pywinpty==3.1.2; sys_platform == "win32"
 psutil>=5.9; sys_platform == "win32"

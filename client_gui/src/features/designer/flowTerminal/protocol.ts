@@ -4,7 +4,8 @@ export type ServerMessage =
   | { type: 'output'; data: string }
   | { type: 'busy'; value: boolean }
   | { type: 'card_running'; value: boolean }
-  | { type: 'exit'; reason: ExitReason; code: number | null }
+  /** `message`: why the shell could not start (e.g. pywinpty missing → `pip install -r server/requirements.txt`). */
+  | { type: 'exit'; reason: ExitReason; code: number | null; message?: string }
 
 const EXIT_REASONS: readonly string[] = ['closed', 'idle_timeout', 'shell_exit', 'error']
 
@@ -14,13 +15,15 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   let value: unknown
   try { value = JSON.parse(raw) } catch { return null }
   if (!value || typeof value !== 'object') return null
-  const { type, data, value: flag, reason, code } = value as Record<string, unknown>
+  const { type, data, value: flag, reason, code, message } = value as Record<string, unknown>
   if (type === 'output' && typeof data === 'string') return { type: 'output', data }
   if (type === 'busy' && typeof flag === 'boolean') return { type: 'busy', value: flag }
   if (type === 'card_running' && typeof flag === 'boolean') return { type: 'card_running', value: flag }
   if (type === 'exit') {
     const known = typeof reason === 'string' && EXIT_REASONS.includes(reason)
-    return { type: 'exit', reason: known ? reason as ExitReason : 'error', code: typeof code === 'number' ? code : null }
+    const exit: Extract<ServerMessage, { type: 'exit' }> = { type: 'exit', reason: known ? reason as ExitReason : 'error', code: typeof code === 'number' ? code : null }
+    if (typeof message === 'string' && message) exit.message = message
+    return exit
   }
   return null
 }
