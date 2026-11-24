@@ -279,6 +279,59 @@ def test_submitted_seed_preempts_live_fallback_lease(naming, monkeypatch, model_
     assert run(naming)["status"] == "done"
 
 
+@pytest.mark.parametrize("locale, required", [("ko", "반드시"), ("en", "must"), ("ja", "必ず"), ("fr", "반드시")])
+def test_new_title_guidance_requires_flow_title(naming, locale, required):
+    text = t.title_request(FA, locale, "new")
+    assert required in text and "`flow_title`" in text and "`title`" in text
+    assert not any(word in text for word in ("선택", "optional", "任意"))
+
+
+@pytest.mark.parametrize("chat_message", [None, "", "   ", "사용자 메시지로 이름 짓기"])
+def test_submission_without_flow_title_uses_chat_or_requirement(naming, monkeypatch, chat_message):
+    from modules.flow_gate.graph_workflow.store import definition_store
+    requirement = "요구사항으로 빈 대화 이름 짓기"
+    monkeypatch.setattr(legacy_adapter, "first_turns", lambda *args: (
+        [{"speaker": "user", "body": chat_message}] if chat_message is not None else []))
+    monkeypatch.setattr(legacy_adapter, "get_run_record", lambda _: None)
+    monkeypatch.setattr(legacy_adapter, "persisted_naming_run", lambda _: None)
+    monkeypatch.setattr(legacy_adapter, "naming_chat", lambda _: naming["chat"])
+    monkeypatch.setattr(definition_store, "latest_revision_no", lambda _: 1)
+    contexts, prompts = [], []
+    def context(*args):
+        contexts.append(args)
+        return "provider", requirement, None
+    monkeypatch.setattr(t, "run_context", context)
+    monkeypatch.setattr(t, "_schedule", lambda fn, *args: fn(*args))
+    monkeypatch.setattr(legacy_adapter, "naming_remote_provider", lambda *args: False)
+    def complete(*args, **kwargs):
+        prompts.append(args[2])
+        return TITLE, None
+    monkeypatch.setattr(legacy_adapter, "complete_prompt", complete)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"}, None,
+                      f"{FA}.0001-R")
+    expected = chat_message if chat_message and chat_message.strip() else requirement
+    assert len(prompts) == 1 and expected in prompts[0]
+    assert len(contexts) == (0 if expected == chat_message else 1)
+    assert titles(naming) == (TITLE, TITLE, TITLE)
+
+
+@pytest.mark.parametrize("chat_message", [None, "사용자 대화 우선"])
+def test_claim_uses_requirement_only_when_chat_is_empty(naming, monkeypatch, chat_message):
+    reads, prompts = [], []
+    def turns(doc_id, *args):
+        reads.append(doc_id)
+        return [{"speaker": "user", "body": chat_message}] if chat_message else []
+    monkeypatch.setattr(legacy_adapter, "first_turns", turns)
+    def complete(*args, **kwargs):
+        prompts.append(args[2])
+        return TITLE, None
+    monkeypatch.setattr(legacy_adapter, "complete_prompt", complete)
+    assert a.generate_flow_names(FA, USER, "provider", "요구사항 대체 내용", naming["chat"])["status"] == "done"
+    assert reads == [naming["chat"]]
+    assert len(prompts) == 1 and (chat_message or "요구사항 대체 내용") in prompts[0]
+    assert titles(naming) == (TITLE, TITLE, TITLE)
+
+
 @pytest.mark.parametrize("locale, word", [("ko", "실제 작업"), ("en", "actual task facts"), ("ja", "実際の作業")])
 def test_title_guidance_localized_and_action_scoped(naming, locale, word):
     from modules.flow_gate.services import mention_service as m
