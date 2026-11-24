@@ -5,7 +5,7 @@ import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import FlowTabStrip from '@/features/designer/center/FlowTabStrip.vue'
 import {
-  clearGitTabResult, gitTabActivity, gitTabActivityLabel, pruneGitTabActivity, setGitTabActivity,
+  clearGitTabResult, gitTabActivity, gitTabActivityLabel, pruneGitTabActivity, setActiveGitTab, setGitTabActivity,
 } from '@/features/designer/center/gitTabActivity'
 
 registerAppMessages(i18n)
@@ -26,6 +26,27 @@ describe('Git activity on the Flow tab (flowgate.v02test.0068)', () => {
     expect(gitTabActivity.a).toBeUndefined()
   })
 
+  it('keeps no result on the shown tab: it goes the moment the run ends there', () => {
+    setActiveGitTab('a')
+    setGitTabActivity('a', { state: 'running', step: 'push', code: null })
+    setGitTabActivity('b', { state: 'running', step: 'push', code: null })
+    expect(gitTabActivity.a?.state).toBe('running')
+    setGitTabActivity('a', { state: 'done', step: null, code: null })
+    setGitTabActivity('b', { state: 'failed', step: 'push', code: 'push_rejected' })
+    expect(gitTabActivity.a).toBeUndefined()
+    expect(gitTabActivity.b?.state).toBe('failed')
+    // Another tab keeps its result until it is activated.
+    setActiveGitTab('b')
+    expect(gitTabActivity.b).toBeUndefined()
+  })
+
+  it('forgets the shown tab once it is closed', () => {
+    setActiveGitTab('a')
+    pruneGitTabActivity(new Set(['b']))
+    setGitTabActivity('a', { state: 'done', step: null, code: null })
+    expect(gitTabActivity.a?.state).toBe('done')
+  })
+
   it('drops the marks of closed tabs', () => {
     setGitTabActivity('a', { state: 'done', step: null, code: null })
     setGitTabActivity('b', { state: 'done', step: null, code: null })
@@ -39,7 +60,7 @@ describe('Git activity on the Flow tab (flowgate.v02test.0068)', () => {
     expect(gitTabActivityLabel({ state: 'running', step: null, code: null }, 'ja')).toBe('Git 実行中')
   })
 
-  it.each([['running'], ['done'], ['skipped'], ['failed']] as const)('draws the %s mark on the tab, the active one included', (state) => {
+  it.each([['running'], ['done'], ['skipped'], ['failed']] as const)('draws the %s mark it is given on the tab', (state) => {
     wrapper = mount(FlowTabStrip, {
       props: { tabs: [{ flowId: 'a', name: '깃' }, { flowId: 'b', name: '선' }], activeFlowId: 'a',
         gitActivity: { a: { state, step: 'push', code: state === 'failed' ? 'push_rejected' : null } } },

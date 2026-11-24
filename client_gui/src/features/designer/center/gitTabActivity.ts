@@ -9,8 +9,10 @@
 //                        store once when the tab opens, and polls only the runs still going on that the panel is not
 //                        reporting itself — one reader per run, never the panel and the tab both.
 //
-// The result stays even while its tab is the one shown (the person may be looking at the Canvas, not the Git panel); it
-// goes when the tab is activated again (left and come back) or closed, and a read of the same run does not bring it back.
+// A result is news only for a run seen going on in this screen: the first read of a tab shows a run still going on, never
+// one that had already ended (an old run of every Flow would light every tab). The shown tab never keeps a result — the
+// Git panel's run box says it — so it goes the moment the run ends; another tab keeps it until it is activated or closed,
+// and a read of the same run does not bring it back.
 import { getCurrentInstance, reactive, readonly } from 'vue'
 import { useProjectStore, type FlowGitExecution } from '@/features/project'
 /** The Git steps a tab names (the Git part's execution steps; the Designer keeps its own copy of the names). */
@@ -34,6 +36,13 @@ const store = reactive<Record<string, GitTabActivity>>({})
 const panelRunning = new Set<string>()
 /** Flows the panel let go of while their run went on: read on the next tick, the run may still go on in the server. */
 const released = new Set<string>()
+/** The Flow whose tab is shown (setActiveGitTab): it keeps a running mark, never a result. */
+let activeFlow: string | null = null
+
+function put(flowId: string, activity: GitTabActivity): void {
+  if (activity.state !== 'running' && flowId === activeFlow) delete store[flowId]
+  else store[flowId] = activity
+}
 
 /** Each Flow's (group's) Git activity by flow id. */
 export const gitTabActivity: Readonly<Record<string, GitTabActivity>> = readonly(store) as Readonly<Record<string, GitTabActivity>>
@@ -42,8 +51,14 @@ export const gitTabActivity: Readonly<Record<string, GitTabActivity>> = readonly
 export function setGitTabActivity(flowId: string, activity: GitTabActivity | null): void {
   if (activity?.state === 'running') panelRunning.add(flowId)
   else if (panelRunning.delete(flowId) && !activity) released.add(flowId)
-  if (activity) store[flowId] = activity
+  if (activity) put(flowId, activity)
   else delete store[flowId]
+}
+
+/** The shown tab (null = none): its result goes now, and a result that ends there later is not kept. */
+export function setActiveGitTab(flowId: string | null): void {
+  activeFlow = flowId
+  if (flowId) clearGitTabResult(flowId)
 }
 
 /** Drops a finished result (a running mark stays: the run is still going). */
@@ -57,6 +72,7 @@ export function pruneGitTabActivity(open: ReadonlySet<string>): void {
   for (const flowId of Object.keys(store)) if (!open.has(flowId)) delete store[flowId]
   for (const flowId of [...panelRunning]) if (!open.has(flowId)) panelRunning.delete(flowId)
   for (const flowId of [...released]) if (!open.has(flowId)) released.delete(flowId)
+  if (activeFlow && !open.has(activeFlow)) activeFlow = null
 }
 
 /** A server run as its tab shows it — the same reading as the Git panel's own result of a run. */
@@ -100,8 +116,12 @@ export function observeGitTabActivity(
       if (disposed || !openFlows().includes(flowId)) return
       const key = run ? `${run.jobId}:${run.status}:${run.cursor}` : ''
       if (!force && seen.get(flowId) === key) return
+      const first = !seen.has(flowId)
       seen.set(flowId, key)
-      if (run && !panelRunning.has(flowId)) store[flowId] = activityOfRun(run)
+      if (!run || panelRunning.has(flowId)) return
+      // A run that had ended before the tab's first read is an old result, not news of this screen: no mark.
+      if (first && !force && run.status !== 'running') return
+      put(flowId, activityOfRun(run))
     } catch {
       // A read failure is not evidence that the server run stopped: keep the mark, the next tick asks again.
     }
