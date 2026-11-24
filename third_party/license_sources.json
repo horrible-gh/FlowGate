@@ -78,6 +78,14 @@
       "path": "third_party/licenses/GPL-3.0.txt",
       "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
       "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/GPL-3.0-or-later.txt"
+    },
+    {
+      "source_url": "https://files.pythonhosted.org/packages/c2/76/783b75a21ce3563b8709050de030ae253853b147bd52e141edc1025aa268/anyascii-0.3.3-py3-none-any.whl",
+      "artifact_sha256": "f5ab5e53c8781a36b5a40e1296a0eeda2f48c649ef10c3921c1381b1d00dee7a",
+      "archive_member": "anyascii-0.3.3.dist-info/licenses/LICENSE",
+      "version": "0.3.3",
+      "path": "third_party/licenses/anyascii-0.3.3-LICENSE.txt",
+      "sha256": "9e33d1beedd533cca2dc085f0c260e37623f62d9a1074ca71e8ede33fe91e09d"
     }
   ]
 }

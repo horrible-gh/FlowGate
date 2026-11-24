@@ -19,6 +19,9 @@ WORKDIR /build/client_gui
 COPY client_gui/package.json client_gui/package-lock.json* ./
 RUN npm install
 COPY client_gui/ ./
+# The Vite notice plugin reads the repository root, one level above client_gui.
+COPY LICENSE THIRD_PARTY_NOTICES.md /build/
+COPY third_party/ /build/third_party/
 RUN printf 'VITE_API_BASE_URL=/flowgate\n' > .env.production.local && npm run build
 
 # ── Stage 2: Python runtime ─────────────────────────────────────────────────
