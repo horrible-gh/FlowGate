@@ -134,8 +134,10 @@ const props = withDefaults(
      * Absent = the signed-in person's own flag (`core/auth/currentUser`, from /auth/me); the server checks it again.
      */
     isAdmin?: boolean
+    /** Raised by one each time the Designer asks for the Git station window (the taskbar's [Git]). */
+    stationRequest?: number
   }>(),
-  { active: true, readOnly: false, source: undefined, isAdmin: undefined },
+  { active: true, readOnly: false, source: undefined, isAdmin: undefined, stationRequest: 0 },
 )
 
 const emit = defineEmits<{
@@ -436,6 +438,8 @@ const stationOpen = ref(false)
 const stationRef = ref<InstanceType<typeof GitStationWindow> | null>(null)
 function openStation(): void { stationOpen.value = true; stationRef.value?.restore() }
 watch(() => props.projectId, () => { stationOpen.value = false })
+// The taskbar's [Git]: open (or bring back) the station window once per request, also the one that mounted the panel.
+watch(() => props.stationRequest, (count, old) => { if (count > 0 && count !== old) openStation() }, { immediate: true })
 const connectOpen = ref(false)
 const connectMinimized = ref(false)
 const connectInitial = shallowRef<GitConnectInitial | null>(null)

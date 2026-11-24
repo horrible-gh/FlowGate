@@ -6,7 +6,7 @@
        line's ✎ turns it into the form.
        the Frame's windows host — drawn whatever is selected; a window keeps the card it was opened for
        and closes only by its × · [닫기] (or its memo deleted); Esc does not close it. -->
-  <ModelessShell kind-color="#4ba3ff"
+  <ModelessShell kind-color="#4ba3ff" kind="note"
     v-for="win in cardMemoWindows"
     :key="win.id"
     :open="true"

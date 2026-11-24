@@ -1,12 +1,16 @@
 <template>
-  <div ref="root" class="designer-taskbar" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
+  <div ref="root" class="designer-taskbar" :class="{ 'is-compact': compact }" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
     <div class="taskbar-group">
-    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :title="t('gui.taskbar.menu')" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
-    <button class="taskbar-item designer-item" type="button" aria-pressed="true" :title="t('gui.nav.designer.title')"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
+    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :aria-label="t('gui.taskbar.menu')" :title="iconOnly || compact ? undefined : t('gui.taskbar.menu')" v-on="iconOnly || compact ? tipFor(t('gui.taskbar.menu')) : {}" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
+    <!-- Pinned buttons: icon-only in every style, the name shows at once above the button on hover or focus. -->
+    <button v-for="pin in pins" :key="pin.key" type="button" class="taskbar-item pin-item" :class="{ 'is-on': pin.on }" data-test="taskbar-pin" :data-pin="pin.key" :aria-label="pin.label" :aria-disabled="pin.disabled ? 'true' : undefined" v-on="tipFor(pin.label)" @click="pressPin(pin)"><svg class="item-glyph" viewBox="0 0 24 24" aria-hidden="true"><path :d="PIN_ICONS[pin.key]" /></svg><i v-if="pin.on" class="pin-dot" aria-hidden="true" /></button>
+    <span v-if="!compact" class="taskbar-separator pins-separator" aria-hidden="true" />
+    <button v-if="!compact" class="taskbar-item designer-item" type="button" aria-pressed="true" :aria-label="t('gui.nav.designer.title')" :title="iconOnly ? undefined : t('gui.nav.designer.title')" v-on="iconOnly ? tipFor(t('gui.nav.designer.title')) : {}"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
-    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
+    <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :data-kind="kindOf(entry)" :style="{ '--kind-color': entry.color }" :aria-label="entry.title" :title="iconOnly ? undefined : entry.title" v-on="iconOnly ? tipFor(entry.title) : {}" @click="restore(entry)"><span class="item-icon"><svg class="item-glyph" viewBox="0 0 24 24" aria-hidden="true"><path :d="KIND_ICONS[kindOf(entry)]" /></svg><em v-if="badges.get(entry.id)" class="item-badge" data-test="taskbar-badge" aria-hidden="true">{{ badges.get(entry.id) }}</em></span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
     </div>
+    <span v-if="tip && !popup" ref="tipEl" class="taskbar-tip" role="tooltip" data-test="taskbar-tip" :style="{ left: `${tip.left}px` }">{{ tip.text }}</span>
     <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'start-classic': popup === 'menu' && modelessStyle === 'classic', 'dock-grid': dockGrid, 'overflow-list': popup === 'overflow' }" :aria-label="dockGrid ? t('gui.taskbar.menu') : undefined" @keydown="menuKey">
       <template v-if="dockGrid">
         <!-- Dock: one small grid of icon tiles that opens just above the dock, with no group headings. -->
@@ -65,8 +69,15 @@ import MeThemeWindow from '@/features/settings/windows/MeThemeWindow.vue'
 import MeAgentsWindow from '@/features/settings/windows/MeAgentsWindow.vue'
 import MeAccountWindow from '@/features/settings/windows/MeAccountWindow.vue'
 import MeSecurityWindow from '@/features/settings/windows/MeSecurityWindow.vue'
-import { modelessWindows, modelessStyle, normalizeTaskbarStyle, TASKBAR_STYLE_FIELD, setModelessTaskbar, removeModelessTaskbar, taskbarCapacity, type ModelessEntry } from '@/core/overlay/modelessRegistry'
+import { modelessWindows, modelessStyle, modelessKindOf, normalizeTaskbarStyle, TASKBAR_STYLE_FIELD, TASKBAR_COMPACT_WIDTH, setModelessTaskbar, removeModelessTaskbar, taskbarCapacity, type ModelessEntry } from '@/core/overlay/modelessRegistry'
+import { flowAttachmentUi } from '../flowAttachments/state'
+import { flowTerminalUi, terminalButtonState } from '../flowTerminal/state'
+import { KIND_ICONS, PIN_ICONS, TASKBAR_PINS, type TaskbarPin } from './taskbarIcons'
 
+// hasFlow: a Flow is open, so the Flow buttons (attachments, terminal, Git) can act. The Shell runs the pinned buttons
+// it owns (`pin`); [Search] only moves the keyboard to the header search box.
+const props = withDefaults(defineProps<{ hasFlow?: boolean }>(), { hasFlow: false })
+const emit = defineEmits<{ pin: [key: Exclude<TaskbarPin, 'search'>] }>()
 const { t } = useI18n()
 const { user } = useCurrentUser()
 const root = ref<HTMLElement | null>(null)
@@ -77,10 +88,63 @@ const width = ref(0)
 const popup = ref<'menu' | 'overflow' | null>(null)
 const id = Symbol('taskbar')
 const minimized = computed(() => modelessWindows.value.filter(entry => entry.minimized))
-const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length, modelessStyle.value))
+// Modern and dock show icons only; under the compact width the [Menu] shows its icon only and the designer item goes.
+const iconOnly = computed(() => modelessStyle.value === 'modern' || modelessStyle.value === 'dock')
+const compact = computed(() => width.value > 0 && width.value < TASKBAR_COMPACT_WIDTH)
+// [Terminal] follows the toolbar's rule: not drawn for someone who may not use it (no gap either).
+const terminalState = computed(() => terminalButtonState(flowTerminalUi.status, flowTerminalUi.currentOpen))
+const pins = computed(() => TASKBAR_PINS.filter(key => key !== 'terminal' || terminalState.value !== 'hidden').map(key => ({
+  key,
+  label: String(t(`gui.taskbar.pin_${key}`)),
+  disabled: (key === 'attachments' || key === 'terminal' || key === 'git') && !props.hasFlow,
+  on: key === 'attachments' ? flowAttachmentUi.currentOpen : key === 'terminal' && terminalState.value === 'on',
+})))
+const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length, modelessStyle.value, pins.value.length))
 const visible = computed(() => minimized.value.slice(0, capacity.value))
 const overflow = computed(() => minimized.value.slice(capacity.value))
 watch(overflow, (entries) => { if (!entries.length && popup.value === 'overflow') close() })
+// Windows of one kind share an icon; when two or more are minimized each gets a small mark: its own (a document
+// number) or its place among them.
+function kindOf(entry: ModelessEntry) { return modelessKindOf(entry) }
+const badges = computed(() => {
+  const byKind = new Map<string, ModelessEntry[]>()
+  for (const entry of minimized.value) {
+    const kind = modelessKindOf(entry)
+    byKind.set(kind, [...(byKind.get(kind) ?? []), entry])
+  }
+  const marks = new Map<symbol, string>()
+  for (const list of byKind.values()) if (list.length > 1) list.forEach((entry, index) => marks.set(entry.id, entry.badge || String(index + 1)))
+  return marks
+})
+// The name tip: shown at once above the pointed or focused item (the browser's own title waits and is easy to miss).
+const tip = ref<{ text: string; left: number } | null>(null)
+const tipEl = ref<HTMLElement | null>(null)
+async function showTip(target: EventTarget | null, text: string) {
+  const bar = root.value
+  if (!(target instanceof HTMLElement) || !bar || !text) return
+  const rect = target.getBoundingClientRect()
+  const barRect = bar.getBoundingClientRect()
+  tip.value = { text, left: rect.left + rect.width / 2 - barRect.left }
+  await nextTick()
+  const half = (tipEl.value?.offsetWidth ?? 0) / 2
+  if (tip.value && half) tip.value.left = Math.max(half + 4, Math.min(tip.value.left, barRect.width - half - 4))
+}
+function hideTip() { tip.value = null }
+function tipFor(text: string) {
+  return { pointerenter: (event: Event) => { void showTip(event.currentTarget, text) }, pointerleave: hideTip, focus: (event: Event) => { void showTip(event.currentTarget, text) }, blur: hideTip }
+}
+function pressPin(pin: { key: TaskbarPin; disabled: boolean }) {
+  hideTip()
+  close()
+  if (pin.disabled) return
+  if (pin.key === 'search') {
+    const input = document.querySelector<HTMLInputElement>('[data-test="designer-search-input"]')
+    input?.focus()
+    input?.select()
+    return
+  }
+  emit('pin', pin.key)
+}
 // Dock opens the menu as a small icon grid above the dock.
 const dockGrid = computed(() => popup.value === 'menu' && modelessStyle.value === 'dock')
 
@@ -90,12 +154,13 @@ function close(focus = false) {
   if (focus) trigger?.focus()
 }
 async function toggle(which: 'menu' | 'overflow') {
+  hideTip()
   if (popup.value === which) { close(true); return }
   popup.value = which
   await nextTick()
   popupRoot.value?.querySelector<HTMLButtonElement>('button')?.focus()
 }
-function restore(entry: ModelessEntry) { close(); entry.restore() }
+function restore(entry: ModelessEntry) { hideTip(); close(); entry.restore() }
 // Menu cards open a window over the Designer instead of leaving the page. A card whose window
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
@@ -367,5 +432,32 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .start-classic-side { flex: none; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px 8px; border-bottom: 1px solid rgba(255, 255, 255, .12); }
 .classic-avatar { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; font-size: 14px; font-weight: 800; color: #fff; background: #2c64a8; }
 .start-classic-side b { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Window-kind and pinned-button line icons (taskbarIcons.ts): strokes only, in the item's own colour. */
+.item-glyph { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.item-icon { position: relative; }
+/* Pinned buttons: one square icon button each, after [Menu]; a lit button (its window is open) gets a dot. */
+.taskbar-item.pin-item { position: relative; width: 40px; padding: 0; display: grid; place-items: center; border: 1px solid var(--fg2-line-strong); border-radius: 6px; background: transparent; text-align: center; overflow: visible; }
+.pin-item .item-glyph { width: 18px; height: 18px; }
+.pin-item.is-on { border-color: var(--fg2-accent, #3b82f6); color: var(--fg2-accent, #3b82f6); }
+.pin-item[aria-disabled="true"] { opacity: .4; cursor: default; }
+[data-taskbar-style="flowgate"] .pin-item:hover:not([aria-disabled="true"]) { background: var(--fg2-bg); }
+.taskbar-item.pin-item[aria-disabled="true"]:hover { background: transparent; }
+.pin-dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: #28b878; }
+/* Same-kind windows: a small mark at the icon's corner (icon-only styles; the others show the name). */
+.item-badge { display: none; position: absolute; right: -6px; bottom: -5px; min-width: 14px; height: 14px; box-sizing: border-box; padding: 0 3px; border-radius: 7px; font: inherit; font-size: 9.5px; font-style: normal; font-weight: 700; line-height: 14px; text-align: center; color: #fff; background: #3b4a61; box-shadow: 0 0 0 1.5px var(--fg2-panel); }
+[data-taskbar-style="modern"] .item-badge, [data-taskbar-style="dock"] .item-badge { display: block; }
+/* The name tip above an item. */
+.taskbar-tip { position: absolute; bottom: calc(100% + 6px); z-index: 100001; transform: translateX(-50%); max-width: min(320px, calc(100vw - 16px)); box-sizing: border-box; padding: 4px 9px; border-radius: 6px; font-size: 12px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; color: var(--fg2-panel); background: var(--fg2-text); box-shadow: 0 4px 12px #0004; }
+/* Narrow bars: [Menu] keeps its icon only and the designer item is not drawn (taskbarCapacity uses the same width). */
+.designer-taskbar.is-compact .menu-trigger { width: 44px; padding: 0; justify-content: center; }
+.designer-taskbar.is-compact .item-label { display: none; }
+[data-taskbar-style="modern"] .taskbar-item.pin-item { width: 44px; border-color: transparent; color: var(--fg2-text); }
+[data-taskbar-style="modern"] .minimized-item .item-glyph { width: 16px; height: 16px; }
+[data-taskbar-style="dock"] .taskbar-item.pin-item { width: 44px; border: 0; }
+[data-taskbar-style="dock"] .pin-item .item-glyph { width: 32px; height: 32px; box-sizing: border-box; padding: 7px; border-radius: 8px; background: color-mix(in srgb, var(--fg2-text) 10%, transparent); box-shadow: 0 2px 6px #0003; }
+[data-taskbar-style="dock"] .minimized-item .item-glyph { width: 18px; height: 18px; }
+[data-taskbar-style="classic"] .taskbar-item.pin-item { width: 36px; border: 1px solid rgba(150, 180, 220, .28); border-radius: 5px; background: rgba(255, 255, 255, .06); }
+[data-taskbar-style="classic"] .taskbar-item.pin-item:hover:not([aria-disabled="true"]) { background: rgba(255, 255, 255, .14); }
+[data-taskbar-style="classic"] .pin-item.is-on { border-color: #5d8fd0; color: #b3d2ff; }
 </style>
 
