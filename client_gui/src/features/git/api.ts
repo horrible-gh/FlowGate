@@ -41,6 +41,7 @@ import type {
   GitConfigView,
   GitAbortFailure,
   GitAbortFailureSession,
+  GitResolverAttempt,
   GitConflictSession,
   GitConnectionTest,
   GitForceCleanupPreview,
@@ -168,6 +169,7 @@ interface RawConflicts extends Envelope {
   resolved_paths?: string[] | null
   // the last failed abort / cleanup and the files resolved along with the session's own.
   abort_failure?: Record<string, unknown> | null
+  resolver_attempt?: Record<string, unknown> | null
   companion_files?: Array<{ path?: unknown; source_path?: unknown }> | null
 }
 
@@ -176,6 +178,18 @@ export function abortFailureOf(raw: unknown): GitAbortFailure | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const row = raw as Record<string, unknown>
   return { trigger: str(row.trigger), reason: str(row.reason), returncode: num(row.returncode), at: str(row.at) }
+}
+
+/** `resolver_attempt` of the server; null when absent, not an object, or of an unknown state. */
+export function resolverAttemptOf(raw: unknown): GitResolverAttempt | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  if (row.state !== 'rejected' && row.state !== 'failed') return null
+  const lines = Array.isArray(row.lines) ? row.lines.filter((v): v is string => typeof v === 'string' && !!v) : []
+  return {
+    runId: str(row.run_id), state: row.state, code: str(row.code), path: str(row.path), lines,
+    lineCount: typeof row.line_count === 'number' ? row.line_count : lines.length, provider: str(row.provider),
+  }
 }
 
 /** git's own reason line of a refused request (`error.details.reason`, also `error.params.reason`), or null. */
@@ -210,6 +224,7 @@ export async function fetchConflicts(groupId: string, mergeId: number): Promise<
         resolved: resolved.has(toSlashes(f.path as string)),
       })),
     abortFailure: abortFailureOf(data.abort_failure),
+    resolverAttempt: resolverAttemptOf(data.resolver_attempt),
     companionFiles: (data.companion_files ?? [])
       .filter((c) => c && typeof c.path === 'string' && c.path)
       .map((c) => ({ path: toSlashes(c.path as string), sourcePath: typeof c.source_path === 'string' && c.source_path ? toSlashes(c.source_path) : null })),

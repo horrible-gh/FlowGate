@@ -35,6 +35,27 @@ def _jobs(group_id):
         *jobs.EXECUTING_STATUSES, *jobs.TERMINAL_STATUSES, "recovery_required"))
 
 
+def _conflict_ai(group_id, merge_id):
+    """flowgate.v02test.0068: the AI resolver of the conflict session this run waits on -
+    ``{"state": "running"}`` while one works, ``{"state": "failed", code, path, lines, ...}`` after one
+    ended with conflicts left (``rejected`` = refused but its run is not over), else None. Read only."""
+    try:
+        from modules.flow_gate.services.ai_invoke import diagnostics
+        from . import conflict
+        live = diagnostics.get_active_status(group_id)
+        if live.get("active") and live.get("action_scope") == "resolve_conflict":
+            return {"state": "running", "runId": live.get("run_id")}
+        session = gs.db_git.get_session(merge_id)
+        attempt = conflict.resolver_attempt(session) if session and session["status"] == "open" else None
+        if not attempt:
+            return None
+        return {"state": "failed", "runId": attempt.get("run_id"), "code": attempt.get("code"),
+                "path": attempt.get("path"), "lines": attempt.get("lines") or [],
+                "lineCount": attempt.get("line_count") or 0, "provider": attempt.get("provider")}
+    except Exception:
+        return None
+
+
 def view(job):
     if not job:
         return None
@@ -42,7 +63,9 @@ def view(job):
     completed = ev.get("completed", p.get("completed", []))
     status = job["status"]
     result = _json(job.get("result"))
-    return {"jobId": job["job_id"], "scope": p["scope"], "target": p.get("target"),
+    waiting_on = ev.get("merge_id") if status not in jobs.TERMINAL_STATUSES else None
+    return {"conflictAi": _conflict_ai(job["group_id"], waiting_on) if waiting_on else None,
+        "jobId": job["job_id"], "scope": p["scope"], "target": p.get("target"),
         "steps": p["steps"], "completed": completed, "cursor": len(completed),
         "status": (result.get("status", "complete") if status == "succeeded" else
                    "stopped" if status in ("failed", "cancelled", "recovery_required") else "running"),

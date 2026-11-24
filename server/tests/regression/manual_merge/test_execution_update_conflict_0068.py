@@ -126,3 +126,116 @@ def test_update_conflict_sessions_picks_open_group_updates_of_listed_slots(monke
     assert list(found) == ["g1"] and found["g1"]["merge_id"] == 3
     monkeypatch.setattr(gs.db_git, "list_open_sessions", lambda: (_ for _ in ()).throw(RuntimeError("db")))
     assert status.update_conflict_sessions([{"group_id": "g1"}]) == {}
+
+
+# ── flowgate.v02test.0068: one side rewrote the function the other side added lines to ─────────────
+#
+# The shape of F80's conflict: the base (F82) added "why it was skipped" log lines inside a function,
+# the Flow rewrote that function so those lines have no place any more and already logs the same
+# thing in one parameterised line. The right resolution is the Flow's side as it is.
+
+NAMING_BASE = (
+    "def name_target(flow, kind):\n"
+    "    record = ledger_load(flow)\n"
+    "    if record is None:\n"
+    "        return {'status': 'unchanged'}\n"
+    "    if record.get('busy'):\n"
+    "        return {'status': 'unchanged', 'busy': True}\n"
+    "    return save_candidate(flow, record)\n"
+)
+NAMING_THEIRS = (
+    "def name_target(flow, kind):\n"
+    "    record = ledger_load(flow)\n"
+    "    if record is None:\n"
+    "        logger.info('flow naming skipped reason=empty_message flow=%s target=%s', flow, 'chat')\n"
+    "        return {'status': 'unchanged'}\n"
+    "    if record.get('busy'):\n"
+    "        logger.info('flow naming skipped reason=busy flow=%s target=%s', flow, 'chat')\n"
+    "        return {'status': 'unchanged', 'busy': True}\n"
+    "    return save_candidate(flow, record)\n"
+)
+NAMING_OURS = (
+    "def name_target(flow, kind):\n"
+    "    group, target, step = guard(flow, claim)\n"
+    "    if step in ('missing', 'done'):\n"
+    "        return step\n"
+    "    if step in ('busy', 'unchanged'):\n"
+    "        logger.info('flow naming skipped reason=%s flow=%s target=%s', step, flow, kind)\n"
+    "        return 'unchanged'\n"
+    "    return apply_candidate(flow, target)\n"
+)
+KEEP_OURS = {"side": "ours", "reason": "the rewritten function logs every skip reason in one line"}
+
+
+def waiting_on_rewrite(proj, ours=NAMING_OURS):
+    """A run parked on an update conflict whose chunk both sides changed over a common base."""
+    gid = FA
+    remote(proj, "naming.py", NAMING_BASE)
+    work(proj, gid, "note.txt", "first\n")
+    first = start(gid)
+    assert drive(gid, first["jobId"], lambda v: v["status"] != "running")["status"] == "complete"
+    assert (proj.wt(gid) / "naming.py").read_text(encoding="utf-8") == NAMING_BASE
+    work(proj, gid, "naming.py", ours)
+    _git(["pull", "origin", "main"], cwd=proj.seed)      # the first run pushed the Flow's merge
+    remote(proj, "naming.py", NAMING_THEIRS)
+    run = start(gid)
+    view = drive(gid, run["jobId"], lambda v: v["mergeId"] is not None)
+    return gid, run["jobId"], view
+
+
+@needs_git
+def test_rewritten_side_is_refused_bare_recorded_as_ai_failure_then_accepted_declared(proj):
+    gid, job_id, view = waiting_on_rewrite(proj)
+    merge_id = view["mergeId"]
+    assert view["conflictAi"] is None
+    files = [{"path": "naming.py", "content": NAMING_OURS}]
+    # The update merge writes the base block too, so "both sides changed" can be judged here as well.
+    assert "\n||||||| " in (proj.wt(gid) / "naming.py").read_text(encoding="utf-8")
+    # 1) Keeping one side without saying why is still refused, and nothing is written.
+    with pytest.raises(conflict.GitServiceError) as refused:
+        conflict.resolve_conflicts(gid, merge_id, files, True, resolver_run_id="run-ai-1")
+    assert refused.value.code == "conflict_side_dropped"
+    # 2) The refusal is on the session; when that AI run ends with the conflict left, it FAILED and
+    #    both the conflicts answer and the waiting run say so (no more silent 「충돌 대기」).
+    attempt = conflict.list_conflicts(gid, merge_id)["resolver_attempt"]
+    assert (attempt["run_id"], attempt["state"], attempt["code"]) == ("run-ai-1", "rejected", "conflict_side_dropped")
+    assert conflict.note_resolver_finished(merge_id, {"run_id": "run-ai-1", "stop_code": "turn_limit"}) is True
+    waiting = ex.view(tick(job_id))
+    assert waiting["status"] == "running" and waiting["mergeId"] == merge_id
+    assert waiting["conflictAi"]["state"] == "failed"
+    assert waiting["conflictAi"]["code"] == "conflict_side_dropped" and waiting["conflictAi"]["path"] == "naming.py"
+    # 3) The same text with the declaration passes: every line the base added is still carried by
+    #    the rewritten function (reworded), so no side was dropped. The same run goes on to push.
+    resolved = conflict.resolve_conflicts(
+        gid, merge_id, [{**files[0], "supersede": KEEP_OURS}], True, resolver_run_id="run-ai-2")
+    assert resolved["result"]["status"] == "updated"
+    done = drive(gid, job_id, lambda v: v["status"] != "running")
+    assert done["status"] == "complete" and done["conflictAi"] is None, done
+    assert proj.show("main", "naming.py") == NAMING_OURS
+
+
+@needs_git
+def test_declared_side_that_really_lost_a_line_is_still_refused_with_that_line(proj):
+    # The rewritten function WITHOUT its log line: the base's two log lines are gone for real.
+    lost = NAMING_OURS.replace(
+        "        logger.info('flow naming skipped reason=%s flow=%s target=%s', step, flow, kind)\n", "")
+    gid, job_id, view = waiting_on_rewrite(proj, ours=lost)
+    merge_id = view["mergeId"]
+    with pytest.raises(conflict.GitServiceError) as refused:
+        conflict.resolve_conflicts(gid, merge_id, [{"path": "naming.py", "content": lost, "supersede": KEEP_OURS}],
+                                   True, resolver_run_id="run-ai-3")
+    assert refused.value.code == "conflict_supersede_invalid"
+    problem = refused.value.details["files"][0]
+    assert problem["condition"] == "dropped_lines_removed" and len(problem["removed_lines"]) == 2
+    attempt = conflict.list_conflicts(gid, merge_id)["resolver_attempt"]
+    assert attempt["code"] == "conflict_supersede_invalid" and attempt["line_count"] == 2
+    assert "reason=empty_message" in attempt["lines"][0]
+    assert ex.view(tick(job_id))["mergeId"] == merge_id      # still waiting, nothing committed
+
+
+def test_resolver_that_resolved_everything_is_no_failure(monkeypatch):
+    monkeypatch.setattr(gs.db_git, "get_session", lambda mid: {"merge_id": mid, "status": "open", "group_id": "g"})
+    monkeypatch.setattr(gs.db_git, "remaining_conflicts", lambda mid: [])
+    assert conflict.note_resolver_finished(7, {"run_id": "r"}) is False
+    monkeypatch.setattr(gs.db_git, "get_session", lambda mid: None)
+    assert conflict.note_resolver_finished(7, {"run_id": "r"}) is False
