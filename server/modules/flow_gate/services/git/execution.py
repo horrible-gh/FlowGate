@@ -307,7 +307,11 @@ def run(ctx, entry):
         if ctx.job["phase"] == "conflict":
             session = gs.db_git.get_session(ev["merge_id"])
             if not session or session["status"] not in ("open", "done"):
-                _fail("merge_aborted")
+                # flowgate.v02test.0068: an accepted resolution that could not be recorded is
+                # undone and its session aborted; say that, not "conflict session aborted".
+                from . import conflict
+                failure = conflict.update_record_failure(session)
+                _fail(failure["code"] if failure and failure.get("code") else "merge_aborted")
             if session["status"] == "open":
                 _wait(ctx, ev, "merge_conflict")
                 return

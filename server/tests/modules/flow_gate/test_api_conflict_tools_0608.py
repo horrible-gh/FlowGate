@@ -212,6 +212,9 @@ class _FakeSessionDb:
     def session_context(self, session):
         return {}
 
+    def session_kind(self, session):
+        return "merge"
+
     def session_files(self, merge_id):
         return [{"path": p} for p in self.paths]
 

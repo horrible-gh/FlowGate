@@ -1309,6 +1309,42 @@ def _supersede_findings(path: str, supersede, violations: list[dict], companions
             })
     return problems, records
 
+def _auto_merged_lines_lost(root: Path, path: str, original: str, submitted: str, side: str) -> list[str]:
+    """flowgate.v02test.0068 - lines of the DROPPED side that git merged cleanly outside the
+    conflict chunks and that the submitted file no longer has.
+
+    A ``supersede`` declaration is checked chunk by chunk, so a submission that is simply the
+    kept side's whole pre-merge file passed it while silently undoing every change of the
+    other side that had merged without a conflict. A line of the conflicted file's common text
+    that exists in the dropped side's version of the file but not in the kept side's came from
+    the dropped side; it must still be in the submission as an exact copy (trimmed). No
+    "similar line" counts here, unlike inside a chunk: git put these lines in place itself, so
+    nothing needs rewording, and on F80's real conflict the base's two log lines were 0.7-similar
+    to the Flow's own log line and would have been waved through. Returns the lines that are
+    missing, in file order; empty when either version cannot be read (nothing to compare against).
+    """
+    kept_ref, dropped_ref = ("HEAD", "MERGE_HEAD") if side == "ours" else ("MERGE_HEAD", "HEAD")
+    kept_raw = _git_bytes(["show", f"{kept_ref}:{path}"], root)
+    dropped_raw = _git_bytes(["show", f"{dropped_ref}:{path}"], root)
+    if kept_raw is None or dropped_raw is None:
+        return []
+    segments = _split_content_segments(original)
+    if segments is None:
+        return []
+    kept_set = {line.strip() for line in kept_raw.decode("utf-8", errors="replace").splitlines()}
+    dropped_set = {line.strip() for line in dropped_raw.decode("utf-8", errors="replace").splitlines()}
+    incoming: list[str] = []
+    for segment in segments:
+        if segment["type"] != "common":
+            continue
+        for line in segment["lines"]:
+            text = line.strip()
+            if text and text in dropped_set and text not in kept_set:
+                incoming.append(line)
+    submitted_set = {line.strip() for line in (submitted or "").splitlines()}
+    return [line for line in incoming if line.strip() not in submitted_set]
+
+
 def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
     """per-chunk selection the review screen overlays on
     the real diff: which conflict chunk resolved to ``ours``/``theirs``/``both``/
@@ -1394,6 +1430,24 @@ def resolve_conflict_src_root(
     return root
 
 
+def _group_update_refs(kind: str, context: dict, root: Path) -> Optional[dict]:
+    """``{"ours", "theirs"}`` of an update conflict: the group worktree's HEAD and the base
+    commit being merged into it. None for any other kind, a rebuild session, or when HEAD
+    cannot be read."""
+    from modules.flow_gate.services import git_service as _gs
+    if kind != _gs.db_git.SESSION_KIND_GROUP_UPDATE or context.get("reconstruct_head"):
+        return None
+    theirs = context.get("source_sha")
+    if not theirs:
+        return None
+    try:
+        proc = _gs._run_git(["rev-parse", "HEAD"], cwd=root)
+    except Exception:
+        return None
+    ours = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    return {"ours": ours, "theirs": theirs} if ours else None
+
+
 def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     from modules.flow_gate.services import git_service as _gs
     session, cfg, _project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
@@ -1450,9 +1504,12 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
         "resolver_attempt": context.get(RESOLVER_ATTEMPT_KEY),
         # The two commits a finalize merge joined, for reading either side's whole file
         # (`/remote/read` with `ref`). None for a TR session, which has no MERGE_HEAD.
+        # flowgate.v02test.0068: an update conflict (base merged INTO the group worktree) has
+        # them too - ours is the group's HEAD, theirs the pinned base commit.
         "refs": (
             {"ours": baseline.get("base_head"), "theirs": baseline.get("merge_head")}
-            if baseline.get("base_head") and baseline.get("merge_head") else None
+            if baseline.get("base_head") and baseline.get("merge_head")
+            else _group_update_refs(kind, context, root)
         ),
         # 088 — the same payload for both kinds, plus what a reader needs to know WHICH
         # question is being asked. "Combine two branches" and "undo this TR's commit" want
@@ -1741,6 +1798,17 @@ def _apply_conflict_resolution_locked(
     return result
 
 
+UPDATE_RECORD_FAILURE_KEY = "update_record_failure"
+
+
+def update_record_failure(session: Optional[dict]) -> Optional[dict]:
+    """``{code, reason, at}`` when this update-conflict session was closed because its
+    accepted resolution could not be recorded (the merge commit was undone), else None."""
+    from modules.flow_gate.services import git_service as _gs
+    value = _gs.db_git.session_context(session).get(UPDATE_RECORD_FAILURE_KEY) if session else None
+    return value if isinstance(value, dict) else None
+
+
 def _record_group_update_resolution(
     group_id: Optional[str], merge_id: int, root: Path, context: dict, cfg: dict,
 ) -> dict:
@@ -1766,12 +1834,35 @@ def _record_group_update_resolution(
             if context.get("reconstruct_head"):
                 _gs.db_git.close_session(merge_id, "done")
         return recorded
-    except Exception:
+    except Exception as exc:
         if context.get("reconstruct_head"):
             from .reconstruct import restore
             restore(root, context)
         else:
             _gs._run_git(["reset", "--hard", "HEAD^1"], cwd=root)
+        # flowgate.v02test.0068: the resolution was accepted and committed, and is undone here.
+        # That used to leave an aborted session and nothing else - the Git run waiting on it
+        # could only say "conflict session aborted". Keep why on the session before closing it.
+        code = getattr(exc, "code", None) or "group_work_base_record_failed"
+        details = getattr(exc, "details", None)
+        reason = details.get("reason") if isinstance(details, dict) else None
+        _log.warning(
+            "update conflict resolution undone merge=%s group=%s code=%s reason=%s exception_type=%s",
+            merge_id, group_id, code, reason, type(exc).__name__,
+        )
+        try:
+            from modules.flow_gate.db.connection import now_iso
+            failed_session = _gs.db_git.get_session(merge_id)
+            failed_context = _gs.db_git.session_context(failed_session) if failed_session else {}
+            failed_context[UPDATE_RECORD_FAILURE_KEY] = {
+                "code": str(code), "reason": reason, "at": now_iso(),
+            }
+            _gs.db_git.set_session_context(merge_id, failed_context)
+        except Exception as note_exc:   # diagnostics only: the abort below still happens
+            _log.warning(
+                "update record failure not kept merge=%s exception_type=%s",
+                merge_id, type(note_exc).__name__,
+            )
         _gs.db_git.close_session(merge_id, "aborted")
         raise
 
@@ -1927,6 +2018,7 @@ def _resolve_conflicts_checked(
             "do not submit a resolution",
         )
     session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
+    merge_head_kind = _gs.db_git.session_kind(session) in _MERGE_HEAD_SESSION_KINDS
 
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
     # side-drop and supersede failures are collected across ALL files and
@@ -2018,6 +2110,14 @@ def _resolve_conflicts_checked(
                 problems, records = _supersede_findings(
                     path, supersede, violations, verified_companions.get(path), submitted=content,
                 )
+                if not problems and merge_head_kind and not verified_companions.get(path):
+                    lost = _auto_merged_lines_lost(root, path, original, content, supersede["side"])
+                    if lost:
+                        problems = [{
+                            "path": path, "chunk": None, "side": supersede["side"],
+                            "condition": "auto_merged_lines_removed",
+                            "removed": len(lost), "removed_lines": lost,
+                        }]
                 if problems:
                     supersede_invalid.extend(problems)
                 else:
@@ -2026,13 +2126,50 @@ def _resolve_conflicts_checked(
                         "reason": supersede["reason"].strip(), "chunks": records,
                     })
             elif violations:
-                side_dropped.append({
+                row = {
                     "path": path,
                     "chunks": [
                         {key: v[key] for key in ("chunk", "start_line", "end_line", "side", "dropped_side")}
                         for v in violations
                     ],
-                })
+                }
+                # flowgate.v02test.0068: a correct one-side resolution was refused here with
+                # nothing but the general hint, and the resolver had to work out by itself that
+                # the same content plus a declaration would pass. Say so when it would.
+                ready_side = violations[0]["side"]
+                probe_problems, _probe = _supersede_findings(
+                    path, {"side": ready_side, "reason": "probe"}, violations,
+                    verified_companions.get(path), submitted=content,
+                )
+                if not probe_problems and not (
+                    merge_head_kind and not verified_companions.get(path)
+                    and _auto_merged_lines_lost(root, path, original, content, ready_side)
+                ):
+                    row["supersede_ready"] = {"side": ready_side}
+                side_dropped.append(row)
+            # flowgate.v02test.0068: an AI run that submits one side's OLD whole file may match
+            # no chunk at all (the text around the chunk differs too), so it was taken for a
+            # hand-merged file and accepted - undoing everything git had merged cleanly from the
+            # other side. Whatever the chunks resolved to, an AI submission must still carry the
+            # lines both sides brought into the file outside the chunks.
+            if (
+                merge_head_kind and resolver_run_id and path in evaluated_paths
+                and not verified_companions.get(path)
+                and not any(
+                    p.get("path") == path and p.get("condition") == "auto_merged_lines_removed"
+                    for p in supersede_invalid
+                )
+            ):
+                lost = [
+                    line for lost_side in _SUPERSEDE_SIDES
+                    for line in _auto_merged_lines_lost(root, path, original, content, lost_side)
+                ]
+                if lost:
+                    supersede_invalid.append({
+                        "path": path, "chunk": None, "side": None,
+                        "condition": "auto_merged_lines_removed",
+                        "removed": len(lost), "removed_lines": lost,
+                    })
         target = resolve_in_root(root, path)
         if target is None:
             raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
@@ -2043,18 +2180,39 @@ def _resolve_conflicts_checked(
         if supersede_invalid:
             details["supersede_invalid"] = supersede_invalid
         names = ", ".join(f"'{row['path']}'" for row in side_dropped)
+        ready = [row for row in side_dropped if row.get("supersede_ready")]
+        ready_note = ""
+        if ready and len(ready) == len(side_dropped):
+            ready_note = (
+                " The submitted content already carries every line of the other side: resend the "
+                "SAME content with the `supersede` declaration named in each file's "
+                "`supersede_ready` (add your reason) and it is accepted."
+            )
+        elif ready:
+            ready_note = (
+                " Files with `supersede_ready` already carry every line of the other side and "
+                "only need that declaration added; the others still need both sides merged."
+            )
         raise GitServiceError(
             422, "conflict_side_dropped",
-            f"{names} dropped one whole side of a resolved conflict chunk. {_SUPERSEDE_HINT}",
+            f"{names} dropped one whole side of a resolved conflict chunk.{ready_note} {_SUPERSEDE_HINT}",
             details,
         )
     if supersede_invalid:
         names = ", ".join(sorted({f"'{row['path']}'" for row in supersede_invalid}))
+        if all(row.get("condition") == "auto_merged_lines_removed" for row in supersede_invalid):
+            message = (
+                f"{names} no longer has lines that git had merged cleanly outside the conflict "
+                "chunks (details.files[].removed_lines). Start from the conflicted file as it is "
+                "now, replace only the marker blocks, and submit again."
+            )
+        else:
+            message = (
+                f"supersede declaration rejected for {names}; see details.files for the failed "
+                "condition of each chunk"
+            )
         raise GitServiceError(
-            422, "conflict_supersede_invalid",
-            f"supersede declaration rejected for {names}; see details.files for the failed "
-            "condition of each chunk",
-            {"files": supersede_invalid},
+            422, "conflict_supersede_invalid", message, {"files": supersede_invalid},
         )
 
     return _apply_conflict_resolution_locked(
