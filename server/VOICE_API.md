@@ -8,7 +8,7 @@ Errors use `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
 | --- | --- | --- |
 | GET `/voice/status` | — | `enabled`, `state`, `default`, `error`, `can_manage` |
 | GET `/voice/catalog` | — | `services[].models[]`; ordinary users see installed models only |
-| POST `/voice/installs` | JSON `service`, `model` | 202, `install_id`; continues after browser closes |
+| POST `/voice/installs` | JSON `service`, `model`, optional `license_ack` | 202, `install_id`; continues after browser closes |
 | GET `/voice/installs/{id}` | — | `step`, `received_bytes`, `total_bytes`, `done`, `error` |
 | DELETE `/voice/installs/{id}` | — | Request cancellation; poll until `done` |
 | DELETE `/voice/services/{service}/models/{model}` | — | `service_removed`, `voice_disabled` |
@@ -72,12 +72,22 @@ support resume, cancellation, disk-space checks and durable progress records.
 On server interruption, an old job is reported interrupted; starting another
 install reuses verified downloads and resumes its partial files.
 
-Offline mode never downloads and never changes the source directory. Supply the
-catalog archives/model and `jfk.wav`. For whisper.cpp, exact-version expanded
-executables/DLLs and ffmpeg are also accepted and checked against per-file hashes.
-`Recording_1.m4a` may substitute for the offline smoke-test sample. A mismatched
-binary version is rejected rather than executed. Catalog versions: whisper.cpp
-1.8.2, sherpa-onnx 1.12.20, Vosk 0.3.45, ffmpeg 8.0.
+Local `--from-dir` installation does not require redistribution approval or
+LICENSE/NOTICE files. It retains catalog hash and size verification and rejects
+SenseVoice and originals with catalog `excluded_paths` (including KSS archives).
+Rehosting exports still fail closed with `voice_redistribution_pending` until
+exact-artifact and native dependency notices are reviewed. This is not a
+determination that a component has no license or commercial use is prohibited.
+
+`--export-bundle DEST --from-dir SOURCE` copies only approved, hash-verified
+catalog components and their pinned `licenses/` LICENSE/NOTICE files. It does not
+copy an entire cache. SenseVoice, the original Korean Zipformer archive (which
+contains KSS), samples and FFmpeg are excluded. No production catalog component
+has been approved for redistribution by this change. Native SDL2, ONNX Runtime,
+GCC runtime and other DLL notices must be completed before approval.
+FFmpeg 8.0 (Gyan GPL-3.0-or-later) remains an upstream direct download; there is no
+FFmpeg redistribution path or GPL section 6 source offer made by this installer.
+The catalog records source commit `140fd653ae` for follow-up review.
 
 Catalog contents (`services/voice_catalog.json`, the only source of the list):
 whisper.cpp carries the six multilingual base models of the pinned upstream
@@ -85,12 +95,27 @@ revision (tiny, base, small, medium, large-v3-turbo, large-v3) and no quantized,
 English-only `.en` or older large-v1/v2 builds; sherpa-onnx carries SenseVoiceSmall and the English and Korean
 streaming Zipformers; Vosk carries the small Korean and US English models.
 
-The first model installs its runtime. Every model must pass a real sample
-transcription before publication; installation then activates the default.
-The sample is `jfk.wav` (must contain "country") unless the model entry has
-`self_test {sample, expect}`: `sample` is a file inside the model archive or a
-pinned service artifact, and `expect` must appear in the transcript (whitespace
-ignored). Models without English need this entry.
+The first eligible model installs and activates its runtime. Korean Zipformer and
+Vosk Korean use `self_test {mode: "load_only"}`: the real runtime must load and
+respond to health checks, with no sample transcription. Their weight license
+labels remain Apache-2.0. The settings test accepts a user's microphone recording
+or uploaded audio and does not require a built-in Korean sample. Other models
+continue their pinned sample transcription checks.
+
+Korean Zipformer extraction excludes `test_wavs/`, then discards the original
+archive (also on error/cancellation). Startup and subsequent installation clean
+known application-owned legacy KSS paths and archive caches. User recordings and
+read-only import directories are not cleaned or modified.
+
+SenseVoice is labelled "FunASR model license — scope pending", linking to
+https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE and the upstream
+FunASR/SenseVoice project. The API requires `license_ack: true` before a direct
+install; CLI requires `--ack-model-license` after reading `--list`. Both UI install
+surfaces show the notice first. SenseVoice cannot be suggested or assigned as the
+system default, and a stored default is ignored with voice disabled. A direct
+SenseVoice install alone stays off; an administrator can test it explicitly.
+Model terms are not inferred from the engine's Apache-2.0 label.
+
 Deleting the default switches voice off; deleting a service's last model removes
 that runtime and its download cache. Shell arguments are never accepted from users.
 Whisper runs on a random loopback port; sherpa and Vosk each use an authenticated

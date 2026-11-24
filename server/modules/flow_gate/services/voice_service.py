@@ -58,7 +58,11 @@ def atomic_json(path, data):
 
 def configuration():
     raw = system_settings.get_value("voice.configuration")
-    return json.loads(raw) if raw else {"enabled": False, "default": None}
+    value = json.loads(raw) if raw else {"enabled": False, "default": None}
+    selected = value.get("default")
+    if selected and not specification(**selected).get("default_eligible", True):
+        value.update(enabled=False, default=None)
+    return value
 
 
 def save_configuration(value):
@@ -108,6 +112,10 @@ class Manager:
                     "is_default": config["default"] == {"service": entry["id"], "model": spec["id"]}})
             if can_manage or models:
                 services.append({"id": entry["id"], "name": entry["name"], "version": entry["version"],
+                                 "components": [{"filename": a["filename"], "component_type": a["component_type"],
+                                                 "license": a["license"], "distribution": a["distribution"],
+                                                 "url": a["url"]} for a in entry["artifacts"]],
+                                 "native_notices": entry.get("native_notices", []),
                                  "license": entry["license"], "installed": any(m["installed"] for m in models),
                                  "available": supported, "unavailable_reason": None if supported else "This release requires Windows x64",
                                  "models": models})
@@ -146,12 +154,18 @@ class Manager:
                     row.update(done=True, step="interrupted", error={"code": "voice_install_interrupted", "message": "Retry to resume verified partial downloads"})
             return {"ok": True, **copy.deepcopy(row)}
 
-    def install(self, service, model, from_dir=None):
+    def install(self, service, model, from_dir=None, license_ack=False):
         from . import voice_streams
         if voice_streams.active(service):
             raise VoiceError("voice_busy", "Finish live transcription before installing", 409)
         entry = specification(service)
-        specification(service, model)
+        spec = specification(service, model)
+        if from_dir is not None:
+            from .voice_distribution import validate_local_install
+            validate_local_install(entry, spec)
+        if spec.get("requires_license_ack") and not license_ack:
+            raise VoiceError("voice_license_ack_required",
+                             spec["license"] + " — " + spec["source"] + " — " + spec["license_url"], 422)
         if not available(entry):
             raise VoiceError("voice_platform_unsupported", "This release requires Windows x64", 422)
         with voice_streams._condition, self.lock:
@@ -196,10 +210,15 @@ class Manager:
             # lock owned by somebody else; OS locks are released after a crash.
             from .voice_lock import installation_lock
             with installation_lock(root()):
+                from .voice_distribution import cleanup_legacy_samples
+                cleanup_legacy_samples(root())
                 destination = self.service_dir(service)
-                artifacts = [*entry["artifacts"], spec]
+                load_only = spec.get("self_test", {}).get("mode") == "load_only"
+                artifacts = [a for a in entry["artifacts"]
+                             if not (load_only and a.get("component_type") == "sample")
+                             and not (from_dir and a.get("component_type") == "ffmpeg")] + [spec]
                 offline_sample = None
-                if from_dir and not list(Path(from_dir).rglob("jfk.wav")):
+                if from_dir and not load_only and not list(Path(from_dir).rglob("jfk.wav")):
                     samples = list(Path(from_dir).rglob("Recording_1.m4a"))
                     if not samples:
                         raise VoiceError("voice_offline_file_invalid", "Offline bundle needs jfk.wav or Recording_1.m4a", 422)
@@ -235,7 +254,11 @@ class Manager:
                 (staging / "models").mkdir(exist_ok=True)
                 staged_model = staging / "models" / (model if spec.get("archive") else spec["filename"])
                 if spec.get("archive"):
-                    download.extract(files[-1], staged_model, cancel)
+                    download.extract(files[-1], staged_model, cancel,
+                                     excluded_parts=tuple(path.strip("/") for path in spec.get("excluded_paths", ())))
+                    if spec.get("excluded_paths"):
+                        # The original upstream archive itself contains KSS audio.
+                        files[-1].unlink(missing_ok=True)
                 else:
                     shutil.copyfile(files[-1], staged_model)
                 download.check_cancel(cancel)
@@ -247,7 +270,9 @@ class Manager:
                     self.trials[job_id] = trial
                 try:
                     trial.start(staging, staged_model)
-                    if offline_sample:
+                    if load_only:
+                        passed = trial.healthy()
+                    elif offline_sample:
                         from .voice_runtime import MAX_AUDIO_BYTES
                         with offline_sample.open("rb") as stream:
                             sample_data = stream.read(MAX_AUDIO_BYTES + 1)
@@ -296,11 +321,14 @@ class Manager:
                     atomic_json(destination / (model + ".installed.json"), {"sha256": spec["sha256"], "version": entry["version"]})
                     promoted = True
                     config = configuration()
-                    if config["default"] is None:
+                    if config["default"] is None and spec.get("default_eligible", True):
                         config["default"] = {"service": service, "model": model}
                     selected = config["default"]
-                    self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))
-                    config["enabled"] = True
+                    if selected:
+                        self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))
+                        config["enabled"] = True
+                    else:
+                        config["enabled"] = False
                     save_configuration(config)
                     self.error = None
                 self._update_job(job_id, step="complete", done=True)
@@ -317,6 +345,11 @@ class Manager:
                 log.exception("Voice installation failed")
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+            if spec.get("excluded_paths"):
+                # Also discard partial/error downloads containing restricted samples.
+                archive = root() / "downloads" / service / spec["filename"]
+                archive.unlink(missing_ok=True)
+                archive.with_name(archive.name + ".part").unlink(missing_ok=True)
 
     def select(self, service=None, model=None, user_id=None):
         if bool(service) != bool(model):
@@ -356,6 +389,8 @@ class Manager:
             return {"ok": True, "text": text, "elapsed_ms": round((time.monotonic() - started) * 1000), **selected}
 
     def set_default(self, service, model):
+        if not specification(service, model).get("default_eligible", True):
+            raise VoiceError("voice_default_restricted", "Model license scope is pending; choose another default", 422)
         with self.inference:
             selected = self.select(service, model)
             config = configuration()
@@ -426,6 +461,10 @@ class Manager:
 
     def startup(self):
         try:
+            from .voice_distribution import cleanup_legacy_samples
+            from .voice_lock import installation_lock
+            with installation_lock(root()):
+                cleanup_legacy_samples(root())
             if configuration()["enabled"]:
                 self.enable(True)
         except Exception:
