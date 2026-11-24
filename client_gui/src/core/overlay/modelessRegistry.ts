@@ -19,7 +19,7 @@ export function setModelessTaskbar(id: symbol, height: number): void { bars.set(
 export function removeModelessTaskbar(id: symbol): void { bars.delete(id) }
 
 export const TASKBAR_STYLE_FIELD = 'designer_taskbar_style'
-export const TASKBAR_STYLES = ['flowgate', 'modern', 'dock'] as const
+export const TASKBAR_STYLES = ['flowgate', 'modern', 'dock', 'classic'] as const
 export type TaskbarStyle = typeof TASKBAR_STYLES[number]
 export function normalizeTaskbarStyle(value: unknown): TaskbarStyle {
   return TASKBAR_STYLES.includes(value as TaskbarStyle) ? value as TaskbarStyle : 'flowgate'
@@ -29,7 +29,8 @@ export const modelessStyle = ref<TaskbarStyle>('flowgate')
 // Fixed item widths make overflow independent of title length and language.
 // Modern shows every item as a 44px icon tile (menu, designer, separator take about 120px).
 // Dock uses the same 44px tiles inside a floating group whose padding and wider separator add about 40px.
-const CAPACITY: Record<TaskbarStyle, [fixed: number, item: number, more: number]> = { flowgate: [260, 226, 80], modern: [120, 48, 52], dock: [160, 48, 52] }
+// Classic shows names: the round menu button and the designer item take about 250px, each window 180px plus a gap.
+const CAPACITY: Record<TaskbarStyle, [fixed: number, item: number, more: number]> = { flowgate: [260, 226, 80], modern: [120, 48, 52], dock: [160, 48, 52], classic: [250, 186, 80] }
 export function taskbarCapacity(width: number, count: number, style: TaskbarStyle = 'flowgate'): number {
   const [fixed, item, more] = CAPACITY[style] ?? CAPACITY.flowgate
   const room = Math.max(0, width - fixed)

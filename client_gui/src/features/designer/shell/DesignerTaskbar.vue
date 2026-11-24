@@ -8,7 +8,7 @@
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
     </div>
     <Teleport to="body" :disabled="!launchpad">
-    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', launchpad, 'overflow-list': popup === 'overflow' }" :data-blur="launchpad ? (plainBackdrop ? 'off' : 'on') : undefined" :aria-label="launchpad ? t('gui.taskbar.menu') : undefined" @keydown="menuKey" @pointerdown="launchpadPointer">
+    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'start-classic': popup === 'menu' && modelessStyle === 'classic', launchpad, 'overflow-list': popup === 'overflow' }" :data-blur="launchpad ? (plainBackdrop ? 'off' : 'on') : undefined" :aria-label="launchpad ? t('gui.taskbar.menu') : undefined" @keydown="menuKey" @pointerdown="launchpadPointer">
       <template v-if="launchpad">
         <div class="launch-grid" role="group" :aria-label="t('gui.taskbar.menu')">
           <template v-for="group in menuGroups" :key="group.key">
@@ -24,6 +24,17 @@
             <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="start-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="start-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="start-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
           </div>
         </template>
+      </template>
+      <template v-else-if="popup === 'menu' && modelessStyle === 'classic'">
+        <!-- A two-level start menu: the white pane lists one "group ▸" line per group, and pointing at or pressing a line
+             opens that group's cards in a sub-menu beside it. The user stays on the glass side. -->
+        <div class="start-classic-list">
+          <button v-for="group in menuGroups" :key="group.key" :ref="(el) => setGroupRef(group.key, el)" type="button" role="menuitem" class="classic-group" :class="{ active: classicGroup === group.key }" :style="{ '--card-color': group.color }" aria-haspopup="menu" :aria-expanded="classicGroup === group.key" :data-group="group.key" @pointerenter="hoverGroup(group.key)" @pointerleave="cancelHover" @click="openGroup(group.key)"><span class="classic-group-icon" aria-hidden="true">{{ group.icon }}</span><b>{{ t(group.label) }}</b><i v-if="group.cards.some(card => cardState(card.key) !== 'closed')" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /><span class="classic-group-arrow" aria-hidden="true">▸</span></button>
+        </div>
+        <div v-if="user" class="start-classic-side"><span class="classic-avatar" aria-hidden="true">{{ user.username.charAt(0).toUpperCase() }}</span><b>{{ user.username }}</b></div>
+        <div v-if="classicSub" ref="classicSubRoot" class="start-classic-sub" role="menu" :aria-label="t(classicSub.label)" :data-group="classicSub.key" :style="classicSubPos" @pointerenter="cancelHover">
+          <button v-for="card in classicSub.cards" :key="card.key" type="button" role="menuitem" class="classic-card" :style="{ '--card-color': classicSub.color }" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="classic-card-icon" aria-hidden="true">{{ card.icon }}</span><span class="classic-card-text"><b>{{ t(card.title) }}</b><small>{{ t(card.body) }}</small></span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+        </div>
       </template>
       <template v-else-if="popup === 'menu'">
         <template v-for="group in menuGroups" :key="group.key">
@@ -103,9 +114,9 @@ function restore(entry: ModelessEntry) { close(); entry.restore() }
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
 type CardKey = 'my-ai' | 'question-policy' | 'theme' | 'agents' | 'account' | 'security'
-const menuGroups: { key: string; label: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
-  { key: 'ai', label: 'gui.taskbar.group_ai', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
-  { key: 'settings', label: 'gui.taskbar.group_settings', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: '◈', title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
+const menuGroups: { key: string; label: string; icon: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
+  { key: 'ai', label: 'gui.taskbar.group_ai', icon: '❖', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
+  { key: 'settings', label: 'gui.taskbar.group_settings', icon: '⚙', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: '◈', title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
 ]
 const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false }, security: { open: false, minimized: false } })
 const windowRefs: Partial<Record<CardKey, { bringToFront?: () => void } | null>> = {}
@@ -121,9 +132,14 @@ function outside(event: Event) {
   if (event.target instanceof Node && !root.value?.contains(event.target) && !popupRoot.value?.contains(event.target)) close()
 }
 function escape(event: KeyboardEvent) {
-  if (popup.value && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true) }
+  if (!popup.value || event.key !== 'Escape') return
+  event.preventDefault(); event.stopPropagation()
+  // Esc steps back one level: an open classic sub-menu closes first, then the menu itself.
+  if (classicGroup.value) closeGroup(true)
+  else close(true)
 }
 function menuKey(event: KeyboardEvent) {
+  if (popup.value === 'menu' && modelessStyle.value === 'classic') { classicKey(event); return }
   const buttons = [...(popupRoot.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
   const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
   let index: number
@@ -135,6 +151,76 @@ function menuKey(event: KeyboardEvent) {
   event.preventDefault()
   buttons[index]?.focus()
 }
+// Classic sub-menus: which group's cards are open beside the first-level line, and where.
+const classicGroup = ref<string | null>(null)
+const classicSub = computed(() => menuGroups.find(group => group.key === classicGroup.value) ?? null)
+const classicSubRoot = ref<HTMLElement | null>(null)
+const classicSubPos = ref<Record<string, string>>({})
+const groupRefs: Record<string, HTMLButtonElement | null> = {}
+function setGroupRef(key: string, el: unknown) { groupRefs[key] = el as HTMLButtonElement | null }
+let hoverTimer: ReturnType<typeof setTimeout> | undefined
+function cancelHover() { clearTimeout(hoverTimer); hoverTimer = undefined }
+// A short pause before following the pointer, so crossing the other line on the way to a sub-menu does not swap it.
+function hoverGroup(key: string) { cancelHover(); if (classicGroup.value !== key) hoverTimer = setTimeout(() => { void openGroup(key) }, 150) }
+async function openGroup(key: string, focusFirst = false) {
+  cancelHover()
+  classicGroup.value = key
+  classicSubPos.value = { visibility: 'hidden' }
+  await nextTick()
+  placeSub()
+  // Wait for the placed (now visible) sub-menu to render: a hidden button cannot take focus.
+  await nextTick()
+  if (focusFirst && classicGroup.value === key) classicSubRoot.value?.querySelector<HTMLButtonElement>('button')?.focus()
+}
+function closeGroup(focusLine = false) {
+  const line = classicGroup.value ? groupRefs[classicGroup.value] : null
+  cancelHover()
+  classicGroup.value = null
+  if (focusLine) line?.focus()
+}
+// The sub-menu opens to the right of its line with its top level with the line. It moves up when it would run past
+// the taskbar, moves left when the screen is too narrow, and scrolls on its own when it is taller than the screen.
+function placeSub() {
+  const line = classicGroup.value ? groupRefs[classicGroup.value] : null
+  const pane = popupRoot.value
+  const sub = classicSubRoot.value
+  if (!line || !pane || !sub) return
+  const paneRect = pane.getBoundingClientRect()
+  const lineRect = line.getBoundingClientRect()
+  const listRect = (line.parentElement ?? line).getBoundingClientRect()
+  const barTop = root.value?.getBoundingClientRect().top ?? window.innerHeight
+  const gap = 8
+  const maxHeight = Math.max(120, barTop - gap * 2)
+  const width = sub.offsetWidth
+  // Full content height plus borders, even if an earlier placement capped it.
+  const height = Math.min(sub.scrollHeight + sub.offsetHeight - sub.clientHeight, maxHeight)
+  const left = Math.max(gap, Math.min(listRect.right - 2, window.innerWidth - width - gap))
+  const top = Math.max(gap, Math.min(lineRect.top - 1, barTop - height))
+  classicSubPos.value = { left: `${left - paneRect.left}px`, top: `${top - paneRect.top}px`, maxHeight: `${maxHeight}px` }
+}
+function classicKey(event: KeyboardEvent) {
+  const active = document.activeElement as HTMLElement | null
+  const inSub = !!(active && classicSubRoot.value?.contains(active))
+  const lines = menuGroups.map(group => groupRefs[group.key]).filter((el): el is HTMLButtonElement => !!el)
+  const buttons = inSub ? [...(classicSubRoot.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])] : lines
+  const current = buttons.indexOf(active as HTMLButtonElement)
+  const line = !inSub ? lines[current] : null
+  const lineKey = line?.dataset.group
+  if (event.key === 'ArrowRight' && lineKey) { event.preventDefault(); void openGroup(lineKey, true); return }
+  if ((event.key === 'Enter' || event.key === ' ') && lineKey) { event.preventDefault(); void openGroup(lineKey, true); return }
+  if (event.key === 'ArrowLeft' && inSub) { event.preventDefault(); closeGroup(true); return }
+  let index: number
+  if (event.key === 'ArrowDown') index = (current + 1) % buttons.length
+  else if (event.key === 'ArrowUp') index = (current - 1 + buttons.length) % buttons.length
+  else if (event.key === 'Home') index = 0
+  else if (event.key === 'End') index = buttons.length - 1
+  else return
+  event.preventDefault()
+  buttons[index]?.focus()
+}
+watch(popup, (value) => { if (value !== 'menu') closeGroup() })
+watch(modelessStyle, () => closeGroup())
+
 let observer: ResizeObserver | null = null
 function measure() {
   width.value = root.value?.clientWidth ?? 0
@@ -153,15 +239,18 @@ onMounted(() => {
   measure()
   if (typeof ResizeObserver !== 'undefined') { observer = new ResizeObserver(measure); observer.observe(root.value!) }
   window.addEventListener('resize', measure)
+  window.addEventListener('resize', placeSub)
   document.addEventListener('pointerdown', outside)
   document.addEventListener('focusin', outside)
   document.addEventListener('keydown', escape, true)
 })
 onBeforeUnmount(() => {
   readSeq++
+  cancelHover()
   observer?.disconnect()
   removeModelessTaskbar(id)
   window.removeEventListener('resize', measure)
+  window.removeEventListener('resize', placeSub)
   document.removeEventListener('pointerdown', outside)
   document.removeEventListener('focusin', outside)
   document.removeEventListener('keydown', escape, true)
@@ -260,5 +349,42 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .start-tile-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; font-size: 18px; color: var(--card-color, #94a3b8); background: color-mix(in srgb, var(--card-color, #94a3b8) 18%, var(--fg2-panel)); }
 .start-tile-name { max-width: 100%; font-size: 11.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .start-tile .menu-card-dot { position: absolute; top: 8px; right: 12px; margin: 0; }
+/* Classic: a glossy bar; the round [Menu] button and every item keep their names, aligned left. */
+.designer-taskbar[data-taskbar-style="classic"] { height: 44px; flex-basis: 44px; padding: 4px 8px; gap: 6px; border-top: 1px solid #5a7aa6; color: #eaf2ff; background: linear-gradient(180deg, #3d5b84 0%, #1d3354 48%, #0b1626 52%, #0d1b2e 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18); }
+[data-taskbar-style="classic"] .taskbar-item { height: 36px; border: 1px solid rgba(140, 175, 220, .35); border-radius: 4px; color: #eaf2ff; background: linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .03) 50%, rgba(0, 0, 0, .08) 51%, rgba(255, 255, 255, .05)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+[data-taskbar-style="classic"] .taskbar-item:hover { background: linear-gradient(180deg, rgba(150, 200, 255, .3), rgba(120, 170, 240, .12) 50%, rgba(60, 110, 190, .18) 51%, rgba(120, 170, 240, .22)); }
+[data-taskbar-style="classic"] .menu-trigger, [data-taskbar-style="classic"] .menu-trigger:hover { width: auto; padding: 0 15px 0 11px; gap: 7px; border: 1px solid #6fa3e0; border-radius: 18px; color: #fff; font-size: 12.5px; font-weight: 700; background: radial-gradient(circle at 50% 30%, #5fa8ff 0%, #1f5fb8 55%, #123b75 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 0 8px rgba(80, 150, 255, .5); }
+[data-taskbar-style="classic"] .menu-trigger:hover, [data-taskbar-style="classic"] .menu-trigger[aria-expanded="true"] { filter: brightness(1.18); }
+[data-taskbar-style="classic"] .designer-item { width: auto; padding: 0 14px 0 9px; border-color: #8fc0ff; background: linear-gradient(180deg, rgba(150, 200, 255, .38), rgba(100, 160, 240, .2) 50%, rgba(40, 100, 190, .3) 51%, rgba(100, 160, 240, .32)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 0 10px rgba(90, 160, 255, .45); }
+[data-taskbar-style="classic"] .item-text small, [data-taskbar-style="classic"] .designer-item i { display: none; }
+[data-taskbar-style="classic"] .item-icon { width: 20px; height: 20px; border-radius: 4px; font-size: 12px; }
+[data-taskbar-style="classic"] .designer-item .item-icon { color: #9ccaff; background: #1b3558; }
+[data-taskbar-style="classic"] .minimized-item { width: 180px; opacity: .72; }
+[data-taskbar-style="classic"] .minimized-item:hover { opacity: 1; }
+[data-taskbar-style="classic"] .minimized-item .item-icon { color: #fff; background: color-mix(in srgb, var(--kind-color, #4ba3ff) 70%, #0b1626); }
+[data-taskbar-style="classic"] .taskbar-separator { height: 26px; background: rgba(255, 255, 255, .2); }
+[data-taskbar-style="classic"] .overflow-trigger { text-align: center; }
+[data-taskbar-style="classic"] .overflow-list { border-radius: 6px; }
+/* The classic [Menu] opens a start menu that sits right on the bar, above the round button. */
+.taskbar-popup.start-classic { left: 4px; bottom: 100%; display: flex; width: min(430px, calc(100vw - 16px)); max-height: calc(100vh - 120px); box-sizing: border-box; padding: 8px; border: 1px solid #6d8fbd; border-radius: 8px 8px 0 0; color: #eaf2ff; background: linear-gradient(180deg, rgba(70, 110, 160, .94), rgba(25, 45, 75, .97) 40%, rgba(14, 28, 48, .98)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 0 1px rgba(0, 0, 0, .6), 0 -10px 36px rgba(0, 0, 0, .55); }
+.start-classic-list { flex: 0 1 264px; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; padding: 6px; border: 1px solid #9fb5d3; border-radius: 5px; color: #14243a; background: linear-gradient(180deg, #f4f7fb, #e6ecf4); box-shadow: inset 0 0 0 1px #fff; }
+.taskbar-popup .classic-group { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; box-sizing: border-box; padding: 4px 8px 4px 10px; border: 1px solid transparent; border-radius: 4px; color: #14243a; background: transparent; }
+.taskbar-popup .classic-group:hover, .taskbar-popup .classic-group:focus-visible, .taskbar-popup .classic-group.active { border-color: #7da2ce; background: linear-gradient(180deg, #eaf3fe, #cfe3fb); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .8); }
+.classic-group-icon { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; font-size: 15px; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #fff), var(--card-color, #94a3b8) 55%, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #000)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 1px 3px rgba(0, 0, 0, .35); }
+.classic-group b { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-group .menu-card-dot { margin-left: auto; }
+.classic-group-arrow { flex: none; margin-left: auto; padding-left: 8px; font-size: 11px; color: #3c5679; }
+.classic-group .menu-card-dot + .classic-group-arrow { margin-left: 0; }
+.start-classic-sub { position: absolute; z-index: 1; display: flex; flex-direction: column; gap: 2px; width: min(290px, calc(100vw - 16px)); overflow-y: auto; box-sizing: border-box; padding: 6px; border: 1px solid #6d8fbd; border-radius: 4px; color: #14243a; background: linear-gradient(180deg, #f4f7fb, #e6ecf4); box-shadow: inset 0 0 0 1px #fff, 2px 4px 16px rgba(0, 0, 0, .45); }
+.taskbar-popup .classic-card { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; box-sizing: border-box; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px; color: #14243a; background: transparent; }
+.taskbar-popup .classic-card:hover, .taskbar-popup .classic-card:focus-visible { border-color: #7da2ce; background: linear-gradient(180deg, #eaf3fe, #cfe3fb); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .8); }
+.classic-card-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 7px; font-size: 17px; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #fff), var(--card-color, #94a3b8) 55%, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #000)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 1px 3px rgba(0, 0, 0, .35); }
+.classic-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.classic-card-text b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-card-text small { font-size: 11px; color: #4f627c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-card .menu-card-dot { margin-left: auto; }
+.start-classic-side { flex: 1 1 140px; min-width: 0; display: flex; align-items: center; align-self: flex-start; gap: 10px; padding: 4px 4px 4px 12px; }
+.classic-avatar { flex: none; display: grid; place-items: center; width: 44px; height: 44px; box-sizing: border-box; border: 2px solid #dfe9f7; border-radius: 6px; font-size: 18px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #6aa9ff, #2a5aa8); box-shadow: 0 2px 6px rgba(0, 0, 0, .5); }
+.start-classic-side b { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 
