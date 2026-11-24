@@ -34,14 +34,14 @@ describe('0043 message changes', () => {
     expect(w.find('[data-test="tl-deleted"]').exists()).toBe(true)
     w.unmount()
   })
-  it('preserves old custom 30 while the hybrid starts at 10', async () => {
-    const w = mount(ComposerSettings, { props: { settings: { ...DEFAULT_CHAT_SETTINGS, contextTurns: 30 }, saving: false, hasProviders: true }, global: { plugins: [i18n] } })
+  it('preserves old custom 30 while the hybrid starts at 5', async () => {
+    const w = mount(ComposerSettings, { props: { settings: { ...DEFAULT_CHAT_SETTINGS, contextMode: 'recent', contextTurns: 30 }, saving: false, hasProviders: true }, global: { plugins: [i18n] } })
     await w.get('[data-test="conv-settings-btn"]').trigger('click')
     expect((w.get('[data-test="conv-setting-context"]').element as HTMLSelectElement).value).toBe('custom')
     await w.get('[data-test="conv-setting-context"]').setValue('checkpoint_recent')
-    expect((w.get('[data-test="conv-setting-turns"]').element as HTMLInputElement).value).toBe('10')
+    expect((w.get('[data-test="conv-setting-turns"]').element as HTMLInputElement).value).toBe('5')
     await w.get('[data-test="conv-settings-save"]').trigger('click')
-    expect(w.emitted('save')![0][0]).toMatchObject({ context_mode: 'checkpoint_recent', checkpoint_max_turns: 10 })
+    expect(w.emitted('save')![0][0]).toMatchObject({ context_mode: 'checkpoint_recent', checkpoint_max_turns: 5 })
     expect(w.emitted('save')![0][0]).not.toHaveProperty('context_turns')
     w.unmount()
   })

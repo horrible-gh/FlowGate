@@ -760,7 +760,7 @@ def _domains_release(ctx, held: list) -> None:
             locks.release(ctx, key)
 
 
-def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct: bool = False) -> dict:
+def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct: bool = False, before_update=None) -> dict:
     """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
     _gs.guard_group_branch_merge_free(group_id)
@@ -798,7 +798,7 @@ def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct:
             if ai_invoke_service.has_active_run(group_id):
                 raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
             return _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                                            lock_ctx=lock_ctx, require_clean=require_clean, reconstruct=reconstruct)
+                                            lock_ctx=lock_ctx, require_clean=require_clean, reconstruct=reconstruct, before_update=before_update)
         finally:
             group_ai_leases.release(group_id, lease_run_id, reason="group_update_finished")
     finally:
@@ -806,7 +806,7 @@ def update_from_base(group_id: str, *, require_clean: bool = False, reconstruct:
 
 
 def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path,
-                             *, lock_ctx=None, require_clean=False, reconstruct=False) -> dict:
+                             *, lock_ctx=None, require_clean=False, reconstruct=False, before_update=None) -> dict:
     """Run the existing update while the Group's G and group lease are held. The base
     checkout's part (gate, dirty check, fetch, fast-forward, start point) runs under B
     and R on ``lock_ctx`` (0669 unit 9a), released before the Group merge."""
@@ -890,8 +890,14 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
             _author_env_from_cfg(cfg),
         )
     before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
+    if before_update is not None:
+        before_update({"head": (before.stdout or "").strip(), "source_sha": source_sha,
+                       "source_ref": source_ref, "floor_before": floor_before})
+    # flowgate.v02test.0068: zdiff3, like the finalize merge. Without the base block the update
+    # conflict had no "both sides changed" evidence at all: the one-side-dropped check never ran on
+    # it and the resolver could not see what each side had changed.
     proc = _gs._run_git(
-        [*_gs._GIT_IDENT,
+        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3",
          "merge", "--no-ff", source_sha, "-m",
          f"Merge base '{work_base_ref}' into '{state['branch']}'"],
         cwd=wt_path, author_env=_author_env_from_cfg(cfg),
@@ -924,6 +930,12 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
             )
             # line-ending-only conflicts need no resolver.
             _gs.apply_eol_separation(merge_id, wt_path)
+            # flowgate.v02test.0068: an update conflict is announced like a merge conflict, so the
+            # open Git tab reads the conflict card at once instead of on the next tab switch.
+            _gs._emit("git_merge_conflict", project_id, group_id, {
+                "project": project_id, "group_id": group_id,
+                "merge_id": merge_id, "conflict_count": len(conflicts), "kind": "group_update",
+            })
             return {"ok": True, "result": {
                 "status": "conflict", "merge_id": merge_id,
                 "conflict_files": conflicts,

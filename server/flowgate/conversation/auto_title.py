@@ -349,8 +349,11 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
             record = p.ledger.load(flow_id)
             entry = slot_of(record)
             if entry.get("state") == "done" and entry.get("id") == target["id"]:
+                logger.info("flow naming skipped reason=target_not_pending flow=%s target=%s state=%s",
+                            flow_id, kind, "done")
                 return group, target, "done"
             if not p.eligible(kind, target):
+                logger.info("flow naming skipped reason=ineligible flow=%s target=%s", flow_id, kind)
                 return group, target, "skipped"
             if entry.get("id") != target["id"]:
                 # Another root document (or a first visit): its own name, its own budget.
@@ -397,11 +400,14 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
             record = p.ledger.load(flow_id)
             entry = slot_of(record)
             if entry.get("state") == "done":
+                logger.info("flow naming skipped reason=target_not_pending flow=%s target=%s state=%s",
+                            flow_id, kind, "done")
                 return "done"
             _, now = live()
             if (now is None or now["id"] != target["id"] or now["title"] != target["title"]
                     or not p.eligible(kind, now) or not entry.get("candidate")):
                 entry["state"] = "skipped"
+                logger.info("flow naming skipped reason=target_changed_or_ineligible flow=%s target=%s", flow_id, kind)
                 p.ledger.save(flow_id, record)
                 return "skipped"
             p.apply(flow_id, kind, now, entry["candidate"], str((user or {}).get("user_id") or ""))
@@ -442,6 +448,7 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
     else:
         text = _root_text(flow_id, provider_id)
     if not any(ch.isalnum() for ch in text):
+        logger.info("flow naming skipped reason=empty_message flow=%s target=%s", flow_id, kind)
         return None
     remote = legacy_adapter.naming_remote_provider(group["project_id"], provider_id)
     if kind == "root":
@@ -486,12 +493,14 @@ def schedule_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                         chat_doc_id: Optional[str] = None) -> bool:
     """Queue after caller commit; False on saturation/shutdown, never blocks sending."""
     if not _first_names_slots.acquire(blocking=False):
+        logger.info("flow naming skipped reason=pool_full flow=%s", flow_id)
         return False
     try:
         future = _first_names_pool.submit(generate_flow_names, flow_id, dict(user), provider_id, message, chat_doc_id)
         future.add_done_callback(lambda _: _first_names_slots.release())
         return True
-    except Exception:
+    except Exception as exc:
         _first_names_slots.release()
+        logger.warning("flow naming skipped reason=pool_unavailable flow=%s exception_type=%s", flow_id, type(exc).__name__)
         return False
 

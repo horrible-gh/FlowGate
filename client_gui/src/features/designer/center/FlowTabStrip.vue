@@ -57,7 +57,7 @@
         class="flow-tab-button"
         :aria-selected="tab.flowId === activeFlowId"
         :tabindex="tab.flowId === activeFlowId ? 0 : -1"
-        :title="tab.name"
+        :title="tabTitle(tab)"
         data-test="designer-flow-tab-button"
         @click="onClick(tab.flowId)"
         @keydown="onKeydown($event, tab.flowId)"
@@ -94,6 +94,11 @@
         <span v-if="conflictOf(tab.flowId)" class="flow-tab-conflict" :class="{ 'is-resolving': conflictOf(tab.flowId)!.state === 'resolving' }" role="img"
           :aria-label="conflictLabel(tab.flowId)" :title="conflictLabel(tab.flowId)" :data-conflict-state="conflictOf(tab.flowId)!.state"
           data-test="designer-flow-tab-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+        <!-- flowgate.v02test.0068: the Flow's Git run — the Git glyph in a turning ring while it goes on, then its result
+             (done green / update skipped yellow / stopped red) until the tab is activated again. -->
+        <span v-if="gitOf(tab.flowId)" class="flow-tab-git" :class="`is-${gitOf(tab.flowId)!.state}`" role="img"
+          :aria-label="gitLabel(tab.flowId)" :title="gitLabel(tab.flowId)" :data-git-state="gitOf(tab.flowId)!.state"
+          data-test="designer-flow-tab-git"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="6" cy="19" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="18" cy="7" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><path d="M6 7.3v9.4M18 9.3c0 4.8-6 4.2-11 7.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></span>
         <!-- 0078: the Flow has an open terminal (the chat bubble's place; both show when both apply). -->
         <span v-if="terminalStates?.[tab.flowId]" class="flow-tab-terminal" role="img" :aria-label="terminalMark"
           :title="terminalMark" data-test="designer-flow-tab-terminal">&gt;_</span>
@@ -102,7 +107,9 @@
           :title="t('gui.designer.center.tab_chat')" data-test="designer-flow-tab-chat"><ChatBubbleIcon :size="14" /></span>
         <span v-else-if="chatEndOf(tab.flowId)" class="flow-tab-chat" :class="`is-${chatEndOf(tab.flowId)}`" role="img"
           :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" :title="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)"
-          data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span>{{ tab.name }}
+          data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span><!--
+          flowgate.v02test.0077: the Flow number before the name, dim (`F77 ID`); none for an id without a group number. -->
+        <span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-no">{{ flowLabel(tab.flowId) }}</span>{{ tab.name }}
       </button>
       <IconButton
         class="flow-tab-close"
@@ -149,7 +156,7 @@
               class="flow-tab-list-item"
               :class="{ 'is-active': tab.flowId === activeFlowId, 'is-archived': isArchived(tab.flowId) }"
               :aria-checked="tab.flowId === activeFlowId ? 'true' : 'false'"
-              :title="tab.name"
+              :title="tabTitle(tab)"
               data-test="designer-flow-tab-list-item"
               :data-flow-id="tab.flowId"
               @click="pickFromList(tab.flowId, close)"
@@ -184,7 +191,10 @@
               <span v-if="conflictOf(tab.flowId)" class="flow-tab-conflict" :class="{ 'is-resolving': conflictOf(tab.flowId)!.state === 'resolving' }" role="img"
           :aria-label="conflictLabel(tab.flowId)" :title="conflictLabel(tab.flowId)" :data-conflict-state="conflictOf(tab.flowId)!.state"
           data-test="designer-flow-tab-list-conflict"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="HEADER_GLYPHS.conflict" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
-        <span class="flow-tab-list-name">{{ tab.name }}</span>
+              <span v-if="gitOf(tab.flowId)" class="flow-tab-git" :class="`is-${gitOf(tab.flowId)!.state}`" role="img"
+                :aria-label="gitLabel(tab.flowId)" :title="gitLabel(tab.flowId)" :data-git-state="gitOf(tab.flowId)!.state"
+                data-test="designer-flow-tab-list-git"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="6" cy="19" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><circle cx="18" cy="7" r="2.3" fill="none" stroke="currentColor" stroke-width="2" /><path d="M6 7.3v9.4M18 9.3c0 4.8-6 4.2-11 7.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></span>
+        <span class="flow-tab-list-name"><span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-list-no">{{ flowLabel(tab.flowId) }}</span>{{ tab.name }}</span>
             </button>
           </div>
         </div>
@@ -204,11 +214,19 @@ import LineIcon from '../../../components/ui/LineIcon.vue'
 import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 import type { FlowTabConflict } from './flowTabConflicts'
+import { flowLabel } from './graph/cardIds'
+import { gitTabActivityLabel, type GitTabActivity } from './gitTabActivity'
 import { wordsFor as terminalWordsFor } from '../flowTerminal/words'
 
 export interface FlowTabStripItem {
   readonly flowId: string
   readonly name: string
+}
+
+/** flowgate.v02test.0077: a tab's hover text — `F77 · ID` (the name alone for an id without a group number). */
+function tabTitle(tab: FlowTabStripItem): string {
+  const label = flowLabel(tab.flowId)
+  return label ? `${label} · ${tab.name}` : tab.name
 }
 
 /** the run states a tab marks (the run lock's statuses, each with its own mark). */
@@ -234,6 +252,8 @@ const props = withDefaults(
     runEnds?: Readonly<Record<string, FlowTabRunEnd | undefined>>
     /** a chat answer that ended while its tab was not active (shown while it is not answering). */
     chatEnds?: Readonly<Record<string, FlowTabChatEnd | undefined>>
+    /** flowgate.v02test.0068: the Flow's Git run and its result, by flow id (gitTabActivity). */
+    gitActivity?: Readonly<Record<string, GitTabActivity | undefined>>
   }>(),
   { runStates: () => ({}), archived: () => ({}), runEnds: () => ({}), chatEnds: () => ({}) },
 )
@@ -296,6 +316,16 @@ function isArchived(flowId: string): boolean {
 
 function runEndOf(flowId: string): FlowTabRunEnd | null {
   return props.runEnds[flowId] ?? null
+}
+
+/** flowgate.v02test.0068: the Flow's Git run (running / done / skipped / remaining / failed), or null. */
+function gitOf(flowId: string): GitTabActivity | null {
+  return props.gitActivity?.[flowId] ?? null
+}
+
+function gitLabel(flowId: string): string {
+  const activity = gitOf(flowId)
+  return activity ? gitTabActivityLabel(activity, locale.value) : ''
 }
 
 function chatEndOf(flowId: string): FlowTabChatEnd | null {
@@ -554,7 +584,7 @@ function updateHiddenMark() {
   }
   const view = strip.getBoundingClientRect()
   hiddenMark.value = props.tabs.some((tab) => {
-    if (!conflictOf(tab.flowId) && !hasEndMark(tab.flowId)) return false
+    if (!conflictOf(tab.flowId) && !hasEndMark(tab.flowId) && !gitOf(tab.flowId)) return false
     const rect = tabRefs.get(tab.flowId)?.getBoundingClientRect()
     return !!rect && (rect.left < view.left - 1 || rect.right > view.right + 1)
   })
@@ -572,7 +602,7 @@ onMounted(() => {
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
     JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
-    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), props.activeFlowId],
+    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), JSON.stringify(props.gitActivity ?? {}), props.activeFlowId],
   () => nextTick(updateOverflow),
 )
 
@@ -812,6 +842,15 @@ function pickFromList(flowId: string, close: () => void) {
   height: 14px;
 }
 
+/* flowgate.v02test.0077: the Flow number before a tab name — dim, monospace, never taking the name's colour. */
+.flow-tab-no {
+  margin-right: 5px;
+  color: #7d95ab;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .flow-tab-list-name {
   min-width: 0;
   overflow: hidden;
@@ -956,6 +995,46 @@ function pickFromList(flowId: string, close: () => void) {
   border-top-color: var(--fg2-status-warning-fg, #ffc072);
   border-radius: 50%;
   animation: flow-tab-spin 0.8s linear infinite;
+}
+
+/* flowgate.v02test.0068 — the Flow's Git run: the Git glyph (14px, like the conflict mark). Running: smaller, inside a
+   blue turning ring (the run mark's keyframes); ended: coloured by the result with a dot of the same colour. */
+.flow-tab-git {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -3px;
+  color: var(--fg2-blue, #8bb5ef);
+}
+.flow-tab-git svg { width: 14px; height: 14px; }
+.flow-tab-git.is-running svg { transform: scale(0.62); }
+.flow-tab-git.is-running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1.6px solid rgba(139, 181, 239, 0.25);
+  border-top-color: var(--fg2-blue, #8bb5ef);
+  border-radius: 50%;
+  animation: flow-tab-spin 0.8s linear infinite;
+}
+.flow-tab-git.is-done { color: var(--fg2-status-success-fg, #4fe0d3); }
+.flow-tab-git.is-skipped,
+.flow-tab-git.is-remaining { color: var(--fg2-status-warning-fg, #ffc072); }
+.flow-tab-git.is-failed { color: var(--fg2-status-danger-fg, #ff96a6); }
+.flow-tab-git:not(.is-running)::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--fg2-panel, #0d1a28);
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .flow-tab-archive {

@@ -21,13 +21,14 @@ from tests.modules.flow_gate.test_flow_archive_v02test_0002 import (
 
 def test_worker_token_is_not_a_user(env):
     assert call(env, "post", expected=403, token="worker")["error"]["code"] == "token_kind_not_allowed"
-def test_archive_rechecks_after_get_and_duplicate_requests_are_idempotent(env):
+def test_archive_rechecks_after_get_and_duplicate_requests_are_idempotent(env, monkeypatch):
+    from modules.flow_gate.graph_workflow.store import run_store
     seed_run(env)
     seed_decision(env)
     assert call(env)["eligible"]
-    sql(env, "UPDATE graph_runs SET status='running' WHERE run_id='current'")
-    call(env, "post", expected=409)
-    sql(env, "UPDATE graph_runs SET status='idle' WHERE run_id='current'")
+    with monkeypatch.context() as activity:
+        activity.setattr(run_store, "has_active_attempts", lambda _: True)
+        assert call(env, "post", expected=409)["error"]["code"] == "work_unfinished"
     first = call(env, "post")
     second = call(env, "post")
     assert first["archived_at"] == second["archived_at"]

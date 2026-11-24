@@ -19,7 +19,7 @@
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
     <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
-    <GitExceptionList :execution-active="!!worktree.state.execution" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
+    <GitExceptionList :execution-active="worktree.state.execution?.status === 'running' || worktree.state.execution?.status === 'stopped'" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" @settings="openConnect" @station="openStation" />
     <template v-for="win in session.state.windows" :key="win.id">
@@ -104,6 +104,7 @@ import { createHttpGitSource, type GitSource } from './gitSource'
 import { createGitSession, GIT_PANEL_CONTEXT, type GitConfirmRequest } from './gitSession'
 import { createGitWorktreeSession, GIT_WORKTREE_CONTEXT, WORKTREE_REFRESH_EVENTS, type WorktreeTicket } from './gitWorktreeSession'
 import { useInspectorEvents } from '../designer/inspector/useInspectorResource'
+import type { GitExecutionStep, GitTabActivity } from './gitExecution'
 import type {
   GitBadge,
   GitConfigSave,
@@ -133,8 +134,10 @@ const props = withDefaults(
      * Absent = the signed-in person's own flag (`core/auth/currentUser`, from /auth/me); the server checks it again.
      */
     isAdmin?: boolean
+    /** Raised by one each time the Designer asks for the Git station window (the taskbar's [Git]). */
+    stationRequest?: number
   }>(),
-  { active: true, readOnly: false, source: undefined, isAdmin: undefined },
+  { active: true, readOnly: false, source: undefined, isAdmin: undefined, stationRequest: 0 },
 )
 
 const emit = defineEmits<{
@@ -142,6 +145,10 @@ const emit = defineEmits<{
   'open-diff': [intent: GitDiffIntent]
   'open-confirm-settings': [intent: GitConfirmSettingsIntent]
   'windows-change': [windows: GitWindowDescriptor[]]
+  /** flowgate.v02test.0068: the shown Flow's Git run for its Flow tab (null = no mark). */
+  'git-activity': [flowId: string, activity: GitTabActivity | null]
+  /** flowgate.v02test.0068: the shown Flow's conflict appeared, changed or went (its Flow tab reads its mark again). */
+  'git-conflict-change': [flowId: string]
 }>()
 
 const { t } = useI18n()
@@ -202,7 +209,39 @@ useInspectorEvents(
   {
     events: GIT_LEDGER_EVENTS,
     matches: (frame, scope) => frame.groupId === scope.flowId,
-    changed: () => void session.refresh(),
+    changed: () => {
+      void session.refresh()
+      // flowgate.v02test.0068: an open session worktree status names may have just ended (resolved, aborted, swept):
+      // read it again too, or its line / card would stay until the next worktree read.
+      if (worktree.state.status?.blockers.some((b) => b.code === 'session_open')) worktree.refresh()
+    },
+  },
+)
+// flowgate.v02test.0068: the open session worktree status names for the shown Flow goes to the Git session, which shows
+// a 받아오기 conflict in the conflict card even when git/status has no conflict row for it.
+watch(
+  () => {
+    const groupId = session.state.flow?.groupId ?? null
+    const status = worktree.state.status
+    const open = status?.groupId === groupId ? status?.blockers.find((b) => b.code === 'session_open' && b.mergeId != null && !!b.sessionKind) : undefined
+    return groupId && open ? JSON.stringify([groupId, open.mergeId, open.sessionKind]) : ''
+  },
+  (key) => {
+    if (!key) return session.adoptOpenSession(null)
+    const [groupId, mergeId, kind] = JSON.parse(key) as [string, number, string]
+    session.adoptOpenSession({ groupId, mergeId, kind })
+  },
+  { immediate: true },
+)
+// flowgate.v02test.0068: the shown Flow's conflict appeared, changed or went as the panel reads it (a resolve, an abort,
+// 세션 중단): its Flow tab reads its conflict mark again now instead of waiting for a server event that may not come.
+watch(
+  () => {
+    const row = session.pendingRow.value
+    return [session.state.flow?.groupId ?? null, row?.status === 'conflict' ? `${row.mergeId ?? ''}|${row.reviewState ?? ''}` : null] as const
+  },
+  ([groupId, conflict], [prevGroup, prevConflict]) => {
+    if (groupId && groupId === prevGroup && conflict !== prevConflict) emit('git-conflict-change', groupId)
   },
 )
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
@@ -292,6 +331,50 @@ function openTargetDiff(path: string, letter: string, target: string): void {
 }
 
 provide(GIT_WORKTREE_CONTEXT, { worktree, diff, openFileDiff, openTargetDiff, confirm: askConfirm })
+
+// flowgate.v02test.0068: the shown Flow's Git run (실행) or individual 받아오기 / 병합 / 푸시, for its Flow tab — a turning
+// mark while it goes on, then done / update skipped / stopped with the step and code (`git-activity`). A Flow switch
+// stops the old Flow's run on this side, so its running mark goes without a result.
+const TAB_BUSY: readonly string[] = ['execution', 'update', 'merge', 'push']
+function tabResultOf(kind: string): GitTabActivity | null {
+  if (kind === 'execution') {
+    const plan = worktree.state.execution
+    if (!plan) return null
+    if (plan.status === 'stopped') return { state: 'failed', step: plan.steps[plan.cursor] ?? null, code: plan.error }
+    const skipped = plan.skipped?.update ?? null
+    // Work left after the run reads as the run box says it (yellow), not as done.
+    if (plan.status === 'remaining') return { state: 'remaining', step: null, code: skipped }
+    return { state: skipped ? 'skipped' : 'done', step: skipped ? 'update' : null, code: skipped }
+  }
+  const step = kind as GitExecutionStep
+  const notice = worktree.state.notices[kind === 'push' ? 'push' : 'apply']
+  if (notice?.tone === 'error' || notice?.code === 'merge_conflict') {
+    return { state: 'failed', step, code: notice.code === 'failed' ? String(notice.params?.code ?? 'failed') : notice.code }
+  }
+  return { state: 'done', step, code: null }
+}
+watch(
+  () => [session.state.flow?.groupId ?? null, worktree.state.busy, worktree.state.execution?.cursor ?? null] as const,
+  ([groupId, busy], previous) => {
+    const [prevGroup, prevBusy] = previous ?? [null, null, null]
+    const wasRunning = !!prevBusy && TAB_BUSY.includes(prevBusy)
+    if (prevGroup && prevGroup !== groupId && wasRunning) tabActivity(prevGroup, null)
+    if (!groupId) return
+    if (busy && TAB_BUSY.includes(busy)) {
+      const plan = worktree.state.execution
+      const step = busy === 'execution' ? plan?.steps[plan.cursor] ?? null : (busy as GitExecutionStep)
+      tabActivity(groupId, { state: 'running', step, code: null })
+      return
+    }
+    if (prevGroup === groupId && wasRunning) tabActivity(groupId, tabResultOf(prevBusy as string))
+  },
+)
+let runningTab: string | null = null
+function tabActivity(flowId: string, activity: GitTabActivity | null): void {
+  runningTab = activity?.state === 'running' ? flowId : runningTab === flowId ? null : runningTab
+  emit('git-activity', flowId, activity)
+}
+onBeforeUnmount(() => { if (runningTab) emit('git-activity', runningTab, null) })
 
 // Another project or Flow group closes the open diff (it opens only intents of the current one).
 watch(
@@ -389,6 +472,8 @@ const stationOpen = ref(false)
 const stationRef = ref<InstanceType<typeof GitStationWindow> | null>(null)
 function openStation(): void { stationOpen.value = true; stationRef.value?.restore() }
 watch(() => props.projectId, () => { stationOpen.value = false })
+// The taskbar's [Git]: open (or bring back) the station window once per request, also the one that mounted the panel.
+watch(() => props.stationRequest, (count, old) => { if (count > 0 && count !== old) openStation() }, { immediate: true })
 const connectOpen = ref(false)
 const connectMinimized = ref(false)
 const connectInitial = shallowRef<GitConnectInitial | null>(null)

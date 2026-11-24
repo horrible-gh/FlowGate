@@ -32,6 +32,7 @@ from modules.flow_gate.graph_workflow.projection.flow_snapshot import (
 )
 from modules.flow_gate.graph_workflow.projection.graph_projector import GraphView, add_draft, project_graph
 from modules.flow_gate.graph_workflow.projection.legacy_projector import Projection, project
+from modules.flow_gate.services import card_numbers
 from modules.flow_gate.graph_workflow.store import (
     assignment_store,
     definition_store,
@@ -173,7 +174,9 @@ def read_canvas(group: dict, user_id: Optional[str], *, view: Optional[str], col
         from .result_binder import reconcile_if_needed       # noqa: PLC0415 — see _flow_run
         reconcile_if_needed(flow_id, project_id)                 # before a run read
     ident = ensure_identity(flow_id, project_id, user_id, client_id)
-    return with_read_snapshot(lambda: _read(group, user_id, ident, view, collapse))
+    body = with_read_snapshot(lambda: _read(group, user_id, ident, view, collapse))
+    card_numbers.fill_missing(flow_id, body["nodes"])      # a drawn card without a number gets one, once
+    return body
 
 
 def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], collapse: Optional[str], *, lookup=None) -> dict:
@@ -190,6 +193,7 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
     _place(proj, layout_store.positions(flow_id))
     for node in proj.nodes:
         node.setdefault("title_state", None)                      # free documents, v0.1 slots
+    flow_ref = card_numbers.decorate(flow_id, proj.nodes)          # card_ref per node: F77-12 and its forms
     applied, ignored = cm.parse_collapse(collapse)
     hidden_counts = _collapse(proj, applied)
     view_block = None
@@ -201,6 +205,7 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
     return {
         "flow_id": flow_id,
         "project_id": project_id,
+        "flow_ref": flow_ref,
         "ownership": block(flow_id, own),
         "projection": proj.projection,
         "view": view_block,

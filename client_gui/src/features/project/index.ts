@@ -28,8 +28,10 @@ export { useProjectStore } from './store'
 // adds the subscription and frame shapes of the store's project event
 // subscription (subscribeProjectEvents, the hub the Canvas subscription also runs on).
 // adds the Designer F5 snapshot shape the Designer Shell saves / restores through the store.
+// v02test.0068 adds a Flow's durable Git run as its Flow tab reads it (FlowGitExecution).
 export type { RoleRunFields, RoleWaitReason } from './types'
 export type { FlowArchiveState } from './flowArchiveApi'
+export type { CardRefMatch } from './cardRefApi'
 export type { AiInvocation, AiInvocationsPage } from './aiInvocationsApi'
 // adds the result of one step / full command (the run result windows read it through the store).
 export type {
@@ -74,6 +76,7 @@ export type {
   FlowCanvasPosition,
   FlowCanvasSlot,
   FlowCanvasTitleState,
+  FlowCardRef,
   FlowCanvasView,
   FlowCanvasViewport,
   FlowChangeSet,
@@ -81,6 +84,7 @@ export type {
   FlowFileDiff,
   FlowFileNode,
   FlowFileTree,
+  FlowGitExecution,
   FlowGraphAssignee,
   FlowGraphConfirmResult,
   FlowGraphDefinition,

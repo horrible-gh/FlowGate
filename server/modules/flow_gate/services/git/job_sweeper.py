@@ -46,7 +46,7 @@ from modules.flow_gate.db.connection import now_iso
 from . import approval_freeze
 from . import approval_publish
 from . import archive_publish
-from . import base_publish
+from . import base_publish, execution
 from . import branch_merge_publish
 from . import worktree_cleanup
 from . import worktree_provision
@@ -243,6 +243,7 @@ def run_forever() -> None:
     _safe("cleanup_executor", worktree_cleanup.install)
     _safe("provision_executor", worktree_provision.install)
     _safe("base_publish_executor", base_publish.install)
+    _safe("git_execution_executor", execution.install)
     _safe("branch_merge_executor", branch_merge_publish.install)
     _safe("archive_executor", archive_publish.install)
     _safe("job_workers_start", runner.start)

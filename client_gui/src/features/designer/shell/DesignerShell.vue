@@ -24,7 +24,7 @@
       :is-read-only="id => center.isFlowReadOnly(id)" :is-archived="id => center.isFlowArchived?.(id) ?? null" />
     <!-- 0078: the Flow terminal windows (admins only; the toolbar's [터미널]). -->
     <FlowTerminalHost ref="terminalHost" :key="`terminal:${projectStore.designerSessionOwner ?? ''}`"
-      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" :dock-target="terminalDockTarget" />
+      :flow-id="center.state.activeFlowId" :tabs="center.state.tabs" :fill-target="terminalFillTarget" />
     <DesignerTop
       :notifications-open="notificationsOpen"
       :notification-project-id="projectId"
@@ -37,7 +37,7 @@
       :targets="menuTargets"
       :recent="recent"
       :can-validate="center.activeCanValidate.value"
-      :can-archive="archiveState?.eligible === true && runPhase === 'idle'"
+      :can-archive="archiveState?.eligible === true && !archiveRunActive"
       :archive-busy="!!projectStore.archiveBusy[center.state.activeFlowId ?? '']"
       :archive-reason="archiveReason"
       @archive="archiveActiveFlow"
@@ -118,7 +118,7 @@
         />
       </template>
     </DesignerBody>
-    <DesignerTaskbar />
+    <DesignerTaskbar :has-flow="hasWorkTarget" @pin="onTaskbarPin" />
 
     <DesignerOpenDialog
       :open="dialog === 'group-open'"
@@ -151,6 +151,11 @@
     <RunResultDetailWindow :key="`detail-${runResult.state.seq}`" :result="runResult.state.result" :open="runResult.state.detailOpen" :flow-name="runResultFlowName" @close="runResult.closeDetail" />
     <DesignerContextMenu :host="contextMenu.host" @request="contextMenu.run" />
     <component :is="contextMenu.dialogs" v-if="contextMenu.actions" :actions="contextMenu.actions" />
+    <!-- v02test.0083: the toolbar's and the Flow row menu's Archive ask once for a Flow that is not completed. -->
+    <ConfirmDialog :open="archiveConfirmFlowId !== null" :title="t('gui.designer.archive.confirm_title')"
+      :message="t('gui.designer.archive.confirm_incomplete')" :confirm-label="t('gui.designer.archive.action')"
+      :cancel-label="t('gui.designer.archive.cancel')" icon="alert" data-test="designer-archive-confirm"
+      @confirm="confirmArchive" @cancel="archiveConfirmFlowId = null" />
     <ToastHost :toasts="shownToasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
@@ -272,10 +277,13 @@ import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRu
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import DesignerTaskbar from './DesignerTaskbar.vue'
+import type { TaskbarPin } from './taskbarIcons'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
+import { flowArchiveReason } from '../archive/flowArchiveReason'
 import ToastHost, { type ToastHostItem } from '../../../components/ui/ToastHost.vue'
+import ConfirmDialog from '../../../components/ui/ConfirmDialog.vue'
 import { copyToClipboard } from '@/core/interaction/clipboard'
 import { createDesignerCenterSession, type ArrangeKind, type CanvasNodeSpec, type FlowRunFailure } from '../center/designerCenterSession'
 import { createServerFlowGraphSource } from '../center/graph/serverFlowGraphSource'
@@ -511,14 +519,13 @@ const activeFlowRef = center.activeFlowRef
 const attachmentHost = ref<InstanceType<typeof FlowAttachmentHost> | null>(null)
 // 0078: the Flow terminal windows.
 const terminalHost = ref<InstanceType<typeof FlowTerminalHost> | null>(null)
-// 0078 · 0009-T: a terminal can be docked into the bottom Dock. The Dock gives its terminal place and draws the
-// Inspector | 터미널 switch through this bridge (it injects the same key and imports nothing of the terminal).
-const terminalDockTarget = shallowRef<HTMLElement | null>(null)
-provide(Symbol.for('flowgate.designer.bottomDockTerminal'), {
-  pane: (flowId: string | null) => terminalHost.value?.bottomPane(flowId) ?? null,
-  select: (flowId: string, pane: 'inspector' | 'terminal') => terminalHost.value?.selectBottomPane(flowId, pane),
-  setTarget: (el: HTMLElement | null) => { terminalDockTarget.value = el },
-  labels: () => terminalHost.value?.dockLabels() ?? null,
+// 0078 · 0015-T A: 모달리스 ↔ 디자이너. A terminal can fill the whole Designer area under the Flow tab strip (the Canvas
+// and the bottom Inspector · Minimap places). The Center column gives that place and shows it through this bridge
+// (it injects the same key and imports nothing of the terminal).
+const terminalFillTarget = shallowRef<HTMLElement | null>(null)
+provide(Symbol.for('flowgate.designer.terminalFill'), {
+  active: (flowId: string | null) => terminalHost.value?.designerActive(flowId) ?? false,
+  setTarget: (el: HTMLElement | null) => { terminalFillTarget.value = el },
 })
 
 const hasWorkTarget = computed(() => activeFlowRef.value !== null)
@@ -1014,6 +1021,14 @@ function onDensity(level: DesignerDensity) {
 
 /** the step a card drag moves in at the chosen density (null = freeform, none). */
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
+
+// The taskbar's pinned buttons run the same paths as the toolbar; [Open project] opens the project list as a floating
+// window (File › Open project keeps the modal dialog).
+function onTaskbarPin(pin: TaskbarPin) {
+  if (pin === 'project') projectStore.openDialog({ window: true })
+  else if (pin === 'attachments') onTopCommand('view.attachments')
+  else if (pin === 'terminal') onTopCommand('view.terminal')
+}
 
 function onTopCommand(command: DesignerTopCommand) {
   if (command === 'view.attachments') { void attachmentHost.value?.open(); return }
@@ -1551,11 +1566,19 @@ watch(
 // Display archive: toolbar and clicked-row menu share this action. Server rechecks under its Flow guard.
 const archiveState = ref<FlowArchiveState | null>(null)
 let archiveReadSeq = 0
-const archiveReason = computed(() => {
-  const reason = archiveState.value?.reason
-  const key = `gui.designer.archive.${reason ?? 'unavailable'}`
-  return archiveState.value?.eligible ? '' : t(te(key) ? key : 'gui.designer.archive.unavailable')
+// v02test.0083: only a Flow actually running (or stopping) keeps the toolbar's Archive off on the client; a paused,
+// stopped or never-run Flow follows the server's `eligible` alone.
+function archiveRunActiveFor(flowId: string): boolean {
+  const phase = center.state.activeFlowId === flowId
+    ? runPhase.value : runPhaseOf(center.runStatus(flowId).run?.status)
+  return phase === 'running' || phase === 'stopping' || center.state.runs[flowId]?.action === 'stop'
+}
+const archiveRunActive = computed(() => {
+  const flowId = center.state.activeFlowId
+  return flowId !== null && archiveRunActiveFor(flowId)
 })
+// F83-5: the same text the project tree's right-click Archive item shows (one shared rule).
+const archiveReason = computed(() => flowArchiveReason(archiveState.value, archiveRunActive.value, t, te))
 async function refreshArchiveState() {
   const flowId = center.state.activeFlowId
   const seq = ++archiveReadSeq
@@ -1574,6 +1597,7 @@ async function changeArchive(flowId: string, archived: boolean) {
   const pid = projectId.value
   if (!pid || projectStore.archiveBusy[flowId]) return
   try {
+    if (archived && archiveRunActiveFor(flowId)) return
     const result = await projectStore.setFlowArchived(pid, flowId, archived)
     if (projectId.value !== pid) return
     center.setFlowArchived(flowId, result.archived)
@@ -1584,10 +1608,30 @@ async function changeArchive(flowId: string, archived: boolean) {
     void refreshArchiveState()
   }
 }
-async function archiveFlow(flowId: string) { await changeArchive(flowId, true) }
+// v02test.0083: a Flow that is not completed (`completed === false`, or absent) is archived only after one confirmation.
+const archiveConfirmFlowId = ref<string | null>(null)
+async function archiveCompleted(flowId: string): Promise<boolean> {
+  if (center.state.activeFlowId === flowId && archiveState.value) return archiveState.value.completed
+  return (await projectStore.readFlowArchive(flowId)).completed
+}
+async function archiveFlow(flowId: string) {
+  if (archiveRunActiveFor(flowId)) return
+  let completed: boolean
+  try { completed = await archiveCompleted(flowId) } catch {
+    menuToast(() => t('gui.designer.archive.failed'), 'warning')
+    return
+  }
+  if (completed) await changeArchive(flowId, true)
+  else archiveConfirmFlowId.value = flowId
+}
+function confirmArchive() {
+  const flowId = archiveConfirmFlowId.value
+  archiveConfirmFlowId.value = null
+  if (flowId) void changeArchive(flowId, true)
+}
 function archiveActiveFlow() {
   const flowId = center.state.activeFlowId
-  if (flowId && archiveState.value?.eligible) void archiveFlow(flowId)
+  if (flowId && archiveState.value?.eligible && !archiveRunActive.value) void archiveFlow(flowId)
 }
 
 let archiveEvents: (() => void) | null = null
@@ -1823,6 +1867,7 @@ const contextMenu = useDesignerContextMenu({
   archive: {
     read: (flowId) => projectStore.readFlowArchive(flowId),
     busy: (flowId) => !!projectStore.archiveBusy[flowId],
+    running: archiveRunActiveFor,
     archiveFlow,
     restoreFlow: (flowId) => changeArchive(flowId, false),
   },

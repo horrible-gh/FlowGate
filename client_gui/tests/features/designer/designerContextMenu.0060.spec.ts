@@ -434,13 +434,13 @@ describe('T-c clicked Flow archive menu', () => {
     const archiveFlow = vi.fn(async () => {})
     const restoreFlow = vi.fn(async () => {})
     let connector!: ReturnType<typeof useDesignerContextMenu>
-    const scope = reactive({ alive: true, busy: false })
+    const scope = reactive({ alive: true, busy: false, running: false })
     const Harness = defineComponent({ setup() {
       connector = useDesignerContextMenu({
         center: reactive({ state: { projectId: 'p', activeFlowId: 'open-flow', tabs: [] } }) as any,
         projectId: () => 'p', canSelectAll: () => false, selectAll: vi.fn(), openGroupCreate: vi.fn(),
         openFlowCreate: vi.fn(), selectPalette: vi.fn(), arrange: { groups: [], enabled: () => false, run: vi.fn() },
-        archive: { read, busy: () => scope.busy, archiveFlow, restoreFlow },
+        archive: { read, busy: () => scope.busy, running: () => scope.running, archiveFlow, restoreFlow },
       })
       return () => h(DesignerContextMenu, { host: connector.host, onRequest: connector.run })
     } })
@@ -461,6 +461,23 @@ describe('T-c clicked Flow archive menu', () => {
     await flushPromises()
     expect(c.archiveFlow).toHaveBeenCalledTimes(1)
     expect(c.archiveFlow).toHaveBeenCalledWith('other-flow')
+  })
+  it('blocks a running clicked Flow even when eligible and rechecks after the menu opens', async () => {
+    const c = await connect(vi.fn(async () => ({ archived: false, eligible: true })))
+    c.scope.running = true
+    c.open('other-flow')
+    await flushPromises()
+    expect(button('flow.archive').getAttribute('aria-disabled')).toBe('true')
+    button('flow.archive').click()
+    expect(c.archiveFlow).not.toHaveBeenCalled()
+    c.scope.running = false
+    c.open('other-flow')
+    await flushPromises()
+    expect(button('flow.archive').getAttribute('aria-disabled')).toBe('false')
+    c.scope.running = true
+    button('flow.archive').click()
+    await flushPromises()
+    expect(c.archiveFlow).not.toHaveBeenCalled()
   })
   it('restores archived rows and keeps project/group menus unchanged', async () => {
     const read = vi.fn(async () => ({ archived: true, eligible: false }))

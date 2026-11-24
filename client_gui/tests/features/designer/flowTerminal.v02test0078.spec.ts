@@ -1,4 +1,5 @@
-/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / dimmed / ready / lit), the `>_` mark on
+/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / ready / lit; F85: no on/off setting —
+ *  an administrator always gets it), the `>_` mark on
  *  Flow tabs and in the tab list, the three-session notice, and the WebSocket frames. The terminal server may not exist
  *  yet, so the API is mocked; the terminal window is replaced by a stand-in (xterm.js needs a real layout). */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -27,8 +28,8 @@ vi.mock('@/features/designer/flowTerminal/FlowTerminalWindow.vue', async () => {
   return {
     default: defineComponent({
       name: 'FlowTerminalWindow',
-      props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex'],
-      emits: ['focus', 'close', 'reopen'],
+      props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex', 'designer', 'fillTarget'],
+      emits: ['focus', 'close', 'reopen', 'designer'],
       setup(props, { expose, emit }) {
         expose({ reveal: () => {}, requestClose: () => emit('close') })
         return () => h('div', {
@@ -54,7 +55,6 @@ const status = (over: Partial<TerminalStatus> = {}): TerminalStatus => ({
   enabled: true, allowed: true, reason: null, max_sessions: 3, active_sessions: 0, flow_session_id: null, ...over,
 })
 const NOT_ADMIN = status({ allowed: false, reason: 'not_admin' })
-const DISABLED = status({ enabled: false, allowed: false, reason: 'disabled' })
 const conflict = (code: string) => Object.assign(new Error(code), { isAxiosError: true, response: { status: 409, data: { detail: { code } } } })
 
 let wrapper: VueWrapper<any> | null = null
@@ -76,10 +76,11 @@ afterEach(() => {
 })
 
 describe('terminalButtonState', () => {
-  it('hides for a non-admin or an unknown status, dims a server-off terminal, lights an open one', () => {
+  it('hides for a non-admin or an unknown status, lights an open one; `enabled` is not read (F85: always on)', () => {
     expect(terminalButtonState(null, false)).toBe('hidden')
     expect(terminalButtonState(NOT_ADMIN, false)).toBe('hidden')
-    expect(terminalButtonState(DISABLED, false)).toBe('disabled')
+    expect(terminalButtonState(status({ enabled: false }), false)).toBe('ready')
+    expect(terminalButtonState(status({ enabled: undefined }), true)).toBe('on')
     expect(terminalButtonState(status(), false)).toBe('ready')
     expect(terminalButtonState(status(), true)).toBe('on')
   })
@@ -114,15 +115,11 @@ describe('toolbar [터미널] button', () => {
     expect(button().find('span').text()).toBe('터미널')
   })
 
-  it('is dimmed with the tooltip "서버 설정에서 꺼져 있음" when the server setting is off, and does nothing', async () => {
-    flowTerminalUi.status = DISABLED
+  it('is always drawn for an administrator: no setting to turn on (F85)', async () => {
+    flowTerminalUi.status = status({ enabled: false })   // even a leftover off value from an older server is ignored
     mountToolbar()
     await nextTick()
-    expect(button().attributes('aria-disabled')).toBe('true')
-    expect(button().classes()).toContain('is-off')
-    expect(button().attributes('title')).toBe('서버 설정에서 꺼져 있음')
-    await button().trigger('click')
-    expect(wrapper!.emitted('command')).toBeUndefined()
+    expect(button().exists()).toBe(true)
   })
 
   it('opens the terminal (view.terminal) and is lit with a dot while the window is open', async () => {
@@ -141,11 +138,11 @@ describe('toolbar [터미널] button', () => {
 
   it('speaks English too', async () => {
     i18n.global.locale.value = 'en'
-    flowTerminalUi.status = DISABLED
+    flowTerminalUi.status = status()
     mountToolbar()
     await nextTick()
     expect(button().find('span').text()).toBe('Terminal')
-    expect(button().attributes('title')).toBe('Turned off in the server settings')
+    expect(button().attributes('title')).toBe('Terminal')
   })
 })
 
@@ -325,7 +322,7 @@ describe('terminal contract helpers', () => {
     expect(openFailureOf(conflict('terminal_session_limit'))).toBe('limit')
     expect(openFailureOf(conflict('terminal_flow_session_exists'))).toBe('exists')
     expect(openFailureOf(conflict('terminal_not_admin'))).toBe('not_admin')
-    expect(openFailureOf(conflict('terminal_disabled'))).toBe('disabled')
+    expect(openFailureOf(conflict('terminal_disabled'))).toBe('failed')   // F85: no such refusal any more
     expect(openFailureOf(conflict('terminal_cwd_unavailable'))).toBe('no_cwd')
     expect(openFailureOf(new Error('boom'))).toBe('failed')
   })
@@ -344,6 +341,8 @@ describe('terminal contract helpers', () => {
     expect(parseServerMessage('{"type":"card_running","value":false}')).toEqual({ type: 'card_running', value: false })
     expect(parseServerMessage('{"type":"exit","reason":"idle_timeout","code":null}')).toEqual({ type: 'exit', reason: 'idle_timeout', code: null })
     expect(parseServerMessage('{"type":"exit","reason":"weird","code":1}')).toEqual({ type: 'exit', reason: 'error', code: 1 })
+    expect(parseServerMessage('{"type":"exit","reason":"error","code":null,"message":"Run `pip install -r server/requirements.txt`"}'))
+      .toEqual({ type: 'exit', reason: 'error', code: null, message: 'Run `pip install -r server/requirements.txt`' })
     expect(parseServerMessage('not json')).toBeNull()
     expect(parseServerMessage('{"type":"busy","value":"yes"}')).toBeNull()
     expect(JSON.parse(inputFrame('ㅎ'))).toEqual({ type: 'input', data: 'ㅎ' })

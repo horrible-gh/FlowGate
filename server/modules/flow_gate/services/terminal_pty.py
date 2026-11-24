@@ -47,6 +47,14 @@ TERMINATE_GRACE_SECONDS = 1.5
 _READ_CHUNK = 65536
 
 
+# Shown when the Windows shell component is missing. ``pywinpty`` is a plain dependency
+# in ``server/requirements.txt`` (no separate installer): rerunning pip fixes it.
+WINPTY_MISSING_MESSAGE = (
+    "The Windows terminal component (pywinpty) is not installed. "
+    "Run `pip install -r server/requirements.txt` on the server and restart it."
+)
+
+
 class PtyError(Exception):
     """The shell could not be started."""
 
@@ -343,7 +351,7 @@ class WindowsPty:
         try:
             from winpty import PtyProcess
         except ImportError as exc:
-            raise PtyError("pywinpty is not installed") from exc
+            raise PtyError(f"{WINPTY_MISSING_MESSAGE} ({exc})") from exc
         try:
             self._proc = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=(rows, cols))
         except Exception as exc:  # noqa: BLE001 -- winpty raises several types

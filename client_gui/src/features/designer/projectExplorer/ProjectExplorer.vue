@@ -10,7 +10,9 @@
     <!-- No visible title row: the surrounding Dock tab already names this view
          . Search and refresh share one compact row. -->
     <div class="project-explorer-search" :class="{ 'is-unavailable': !projectId }">
-      <div class="project-explorer-search-field">
+      <!-- flowgate.v02test.0077: Enter in the search opens what an id names — the card of `F77-12` (its Flow opened,
+           the card selected), else the one Flow `F77` / `77` names. A name search keeps Enter as it was (nothing). -->
+      <div class="project-explorer-search-field" @keydown.enter="onSearchEnter">
         <Input
           v-model="query"
           type="text"
@@ -51,6 +53,30 @@
       <input v-model="includeArchived" type="checkbox" :disabled="!projectId" data-test="project-explorer-include-archived" />
       {{ t('gui.designer.archive.include') }}
     </label>
+
+    <!-- flowgate.v02test.0077: the card a card id (`F77-12`, `flowgate.v02test.F77-12`, `#12` in the open Flow) names,
+         above the tree that shows its Flow. The first one is what Enter opens; a click opens any of them. -->
+    <div
+      v-if="isSearching && cardMatches.length > 0"
+      class="project-explorer-cards"
+      data-test="project-explorer-card-results"
+    >
+      <div class="project-explorer-cards-head">{{ t('gui.designer.project_explorer.cards') }}</div>
+      <button
+        v-for="(match, index) in cardMatches"
+        :key="`${match.flowId}:${match.nodeKey}`"
+        type="button"
+        class="project-explorer-card"
+        :class="{ 'is-first': index === 0 }"
+        :title="match.full"
+        data-test="project-explorer-card"
+        @click="openCard(match)"
+      >
+        <span class="project-explorer-card-id">{{ match.short }}</span>
+        <span class="project-explorer-card-title">{{ match.title ?? match.full }}</span>
+        <kbd v-if="index === 0" class="project-explorer-card-key">{{ t('gui.designer.project_explorer.enter_open') }}</kbd>
+      </button>
+    </div>
 
     <div class="project-explorer-body">
       <!-- 0060: while the server is unreachable (the App Shell's banner is up) a tree that never loaded says it is
@@ -138,11 +164,12 @@ import ErrorState from '../../../components/ui/ErrorState.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import Input from '../../../components/ui/Input.vue'
 import LoadingState from '../../../components/ui/LoadingState.vue'
-import { useProjectStore, type GroupTreeNode } from '@/features/project'
+import { useProjectStore, type CardRefMatch, type GroupTreeNode } from '@/features/project'
 import ProjectTree from './ProjectTree.vue'
 import {
   buildExplorerProject,
   filterExplorerProject,
+  parseExplorerId,
   projectNodeId,
   type ExplorerFlow,
   type ExplorerGroup,
@@ -261,7 +288,94 @@ const displayProject = computed<ExplorerProject | null>(() =>
   loaded.value ? buildExplorerProject(nodes.value, rootNodeId.value, projectName.value) : null,
 )
 
-const filtered = computed(() => filterExplorerProject(displayProject.value, query.value))
+// flowgate.v02test.0077: `#12` names a card of the Flow the Designer has open, so that Flow is the search's context.
+const filtered = computed(() => filterExplorerProject(displayProject.value, query.value, { contextFlowId: props.activeFlowId ?? null }))
+
+// ── Card ids (flowgate.v02test.0077, 0005-T §4) ─────────────────────────────
+// A card id is resolved by the server (the exact match of the document search, 0004-TR §3.4); the tree itself only
+// knows Flow numbers. A read starts a moment after the last key so typing `F77-12` does not ask for `F77-1` too, and
+// only the answer to the latest query is kept.
+const CARD_LOOKUP_DELAY_MS = 150
+const cardMatches = ref<CardRefMatch[]>([])
+let cardSeq = 0
+let cardTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearCardLookup() {
+  cardSeq += 1
+  if (cardTimer !== null) clearTimeout(cardTimer)
+  cardTimer = null
+  cardMatches.value = []
+}
+
+/** The Flows of this tree first (a card of a Flow this tree shows), then the rest in the server's order. */
+function inTreeFirst(matches: CardRefMatch[]): CardRefMatch[] {
+  const shown = new Set(displayProject.value?.groups.flatMap((group) => group.flows.map((flow) => flow.id)) ?? [])
+  return [...matches.filter((m) => shown.has(m.flowId)), ...matches.filter((m) => !shown.has(m.flowId))]
+}
+
+watch(
+  [query, projectId, () => props.activeFlowId],
+  () => {
+    clearCardLookup()
+    const pid = projectId.value
+    const id = parseExplorerId(query.value)
+    if (!pid || !id || id.kind === 'flow') return
+    const context = id.kind === 'local' ? props.activeFlowId ?? null : null
+    if (id.kind === 'local' && context === null) return
+    const seq = cardSeq
+    const text = query.value.trim()
+    cardTimer = setTimeout(() => {
+      cardTimer = null
+      projectStore.findCardRefs(pid, text, context).then((matches) => {
+        if (seq === cardSeq) cardMatches.value = inTreeFirst(matches)
+      }, () => {
+        // A failed lookup shows no card; the tree's own Flow matches stay.
+        if (seq === cardSeq) cardMatches.value = []
+      })
+    }, CARD_LOOKUP_DELAY_MS)
+  },
+)
+
+/** Where a Flow is in the latest tree (the search aside), for the Group id an activation carries. */
+function locateFlow(flowId: string): ExplorerFlow | null {
+  for (const group of displayProject.value?.groups ?? []) {
+    const flow = group.flows.find((candidate) => candidate.id === flowId)
+    if (flow) return flow
+  }
+  return null
+}
+
+// The window event the Designer shows one card with (its Flow opened or activated, the card selected once its Graph
+// is shown) — `OPEN_CARD_EVENT` of the Inspector's verification model, the same contract the `검증` line's [→] uses.
+const OPEN_CARD_EVENT = 'fg:open_card'
+
+/** Opens the card's Flow (selected here, opened by the Designer like a double click) and selects the card. */
+function openCard(match: CardRefMatch) {
+  const pid = projectId.value
+  if (!pid) return
+  const flow = locateFlow(match.flowId)
+  const flowName = flow?.name ?? match.flowId
+  if (flow) onActivateFlow(flow)
+  window.dispatchEvent(new CustomEvent(OPEN_CARD_EVENT, {
+    detail: { projectId: pid, flowId: match.flowId, nodeKey: match.nodeKey, flowName },
+  }))
+}
+
+function onSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing) return
+  const first = cardMatches.value[0]
+  if (first) {
+    event.preventDefault()
+    openCard(first)
+    return
+  }
+  const named = filtered.value.idMatchIds
+  if (named.length !== 1) return
+  const flow = locateFlow(named[0])
+  if (!flow) return
+  event.preventDefault()
+  onActivateFlow(flow)
+}
 
 // ── Expansion ────────────────────────────────────────────────────────────────
 // Local to this instance: it is view state, not project context. The Project root starts
@@ -519,6 +633,7 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   pendingRecovery = false
+  clearCardLookup()
 })
 
 watch(
@@ -648,6 +763,72 @@ defineExpose({ refresh })
   gap: 4px;
   padding: 0 8px 6px;
   font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.project-explorer-cards {
+  margin: 0 8px 6px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius-sm);
+  overflow: hidden;
+}
+
+.project-explorer-cards-head {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--fg2-line);
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.project-explorer-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--fg2-control-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-explorer-card:hover,
+.project-explorer-card.is-first {
+  background: var(--fg2-line);
+  color: var(--fg2-text);
+}
+
+.project-explorer-card:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: -2px;
+}
+
+.project-explorer-card-id {
+  flex: none;
+  font-family: var(--fg2-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 11.5px;
+  color: var(--fg2-muted-2);
+}
+
+.project-explorer-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-explorer-card-key {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10.5px;
   color: var(--fg2-muted);
 }
 

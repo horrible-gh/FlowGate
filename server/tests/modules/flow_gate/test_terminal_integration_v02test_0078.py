@@ -93,7 +93,7 @@ def test_terminal_routes_are_not_group_writes_and_a_running_card_does_not_block_
     monkeypatch.setattr(group_ai_leases, "get_active", lambda gid: dict(lease, group_id=gid))
     monkeypatch.setattr(policy.db_leases, "get_active", lambda gid: dict(lease, group_id=gid))
     mgr = ts.TerminalManager(pty_factory=lambda *a: pytest.fail("no shell in this test"),
-                             enabled=lambda: True, flow_resolver=lambda fid: ("proj", str(tmp_path)),
+                             flow_resolver=lambda fid: ("proj", str(tmp_path)),
                              recorder=lambda *a, **k: None)
     monkeypatch.setattr(ts, "manager", mgr)
     app = FastAPI()
@@ -229,7 +229,7 @@ def real(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(workflow_events, "create", lambda data: rows.append(data) or data)
     folder = tmp_path / "wt"
     folder.mkdir()
-    mgr = ts.TerminalManager(enabled=lambda: True, flow_resolver=lambda fid: ("proj", str(folder)),
+    mgr = ts.TerminalManager(flow_resolver=lambda fid: ("proj", str(folder)),
                              card_probe=lambda fid: False, recorder=ts.record_event)
     mgr.watch_interval = 0.1
     monkeypatch.setattr(ts, "manager", mgr)
@@ -351,7 +351,7 @@ def test_websocket_needs_no_login_token_and_ignores_one_in_the_query(tmp_path, m
         def terminate(self, grace=0):
             self.out.put(None)
 
-    mgr = ts.TerminalManager(pty_factory=Quiet, shell_argv=lambda: ["x"], enabled=lambda: True,
+    mgr = ts.TerminalManager(pty_factory=Quiet, shell_argv=lambda: ["x"],
                              flow_resolver=lambda fid: ("proj", str(tmp_path)), card_probe=lambda fid: False,
                              recorder=lambda *a, **k: None)
     mgr.watch_interval = 0.02
@@ -435,6 +435,7 @@ class FakePsProc:
 def fake_windows(monkeypatch):
     FakeWinProc.spawned.clear()
     FakePsProc.killed.clear()
+    # pywinpty is a plain requirement now: WindowsPty imports ``winpty`` directly.
     monkeypatch.setitem(sys.modules, "winpty", types.SimpleNamespace(PtyProcess=FakeWinProc))
     grandchild = FakePsProc(7)
     child = FakePsProc(6, [grandchild])
@@ -493,5 +494,6 @@ def test_windows_terminate_without_psutil_uses_taskkill_tree(fake_windows, monke
 
 def test_windows_without_pywinpty_is_a_start_failure_not_a_crash(monkeypatch):
     monkeypatch.setitem(sys.modules, "winpty", None)
-    with pytest.raises(terminal_pty.PtyError):
+    with pytest.raises(terminal_pty.PtyError) as error:
         terminal_pty.WindowsPty(["powershell.exe"], "C:/w", {}, 80, 24)
+    assert "pip install -r server/requirements.txt" in str(error.value)

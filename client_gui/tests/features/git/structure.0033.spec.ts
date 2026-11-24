@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as GitFeature from '@/features/git'
+import { REVIEW_STATES } from '@/features/git/gitSession'
+import { TAB_REVIEW_STATES } from '@/features/designer/center/flowTabConflicts'
 import { APP_MESSAGES } from '@/app/i18n'
 
 // source-level guards for the Designer Git part.
@@ -92,6 +94,10 @@ describe('features/git structure (flowgate.v02.0033)', () => {
 
   it('exposes only the panel at runtime (0067 T#4: the Center Diff is internal)', () => {
     expect(Object.keys(GitFeature)).toEqual(['DesignerGitPanel'])
+  })
+
+  it('keeps the Flow tab\'s own copy of the merge review states equal to the panel\'s', () => {
+    expect(TAB_REVIEW_STATES).toEqual(REVIEW_STATES)
   })
 
   it('reaches the server only through api.ts (actions) and features/project (reads)', () => {

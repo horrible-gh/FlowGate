@@ -1,4 +1,4 @@
-"""Designer terminal server: permission, setting, limits,
+"""Designer terminal server: permission (always on for admins), limits,
 start folder, one-time ticket, WebSocket frames and process cleanup.
 
 The contract tests drive the real routes with a fake pseudo-terminal; the POSIX test at the
@@ -82,7 +82,6 @@ class FakePty:
 
 class Env:
     def __init__(self, tmp_path):
-        self.enabled = True
         self.card = False
         self.clock = FakeClock()
         self.ptys: list[FakePty] = []
@@ -113,7 +112,7 @@ def env(tmp_path, monkeypatch):
         state.flows[name] = folder
     mgr = ts.TerminalManager(
         pty_factory=state.factory, shell_argv=lambda: ["fake-shell"], clock=state.clock,
-        enabled=lambda: state.enabled, flow_resolver=state.flow,
+        flow_resolver=state.flow,
         card_probe=lambda flow_id: state.card, recorder=state.record,
     )
     mgr.watch_interval = 0.02
@@ -155,19 +154,15 @@ def wait_for(predicate, timeout=5.0):
     return predicate()
 
 
-# -- permission and setting ------------------------------------------------------------
+# -- permission ---------------------------------------------------------------------------
 
 
 def test_status_tells_the_screen_whether_to_hide_or_grey_the_button(env):
     body = client_for(MEMBER).get("/api/v1/terminal/status", params={"flow_id": "g1"}).json()
     assert body == {"enabled": True, "allowed": False, "reason": "not_admin", "max_sessions": 3,
                     "active_sessions": 0, "flow_session_id": None}
-    env.enabled = False
-    body = client_for(ADMIN).get("/api/v1/terminal/status", params={"flow_id": "g1"}).json()
-    assert (body["enabled"], body["allowed"], body["reason"]) == (False, False, "disabled")
-    env.enabled = True
     body = client_for(ADMIN).get("/api/v1/terminal/status").json()
-    assert (body["allowed"], body["reason"], body["active_sessions"]) == (True, None, 0)
+    assert (body["enabled"], body["allowed"], body["reason"], body["active_sessions"]) == (True, True, None, 0)
 
 
 def test_non_admin_is_refused_on_every_session_path(env):
@@ -181,29 +176,18 @@ def test_non_admin_is_refused_on_every_session_path(env):
     assert env.ptys == []
 
 
-def test_disabled_setting_refuses_and_defaults_off(env, monkeypatch):
-    env.enabled = False
-    response = client_for(ADMIN).post("/api/v1/terminal/sessions", json={"flow_id": "g1", "cols": 80, "rows": 24})
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "terminal_disabled"
-    # Read from source: importing config mirrors .env keys into os.environ for the session.
-    import ast
-
-    tree = ast.parse((Path(__file__).resolve().parents[3] / "config.py").read_text(encoding="utf-8"))
-    settings_cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Settings")
-    field = next(n for n in settings_cls.body if isinstance(n, ast.AnnAssign)
-                 and getattr(n.target, "id", None) == "TERMINAL_ENABLED")
-    assert isinstance(field.value, ast.Constant) and field.value.value is False
-
-
-def test_ticket_from_a_session_is_refused_once_the_setting_is_off(env):
+def test_admin_opens_without_any_setting_even_if_an_old_off_value_remains(env, monkeypatch):
+    # F85: no on/off switch. A leftover ``terminal.enabled=false`` row is never read.
+    from modules.flow_gate.db import system_settings
+    monkeypatch.setattr(system_settings, "get_value", lambda key, default=None: "false")
+    assert not hasattr(ts, "terminal_enabled")
     client = client_for(ADMIN)
+    assert client.get("/api/v1/terminal/status").json()["allowed"] is True
     created = open_session(client)
-    env.enabled = False
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(f"/api/v1/terminal/ws?ticket={created['ticket']}") as ws:
-            ws.receive_text()
-    assert env.ptys == []
+    with client.websocket_connect(f"/api/v1/terminal/ws?ticket={created['ticket']}") as ws:
+        assert wait_for(lambda: env.ptys)
+        env.ptys[0].exit(0)
+        assert frames_until(ws, "exit")[0]["reason"] == "shell_exit"
 
 
 # -- limits ----------------------------------------------------------------------------
@@ -404,7 +388,21 @@ def test_spawn_failure_reports_error_and_frees_the_slot(env):
     client = client_for(ADMIN)
     created = open_session(client)
     with client.websocket_connect(f"/api/v1/terminal/ws?ticket={created['ticket']}") as ws:
-        assert json.loads(ws.receive_text()) == {"type": "exit", "reason": "error", "code": None}
+        assert json.loads(ws.receive_text()) == {"type": "exit", "reason": "error", "code": None,
+                                                 "message": "no shell"}
+    assert client.get("/api/v1/terminal/status").json()["active_sessions"] == 0
+
+
+def test_missing_pywinpty_is_a_start_failure_with_the_pip_hint(env, monkeypatch):
+    monkeypatch.setattr(terminal_pty, "IS_WINDOWS", True)
+    monkeypatch.setitem(sys.modules, "winpty", None)       # import winpty -> ImportError
+    env.mgr.pty_factory = terminal_pty.open_pty
+    client = client_for(ADMIN)
+    created = open_session(client)
+    with client.websocket_connect(f"/api/v1/terminal/ws?ticket={created['ticket']}") as ws:
+        frame = json.loads(ws.receive_text())
+    assert (frame["type"], frame["reason"], frame["code"]) == ("exit", "error", None)
+    assert "pip install -r server/requirements.txt" in frame["message"]
     assert client.get("/api/v1/terminal/status").json()["active_sessions"] == 0
 
 

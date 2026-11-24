@@ -184,7 +184,22 @@ def _content_document_access(ctx: dict) -> dict:
                 "method": "GET",
                 "url": (f"{base}/search/documents/content?q=<keyword>{project_filter}"
                         + _documents_block.CONTENT_SEARCH_OPTIONS),
-                "summary": "Search bodies and receive match locations with context.",
+                "summary": "Search bodies and receive match locations with context. CH documents not yet migrated retain document-body/title/id search, document totals and default detailed matches until migration completes.",
+                "parameters": {
+                    "doc_id": "Restrict to one conversation; lifts the per-conversation turn cap and enables cursor paging.",
+                    "group_id": "Restrict to one flow; mutually exclusive with doc_id. Group/global turn results remain capped without cursor paging.",
+                    "include_matches": "Single migrated CH doc_id: defaults to false (compact); true adds match_total/matches with context and locators. Other searches default to true.",
+                    "sort": "Turn order: desc (default, newest first) or asc (oldest first).",
+                    "cursor": "With a CH doc_id, pass next_cursor unchanged using the same search conditions. Non-conversation documents/types, changed conditions or malformed cursors return 400.",
+                },
+                "response": {
+                    "items": "Single migrated CH doc_id without include_matches=true: only seq, speaker, display_name, created_at, snippet (about 150 characters). Otherwise document-body results followed by conversation_turn results (no separate turn_items key).",
+                    "turn_read": "Single migrated CH doc_id: GET /flowgate/api/v1/conversation/{doc_id}/turns?after_seq=<seq-1>&through_seq=<seq>&limit=1; substitute the result seq to read one turn. doc_id appears once at the top level in compact results.",
+                    "context_lines/hits_per_doc": "Single migrated CH doc_id: omitted unless include_matches=true, then reflect clamped values actually applied.",
+                    "turn_total": "Number of conversation-turn results returned on this page, not the total across all pages.",
+                    "next_cursor": "Cursor for the next conversation-turn page; null when there is no next page.",
+                    "total": "Single migrated CH doc_id: actual matching turn count across all pages using the same filters and max_seq snapshot, including cursor pages. Other searches retain document-body total/offset/limit semantics.",
+                },
             },
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),

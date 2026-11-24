@@ -434,6 +434,8 @@ if ($Interactive -and $dbReady) {
     }
 }
 
+# (web terminal: pywinpty comes from server\requirements.txt; no separate step)
+
 # ── done ─────────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '──────────────────────────────────────────────────────────────'

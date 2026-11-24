@@ -8,8 +8,7 @@ nothing to persist except the start/end record.
 Life of a session
 -----------------
 1. ``POST /terminal/sessions`` -> :meth:`TerminalManager.create` checks admin, the
-   ``TERMINAL_ENABLED`` setting, the one-per-Flow and three-per-person limits, decides the
-   start folder (group worktree, else the project branch checkout) and returns a one-time
+   one-per-Flow and three-per-person limits, decides the start folder (group worktree, else the project branch checkout) and returns a one-time
    ticket valid for 30 seconds. No process exists yet.
 2. ``WS /terminal/ws?ticket=`` -> :func:`serve_websocket` redeems the ticket (single use),
    starts the shell and relays input/output until one side ends it.
@@ -19,6 +18,9 @@ Life of a session
 
 Keystrokes, commands and output are never recorded: only who, when, which folder
 and why it ended.
+
+The terminal is always available to administrators: there is no on/off setting (a
+leftover ``terminal.enabled`` row in the DB is simply not read).
 """
 from __future__ import annotations
 
@@ -64,15 +66,6 @@ class TerminalError(Exception):
                                                        "details": dict(self.details)}}
         body.update(self.details)
         return body
-
-
-def terminal_enabled() -> bool:
-    """``TERMINAL_ENABLED`` (server setting, installed default off)."""
-    try:
-        from config import settings
-    except Exception:  # noqa: BLE001 -- no readable settings: treat as off
-        return False
-    return bool(getattr(settings, "TERMINAL_ENABLED", False))
 
 
 def resolve_flow(flow_id: str) -> tuple[str, str]:
@@ -167,7 +160,6 @@ class TerminalManager:
         pty_factory: Callable[..., Any] = terminal_pty.open_pty,
         shell_argv: Optional[Callable[[], list[str]]] = None,
         clock: Callable[[], float] = time.monotonic,
-        enabled: Optional[Callable[[], bool]] = None,
         flow_resolver: Optional[Callable[[str], tuple[str, str]]] = None,
         card_probe: Optional[Callable[[str], bool]] = None,
         recorder: Optional[Callable[..., None]] = None,
@@ -175,7 +167,6 @@ class TerminalManager:
         self.pty_factory = pty_factory
         self.shell_argv = shell_argv or terminal_pty.default_shell_argv
         self.clock = clock
-        self.enabled = enabled or terminal_enabled
         self.flow_resolver = flow_resolver or resolve_flow
         self.card_probe = card_probe or card_running
         self.recorder = recorder or record_event
@@ -204,9 +195,8 @@ class TerminalManager:
             return self._sessions.get(session_id)
 
     def status(self, user: dict, flow_id: Optional[str]) -> dict:
-        enabled = bool(self.enabled())
         is_admin = bool(user.get("is_admin"))
-        reason = None if is_admin and enabled else ("not_admin" if not is_admin else "disabled")
+        reason = None if is_admin else "not_admin"
         active, flow_session = 0, None
         if is_admin:
             self.reap_expired()
@@ -217,7 +207,7 @@ class TerminalManager:
                     found = self._flow_session(user_id, flow_id)
                     flow_session = found.session_id if found else None
         return {
-            "enabled": enabled,
+            "enabled": True,            # kept for older screens; the terminal has no off switch
             "allowed": reason is None,
             "reason": reason,
             "max_sessions": self.max_sessions,
@@ -230,8 +220,6 @@ class TerminalManager:
     def _gate(self, user: dict) -> str:
         if not user.get("is_admin"):
             raise TerminalError(403, "terminal_not_admin", "Administrator access required.")
-        if not self.enabled():
-            raise TerminalError(403, "terminal_disabled", "The terminal is turned off in the server settings.")
         user_id = str(user.get("user_id") or "")
         if not user_id:
             raise TerminalError(403, "terminal_not_admin", "Administrator access required.")
@@ -377,6 +365,10 @@ class TerminalManager:
             self.recorder("terminal_session_ended", session, reason)
         return True
 
+    def open_count(self) -> int:
+        with self._lock:
+            return sum(s.live for s in self._sessions.values())
+
     def shutdown(self) -> None:
         """Server stop: no shell may outlive the server process."""
         with self._lock:
@@ -404,9 +396,7 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
     """Relay one terminal WebSocket (the frame shapes agreed with the screen card)."""
     mgr = mgr or manager
     session = mgr.redeem(ticket)
-    if session is None or not mgr.enabled():
-        if session is not None:
-            await anyio.to_thread.run_sync(mgr.end, session, "error")
+    if session is None:
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -427,10 +417,22 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
         outcome.setdefault("code", code)
         loop.call_soon_threadsafe(ended.set)
 
-    session._closers.append(on_end)
+    with mgr._lock:
+        session._closers.append(on_end)
+        if not session.live:
+            on_end(session.end_reason or "closed", session.exit_code)
+    if not session.live:
+        await _finish(websocket, send, open_state, session.end_reason or "closed", session.exit_code)
+        return
     try:
         await anyio.to_thread.run_sync(mgr.spawn, session)
-    except Exception:  # noqa: BLE001 -- includes PtyError
+    except terminal_pty.PtyError as exc:
+        # e.g. pywinpty missing on Windows: a start failure with the fix, never a crash.
+        log.warning("terminal session %s: shell start failed: %s", session.session_id, exc)
+        await anyio.to_thread.run_sync(mgr.end, session, "error")
+        await _finish(websocket, send, open_state, "error", None, message=str(exc))
+        return
+    except Exception:  # noqa: BLE001
         log.warning("terminal session %s: shell start failed", session.session_id, exc_info=True)
         await anyio.to_thread.run_sync(mgr.end, session, "error")
         await _finish(websocket, send, open_state, "error", None)
@@ -534,11 +536,15 @@ async def serve_websocket(websocket, ticket: str, mgr: Optional[TerminalManager]
     await _finish(websocket, send, open_state, reason, code)
 
 
-async def _finish(websocket, send, open_state: dict, reason: str, code: Optional[int]) -> None:
+async def _finish(websocket, send, open_state: dict, reason: str, code: Optional[int],
+                  message: Optional[str] = None) -> None:
     if not open_state["open"]:
         return
+    frame: dict[str, Any] = {"type": "exit", "reason": reason if reason in EXIT_REASONS else "error", "code": code}
+    if message:
+        frame["message"] = message
     try:
-        await send({"type": "exit", "reason": reason if reason in EXIT_REASONS else "error", "code": code})
+        await send(frame)
     except Exception:  # noqa: BLE001 -- the socket may already be gone
         pass
     open_state["open"] = False

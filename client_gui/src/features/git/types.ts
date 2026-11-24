@@ -95,9 +95,23 @@ export interface GitConflictSession {
   // the last failed abort / cleanup of this session as the server recorded it
   // (`abort_failure`), null when there is none. `reason` is git's own line.
   abortFailure?: GitAbortFailure | null
+  // flowgate.v02test.0068: the last AI resolver attempt that was refused or ended with conflicts left
+  // (`resolver_attempt`), null when there is none. Kept by the server, so it is still there after a tab switch.
+  resolverAttempt?: GitResolverAttempt | null
   // (card B): files that the resolution carried along with the session's own (`companion_files`),
   // e.g. the file main moved a conflicted file to. `sourcePath` is the session file they came from.
   companionFiles?: GitCompanionFile[]
+}
+
+/** `resolver_attempt` of GET …/conflicts: `rejected` = refused while its run goes on, `failed` = the run ended. */
+export interface GitResolverAttempt {
+  runId: string | null
+  state: 'rejected' | 'failed'
+  code: string | null
+  path: string | null
+  lines: string[]
+  lineCount: number
+  provider: string | null
 }
 
 /** `abort_failure` of GET …/conflicts: why `git merge --abort` (or the cleanup) was refused. */
@@ -457,6 +471,9 @@ export interface WorktreeOwnership {
 export interface WorktreeBlocker {
   code: string
   operations: string[]
+  /** `session_open` only (flowgate.v02test.0068): the open session's kind (merge / group_update / tr_revert / …) and id. */
+  sessionKind?: string | null
+  mergeId?: number | null
 }
 
 /** GET /groups/{gid}/git/worktree/status (E1), also the `status` of every E2–E6 answer. */

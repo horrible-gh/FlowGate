@@ -6,7 +6,7 @@
        were opened for (not the selection), so the questions read, the answers sent and the AI asked are always that
        document's, and a selection change, a tab change or a click elsewhere never closes them. A window closes only by
        its own × (`close`); Esc does not close it. -->
-  <ModelessShell kind-color="#4ba3ff"
+  <ModelessShell kind-color="#4ba3ff" kind="question"
     v-for="(win, index) in windows"
     :key="win.id"
     :open="true"

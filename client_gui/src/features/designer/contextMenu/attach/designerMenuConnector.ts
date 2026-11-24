@@ -41,6 +41,7 @@ import { useI18n } from 'vue-i18n'
 import type { DesignerCenterSession } from '../../center/designerCenterSession'
 import type { FlowGraph } from '../../center/graph/flowGraph'
 import { isEdgeProgressed } from '../../center/graph/edgeProgress'
+import { cardCopyId } from '../../center/graph/cardIds'
 import { isEdgeProtected } from '../../center/run/flowRunLock'
 import type { FlowCardMenuItem, FlowCardMenuKey } from '../../center/run/flowCardMenu'
 import {
@@ -57,6 +58,7 @@ import { attachRightButtonGuard } from '../gesture'
 import { createDesignerMenuHost, type DesignerMenuHost } from '../host'
 import { paletteMenu } from '../paletteMenu'
 import { projectTreeMenu } from '../projectTreeMenu'
+import { flowArchiveReason } from '../../archive/flowArchiveReason'
 import type {
   CanvasTarget,
   CardRunCommand,
@@ -170,12 +172,16 @@ export interface DesignerContextMenuDeps {
   readonly selectAll: (flowId: string) => void
   /** File › New Group (the top menu's dialog and create path). */
   readonly openFlowBaseBranch?: (projectId: string, flowId: string) => void
-  /** flowgate.v02gui.0003: the card menu's ID 복사 — copies the card's document id (absent: the item is not shown). */
+  /**
+   * flowgate.v02gui.0003: the card menu's ID 복사 (absent: the item is not shown). flowgate.v02test.0077: it is handed the
+   * card's full display id (`flowgate.v02test.F77-12`), or its document id while the card has no number.
+   */
   readonly copyDocumentId?: (docId: string) => void
   readonly projectGitEnabled?: (projectId: string) => boolean | undefined
   readonly archive?: {
-    read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean }>
+    read: (flowId: string) => Promise<{ archived: boolean; eligible: boolean; reason?: string | null }>
     busy: (flowId: string) => boolean
+    running?: (flowId: string) => boolean
     archiveFlow: (flowId: string) => Promise<void>
     restoreFlow: (flowId: string) => Promise<void>
   }
@@ -255,12 +261,15 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
     const projectAt = deps.projectId()
     // The row must still be in the Explorer's tree (a re-read may have removed the Group / Flow) — §3.3, §3.4.
     const live = () => deps.projectId() === projectAt && (alive?.() ?? true)
-    let archive: { archived: boolean; eligible: boolean } | null = null
+    let archive: { archived: boolean; eligible: boolean; reason?: string | null } | null = null
     const build = () => live() ? projectTreeMenu({
       target,
       available: { currentProject: deps.projectId() === target.projectId, gitEnabled: deps.projectGitEnabled?.(target.projectId),
-        archived: archive?.archived, archiveEligible: archive?.eligible,
+        archived: archive?.archived,
+        archiveEligible: archive?.eligible && !(target.kind === 'flow' && deps.archive?.running?.(target.flowId)),
         archiveBusy: target.kind === 'flow' ? deps.archive?.busy(target.flowId) : false,
+        // F83-5: why Archive is off, by the toolbar's own rule (not read yet → no tooltip).
+        archiveReason: archive && target.kind === 'flow' ? flowArchiveReason(archive, !!deps.archive?.running?.(target.flowId), t, te) : undefined,
         // v02gui.0027: the Group's archive state as its row showed it when the menu opened.
         groupArchived: target.kind === 'group' ? target.archived === true : undefined,
         groupArchivable: target.kind === 'group' ? !isUngroupedBucket(target) : undefined },
@@ -431,7 +440,7 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
           editable,
           structureEditable: node.structureEditable === true && !marks.protectedNodeIds.has(node.id),
           definitionExists: !!node.definition,
-          hasDocument: !!node.document?.docId,
+          hasCardId: cardCopyId(node.cardRef, node.document?.docId) !== null,
         },
         connected: CANVAS_CONNECTED,
         runItems: target.kind === 'node' ? runItems(entry.flowId, node.id) : [],
@@ -477,9 +486,11 @@ export function useDesignerContextMenu(deps: DesignerContextMenuDeps) {
       } else if (request.command === 'edge.disconnect' && scope.kind === 'edge') {
         center.removeEdge(scope.flowId, scope.edgeId)
       } else if (request.command === 'node.copyId' && scope.kind === 'node') {
-        // flowgate.v02gui.0003: the id the Inspector's ID 복사 copies (the card's document), read from the graph of now.
-        const docId = canvasState(scope.flowId)?.graph.nodes.find((candidate) => candidate.id === scope.nodeId)?.document?.docId
-        if (docId) deps.copyDocumentId?.(docId)
+        // flowgate.v02gui.0003: the id the Inspector's ID 복사 copies, read from the graph of now — flowgate.v02test.0077:
+        // the card's full display id, its document id only while it has no number.
+        const copied = canvasState(scope.flowId)?.graph.nodes.find((candidate) => candidate.id === scope.nodeId)
+        const id = copied ? cardCopyId(copied.cardRef, copied.document?.docId) : null
+        if (id) deps.copyDocumentId?.(id)
       } else if (request.command in RUN_KEYS && scope.kind === 'node') {
         center.chooseCardMenu(scope.flowId, scope.nodeId, RUN_KEYS[request.command as CardRunCommand])
       }

@@ -549,7 +549,51 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
 
   // ── Context and gate ───────────────────────────────────────────────────────────────
 
+  let executionTimer: ReturnType<typeof setTimeout> | null = null
+  let executionRead = 0
+  function stopExecutionPoll(): void {
+    ++executionRead
+    if (executionTimer !== null) clearTimeout(executionTimer)
+    executionTimer = null
+  }
+
+  async function readExecution(): Promise<void> {
+    const held = ticket()
+    const api = wsrc()
+    if (!held || !api?.loadExecution) return
+    stopExecutionPoll()
+    const seq = executionRead
+    try {
+      const execution = await api.loadExecution(held.groupId)
+      if (!isCurrent(held) || seq !== executionRead) return
+      const wasRunning = state.execution?.status === 'running'
+      const before = state.execution
+      state.execution = execution
+      if (execution?.status === 'running' && !execution.mergeId) state.busy = 'execution'
+      else if (state.busy === 'execution') state.busy = null
+      if (wasRunning && execution?.status !== 'running') afterRemote({ e1: true, e8: true, e10: true })
+      // flowgate.v02test.0068: the run parked on a conflict session. The conflict card comes from git/status, which
+      // this poll does not read — it used to appear only after a tab switch. Read it when the wait starts, when
+      // the session's AI starts / fails, and on every poll for as long as the card of that session is not shown.
+      const waitsOn = execution?.status === 'running' ? execution.mergeId ?? null : null
+      if (waitsOn != null && !git.state.busy) {
+        const shown = SESSION_CARDS.includes(git.groupCard.value ?? '') && git.pendingRow.value?.mergeId === waitsOn
+        const aiChanged = (before?.conflictAi?.state ?? null) !== (execution?.conflictAi?.state ?? null)
+        if (!shown || before?.mergeId !== waitsOn || aiChanged) void git.refresh()
+      }
+    } catch (error) {
+      if (!isCurrent(held) || seq !== executionRead) return
+      // A disconnected browser cannot declare a server job stopped.
+      reportError('apply', error)
+    } finally {
+      if (isCurrent(held) && seq === executionRead && !state.forbidden) {
+        executionTimer = setTimeout(() => { void readExecution() }, 2500)
+      }
+    }
+  }
+
   function clearServer(): void {
+    stopExecutionPoll()
     nextGeneration()
     appliedSeq = 0
     pendingReads.e1 = pendingReads.e8 = pendingReads.e10 = pendingReads.list = false
@@ -814,6 +858,29 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     const api = wsrc()
     if (!held || !api || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
     if (SESSION_CARDS.includes(git.groupCard.value ?? '')) return
+    if (api.startExecution) {
+      if (state.execution?.status === 'running') return
+      stopExecutionPoll()
+      state.busy = 'execution'
+      try {
+        const execution = await api.startExecution(held.groupId, {
+          scope, target: state.mergeTarget, message: state.message, provider_id: state.providerId,
+          ...selection, request_id: crypto.randomUUID(),
+          ...(resume && state.execution?.jobId ? { resume_from: state.execution.jobId } : {}),
+          commit_remaining: commitRemaining,
+        })
+        if (isCurrent(held)) state.execution = execution
+      } catch (error) {
+        if (isCurrent(held)) reportError('apply', error)
+      } finally {
+        if (isCurrent(held)) {
+          state.busy = null
+          void readExecution()
+          afterRemote({ e1: true, e8: true, e10: true })
+        }
+      }
+      return
+    }
     const plan = resume && state.execution?.status === 'stopped'
       ? state.execution : newExecution(scope, state.mergeTarget)
     if (resume && commitRemaining && plan.error === 'uncommitted_changes') plan.steps.splice(plan.cursor, 0, 'commit')
@@ -889,6 +956,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   function refresh(): void {
+    if (gateOpen.value) void readExecution()
     if (gateOpen.value) requestReads({ e1: true, e8: true, e10: true, list: state.infoPane === 'diff' })
   }
 
@@ -1001,6 +1069,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
         if (open && (contextChanged || !prevOpen)) {
           requestReads({ e1: true, e8: true, e10: true })
           void loadProviders()
+          void readExecution()
         }
       },
       { immediate: true },
@@ -1523,6 +1592,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   function dispose(): void {
+    stopExecutionPoll()
     disposed = true
     nextGeneration()
     voidWorkBase()

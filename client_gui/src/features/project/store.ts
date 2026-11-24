@@ -32,6 +32,7 @@
 // opening (no recent entry, no explicit-open signal), and the HTTP status / network failure of a failed read.
 
 import { readFlowArchive, changeFlowArchive, type FlowArchiveState } from './flowArchiveApi'
+import { findCardRefs } from './cardRefApi'
 import {
   readDesignerDockSizes,
   saveDesignerDockSizes as saveDesignerDockSizesApi,
@@ -56,6 +57,7 @@ import type {
   FlowChangeSet,
   FlowFileDiff,
   FlowFileTree,
+  FlowGitExecution,
   GroupTreeNode,
   FlowCanvas,
   FlowCanvasLayoutInput,
@@ -94,6 +96,7 @@ import {
   fetchFlowChangeSet,
   fetchFlowFileDiff,
   fetchFlowFileTree,
+  fetchFlowGitExecution,
   fetchMergeReviewFileDiff,
   fetchProjectGitStatus,
   fetchWorkBaseOptions,
@@ -151,6 +154,8 @@ import {
 export interface OpenDialogOptions {
   /** Open the create child right away (the Designer's File › New Project). Admin-only downstream. */
   create?: boolean
+  /** Open the list as a floating window over the Designer (its taskbar's [Open project]) instead of the modal. */
+  window?: boolean
 }
 
 export const useProjectStore = defineStore('project', () => {
@@ -708,6 +713,11 @@ export const useProjectStore = defineStore('project', () => {
     return fetchFlowAiActivity(groupId, options)
   }
 
+  // flowgate.v02test.0068: the Designer's Flow tab reads each open Flow's durable Git run through this.
+  function loadFlowGitExecution(groupId: string): Promise<FlowGitExecution | null> {
+    return fetchFlowGitExecution(groupId)
+  }
+
   // the Designer Git part's file reads. A conflict / uncommitted file is a
   // Base checkout file (HEAD vs working tree); a merge review file is read from the frozen
   // review candidate. Stateless like the loaders above.
@@ -799,9 +809,15 @@ export const useProjectStore = defineStore('project', () => {
   // set by openDialog({ create: true }) and read once by ProjectDialog when it
   // opens. Not persisted; a Dialog open without the option clears it.
   const createRequested = ref(false)
+  // Which form the Dialog takes (set on every open), and a count of open requests so an already open window can
+  // come back to the front when it is asked for again.
+  const dialogAsWindow = ref(false)
+  const dialogRequest = ref(0)
 
   function openDialog(options: OpenDialogOptions = {}): void {
     createRequested.value = options.create === true
+    dialogAsWindow.value = options.window === true
+    dialogRequest.value += 1
     dialogOpen.value = true
     void fetchProjects()
   }
@@ -827,6 +843,8 @@ export const useProjectStore = defineStore('project', () => {
     loading,
     error,
     dialogOpen,
+    dialogAsWindow: computed(() => dialogAsWindow.value),
+    dialogRequest: computed(() => dialogRequest.value),
     currentProject,
     // Read-only id view: `currentProject` needs the active list loaded, but a screen that
     // only needs "which project" (e.g. the Designer) must not wait for or trigger it.
@@ -870,6 +888,8 @@ export const useProjectStore = defineStore('project', () => {
     readFlowArchive,
     setFlowArchived,
     archiveBusy,
+    // flowgate.v02test.0077: the card a display id (`F77-12`) names — a stateless pass-through like readFlowArchive.
+    findCardRefs,
     getCachedGroupTree,
     invalidateGroupTree,
     fetchGroupTree,
@@ -891,6 +911,7 @@ export const useProjectStore = defineStore('project', () => {
     loadFlowChanges,
     loadFlowFileDiff,
     loadFlowAiActivity,
+    loadFlowGitExecution,
     loadBaseFileDiff,
     loadMergeReviewFileDiff,
     loadFlowCanvas,

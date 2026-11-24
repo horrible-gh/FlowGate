@@ -1,5 +1,5 @@
 export default {
-  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "security_window": "My settings · Security"},
+  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "style_flowgate": "FlowGate", "style_modern": "Modern", "style_dock": "Dock", "style_classic": "Classic", "security_window": "My settings · Security", "pin_project": "Open project", "pin_attachments": "Attachments", "pin_terminal": "Terminal", "pin_git": "Git", "pin_search": "Search"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
   connection_banner: {"reconnecting": "Connection to the server lost · reconnecting automatically…", "hint": "Lists and chats come back on their own once connected, and unsent messages are sent again.", "unknown_error": "An unknown error occurred", "reload": "Reload"},
@@ -638,11 +638,14 @@ export default {
       unavailable: 'Archive status is unavailable.',
       failed: 'Could not change archive status.',
       group_restore_failed: 'Could not restore the group.',
+      confirm_title: 'Archive flow',
+      confirm_incomplete: 'This flow is not completed. Archive it? You can undo this with right-click → Restore.',
+      cancel: 'Cancel',
     },
     project_explorer: {
       title: 'Project',
       refresh: 'Refresh',
-      search_placeholder: 'Search projects, groups, flows',
+      search_placeholder: 'Search projects, groups, flows, F77-12',
       search_clear: 'Clear search',
       loading: 'Loading the project structure...',
       load_failed: 'Could not load the project structure.',
@@ -653,6 +656,11 @@ export default {
       group_menu: 'Group menu',
       no_results: 'No matching project, group or flow.',
       reconnecting: 'Reconnecting…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · Name used in IDs: {key}',
+      archived: 'Archived',
+      cards: 'Cards',
+      enter_open: 'Enter to open',
     },
     // Designer File Explorer.
     file_explorer: {
@@ -762,6 +770,10 @@ export default {
         more: 'More',
         copy_id: 'Copy ID',
         copied: 'ID copied',
+        card_id_copy: 'Click to copy {id}',
+        card_id_copied: 'Copied',
+        copy_doc_id: 'Copy document ID',
+        doc_id_copied: 'Document ID copied',
         kind_bug: 'Bug',
         state_tip: 'Document status: {doc} / Run status: {run}',
       },
@@ -1526,6 +1538,10 @@ export default {
       ai_close: 'Close',
       ai_server_default: 'server default AI',
       ai_ended: 'AI resolve ended ({status}) · {name} · {n} conflicts left',
+      ai_failed: 'AI failed · {why}',
+      ai_failed_next: 'Try another AI or resolve it yourself.',
+      ai_why: { dropped: 'one side was dropped', lines: '{n} lines missing', markers: 'conflict markers left', ended: 'ended unresolved', cancelled: 'stopped' },
+      abort_short: 'Abort',
       blocked: {
         missing_merge: 'Merge ID missing · refresh Git status',
         load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',

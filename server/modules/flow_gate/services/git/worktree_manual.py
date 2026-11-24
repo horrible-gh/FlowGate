@@ -180,7 +180,8 @@ def _admission(group_id: str, state: dict) -> None:
     if session is not None:
         raise GitServiceError(409, "invalid_state", "A Git session is open",
                               details={"reason": "session_open",
-                                       "session_kind": gs.db_git.session_kind(session)})
+                                       "session_kind": gs.db_git.session_kind(session),
+                                       "merge_id": session.get("merge_id")})
     if (state.get("status") or "none") not in ("none", "awaiting_choice", "waiting"):
         raise GitServiceError(409, "invalid_state", "Group state blocks manual Git",
                               details={"reason": "group_state"})
@@ -192,8 +193,14 @@ def _blockers(group_id: str, state: dict) -> list[dict]:
     try:
         _admission(group_id, state)
     except GitServiceError as exc:
-        result.append({"code": "session_open" if exc.details.get("reason") == "session_open" else exc.code,
-                       "operations": list(OPERATIONS)})
+        details = exc.details or {}
+        blocker = {"code": "session_open" if details.get("reason") == "session_open" else exc.code,
+                   "operations": list(OPERATIONS)}
+        if blocker["code"] == "session_open":
+            # flowgate.v02test.0068: which session holds the Flow, so the Git tab can name it and offer its abort
+            # even when no conflict card shows it (a branch merge / graph attempt session is not a pending row).
+            blocker.update(session_kind=details.get("session_kind"), merge_id=details.get("merge_id"))
+        result.append(blocker)
     if operation_job.get_group_freeze_claim(group_id):
         result.append({"code": "group_frozen_for_approval", "operations": list(OPERATIONS)})
     return result
@@ -400,7 +407,7 @@ def _require_history_recovered(group_id: str) -> None:
 
 
 def commit(group_id: str, *, message, worktree_token: str | None = None,
-           index_token: str | None = None) -> dict:
+           index_token: str | None = None, before_commit=None) -> dict:
     """Commit exactly the index. Never stages, unstages, absorbs, merges or pushes."""
     subject = _commit_subject(message)
     with mutation_context(group_id) as (_, cfg, _, root):
@@ -431,6 +438,8 @@ def commit(group_id: str, *, message, worktree_token: str | None = None,
             # The server never unstages on the requester's behalf.
             raise GitServiceError(409, "staged_protected_paths", "Protected paths are staged",
                                   details={"counts": counts, "paths": protected})
+        if before_commit is not None:
+            before_commit(root, current["snapshot"])
         proc = gs._run_git([*gs._GIT_IDENT, "commit", "-q", "-m", subject], cwd=root,
                            author_env=gs._author_env_from_cfg(cfg))
         if proc.returncode:

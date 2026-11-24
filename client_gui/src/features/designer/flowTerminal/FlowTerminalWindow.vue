@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <section v-show="visible && !docked" ref="root" class="ft-window" :class="{ focused, minimized }" :style="placeStyle"
+    <section v-show="visible && !designer" ref="root" class="ft-window" :class="{ focused, minimized }" :style="placeStyle"
       tabindex="-1" role="dialog" :aria-label="`${w.title} · ${title}`" data-test="flow-terminal-window" :data-flow-id="flowId"
       :data-minimized="minimized ? 'true' : undefined" @pointerdown="emit('focus')">
       <header class="ft-head" @pointerdown="startDrag" @dblclick="toggleMinimize">
@@ -10,10 +10,10 @@
         <!-- 0001-R §3.1-6: the working folder is always in the title bar (a long path is cut at its start, the tooltip has all). -->
         <span class="ft-cwd" :title="`${w.cwd}: ${session.cwd}`" data-test="flow-terminal-cwd"><bdi dir="ltr">{{ session.cwd }}</bdi></span>
         <span class="ft-spacer" />
-        <!-- 0009-T 할 일 1: into the Designer's bottom Dock (the same shell goes on there). -->
-        <Button variant="ghost" size="sm" class="ft-head-btn" :title="w.dock" :aria-label="w.dock" :disabled="!canDock"
-          data-test="flow-terminal-dock" @pointerdown.stop @dblclick.stop @click="emit('dock', true)">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11z" /><path d="M2.5 9h11" /><path d="M8 4.8v2.6M6.6 6l1.4 1.4L9.4 6" /></svg>
+        <!-- 0015-T A-1: [⇲ 디자이너로] — the same shell fills the Designer area under the Flow tabs. -->
+        <Button variant="ghost" size="sm" class="ft-head-btn ft-mode-btn" :title="w.toDesigner" :aria-label="w.toDesigner" :disabled="!canFill"
+          data-test="flow-terminal-to-designer" @pointerdown.stop @dblclick.stop @click="emit('designer', true)">
+          <span aria-hidden="true">⇲</span>{{ w.toDesigner }}
         </Button>
         <Button variant="ghost" size="sm" class="ft-head-btn" :title="minimized ? w.restore : w.minimize" :aria-label="minimized ? w.restore : w.minimize"
           data-test="flow-terminal-minimize" @pointerdown.stop @dblclick.stop @click="toggleMinimize">
@@ -26,17 +26,24 @@
       </header>
 
       <div v-show="!minimized" class="ft-main">
-        <!-- 0009-T 할 일 2·4: docked, this part (the xterm.js screen, its overlays and the band) is moved into the bottom
-             Dock's terminal place by the Teleport — the same DOM, Terminal, WebSocket and session; nothing is made again. -->
-        <Teleport :to="dockTarget ?? 'body'" :disabled="!docked || !dockTarget">
-        <div v-show="!docked || visible" class="ft-body" :class="{ 'is-docked': docked }" data-test="flow-terminal-body"
-          :data-flow-id="flowId" :data-docked="docked ? 'true' : undefined" @pointerdown="docked && emit('focus')">
-        <header v-if="docked" class="ft-dock-head" data-test="flow-terminal-dock-head">
-          <span class="ft-dock-label">{{ w.cwd }}</span>
-          <span class="ft-cwd ft-dock-cwd" :title="`${w.cwd}: ${session.cwd}`" data-test="flow-terminal-dock-cwd"><bdi dir="ltr">{{ session.cwd }}</bdi></span>
+        <!-- 0015-T A-2: in 디자이너 mode this part (the xterm.js screen, its overlays and the band) is moved into the
+             Designer area under the Flow tabs by the Teleport — the same DOM, Terminal, WebSocket and session; nothing is
+             made again. Its title bar: the folder, [⇱ 모달리스로], [✕]. No split, no height bar. -->
+        <Teleport :to="fillTarget ?? 'body'" :disabled="!designer || !fillTarget">
+        <div v-show="!designer || visible" class="ft-body" :class="{ 'is-designer': designer }" data-test="flow-terminal-body"
+          :data-flow-id="flowId" :data-designer="designer ? 'true' : undefined" @pointerdown="designer && emit('focus')">
+        <header v-if="designer" class="ft-fill-head" data-test="flow-terminal-designer-head">
+          <span class="ft-head-square" aria-hidden="true">&gt;_</span>
+          <span class="ft-title">{{ w.title }}</span>
+          <span class="ft-fill-label">{{ w.cwd }}</span>
+          <span class="ft-cwd" :title="`${w.cwd}: ${session.cwd}`" data-test="flow-terminal-designer-cwd"><bdi dir="ltr">{{ session.cwd }}</bdi></span>
           <span class="ft-spacer" />
-          <Button variant="ghost" size="sm" class="ft-dock-btn" :title="w.undock" data-test="flow-terminal-undock" @click="emit('dock', false)">{{ w.undock }}</Button>
-          <Button variant="ghost" size="sm" class="ft-dock-btn ft-close" :title="w.close" data-test="flow-terminal-dock-close" @click="requestClose">{{ w.dockClose }}</Button>
+          <Button variant="ghost" size="sm" class="ft-fill-btn" :title="w.toModeless" :aria-label="w.toModeless" data-test="flow-terminal-to-modeless"
+            @click="emit('designer', false)"><span aria-hidden="true">⇱</span>{{ w.toModeless }}</Button>
+          <Button variant="ghost" size="sm" class="ft-fill-btn ft-fill-x ft-close" :title="w.endShell" :aria-label="w.endShell"
+            data-test="flow-terminal-designer-close" @click="requestClose">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+          </Button>
         </header>
         <p v-if="cardRunning && !ended" class="ft-band" role="status" data-test="flow-terminal-card-running">{{ w.cardRunning }}</p>
         <div class="ft-screen-wrap">
@@ -45,6 +52,7 @@
           <div v-if="ended" class="ft-ended" role="status" data-test="flow-terminal-ended" :data-reason="ended.reason">
             <strong>{{ w.ended }}</strong>
             <small>{{ endedDetail }}</small>
+            <small v-if="ended.message" class="ft-ended-message" data-test="flow-terminal-ended-message">{{ ended.message }}</small>
             <Button variant="primary" size="sm" data-test="flow-terminal-reopen" @click="emit('reopen')">{{ w.reopen }}</Button>
           </div>
           <div v-if="confirming" class="ft-confirm" role="alertdialog" :aria-label="w.confirmTitle" data-test="flow-terminal-confirm">
@@ -73,10 +81,13 @@
 // "세션이 끝났습니다" with [새로 열기] — no reattach in this stage. Hidden (another Flow tab) the session goes on.
 // Copy: Ctrl+Shift+C, or Ctrl+C while text is selected (Ctrl+C without a selection is the shell's interrupt).
 // Paste: Ctrl+V / Ctrl+Shift+V go to the browser's paste, which xterm.js sends as input. Korean input uses the IME.
-// 0009-T: `docked` draws the screen in the Designer's bottom Dock (`dockTarget`) instead of the window — [아래에 붙이기]
-// / [떼기] ask the Host (`dock` event). The window keeps its place and size while docked, so [떼기] brings it back
-// where it was. After each move the screen is fitted again and its rows / columns are sent to the shell; the Dock's
-// height and the Center column's width are followed by the same ResizeObserver as the window's size.
+// 0015-T A: `designer` draws the screen filling the Designer area under the Flow tabs (`fillTarget`) instead of the
+// window — [⇲ 디자이너로] / [⇱ 모달리스로] ask the Host (`designer` event). The window keeps its place and size meanwhile,
+// so [⇱ 모달리스로] brings it back where it was. After each move the screen is fitted again and its rows / columns are
+// sent to the shell (the same resize frame); the area's size is followed by the same ResizeObserver as the window's.
+// F85: there is no on/off setting any more, so no "turned off" close. When the shell could not start, the exit frame's
+// `message` (e.g. `pip install -r server/requirements.txt` for a Windows server without pywinpty) is shown under
+// "세션이 끝났습니다".
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Terminal } from '@xterm/xterm'
@@ -91,15 +102,15 @@ import { wordsFor } from './words'
 const props = defineProps<{
   flowId: string; title: string; session: TerminalSession; position: number
   visible: boolean; focused: boolean; zIndex: number
-  /** Drawn in the bottom Dock (0009-T). */
-  docked?: boolean
-  /** The bottom Dock's terminal place; null = no Dock to go to ([아래에 붙이기] is unavailable). */
-  dockTarget?: HTMLElement | null
+  /** Fills the Designer area under the Flow tabs (0015-T A). */
+  designer?: boolean
+  /** That area; null = nothing to fill ([⇲ 디자이너로] is unavailable). */
+  fillTarget?: HTMLElement | null
 }>()
-const emit = defineEmits<{ close: []; focus: []; reopen: []; dock: [docked: boolean] }>()
+const emit = defineEmits<{ close: []; focus: []; reopen: []; designer: [on: boolean] }>()
 const { locale } = useI18n()
 const w = computed(() => wordsFor(locale.value))
-const canDock = computed(() => !!props.dockTarget)
+const canFill = computed(() => !!props.fillTarget)
 
 /* ── place: dragged by the header, resized by the corner (CSS resize), minimized to the header ── */
 const root = ref<HTMLElement | null>(null)
@@ -137,7 +148,7 @@ function toggleMinimize() {
 }
 /** Brings the window back (from minimized too) and puts the keyboard in the shell. */
 function reveal() {
-  if (minimized.value && !props.docked) toggleMinimize()
+  if (minimized.value && !props.designer) toggleMinimize()
   if (term && !ended.value) term.focus()
   else root.value?.focus({ preventScroll: true })
 }
@@ -147,7 +158,7 @@ const connected = ref(false)
 const busy = ref(false)
 const cardRunning = ref(false)
 const confirming = ref(false)
-const ended = ref<{ reason: ExitReason; code: number | null } | null>(null)
+const ended = ref<{ reason: ExitReason; code: number | null; message?: string } | null>(null)
 const endedDetail = computed(() => {
   const end = ended.value
   if (!end) return ''
@@ -179,7 +190,8 @@ function connect() {
   ws.onmessage = event => handle(parseServerMessage(event.data))
   ws.onclose = () => {
     if (socket === ws) socket = null
-    if (!disposed) finish('closed', null)
+    if (disposed) return
+    finish('closed', null)
   }
 }
 function handle(message: ServerMessage | null) {
@@ -187,11 +199,11 @@ function handle(message: ServerMessage | null) {
   if (message.type === 'output') { if (term) term.write(message.data); else early.push(message.data) }
   else if (message.type === 'busy') busy.value = message.value
   else if (message.type === 'card_running') cardRunning.value = message.value
-  else finish(message.reason, message.code)
+  else finish(message.reason, message.code, message.message)
 }
-function finish(reason: ExitReason, code: number | null) {
+function finish(reason: ExitReason, code: number | null, message?: string) {
   if (ended.value) return
-  ended.value = { reason, code }
+  ended.value = message ? { reason, code, message } : { reason, code }
   busy.value = false
   confirming.value = false
   const ws = socket
@@ -225,7 +237,7 @@ async function loadScreen() {
   if (props.visible && props.focused) created.focus()
 }
 function fitNow() {
-  if (!fit || (minimized.value && !props.docked) || !props.visible || !screen.value?.offsetWidth) return
+  if (!fit || (minimized.value && !props.designer) || !props.visible || !screen.value?.offsetWidth) return
   try { fit.fit() } catch { /* not measurable yet (hidden) — the next resize fits */ }
 }
 function keyEvent(event: KeyboardEvent): boolean {
@@ -269,10 +281,10 @@ function shutdown() {
 }
 
 watch(() => props.visible, shown => { if (shown) void nextTick(fitNow) })
-// Moved into / out of the bottom Dock: the window comes back unminimized, the screen is fitted to its new place and
+// Moved into / out of the Designer area: the window comes back unminimized, the screen is fitted to its new place and
 // the shell gets the rows / columns (sent again even when they happen to be the same).
-watch(() => props.docked && !!props.dockTarget, async () => {
-  if (props.docked) minimized.value = false
+watch(() => props.designer && !!props.fillTarget, async () => {
+  if (props.designer) minimized.value = false
   await nextTick()
   fitNow()
   if (term) send(resizeFrame(term.cols, term.rows))
@@ -319,14 +331,17 @@ defineExpose({ reveal, requestClose })
 
 .ft-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ft-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-/* Docked: fills the bottom Dock's terminal place (its own colors, as in the window). */
-.ft-body.is-docked { position: absolute; inset: 0; background: #0a1626; color: #d8e8f5; font-size: 12px; }
+.ft-window .ft-mode-btn { width: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
+/* 디자이너: fills the whole area under the Flow tabs (its own colors, as in the window). */
+.ft-body.is-designer { position: absolute; inset: 0; background: #0a1626; color: #d8e8f5; font-size: 12px; }
 .ft-body button { font-family: inherit; }
-.ft-dock-head { flex-shrink: 0; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 11px;
-  border-bottom: 1px solid #355876; background: #10273e; }
-.ft-dock-label { flex-shrink: 0; font-size: 11px; color: #7f9db6; white-space: nowrap; }
-.ft-body .ft-dock-btn { height: 22px; padding: 0 9px; border: 1px solid var(--fg2-line-strong); border-radius: 5px; color: var(--fg2-control-fg);
-  font-size: 11px; white-space: nowrap; }
+.ft-fill-head { flex-shrink: 0; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 9px 0 11px;
+  user-select: none; border-bottom: 1px solid #355876; background: linear-gradient(180deg, #18334e, #10273e); }
+.ft-fill-label { flex-shrink: 0; font-size: 11px; color: #7f9db6; white-space: nowrap; }
+.ft-body .ft-fill-btn { height: 25px; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px; border: 1px solid var(--fg2-line-strong);
+  border-radius: 5px; color: var(--fg2-control-fg); font-size: 11px; white-space: nowrap; }
+.ft-body .ft-fill-x { width: 27px; padding: 0; justify-content: center; }
+.ft-body .ft-fill-x svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .ft-body .ft-close:hover { background: var(--fg2-status-danger-bg); border-color: var(--fg2-status-danger-border); color: var(--fg2-text); }
 .ft-band { flex-shrink: 0; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--fg2-status-warning-border, #8a6a24);
   background: var(--fg2-status-warning-bg, #3a2f12); color: var(--fg2-status-warning-fg, #ffd98a); font-size: 12px; }
@@ -337,6 +352,7 @@ defineExpose({ reveal, requestClose })
 .ft-ended { align-content: center; gap: 8px; text-align: center; }
 .ft-ended strong { font-size: 15px; color: #f0f7ff; }
 .ft-ended small { color: #9fb8cc; font-size: 12px; }
+.ft-ended .ft-ended-message { max-width: 52ch; color: #ffd28a; white-space: pre-wrap; word-break: break-word; }
 .ft-confirm-card { width: min(360px, calc(100% - 40px)); padding: 18px 20px; border: 1px solid #5a7fa3; border-radius: 10px; background: #10253b;
   box-shadow: 0 14px 40px #0009; }
 .ft-confirm-card h3 { margin: 0 0 6px; font-size: 14px; color: #f0f7ff; }

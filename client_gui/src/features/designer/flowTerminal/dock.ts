@@ -1,48 +1,32 @@
-// Docking a Flow terminal into the Designer's bottom Dock (0078 · 0001-R §3.1-3 rev 3, 0009-T).
-// - `docked[flowId]`: the Flow's terminal is wanted in the bottom Dock (remembered per Flow for this browser session;
-//   a Flow that was never docked opens floating). [새로 열기] and opening again after [닫기] keep it.
-// - `pane[flowId]`: what the left 7 of the bottom Dock shows for that Flow while its terminal is docked.
-// The bottom Dock shows the Inspector | 터미널 switch only for the open Flow whose terminal is open *and* docked;
-// anything else is the Inspector alone, as before.
+// Where a Flow terminal is drawn (0078 · 0015-T A): the floating window (모달리스) or filling the whole Designer area
+// under the Flow tab strip (디자이너 — the Canvas and the bottom Inspector · Minimap places, all of it; nothing split).
+// - `designer[flowId]`: the Flow's terminal fills the Designer. Remembered per Flow for as long as the Host lives; a
+//   terminal opens floating the first time, and [✕] (the shell ends) forgets it, so the next one opens floating too.
+// Moving between the two never ends the shell: the window moves the same screen (Teleport), nothing is made again.
 import { reactive } from 'vue'
 
-export type BottomPane = 'inspector' | 'terminal'
-
-export interface TerminalDockState {
-  docked: Record<string, boolean>
-  pane: Record<string, BottomPane>
+export interface TerminalPlaceState {
+  designer: Record<string, boolean>
 }
 
-export function createTerminalDockState(): TerminalDockState {
-  return reactive({ docked: {}, pane: {} }) as TerminalDockState
+export function createTerminalPlaceState(): TerminalPlaceState {
+  return reactive({ designer: {} }) as TerminalPlaceState
 }
 
-/** [아래에 붙이기]: the terminal goes into the bottom Dock and its tab is chosen. */
-export function dockFlow(state: TerminalDockState, flowId: string): void {
-  state.docked[flowId] = true
-  state.pane[flowId] = 'terminal'
+/** [⇲ 디자이너로]: the terminal fills the Designer area. */
+export function toDesigner(state: TerminalPlaceState, flowId: string): void {
+  state.designer[flowId] = true
 }
 
-/** [떼기]: back to the floating window. */
-export function undockFlow(state: TerminalDockState, flowId: string): void {
-  delete state.docked[flowId]
-  delete state.pane[flowId]
+/** [⇱ 모달리스로]: back to the floating window. */
+export function toModeless(state: TerminalPlaceState, flowId: string): void {
+  delete state.designer[flowId]
 }
 
-/** A closed Flow tab forgets its terminal place. */
-export const forgetFlow = undockFlow
+/** [✕] or a closed Flow tab forgets the place: the next terminal of that Flow opens floating. */
+export const forgetFlow = toModeless
 
-export function selectBottomPane(state: TerminalDockState, flowId: string, pane: BottomPane): void {
-  if (state.docked[flowId]) state.pane[flowId] = pane
-}
-
-/** The terminal of `flowId` is drawn in the bottom Dock: it is open, docked and there is a Dock to go to. */
-export function isDockedNow(state: TerminalDockState, flowId: string, open: boolean, hasTarget: boolean): boolean {
-  return open && hasTarget && !!state.docked[flowId]
-}
-
-/** What the bottom Dock's left part shows for the open Flow: null = the Inspector alone (no switch). */
-export function bottomPaneOf(state: TerminalDockState, flowId: string | null, open: boolean): BottomPane | null {
-  if (!flowId || !open || !state.docked[flowId]) return null
-  return state.pane[flowId] ?? 'terminal'
+/** The terminal of `flowId` fills the Designer now: it is open, in designer mode and there is a place to fill. */
+export function isDesignerNow(state: TerminalPlaceState, flowId: string | null, open: boolean, hasTarget: boolean): boolean {
+  return !!flowId && open && hasTarget && !!state.designer[flowId]
 }

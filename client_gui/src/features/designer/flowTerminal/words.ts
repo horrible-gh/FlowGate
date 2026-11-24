@@ -3,7 +3,7 @@
 type ExitWord = 'closed' | 'idle_timeout' | 'shell_exit' | 'error'
 
 const ko = {
-  title: '터미널', tabMark: '터미널 열림', disabled: '서버 설정에서 꺼져 있음',
+  title: '터미널', tabMark: '터미널 열림',
   limit: '터미널은 3개까지 열 수 있습니다 — 다른 탭의 터미널을 닫아 주세요',
   exists: '이 플로우의 터미널이 다른 브라우저 창에서 열려 있습니다',
   notAdmin: '관리자만 터미널을 쓸 수 있습니다', failed: '터미널을 열지 못했습니다. 다시 시도해 주세요.',
@@ -15,14 +15,13 @@ const ko = {
   exitCode: (code: number) => `종료 코드 ${code}`,
   confirmTitle: '실행 중인 명령이 있습니다', confirmBody: '창을 닫으면 실행 중인 명령도 함께 끝납니다.',
   confirmClose: '닫기', cancel: '취소', dismiss: '알림 닫기',
-  // 0009-T: docking into the Designer's bottom Dock.
-  dock: '아래에 붙이기', undock: '떼기', dockClose: '닫기',
-  inspectorTab: '인스펙터', terminalTab: '터미널', dockSwitch: '아래 칸 보기 전환',
+  // 0015-T A: 모달리스 ↔ 디자이너 (filling the Designer area under the Flow tabs).
+  toDesigner: '디자이너로', toModeless: '모달리스로', endShell: '닫기 (셸 끝내기)',
 }
 type Words = typeof ko
 
 const en: Words = {
-  title: 'Terminal', tabMark: 'Terminal open', disabled: 'Turned off in the server settings',
+  title: 'Terminal', tabMark: 'Terminal open',
   limit: 'Up to 3 terminals can be open — close the terminal of another tab',
   exists: "This Flow's terminal is open in another browser window",
   notAdmin: 'Only administrators can use the terminal', failed: 'Could not open the terminal. Please try again.',
@@ -34,12 +33,11 @@ const en: Words = {
   exitCode: code => `exit code ${code}`,
   confirmTitle: 'A command is running', confirmBody: 'Closing the window also ends the running command.',
   confirmClose: 'Close', cancel: 'Cancel', dismiss: 'Dismiss',
-  dock: 'Dock below', undock: 'Undock', dockClose: 'Close',
-  inspectorTab: 'Inspector', terminalTab: 'Terminal', dockSwitch: 'Bottom panel view',
+  toDesigner: 'To Designer', toModeless: 'To modeless', endShell: 'Close (end the shell)',
 }
 
 const ja: Words = {
-  title: 'ターミナル', tabMark: 'ターミナル表示中', disabled: 'サーバー設定でオフになっています',
+  title: 'ターミナル', tabMark: 'ターミナル表示中',
   limit: 'ターミナルは3つまで開けます — 他のタブのターミナルを閉じてください',
   exists: 'このフローのターミナルは別のブラウザウィンドウで開かれています',
   notAdmin: 'ターミナルは管理者のみ使用できます', failed: 'ターミナルを開けませんでした。もう一度お試しください。',
@@ -51,8 +49,7 @@ const ja: Words = {
   exitCode: code => `終了コード ${code}`,
   confirmTitle: '実行中のコマンドがあります', confirmBody: 'ウィンドウを閉じると実行中のコマンドも終了します。',
   confirmClose: '閉じる', cancel: 'キャンセル', dismiss: '通知を閉じる',
-  dock: '下にドッキング', undock: '切り離す', dockClose: '閉じる',
-  inspectorTab: 'インスペクター', terminalTab: 'ターミナル', dockSwitch: '下パネルの表示切替',
+  toDesigner: 'デザイナーへ', toModeless: 'モードレスへ', endShell: '閉じる (シェル終了)',
 }
 
 export const words: Record<'ko' | 'en' | 'ja', Words> = { ko, en, ja }

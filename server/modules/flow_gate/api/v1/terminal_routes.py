@@ -2,8 +2,8 @@
 
 Paths (under ``/flowgate/api/v1/terminal``), fixed with the screen card:
 
-* ``GET /status?flow_id=`` -- anyone signed in; the screen hides/greys its button from it.
-* ``POST /sessions`` -- administrators only, ``TERMINAL_ENABLED`` only; returns a one-time
+* ``GET /status?flow_id=`` -- anyone signed in; the screen hides its button from it.
+* ``POST /sessions`` -- administrators only (no on/off setting); returns a one-time
   30-second ticket for the WebSocket so the login token never appears in a URL.
 * ``WS /ws?ticket=`` -- the terminal stream.
 * ``DELETE /sessions/{session_id}`` -- ends the session and its whole process tree.
@@ -63,3 +63,4 @@ def delete_terminal_session(session_id: str, user: dict = Depends(get_current_us
 @router.websocket("/ws")
 async def terminal_socket(websocket: WebSocket, ticket: str = Query(default="", max_length=128)):
     await terminal_sessions.serve_websocket(websocket, ticket)
+
