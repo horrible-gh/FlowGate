@@ -151,7 +151,13 @@ export function useMerge(target: () => InspectorTarget | null, refresh?: () => v
     { immediate: true },
   )
 
-  const screen = computed(() => mergeScreenOf(state.value?.state ?? null, hadWork.value, picking.value))
+  const screen = computed(() => {
+    const current = state.value
+    // Opening the picker is read-only; only submitting a choice stops the server's automatic tries.
+    if (picking.value && current?.state === 'catching_up' && mergeAutoRunning(current.autoResolve)
+      && current.actions.includes('pick')) return 'pick'
+    return mergeScreenOf(current?.state ?? null, hadWork.value, picking.value)
+  })
 
   // Progress is read again while the server works on its own: a merge in progress, a waiting one, or an automatic resolution.
   // Opening the window only reads; nothing here asks the server to stop or start the automatic tries.
