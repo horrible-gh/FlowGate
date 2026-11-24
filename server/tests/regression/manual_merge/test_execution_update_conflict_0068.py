@@ -239,3 +239,62 @@ def test_resolver_that_resolved_everything_is_no_failure(monkeypatch):
     assert conflict.note_resolver_finished(7, {"run_id": "r"}) is False
     monkeypatch.setattr(gs.db_git, "get_session", lambda mid: None)
     assert conflict.note_resolver_finished(7, {"run_id": "r"}) is False
+
+
+# ── a closed 받아오기 session is announced, whatever closed it ─────────────────────────────────────
+# An update conflict never writes the group status, so nothing told an open screen that it had
+# ended: the Flow tab kept its conflict mark after 세션 중단. Every close now sends
+# git_status_changed (reason update_session_closed) for the group.
+
+def closed_notices(monkeypatch):
+    seen = []
+    monkeypatch.setattr(gs, "_emit", lambda event, project, group, payload: seen.append((event, project, group, payload)))
+    return lambda: [(group, payload["merge_id"], payload["session_status"]) for event, _project, group, payload in seen
+                    if event == "git_status_changed" and payload.get("reason") == "update_session_closed"]
+
+
+@needs_git
+def test_update_conflict_abort_announces_the_closed_session(proj, monkeypatch):
+    gid, _job_id, view = waiting_on_update(proj)
+    closed = closed_notices(monkeypatch)
+    conflict.abort_merge(gid, view["mergeId"])
+    assert closed() == [(gid, view["mergeId"], "aborted")]
+    assert conflict_row(gid) is None
+
+
+@needs_git
+def test_update_conflict_resolve_announces_the_closed_session(proj, monkeypatch):
+    gid, _job_id, view = waiting_on_update(proj)
+    closed = closed_notices(monkeypatch)
+    conflict.resolve_conflicts(gid, view["mergeId"], [{"path": "same.txt", "content": "base\nwork\n"}], True)
+    assert closed() == [(gid, view["mergeId"], "done")]
+
+
+@needs_git
+def test_closed_session_notice_waits_for_the_commit(proj, monkeypatch):
+    gid, _job_id, view = waiting_on_update(proj)
+    closed = closed_notices(monkeypatch)
+    with get_store().transaction():
+        gs._announce_update_session_closed(view["mergeId"], "done")
+        # A reader woken now would still find the session open.
+        assert closed() == []
+    assert closed() == [(gid, view["mergeId"], "done")]
+
+
+def test_closed_session_notice_is_for_update_sessions_only(monkeypatch):
+    sessions = {
+        3: {"merge_id": 3, "group_id": "g1", "kind": gs.db_git.SESSION_KIND_GROUP_UPDATE},
+        4: {"merge_id": 4, "group_id": "g1", "kind": gs.db_git.SESSION_KIND_MERGE},
+        5: {"merge_id": 5, "group_id": None, "kind": gs.db_git.SESSION_KIND_GROUP_UPDATE},
+    }
+    monkeypatch.setattr(gs.db_git, "get_session", lambda merge_id: sessions.get(merge_id))
+    monkeypatch.setattr(gs.db_git, "session_kind", lambda s: s["kind"])
+    monkeypatch.setattr(gs, "_project_of_group", lambda group_id: "proj")
+    closed = closed_notices(monkeypatch)
+    for merge_id in (4, 5, 99):
+        gs._announce_update_session_closed(merge_id, "aborted")
+    assert closed() == []
+    gs._announce_update_session_closed(3, "aborted")
+    assert closed() == [("g1", 3, "aborted")]
+    # Registered once on the session close notice.
+    assert [cb.__name__ for cb in gs.db_git._close_listeners].count("_announce_update_session_closed") == 1

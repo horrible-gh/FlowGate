@@ -141,7 +141,20 @@ export interface GitState {
   aiProviderId: string | null
   // How the last AI run on the open conflict ended while markers remained (null = none / gone).
   aiOutcome: GitAiOutcome | null
+  // flowgate.v02test.0068: the Flow's open Git session as its worktree status names it (adoptOpenSession); null = none.
+  openSession: GitOpenSession | null
 }
+
+/** The Flow's open Git session as worktree status names it (`session_open`): its group, id and kind. */
+export interface GitOpenSession {
+  groupId: string
+  mergeId: number
+  kind: string
+}
+
+/** Session kinds whose conflict the conflict card resolves with no git/status row of its own: 받아오기 only. A merge
+ *  session always has its row (the group status), and a TR / branch / card merge is handled elsewhere. */
+export const ADOPTED_SESSION_KINDS: readonly string[] = ['group_update']
 
 /** The merge session a forced cleanup is about (default: the shown group's open conflict). */
 export interface ForceCleanupTarget {
@@ -190,6 +203,12 @@ export interface GitSession {
    * it; otherwise why not (the code, and git's own reason line when it gave one). Both status reads follow.
    */
   abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null>
+  /**
+   * flowgate.v02test.0068: the open session worktree status names for the shown Flow (null = none). A 받아오기 conflict
+   * session git/status gave no conflict row for is shown by the conflict card all the same, so it can always be
+   * resolved or aborted there; git/status is read again when that changes the card.
+   */
+  adoptOpenSession(open: GitOpenSession | null): void
   /**
    * (task 3): the administrator's forced cleanup of an open merge whose abort git refuses.
    * `preview` reads what it would reset (null when it cannot be read); `run` does it and true means the server closed
@@ -293,6 +312,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     windows: [],
     aiProviderId: null,
     aiOutcome: null,
+    openSession: null,
   })
 
   let disposed = false
@@ -308,10 +328,18 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
 
   // ── Derived views ──────────────────────────────────────────────────────────────────
 
-  const pendingRow = computed(() => {
+  const pendingRow = computed<DeepReadonly<ProjectGitPendingRow> | null>(() => {
     const gid = state.flow?.groupId
     if (!gid || !state.status?.enabled) return null
-    return state.status.pending.find((row) => row.groupId === gid) ?? null
+    const row = state.status.pending.find((item) => item.groupId === gid) ?? null
+    // flowgate.v02test.0068: the conflict card used to depend on git/status alone. An open 받아오기 conflict session that
+    // worktree status names but git/status has no conflict row for (an answer read before the session opened, a failed
+    // session read on the server) left only 「열린 Git 세션」 and no way to resolve it. It is the group's conflict row here.
+    const open = state.openSession
+    if (open && open.groupId === gid && ADOPTED_SESSION_KINDS.includes(open.kind) && !(row?.status === 'conflict' && row.mergeId !== null)) {
+      return { groupId: gid, status: 'conflict', mergeId: open.mergeId, acDocId: row?.acDocId ?? null, reviewState: null, finalApprovalBound: false, plan: null }
+    }
+    return row
   })
 
   const groupCard = computed<GitGroupCard>(() => {
@@ -700,6 +728,16 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
 
   function refresh(): Promise<void> {
     return load({ forceConflicts: true })
+  }
+
+  function adoptOpenSession(open: GitOpenSession | null): void {
+    const now = state.openSession
+    if ((now?.groupId ?? null) === (open?.groupId ?? null) && (now?.mergeId ?? null) === (open?.mergeId ?? null) && (now?.kind ?? null) === (open?.kind ?? null)) return
+    const key = () => { const row = pendingRow.value; return row ? `${row.groupId}|${row.status}|${row.mergeId ?? ''}` : '' }
+    const before = key()
+    state.openSession = open ? { groupId: open.groupId, mergeId: open.mergeId, kind: open.kind } : null
+    // The card changed (a session git/status did not show, or one that is gone): read its files / what Git says now.
+    if (key() !== before) void load({ forceConflicts: true })
   }
 
   function loadConflicts(): Promise<void> {
@@ -1151,6 +1189,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     abortForReapproval,
     abortMerge,
     abortOpenSession,
+    adoptOpenSession,
     forceCleanupPreview,
     forceCleanup,
     loadAbortFailures,
