@@ -1857,6 +1857,9 @@ def _record_group_update_resolution(
             failed_context[UPDATE_RECORD_FAILURE_KEY] = {
                 "code": str(code), "reason": reason, "at": now_iso(),
             }
+            ledger_commit = details.get("ledger_commit") if isinstance(details, dict) else None
+            if ledger_commit:
+                failed_context[UPDATE_RECORD_FAILURE_KEY]["ledger_commit"] = str(ledger_commit)
             _gs.db_git.set_session_context(merge_id, failed_context)
         except Exception as note_exc:   # diagnostics only: the abort below still happens
             _log.warning(
