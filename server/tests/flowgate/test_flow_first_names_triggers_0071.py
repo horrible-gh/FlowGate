@@ -166,3 +166,81 @@ def test_run_context_uses_current_execution_role(naming, monkeypatch, role_state
     monkeypatch.setattr(resolve, "read_card_role_inputs", lambda *args: inputs)
     monkeypatch.setattr(availability, "check_availability", lambda *args, **kwargs: "disabled" if role_state == "unavailable" else None)
     assert t.run_context(FA, 1)[0] == expected
+
+
+
+def test_submitted_title_skips_context_reads(wired, monkeypatch):
+    from unittest.mock import Mock
+    first = Mock(side_effect=AssertionError("unexpected first message read"))
+    root = Mock(side_effect=FileNotFoundError("unreadable root"))
+    generate = Mock()
+    schedule = Mock()
+    monkeypatch.setattr(a, "_first_user_message", first)
+    monkeypatch.setattr(t, "run_context", root)
+    monkeypatch.setattr(a, "generate_flow_names", generate)
+    monkeypatch.setattr(t, "_schedule", schedule)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      '  "제목: 제출된 이름."  ', wired["chat"])
+    generate.assert_called_once_with(FA, {"user_id": USER["user_id"]}, "provider", "",
+                                     wired["chat"], title="제출된 이름")
+    first.assert_not_called()
+    root.assert_not_called()
+    schedule.assert_not_called()
+
+
+def test_submitted_title_saves_without_root_or_message(wired, monkeypatch):
+    from unittest.mock import Mock
+    root = Mock(side_effect=FileNotFoundError("unreadable root"))
+    monkeypatch.setattr(t, "run_context", root)
+    monkeypatch.setattr(legacy_adapter, "first_turns", lambda *args: [])
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      TITLE, wired["chat"])
+    assert titles(wired) == (TITLE, TITLE, TITLE)
+    assert wired["calls"] == 0
+    root.assert_not_called()
+
+
+@pytest.mark.parametrize("title", [None, "   ", "제목:"])
+@pytest.mark.parametrize("error", [FileNotFoundError("private root path"),
+                                  PermissionError("private root path"),
+                                  UnicodeDecodeError("utf-8", b"\xff", 0, 1, "private root path")])
+def test_submitted_title_root_failure_still_schedules(wired, monkeypatch, caplog, title, error):
+    from unittest.mock import Mock
+    from modules.flow_gate.graph_workflow.store import definition_store
+    monkeypatch.setattr(a, "_first_user_message", lambda _: "")
+    monkeypatch.setattr(definition_store, "latest_revision_no", lambda _: 1)
+    root = Mock(side_effect=error)
+    schedule = Mock(return_value=True)
+    monkeypatch.setattr(t, "run_context", root)
+    monkeypatch.setattr(t, "_schedule", schedule)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      title, wired["chat"])
+    root.assert_called_once_with(FA, 1, "provider")
+    schedule.assert_called_once_with(a.generate_flow_names, FA, {"user_id": USER["user_id"]},
+                                     "provider", "", wired["chat"])
+    warnings = [r.getMessage() for r in caplog.records if "reason=root_read_failed" in r.getMessage()]
+    assert warnings == [f"flow_auto_title reason=root_read_failed flow={FA}"]
+    assert "private root path" not in caplog.text
+
+
+@pytest.mark.parametrize("first_message", [TEXT, ""])
+def test_submitted_title_fallback_preserves_context_order(wired, monkeypatch, first_message):
+    from unittest.mock import Mock
+    from modules.flow_gate.graph_workflow.store import definition_store
+    order = []
+    def first(_):
+        order.append("first")
+        return first_message
+    def root(*args):
+        order.append("root")
+        return "provider", TEXT, None
+    monkeypatch.setattr(a, "_first_user_message", first)
+    monkeypatch.setattr(t, "run_context", root)
+    monkeypatch.setattr(definition_store, "latest_revision_no", lambda _: 1)
+    schedule = Mock(return_value=True)
+    monkeypatch.setattr(t, "_schedule", schedule)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      None, wired["chat"])
+    assert order == (["first"] if first_message else ["first", "root"])
+    schedule.assert_called_once_with(a.generate_flow_names, FA, {"user_id": USER["user_id"]},
+                                     "provider", TEXT, wired["chat"])
