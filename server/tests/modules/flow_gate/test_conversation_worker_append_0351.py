@@ -140,3 +140,14 @@ def test_chat_completion_oracle_tracks_the_append_only_turn_head(monkeypatch):
 
     assert oracle is not None
     assert oracle() is True
+
+
+def test_optional_title_reaches_append_with_server_owned_identity():
+    with patch.object(routes.token_service, "inspect_for_replay", return_value=dict(TOKEN)), \
+         patch.object(routes.db_documents, "get_by_id", return_value=DOC), \
+         patch.object(service, "append_turn", return_value=_result()) as append:
+        response = _post(_client(), title="로그인 오류 수정")
+    assert response.status_code == 201
+    assert append.call_args.kwargs["naming_title"] == "로그인 오류 수정"
+    assert append.call_args.kwargs["actor"] == {"kind": "worker", "token": TOKEN}
+    assert "title" not in response.json()["turn"]

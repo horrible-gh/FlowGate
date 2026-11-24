@@ -1,5 +1,33 @@
 """Optional first-name scheduling port, wired by the application composition root."""
 _handler = None
+_title_handler = None
+_request_handler = None
+
+
+def register_title(handler, request_handler):
+    global _title_handler, _request_handler
+    _title_handler, _request_handler = handler, request_handler
+
+
+def title_request(flow_id, locale="ko", action="chat"):
+    if _request_handler is None or not flow_id:
+        return ""
+    try:
+        return _request_handler(flow_id, locale, action)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("flow naming request exception_type=%s", type(exc).__name__)
+        return ""
+
+
+def submitted(token, title, doc_id=None):
+    if _title_handler is None:
+        return
+    try:
+        _title_handler(token, title, doc_id)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("flow naming submission exception_type=%s", type(exc).__name__)
 
 
 def register(handler):

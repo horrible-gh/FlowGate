@@ -2618,6 +2618,8 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # the model resends with commit_message (the plain-text fallback below is refused too).
     if isinstance(tool_input.get("commit_message"), str) and tool_input["commit_message"].strip():
         body["commit_message"] = tool_input["commit_message"]
+    if isinstance(tool_input.get("title"), str):
+        body["title"] = tool_input["title"]
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),
@@ -2743,7 +2745,7 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 _REGISTER_MODEL_FIELDS = {
     "new": ("doc_type", "title", "content", "node_title"),
     "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
-             "rejection_review_id", "node_title", "commit_message"),
+             "rejection_review_id", "node_title", "commit_message", "title"),
     # force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
     "review": ("verdict", "findings", "comment", "body_sha256", "body_chars"),

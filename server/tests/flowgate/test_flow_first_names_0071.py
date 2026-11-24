@@ -29,6 +29,7 @@ def naming(env, monkeypatch):
     state = {"key": key, "chat": chat, "calls": 0, "hook": None, "answer": TITLE}
     monkeypatch.setattr(legacy_adapter, "has_permission", lambda *args: True)
     monkeypatch.setattr(legacy_adapter, "title_max_len", lambda: 100)
+    monkeypatch.setattr(legacy_adapter, "naming_remote_provider", lambda *args: False)
     def prompt(*args, **kwargs):
         state["calls"] += 1
         assert TEXT in args[2]
@@ -235,4 +236,4 @@ def test_expired_generation_lease_can_recover(naming, monkeypatch):
         ledger.save(FA, state)
     with_flow_guard(FA, expire)
     monkeypatch.setattr(legacy_adapter, "complete_prompt", complete)
-    assert run(naming)["status"] == "done"
+    assert a.generate_flow_names(FA, USER, "provider", TEXT, naming["chat"], title=TITLE)["status"] == "done"

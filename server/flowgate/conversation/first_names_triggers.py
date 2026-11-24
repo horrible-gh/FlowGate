@@ -6,6 +6,49 @@ from . import auto_title, activity, legacy_adapter, contracts as c
 log = logging.getLogger(__name__)
 
 
+def title_request(flow_id, locale="ko", action="chat"):
+    from . import first_names_ports as p
+    # new.title is document metadata; reviews/preflight cannot submit a title.
+    if action not in ("chat", "edit"):
+        return ""
+    if not legacy_adapter.has_graph_definition(flow_id):
+        return ""
+    if p.guard(flow_id, lambda: p.ledger.load(flow_id).get("candidate")):
+        return ""
+    locale = str(locale or "ko").lower().split("-")[0]
+    return {
+        "ko": "답변 제출 시 선택 필드 `title`에 실제 작업 사실에 기반한 짧은 작업 제목을 보내세요. 플로우·시작 카드·채팅의 공통 이름으로 사용합니다. 문서 등록(new)의 `title`은 문서 제목이므로 이 용도로 바꾸지 마세요.",
+        "ja": "回答の送信時に任意フィールド `title` で実際の作業内容に基づく短い作業名を送信してください。フロー・開始カード・チャットの共通名に使います。文書登録(new)の `title` は文書名なので、この用途で変更しないでください。",
+        "en": "When submitting your answer, send a short task title based on actual task facts in the optional `title` field. It names the flow, start card and chat together. The `title` of document registration (new) is document metadata; preserve that document title.",
+    }.get(locale, "답변의 선택 필드 `title`에 실제 작업 사실에 기반한 짧은 작업 제목을 보내세요. 문서 등록(new)의 `title`은 문서 제목으로 유지하세요.")
+
+def submitted_title(token, title, doc_id=None):
+    flow_id = token.get("group_id")
+    if not flow_id or not legacy_adapter.has_graph_definition(flow_id):
+        return
+    run = (legacy_adapter.get_run_record(token.get("ai_run_id"))
+           or legacy_adapter.persisted_naming_run(token.get("ai_run_id")) or {})
+    provider = run.get("provider_id") or token.get("provider_id")
+    user_id = token.get("issued_to")
+    if not provider or not user_id:
+        log.warning("flow_auto_title reason=reply_context_missing flow=%s", flow_id)
+        return
+    doc = legacy_adapter.get_document(doc_id) if doc_id else None
+    chat_id = doc_id if doc and doc.get("type_code") == "CH" else legacy_adapter.naming_chat(flow_id)
+    # Read actual task facts for the single local fallback, never the report header.
+    message = ""
+    if not chat_id:
+        from modules.flow_gate.graph_workflow.store import definition_store
+        _, message, _ = run_context(flow_id, definition_store.latest_revision_no(flow_id), provider)
+    cleaned = auto_title.clean_title(title, auto_title.TITLE_MAX_CHARS) if isinstance(title, str) else None
+    if cleaned:
+        auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, message,
+                                       chat_id, title=cleaned)
+    else:
+        # A local fallback must not delay delivery of an already committed reply.
+        _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, message, chat_id)
+
+
 def notify(flow_id, targets=None, doc_id=None):
     """Post-commit hints; clients read authoritative values, never apply event titles."""
     from modules.flow_gate.api.v1.events.publisher import broadcast_event_nowait, FlowEvent
@@ -83,7 +126,7 @@ def _run(flow_id, user_id, revision_no, provider_id=None):
                                    else run_context(flow_id, revision_no))
         provider = provider_id or provider
         if provider:
-            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text)
+            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text, allow_fallback=False)
         else:
             log.debug("flow naming skipped reason=provider_missing flow=%s", flow_id)
     except Exception as exc:

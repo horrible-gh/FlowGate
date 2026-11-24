@@ -35,6 +35,7 @@ class WorkerConversationTurnAppend(BaseModel):
     # required (422 commit_message_required) when the token is an
     # edit-mode chat token and the worktree holds changes that run end would commit.
     commit_message: Optional[str] = None
+    title: Optional[str] = None
 
 
 def _fail(status: int, message: str, *, code=None, unknown_keys=None) -> JSONResponse:
@@ -193,6 +194,7 @@ def _append_authenticated(
             body_raw=body.body,
             idempotency_key=body.idempotency_key,
             based_on_seq=body.based_on_seq,
+            naming_title=body.title,
             display_name_hint=body.display_name,
             body_sha256=body.body_sha256,
             body_chars=body.body_chars,

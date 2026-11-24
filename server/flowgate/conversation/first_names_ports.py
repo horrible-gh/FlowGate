@@ -63,7 +63,7 @@ def targets(flow_id, chat_doc_id, *, chat_only=False):
         out["chat"] = {"id": chat_doc_id, "title": doc.get("title"), "meta": doc.get("meta"),
                        "manual": bool(meta.get("first_name_manual") or marker.get("state") in
                                       ("manual", "done"))}
-    return group, ({"chat": out["chat"]} if chat_only else {k: v for k, v in out.items() if k != "chat"})
+    return group, ({"chat": out["chat"]} if chat_only else out)
 
 
 def eligible(kind, target):
