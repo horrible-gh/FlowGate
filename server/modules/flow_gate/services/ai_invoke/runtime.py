@@ -469,6 +469,7 @@ _REGISTER_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "Document title"},
+        "flow_title": {"type": "string", "description": "Optional short task name shared by the flow, start card and chat; separate from document title"},
         "content": {"type": "string", "description": "Full markdown content of the document"},
         "doc_type": {"type": "string", "description": "Document type code, e.g. NR, D, P, L, T, TR"},
     },

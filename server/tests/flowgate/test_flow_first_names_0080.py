@@ -223,8 +223,9 @@ def test_remote_partial_save_reuses_candidate(naming, monkeypatch):
     assert titles(naming) == (TITLE, TITLE, TITLE)
 
 
+@pytest.mark.parametrize("action", ["new", "edit"])
 @pytest.mark.parametrize("dry_run, status, changed", [(False, 200, True), (True, 200, False), (False, 422, False)])
-def test_card_submission_only_names_after_success(naming, monkeypatch, dry_run, status, changed):
+def test_card_submission_only_names_after_success(naming, monkeypatch, dry_run, status, changed, action):
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.graph_workflow.services import first_names_hooks
     from starlette.responses import JSONResponse
@@ -236,7 +237,9 @@ def test_card_submission_only_names_after_success(naming, monkeypatch, dry_run, 
     monkeypatch.setattr(legacy_adapter, "complete_prompt", lambda *args, **kwargs: pytest.fail("extra call"))
     response = inbox_routes._in_write_session(
         lambda *args: JSONResponse({"ok": status == 200}, status_code=status), None, "raw",
-        {"action": "edit", "doc_id": f"{FA}.0001-R", "group_id": "forged", "title": TITLE, "dry_run": dry_run})
+        {"action": action, "doc_id": f"{FA}.0001-R", "group_id": "forged",
+         "title": TITLE if action == "edit" else "서버 수정 · 레포트",
+         "flow_title": TITLE, "dry_run": dry_run})
     assert response.status_code == status
     assert titles(naming) == ((TITLE, TITLE, TITLE) if changed else ("새 플로우", None, "새 대화"))
 
@@ -282,7 +285,7 @@ def test_title_guidance_localized_and_action_scoped(naming, locale, word):
     from modules.flow_gate.graph_workflow.services import first_names_hooks as hooks
     from unittest.mock import patch
     with patch.object(hooks, "_request_handler", t.title_request):
-        for action in ("new", "review", "preflight", "test_run", "failure_origin_review"):
+        for action in ("review", "preflight", "test_run", "failure_origin_review"):
             assert hooks.title_request(FA, locale, action) == ""
         assert word in hooks.title_request(FA, locale, "chat")
         kwargs = dict(project="p", module="m", group="0001", group_id=FA,
@@ -293,8 +296,12 @@ def test_title_guidance_localized_and_action_scoped(naming, locale, word):
         assert word in text
         heading = {"ko": "공통 작업 이름", "en": "Shared task title", "ja": "共通の作業名"}[locale]
         assert "## " + heading in text
-        for action in ("new", "review"):
-            assert heading not in m.build_mention(**kwargs, action_scope=action)
+        text = m.build_mention(**kwargs, action_scope="new")
+        assert "## " + heading in text and "`flow_title`" in text and word in text
+        assert heading not in m.build_mention(**kwargs, action_scope="review")
+        a.generate_flow_names(FA, USER, "p", TEXT, naming["chat"], title=TITLE)
+        assert hooks.title_request(FA, locale, "new") == ""
+        assert heading not in m.build_mention(**kwargs, action_scope="new")
 
 
 def test_new_report_title_is_never_a_shared_seed(naming, monkeypatch):
@@ -317,3 +324,40 @@ def test_new_report_title_is_never_a_shared_seed(naming, monkeypatch):
     assert body["title"] == "서버 수정 · 레포트"
     assert not ledger.load(FA).get("candidate")
     assert titles(naming) == ("새 플로우", None, "새 대화")
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_api_new_flow_title_reaches_shared_names(naming, monkeypatch, manual):
+    from modules.flow_gate.services import api_server_tools as tools
+    from modules.flow_gate.services.ai_invoke import worker
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    from starlette.responses import JSONResponse
+    from modules.flow_gate.graph_workflow.services.flow_guard import with_flow_guard
+    token = {"group_id": FA, "issued_to": USER["user_id"], "ai_run_id": "run", "provider_id": "stale"}
+    monkeypatch.setattr(inbox_routes.token_service, "inspect_for_replay", lambda _: token)
+    monkeypatch.setattr(first_names_hooks, "_title_handler", t.submitted_title)
+    monkeypatch.setattr(legacy_adapter, "get_run_record", lambda _: {"provider_id": "actual"})
+    seen = []
+    generate = a.generate_flow_names
+    def capture(flow, user, provider, *args, **kwargs):
+        seen.append((flow, user, provider))
+        return generate(flow, user, provider, *args, **kwargs)
+    monkeypatch.setattr(a, "generate_flow_names", capture)
+    monkeypatch.setattr(legacy_adapter, "complete_prompt", lambda *args, **kwargs: pytest.fail("extra AI call"))
+    if manual:
+        groups.update(FA, {"title": "내 플로우"})
+        with_flow_guard(FA, lambda: title_store.save_human(FA, naming["key"], "내 카드", USER["user_id"]))
+        documents.update(naming["chat"], {"title": "내 대화"})
+    payload = {"doc_type": "TR", "content": "Report body", "title": "서버 수정 · 레포트", "flow_title": TITLE}
+    tools.validate(tools.REGISTER_SCHEMAS["new"], payload)
+    body = worker._register_envelope({"action": "new", "doc": "root", "project": "p", "group": FA}, {}, payload)
+    assert body["title"] == payload["title"] and body["flow_title"] == TITLE
+    response = inbox_routes._in_write_session(lambda *args: JSONResponse({"ok": True}, status_code=201), None, "raw", body)
+    assert response.status_code == 201
+    assert seen == [(FA, USER, "actual")]
+    expected = ("내 플로우", "내 카드", "내 대화") if manual else (TITLE, TITLE, TITLE)
+    assert titles(naming) == expected
+    body["flow_title"] = "후속 이름"
+    inbox_routes._in_write_session(lambda *args: JSONResponse({"ok": True}, status_code=201), None, "raw", body)
+    assert titles(naming) == expected

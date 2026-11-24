@@ -149,7 +149,7 @@ SCHEMAS = {
 # never refuses it (``x-flowgate-lenient``), so no value of it fails a registration — the title service judges it.
 NODE_TITLE_SCHEMA = {"type": "string", "x-flowgate-lenient": True}
 REGISTER_SCHEMAS = {
-    "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}, "node_title": NODE_TITLE_SCHEMA}, ["content", "doc_type"]),
+    "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}, "node_title": NODE_TITLE_SCHEMA, "flow_title": {"type": "string", "description": "Optional short task name shared by the flow, start card and chat. Separate from the document title; ignored after naming."}}, ["content", "doc_type"]),
     "edit": _obj({"title": {"type": "string", "description": "Optional short title shared by the flow, start card and chat; ignored after naming."}, "content": {"type": "string"}, "expected_revision": {"type": "integer", "minimum": 0}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}, "node_title": NODE_TITLE_SCHEMA, "commit_message": {"type": "string", "description": "TR edit: English (ASCII) single line, at most 200 characters; recommended type(scope): summary. Required unless a valid saved message exists. Rejected for other document types."}}, ["content", "expected_revision", "edit_reason"]),
     # force_encoding_reason removed -- review never accepts a
     # model-authored corruption bypass, so the schema no longer exposes the field.
