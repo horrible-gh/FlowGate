@@ -82,6 +82,8 @@ interface ItemDisplay {
   readonly danger?: boolean
   readonly disabled?: boolean
   readonly disabledReason?: DisabledReason
+  /** v02test.0083 F83-5: a ready-to-show text a disabled item gives as its tooltip and accessible description (the Flow Archive's reason, the toolbar's text); a `disabledReason` wins over it. */
+  readonly tooltip?: string
   /** v02gui.0027 (0008-T): a small line under the label (a message key of the menu and its values), e.g. Delete Group's state. */
   readonly hint?: { readonly key: string; readonly params?: Readonly<Record<string, string | number>> }
 }

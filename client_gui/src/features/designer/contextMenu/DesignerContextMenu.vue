@@ -29,7 +29,7 @@
               :aria-expanded="item.kind === 'submenu' ? subKey === item.key : undefined"
               :aria-controls="item.kind === 'submenu' && subKey === item.key ? submenuId : undefined"
               :title="reason(item)"
-              :aria-describedby="item.disabledReason ? reasonId(panel.level, index) : undefined"
+              :aria-describedby="reason(item) ? reasonId(panel.level, index) : undefined"
               @mouseenter="onHover(item, panel.level, $event, panel.generation)"
               @click="choose(item, $event.currentTarget as HTMLElement, panel.generation)">
               <span class="designer-context-icon" aria-hidden="true">{{ item.icon }}</span>
@@ -40,7 +40,7 @@
               <span v-else class="designer-context-label">{{ label(item) }}</span>
               <span v-if="item.kind === 'submenu'" class="designer-context-arrow" aria-hidden="true">›</span>
             </button>
-            <span v-if="item.disabledReason" :id="reasonId(panel.level, index)" hidden>{{ reason(item) }}</span>
+            <span v-if="reason(item)" :id="reasonId(panel.level, index)" hidden>{{ reason(item) }}</span>
           </template>
         </template>
       </div>
@@ -79,7 +79,9 @@ const panels = computed(() => [
 ])
 const label = (item: MenuAction | MenuSubmenu) => item.label ?? t(item.labelKey ?? '')
 const hint = (item: MenuAction | MenuSubmenu) => (item.hint ? t(item.hint.key, { ...(item.hint.params ?? {}) }) : '')
-const reason = (item: MenuAction | MenuSubmenu) => (item.disabledReason ? t('reasons.' + item.disabledReason) : undefined)
+// F83-5: a disabled item without a `disabledReason` may still carry its own ready text (`tooltip`).
+const reason = (item: MenuAction | MenuSubmenu) => (item.disabledReason ? t('reasons.' + item.disabledReason)
+  : item.disabled && item.tooltip ? item.tooltip : undefined)
 const reasonId = (level: number, index: number) => `designer-context-reason-${session.value?.generation}-${level}-${index}`
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight })
 const panelElement = (level: number) => root.value?.querySelector<HTMLElement>('[data-level="' + level + '"]')

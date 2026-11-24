@@ -85,14 +85,14 @@ def _run(flow_id, user_id, revision_no, provider_id=None):
         if provider:
             auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text)
         else:
-            log.debug("flow naming skipped reason=provider_missing flow=%s", flow_id)
+            log.info("flow naming skipped reason=provider_missing flow=%s", flow_id)
     except Exception as exc:
         log.warning("flow naming setup exception_type=%s", type(exc).__name__)
 
 
 def _schedule(fn, *args):
     if not auto_title._first_names_slots.acquire(blocking=False):
-        log.debug("flow naming skipped reason=pool_full")
+        log.info("flow naming skipped reason=pool_full")
         return False
     try:
         future = auto_title._first_names_pool.submit(fn, *args)
@@ -100,7 +100,7 @@ def _schedule(fn, *args):
         return True
     except Exception as exc:
         auto_title._first_names_slots.release()
-        log.debug("flow naming skipped reason=pool_unavailable exception_type=%s", type(exc).__name__)
+        log.info("flow naming skipped reason=pool_unavailable exception_type=%s", type(exc).__name__)
         return False
 
 
@@ -111,18 +111,19 @@ def schedule_run(flow_id, user_id, revision_no):
 def schedule_completed(run):
     flow_id, user_id, provider = run.get("group_id"), run.get("issued_to"), run.get("provider_id")
     if not flow_id or not user_id or not provider:
-        log.debug("flow naming skipped reason=run_context_missing")
+        log.info("flow naming skipped reason=run_context_missing")
         return False
     return _schedule(_completed, flow_id, user_id, provider, run.get("doc_ref"))
 
 
 def _completed(flow_id, user_id, provider, doc_id):
     if not legacy_adapter.has_graph_definition(flow_id):
-        log.debug("flow naming skipped reason=not_graph flow=%s", flow_id)
+        log.info("flow naming skipped reason=not_graph flow=%s", flow_id)
         return
     doc = legacy_adapter.get_document(doc_id) if doc_id else None
     if doc and doc.get("type_code") == "CH":
         # Reply append owns chat naming, including the first-reply requirement.
+        log.info("flow naming skipped reason=reply_owns_chat doc=%s", doc_id)
         return
     from modules.flow_gate.graph_workflow.store import definition_store
     _run(flow_id, user_id, definition_store.latest_revision_no(flow_id), provider)
@@ -131,24 +132,33 @@ def _completed(flow_id, user_id, provider, doc_id):
 def _reply(doc_id, user_id, provider_id):
     try:
         doc = legacy_adapter.get_document(doc_id)
-        if doc and doc.get("group_id") and legacy_adapter.has_graph_definition(doc["group_id"]):
-            auto_title.generate_flow_names(doc["group_id"], {"user_id": user_id}, provider_id, chat_doc_id=doc_id)
+        if not doc:
+            log.info("flow naming skipped reason=doc_missing doc=%s", doc_id)
+            return
+        if not doc.get("group_id") or not legacy_adapter.has_graph_definition(doc["group_id"]):
+            log.info("flow naming skipped reason=not_graph doc=%s", doc_id)
+            return
+        auto_title.generate_flow_names(doc["group_id"], {"user_id": user_id}, provider_id, chat_doc_id=doc_id)
     except Exception as exc:
         log.warning("flow naming reply exception_type=%s", type(exc).__name__)
 
 
 def schedule_reply(doc_id, turn):
     if turn.get("speaker") != "ai" or not str(turn.get("body") or "").strip():
-        log.debug("flow naming skipped reason=not_ai_reply doc=%s", doc_id)
+        log.info("flow naming skipped reason=not_ai_reply doc=%s", doc_id)
         return False
     run_id = turn.get("source_run_id")
-    run = legacy_adapter.get_run_record(run_id) or legacy_adapter.persisted_naming_run(run_id) or {}
+    # The append service supplies verified worker-token fields, never request body fields.
+    # Bound token fields only fill gaps; non-None fields from the live or persisted run record win when present.
     token = turn.get("_naming_context") or {}
-    if token.get("ai_run_id") == run_id and token.get("doc_ref") == doc_id:
+    bound_token = bool(run_id and token.get("ai_run_id") == run_id
+                       and token.get("doc_ref") == doc_id)
+    run = legacy_adapter.get_run_record(run_id) or legacy_adapter.persisted_naming_run(run_id) or {}
+    if bound_token:
         run = {**{k: token[k] for k in ("issued_to", "provider_id", "doc_ref") if token.get(k)},
                **{k: v for k, v in run.items() if v is not None}}
     user_id, provider_id = run.get("issued_to"), run.get("provider_id")
     if not user_id or not provider_id or run.get("doc_ref") != doc_id:
-        log.debug("flow naming skipped reason=reply_context_missing doc=%s", doc_id)
+        log.info("flow naming skipped reason=reply_context_missing doc=%s", doc_id)
         return False
     return _schedule(_reply, doc_id, user_id, provider_id)

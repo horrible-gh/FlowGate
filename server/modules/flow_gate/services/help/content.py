@@ -185,6 +185,18 @@ def _content_document_access(ctx: dict) -> dict:
                 "url": (f"{base}/search/documents/content?q=<keyword>{project_filter}"
                         + _documents_block.CONTENT_SEARCH_OPTIONS),
                 "summary": "Search bodies and receive match locations with context.",
+                "parameters": {
+                    "doc_id": "Restrict to one conversation; lifts the per-conversation turn cap and enables cursor paging.",
+                    "group_id": "Restrict to one flow; mutually exclusive with doc_id. Group/global turn results remain capped without cursor paging.",
+                    "sort": "Turn order: desc (default, newest first) or asc (oldest first).",
+                    "cursor": "With doc_id, pass next_cursor unchanged using the same search conditions. Changed conditions or malformed cursors return 400.",
+                },
+                "response": {
+                    "items": "Document-body results followed by turn_items: conversation-turn results identified by match_kind=conversation_turn (no separate turn_items response key).",
+                    "turn_total": "Number of conversation-turn results returned on this page, not the total across all pages.",
+                    "next_cursor": "Cursor for the next conversation-turn page; null when there is no next page.",
+                    "total": "Document-body count only. Cursor pages omit document-body results and return total=0; without cursor, total/offset/limit retain their document-body paging meaning.",
+                },
             },
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),

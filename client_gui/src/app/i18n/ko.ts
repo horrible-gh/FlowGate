@@ -642,6 +642,10 @@ export default {
       unavailable: '아카이브 상태를 확인할 수 없습니다.',
       failed: '아카이브 상태를 변경하지 못했습니다.',
       group_restore_failed: '그룹을 복원하지 못했습니다.',
+      // v02test.0083: asked once before archiving a Flow that is not completed.
+      confirm_title: '플로우 아카이브',
+      confirm_incomplete: '완료되지 않은 플로우입니다. 아카이브할까요? 우클릭 → 복원으로 되돌릴 수 있습니다.',
+      cancel: '취소',
     },
     project_explorer: {
       title: '프로젝트',

@@ -638,6 +638,9 @@ export default {
       unavailable: 'アーカイブ状態を確認できません。',
       failed: 'アーカイブ状態を変更できませんでした。',
       group_restore_failed: 'グループを復元できませんでした。',
+      confirm_title: 'フローをアーカイブ',
+      confirm_incomplete: '完了していないフローです。アーカイブしますか？右クリック → 復元で元に戻せます。',
+      cancel: 'キャンセル',
     },
     project_explorer: {
       title: 'プロジェクト',
