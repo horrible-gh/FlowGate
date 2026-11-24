@@ -61,6 +61,14 @@ describe('dock taskbar style', () => {
     expect(panelText).not.toContain(String(i18n.global.t('gui.taskbar.group_settings')))
     expect(document.activeElement?.getAttribute('data-card')).toBe('my-ai')
   })
+  it('numbers the tiles left to right so their icons rise one after another', async () => {
+    const wrapper = bar()
+    await flushPromises()
+    await wrapper.get('.menu-trigger').trigger('click')
+    await nextTick()
+    const order = [...grid()!.querySelectorAll<HTMLElement>('.dock-tile')].map(tile => tile.style.getPropertyValue('--i'))
+    expect(order).toEqual(['0', '1', '2', '3', '4', '5'])
+  })
   it('closes the menu when the blurred page is pressed', async () => {
     const wrapper = bar()
     await flushPromises()
