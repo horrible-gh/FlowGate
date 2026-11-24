@@ -432,6 +432,52 @@ defineExpose({ bringToFront, geometry, setGeometry })
   filter: brightness(1.05);
 }
 
+/* Classic: glossy blue title bar with white title; − and × stay on the right, × is a wide red button. */
+.ui-modeless-panel[data-taskbar-style="classic"] {
+  border-radius: 7px;
+  border-color: #4d6f9c;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 14px 36px rgba(0, 0, 0, 0.6);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar {
+  padding: 4px 6px 4px 12px;
+  border-bottom-color: #3c5a82;
+  background: linear-gradient(180deg, #7095c9, #3f6296 50%, #2d4d7d 51%, #45699e);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-title {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep(button) {
+  color: #fff;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  width: 28px;
+  min-width: 0;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.06));
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]) {
+  width: 42px;
+  border-color: #7a2010;
+  background: linear-gradient(180deg, #e8907f, #c8432f 50%, #b02a18 51%, #d7543a);
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  filter: brightness(1.18);
+}
+
 .is-minimized .ui-modeless-titlebar {
   border-bottom: none;
 }
