@@ -53,7 +53,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import i18n from '@shared/i18n'
 import IconButton from './IconButton.vue'
-import { modelessStyle, modelessTaskbarHeight, registerModeless, unregisterModeless } from '../../core/overlay/modelessRegistry'
+import { modelessStyle, modelessTaskbarHeight, registerModeless, unregisterModeless, type ModelessKind } from '../../core/overlay/modelessRegistry'
 import { allocateOverlayZIndex } from '../../core/overlay/zIndex'
 import { captureFocusedElement, returnFocusTo } from '../../core/overlay/focusReturn'
 
@@ -62,6 +62,10 @@ const props = withDefaults(
     open: boolean
     title?: string
     kindColor?: string
+    // What the window is about (its taskbar icon) and a short mark that tells same-kind windows apart there.
+    // Left unset, the kind follows the kind colour.
+    kind?: ModelessKind
+    badge?: string
     initialX?: number
     initialY?: number
     initialWidth?: number
@@ -84,6 +88,8 @@ const props = withDefaults(
   {
     title: '',
     kindColor: 'var(--fg2-accent, #6478dc)',
+    kind: undefined,
+    badge: undefined,
     initialX: 120,
     initialY: 120,
     initialWidth: 420,
@@ -153,7 +159,7 @@ function setMinimized(value: boolean): void {
 watchEffect(() => {
   if (!props.open) { unregisterModeless(registryId); return }
   registerModeless({ id: registryId, title: props.title || headerTitle.value || 'Window',
-    color: props.kindColor, minimized: isMinimized.value, restore: () => {
+    color: props.kindColor, kind: props.kind, badge: props.badge, minimized: isMinimized.value, restore: () => {
       setMinimized(false)
       bringToFront()
       void nextTick(() => panelRef.value?.focus({ preventScroll: true }))
