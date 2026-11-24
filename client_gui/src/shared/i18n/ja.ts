@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from '../productName'
+
 export default {
   common: {
     reset: '元に戻す',
@@ -7,7 +9,7 @@ export default {
   },
   auth: {
     login: {
-      title: 'FlowGate ログイン',
+      title: `${PRODUCT_NAME} ログイン`,
       password: 'パスワード',
       show_password: 'パスワードを表示',
       hide_password: 'パスワードを非表示',

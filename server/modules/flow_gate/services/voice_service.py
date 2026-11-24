@@ -23,6 +23,30 @@ from .voice_runtime import Runtime, convert
 
 log = logging.getLogger(__name__)
 CATALOG = json.loads(Path(__file__).with_name("voice_catalog.json").read_text(encoding="utf-8"))
+# Models removed from the product (F86-7 U1). They are never installed, selected or
+# activated again; files already on a user's disk are reported, never deleted here.
+RETIRED_MODELS = {
+    ("sherpa-onnx", "sensevoice-small-int8"): {
+        "name": "SenseVoiceSmall int8",
+        "filename": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+    },
+}
+
+
+def _prune(path, keep):
+    """Delete ``path`` except the ``keep`` paths and the directories leading to them."""
+    if not (path.exists() or path.is_symlink()):
+        return
+    if path in keep:
+        return
+    if path.is_dir() and not path.is_symlink() and any(path in k.parents for k in keep):
+        for child in list(path.iterdir()):
+            _prune(child, keep)
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def root() -> Path:
@@ -36,6 +60,8 @@ def specification(service, model=None):
         raise VoiceError("voice_unknown_service", "Unknown service", 404)
     if model is None:
         return entry
+    if (service, model) in RETIRED_MODELS:
+        raise VoiceError("voice_model_retired", "Model is no longer supported", 410)
     item = next((m for m in entry["models"] if m["id"] == model), None)
     if item is None:
         raise VoiceError("voice_unknown_model", "Unknown model", 404)
@@ -60,12 +86,16 @@ def configuration():
     raw = system_settings.get_value("voice.configuration")
     value = json.loads(raw) if raw else {"enabled": False, "default": None}
     selected = value.get("default")
-    if selected and not specification(**selected).get("default_eligible", True):
+    if selected and (selected.get("service"), selected.get("model")) in RETIRED_MODELS:
+        # A stored retired default stays off; status() reports it as retired.
+        value.update(enabled=False, default=None, retired_default=selected)
+    elif selected and not specification(**selected).get("default_eligible", True):
         value.update(enabled=False, default=None)
     return value
 
 
 def save_configuration(value):
+    value = {k: v for k, v in value.items() if k != "retired_default"}
     system_settings.set_value("voice.configuration", json.dumps(value), value_type="json")
 
 
@@ -91,6 +121,28 @@ class Manager:
 
     def installed(self, service, model):
         return (self.service_dir(service) / (model + ".installed.json")).is_file() and self.model_path(service, model).exists()
+
+    def retired_models(self, config):
+        """Retired models still on disk or stored as the default: shown as retired, not activated."""
+        rows = []
+        for (service, model), info in RETIRED_MODELS.items():
+            on_disk = (root() / "services" / service / (model + ".installed.json")).is_file()
+            was_default = config.get("retired_default") == {"service": service, "model": model}
+            if on_disk or was_default:
+                rows.append({"service": service, "model": model, "name": info["name"], "status": "retired",
+                             "installed": on_disk, "was_default": was_default})
+        return rows
+
+    def retired_files(self, service):
+        """Files of retired models of ``service`` still on disk; service cleanup must keep them."""
+        base, cache = root() / "services" / service, root() / "downloads" / service
+        paths = []
+        for (owner, model), info in RETIRED_MODELS.items():
+            if owner != service:
+                continue
+            paths += [base / (model + ".installed.json"), base / "models" / model,
+                      cache / info["filename"], cache / (info["filename"] + ".part")]
+        return {p for p in paths if p.exists() or p.is_symlink()}
 
     def busy(self, service=None, model=None):
         return any(not j["done"] and (service is None or j["service"] == service)
@@ -133,7 +185,8 @@ class Manager:
             elif self.error or (config["enabled"] and not healthy):
                 state = "error"
         error = self.error or ({"code": "voice_module_unavailable", "message": "Voice module is not responding"} if config["enabled"] and not healthy else None)
-        return {"ok": True, "enabled": enabled, "state": state, "default": config["default"], "error": error, "can_manage": can_manage}
+        return {"ok": True, "enabled": enabled, "state": state, "default": config["default"], "error": error, "can_manage": can_manage,
+                "retired": self.retired_models(config) if can_manage else []}
 
     def _update_job(self, job_id, **values):
         with self.lock:
@@ -154,7 +207,7 @@ class Manager:
                     row.update(done=True, step="interrupted", error={"code": "voice_install_interrupted", "message": "Retry to resume verified partial downloads"})
             return {"ok": True, **copy.deepcopy(row)}
 
-    def install(self, service, model, from_dir=None, license_ack=False):
+    def install(self, service, model, from_dir=None):
         from . import voice_streams
         if voice_streams.active(service):
             raise VoiceError("voice_busy", "Finish live transcription before installing", 409)
@@ -163,9 +216,6 @@ class Manager:
         if from_dir is not None:
             from .voice_distribution import validate_local_install
             validate_local_install(entry, spec)
-        if spec.get("requires_license_ack") and not license_ack:
-            raise VoiceError("voice_license_ack_required",
-                             spec["license"] + " — " + spec["source"] + " — " + spec["license_url"], 422)
         if not available(entry):
             raise VoiceError("voice_platform_unsupported", "This release requires Windows x64", 422)
         with voice_streams._condition, self.lock:
@@ -452,8 +502,16 @@ class Manager:
             cached.unlink(missing_ok=True)
             remaining = any(self.installed(service, m["id"]) for m in specification(service)["models"])
             if not remaining:
-                shutil.rmtree(directory)
-                shutil.rmtree(root() / "downloads" / service, ignore_errors=True)
+                # Removing the last catalog model removes the engine and cache, but files of a
+                # retired model (weights, installed marker, cached archive) are user files the
+                # user did not ask to delete: they stay on disk and keep showing as retired.
+                keep = self.retired_files(service)
+                if keep:
+                    _prune(directory, keep)
+                    _prune(root() / "downloads" / service, keep)
+                else:
+                    shutil.rmtree(directory)
+                    shutil.rmtree(root() / "downloads" / service, ignore_errors=True)
             if config["enabled"]:
                 selected = self.select()
                 self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))

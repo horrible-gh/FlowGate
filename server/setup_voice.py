@@ -19,7 +19,6 @@ def main():
     parser.add_argument("--model", default="base")
     parser.add_argument("--from-dir", type=Path, help="Offline directory containing the exact catalog archives, model and jfk.wav; never modified")
     parser.add_argument("--list", action="store_true")
-    parser.add_argument("--ack-model-license", action="store_true", help="Acknowledge the pending license and upstream source printed by --list")
     parser.add_argument("--export-bundle", type=Path, help="Export reviewed redistribution files and notices from --from-dir")
     options = parser.parse_args()
     if options.list:
@@ -38,7 +37,7 @@ def main():
             from modules.flow_gate.services.voice_distribution import export_bundle
             export_bundle(specification(options.service), spec, options.from_dir, options.export_bundle)
             return 0
-        result = manager.install(options.service, options.model, options.from_dir, license_ack=options.ack_model_license)
+        result = manager.install(options.service, options.model, options.from_dir)
         job_id = result["install_id"]
         previous = None
         while True:

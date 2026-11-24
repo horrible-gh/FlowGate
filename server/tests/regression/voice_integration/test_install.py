@@ -12,7 +12,7 @@ STREAMING = {"zipformer-en-20m": "country", "zipformer-ko": "주민등록증", "
 
 @pytest.mark.parametrize("service,model", [
     ("whisper.cpp", "tiny"), ("whisper.cpp", "large-v3-turbo"),
-    ("sherpa-onnx", "sensevoice-small-int8"), ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
+    ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
     ("vosk", "small-en-us"), ("vosk", "small-ko")])
 def test_real_install_and_inference(request, tmp_path, monkeypatch, service, model):
     if not request.config.getoption("--voice-downloads"):
@@ -22,14 +22,14 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
     monkeypatch.setattr(vs, "configuration", lambda: copy.deepcopy(state))
     monkeypatch.setattr(vs, "save_configuration", lambda value: state.update(copy.deepcopy(value)))
     manager = vs.Manager()
-    job_id = manager.install(service, model, license_ack=model == "sensevoice-small-int8")["install_id"]
+    job_id = manager.install(service, model)["install_id"]
     deadline = time.monotonic() + 900
     while not manager.job(job_id)["done"] and time.monotonic() < deadline:
         time.sleep(0.5)
     job = manager.job(job_id)
     try:
         assert job["done"] and not job["error"], job
-        assert manager.status()["enabled"] is (model != "sensevoice-small-int8")
+        assert manager.status()["enabled"] is True
         if vs.specification(service, model).get("self_test", {}).get("mode") == "load_only":
             assert manager.runtime.healthy()
             assert not list(manager.model_path(service, model).rglob("test_wavs"))

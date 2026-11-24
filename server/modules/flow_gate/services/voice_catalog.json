@@ -56,7 +56,21 @@
           "component_type": "engine",
           "license": "MIT",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "notices": [
+            {
+              "filename": "whisper.cpp-1.8.2-LICENSE.txt",
+              "size_bytes": 1078,
+              "sha256": "e562a2ddfaf8280537795ac5ecd34e3012b6582a147ef69ba6a6a5c08c84757d",
+              "source_url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/LICENSE"
+            },
+            {
+              "filename": "SDL2-2.28.5-LICENSE.txt",
+              "size_bytes": 884,
+              "sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927",
+              "source_url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.28.5/LICENSE.txt"
+            }
+          ]
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -219,7 +233,8 @@
       ],
       "redistribution_status": "pending-native-notices",
       "native_notices": [
-        "SDL2.dll: version and license notice pending"
+        "SDL2.dll 2.28.5: zlib license text secured (SDL2-2.28.5-LICENSE.txt)",
+        "whisper-server.exe vendored cpp-httplib/nlohmann-json notices: not yet extracted; redistribution stays off"
       ]
     },
     {
@@ -240,7 +255,33 @@
           "component_type": "engine",
           "license": "Apache-2.0",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "notices": [
+            {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
+            },
+            {
+              "filename": "onnxruntime-1.17.1-LICENSE.txt",
+              "size_bytes": 1094,
+              "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+              "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl"
+            },
+            {
+              "filename": "onnxruntime-1.17.1-ThirdPartyNotices.txt",
+              "size_bytes": 345046,
+              "sha256": "986101973ef6af459c36845f626791da4c9ae52bdad4a980989af2c6a5cb5a61",
+              "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl"
+            },
+            {
+              "filename": "cargs-1.0.3-LICENSE.txt",
+              "size_bytes": 1091,
+              "sha256": "e144db54f3cbd2110ccdd99cda1eaef528eb89a2f97bbee46989a7ba6b5292a3",
+              "source_url": "https://raw.githubusercontent.com/likle/cargs/v1.0.3/LICENSE.md"
+            }
+          ]
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -280,34 +321,6 @@
         }
       ],
       "models": [
-        {
-          "filename": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
-          "size_bytes": 163002883,
-          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
-          "id": "sensevoice-small-int8",
-          "name": "SenseVoiceSmall int8",
-          "license": "FunASR 모델 라이선스 — 적용 범위 확인 중",
-          "languages": [
-            "zh",
-            "en",
-            "ja",
-            "ko",
-            "yue"
-          ],
-          "realtime": false,
-          "gpu_required": false,
-          "archive": true,
-          "kind": "sense_voice",
-          "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false,
-          "license_url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
-          "source": "FunASR/SenseVoice",
-          "source_url": "https://github.com/FunAudioLLM/SenseVoice",
-          "default_eligible": false,
-          "requires_license_ack": true
-        },
         {
           "filename": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
           "size_bytes": 127887156,
@@ -355,7 +368,9 @@
       ],
       "redistribution_status": "pending-native-notices",
       "native_notices": [
-        "ONNX Runtime: version and bundled notices pending"
+        "onnxruntime.dll 1.17.1: LICENSE and ThirdPartyNotices secured from the official 1.17.1 release",
+        "cargs.dll 1.0.3: MIT license secured",
+        "sherpa-onnx-c-api.dll statically linked dependencies (kaldi-native-fbank, OpenFst, etc.): notices pending; redistribution stays off"
       ]
     },
     {
@@ -376,7 +391,27 @@
           "component_type": "engine",
           "license": "Apache-2.0",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "notices": [
+            {
+              "filename": "vosk-api-0.3.45-COPYING.txt",
+              "size_bytes": 10173,
+              "sha256": "bb618af833c817ab01c1564bd3ec75ba4b4f9cf30910a4a2168e30a674ee8cc6",
+              "source_url": "https://raw.githubusercontent.com/alphacep/vosk-api/v0.3.45/COPYING"
+            },
+            {
+              "filename": "gcc-10.2.0-COPYING.RUNTIME.txt",
+              "size_bytes": 3324,
+              "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+              "source_url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-10.2.0/COPYING.RUNTIME"
+            },
+            {
+              "filename": "GPL-3.0.txt",
+              "size_bytes": 34674,
+              "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+              "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/GPL-3.0-or-later.txt"
+            }
+          ]
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -460,7 +495,9 @@
       ],
       "redistribution_status": "pending-native-notices",
       "native_notices": [
-        "GCC runtime and other DLLs: versions, exceptions and notices pending"
+        "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 runtime exception text secured; exact GCC patch level not proven",
+        "libwinpthread-1.dll: mingw-w64 version and notice not proven; redistribution stays off",
+        "libvosk.dll statically linked Kaldi/OpenFst/BLAS notices: pending; redistribution stays off"
       ]
     }
   ]

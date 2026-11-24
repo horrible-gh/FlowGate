@@ -9,7 +9,7 @@
     <div class="designer-header-left">
       <div class="designer-header-brand" data-test="designer-header-brand">
         <span class="designer-header-logo" aria-hidden="true">FG</span>
-        <span class="designer-header-product">FlowGate <span>Designer</span></span>
+        <span class="designer-header-product">{{ PRODUCT_NAME }} <span>Designer</span></span>
       </div>
       <div class="designer-header-actions">
         <button
@@ -99,6 +99,7 @@ import NotificationAiDetailHost from './notifications/NotificationAiDetailHost.v
 import type { ExplorerProject } from '../projectExplorer/projectExplorerTree'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { PRODUCT_NAME } from '@shared/productName'
 import GlobalSearch from './GlobalSearch.vue'
 import LineIcon, { type LineIconName } from '@/components/ui/LineIcon.vue'
 import { DESIGNER_LOCALES, type DesignerLocale, type DesignerSearchRequest, type DesignerTopCommand } from './designerTop'

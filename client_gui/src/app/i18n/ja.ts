@@ -1,5 +1,7 @@
+import { PRODUCT_NAME } from '../../shared/productName.ts'
+
 export default {
-  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "style_flowgate": "FlowGate", "style_modern": "モダン", "style_dock": "ドック", "style_classic": "クラシック", "security_window": "自分の設定 · セキュリティ", "pin_project": "プロジェクトを開く", "pin_attachments": "添付ファイル", "pin_terminal": "ターミナル", "pin_git": "Git", "pin_search": "検索"},
+  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "モダン", "style_dock": "ドック", "style_classic": "クラシック", "security_window": "自分の設定 · セキュリティ", "pin_project": "プロジェクトを開く", "pin_attachments": "添付ファイル", "pin_terminal": "ターミナル", "pin_git": "Git", "pin_search": "検索"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
   connection_banner: {"reconnecting": "サーバーとの接続が切れました · 自動で再接続しています…", "hint": "接続が戻ると一覧と会話は自動で戻り、送れなかったメッセージも再送します。", "unknown_error": "不明なエラーが発生しました", "reload": "再読み込み"},
@@ -251,7 +253,7 @@ export default {
   card: { bodyUnreadable: "AIが読めない文書があります" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
-    home_aria: 'FlowGate ダッシュボードへ移動',
+    home_aria: `${PRODUCT_NAME} ダッシュボードへ移動`,
   },
   common: {
     cancel: 'キャンセル',
@@ -287,15 +289,15 @@ export default {
   sidebar: {
     help: 'ヘルプ',
     help_unavailable: 'ヘルプはまだ準備中です。',
-    version: 'FlowGate v0.2',
+    version: `${PRODUCT_NAME} v0.2`,
     build: 'Build {build}',
   },
   dashboard: {
     greeting_line1: '良い一日を。',
     greeting_line2: '今、新しい可能性をつなげましょう。',
-    lead: 'FlowGate はアイデアを実際の作業へつなげる場所です。',
+    lead: `${PRODUCT_NAME} はアイデアを実際の作業へつなげる場所です。`,
     quote: '“小さなアイデアも\n正しい流れに出会えば\n大きな変化を生みます。”',
-    quote_by: '— FlowGate',
+    quote_by: `— ${PRODUCT_NAME}`,
     cards_aria: '画面ショートカット',
     unavailable: '準備中',
     cards: {
@@ -1226,7 +1228,7 @@ export default {
       user: '自分',
       ai: 'AI',
       // FlowGate's own turn (e.g. the chat commit result).
-      system: 'FlowGate',
+      system: `${PRODUCT_NAME}`,
       sending: '送信中',
       failed: '送信できませんでした。',
       // A: the failed bubble's short reason.
@@ -1886,7 +1888,7 @@ export default {
       row_select: '{name} を選択',
       tag: {
         managed: '🔒',
-        managed_tip: 'FlowGate 管理ファイル — 直接変更不可',
+        managed_tip: `${PRODUCT_NAME} 管理ファイル — 直接変更不可`,
         excluded: 'ツール残留物',
         excluded_tip: 'ツール残留物のファイル',
         excluded_new: 'ツール残留物',
@@ -2441,7 +2443,7 @@ export default {
   },
   placeholder: {
     badge: '準備中',
-    body: 'この画面は FlowGate v0.2 ではまだ実装されていません。',
+    body: `この画面は ${PRODUCT_NAME} v0.2 ではまだ実装されていません。`,
     back: 'ダッシュボードに戻る',
   },
   not_found: {
@@ -2450,7 +2452,7 @@ export default {
   },
   ai: {
     title: 'AI 管理',
-    subtitle: 'AI を接続・評価し、チームを編成して FlowGate で利用します。',
+    subtitle: `AI を接続・評価し、チームを編成して ${PRODUCT_NAME} で利用します。`,
     load_failed_title: 'AI 情報を読み込めません',
     tabs_aria: 'AI 管理タブ',
     tabs: {
@@ -2589,7 +2591,7 @@ export default {
       local_api: 'ローカル API',
       remote_cli: 'リモート CLI',
       remote_api: 'リモート API',
-      local_hint: 'FlowGate で実行',
+      local_hint: `${PRODUCT_NAME} で実行`,
       remote_hint: 'リモート Agent で実行',
       unsupported: '未対応',
     },
@@ -2852,7 +2854,7 @@ export default {
     scope_sub: {
       me: 'このアカウントだけに適用',
       project: '選んだプロジェクトだけに適用',
-      system: 'FlowGate サーバー全体 · 管理者',
+      system: `${PRODUCT_NAME} サーバー全体 · 管理者`,
     },
     system_groups: {
       ops: '運用',
@@ -3549,7 +3551,7 @@ export default {
         },
         author_name: 'Author 名',
         author_email: 'Author メール',
-        author_default: '未設定 (FlowGate 既定値)',
+        author_default: `未設定 (${PRODUCT_NAME} 既定値)`,
         secret: 'Secret',
         secret_set: '登録済み',
         secret_unset: '未登録',

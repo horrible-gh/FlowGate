@@ -86,6 +86,68 @@
       "version": "0.3.3",
       "path": "third_party/licenses/anyascii-0.3.3-LICENSE.txt",
       "sha256": "9e33d1beedd533cca2dc085f0c260e37623f62d9a1074ca71e8ede33fe91e09d"
+    },
+    {
+      "path": "third_party/licenses/whisper.cpp-1.8.2-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/LICENSE",
+      "version": "1.8.2",
+      "upstream_tag": "v1.8.2",
+      "upstream_commit": "4979e04f5dcaccb36057e059bbaed8a2f5288315",
+      "covers": "whisper-bin-x64.zip: whisper.dll, ggml*.dll, whisper-server.exe (whisper.cpp/ggml project code)",
+      "sha256": "e562a2ddfaf8280537795ac5ecd34e3012b6582a147ef69ba6a6a5c08c84757d"
+    },
+    {
+      "path": "third_party/licenses/SDL2-2.28.5-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.28.5/LICENSE.txt",
+      "version": "2.28.5",
+      "upstream_tag": "release-2.28.5",
+      "upstream_commit": "15ead9a40d09a1eb9972215cceac2bf29c9b77f6",
+      "covers": "whisper-bin-x64.zip Release/SDL2.dll (PE FileVersion 2.28.5.0)",
+      "sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927"
+    },
+    {
+      "path": "third_party/licenses/onnxruntime-1.17.1-LICENSE.txt",
+      "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl",
+      "artifact_sha256": "6226a5201ab8cafb15e12e72ff2a4fc8f50654e8fa5737c6f0bd57c5ff66827e",
+      "archive_member": "onnxruntime/LICENSE",
+      "version": "1.17.1",
+      "covers": "sherpa-onnx v1.12.20 win-x64 onnxruntime.dll, onnxruntime_providers_shared.dll (PE FileVersion 1.17.20240223.5.8f5c79c)",
+      "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+    },
+    {
+      "path": "third_party/licenses/onnxruntime-1.17.1-ThirdPartyNotices.txt",
+      "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl",
+      "artifact_sha256": "6226a5201ab8cafb15e12e72ff2a4fc8f50654e8fa5737c6f0bd57c5ff66827e",
+      "archive_member": "onnxruntime/ThirdPartyNotices.txt",
+      "version": "1.17.1",
+      "covers": "Bundled third-party notices of the official ONNX Runtime 1.17.1 release",
+      "sha256": "986101973ef6af459c36845f626791da4c9ae52bdad4a980989af2c6a5cb5a61"
+    },
+    {
+      "path": "third_party/licenses/cargs-1.0.3-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/likle/cargs/v1.0.3/LICENSE.md",
+      "version": "1.0.3",
+      "upstream_tag": "v1.0.3",
+      "upstream_commit": "5bbcfca833eeb504996afb85ad5b8470c96dc752",
+      "covers": "sherpa-onnx v1.12.20 win-x64 lib/cargs.dll (version from sherpa-onnx v1.12.20 cmake/cargs.cmake)",
+      "sha256": "e144db54f3cbd2110ccdd99cda1eaef528eb89a2f97bbee46989a7ba6b5292a3"
+    },
+    {
+      "path": "third_party/licenses/vosk-api-0.3.45-COPYING.txt",
+      "source_url": "https://raw.githubusercontent.com/alphacep/vosk-api/v0.3.45/COPYING",
+      "version": "0.3.45",
+      "upstream_tag": "v0.3.45",
+      "upstream_commit": "cf2560c9f8a49d3d366b433fdabd78c518231bec",
+      "covers": "vosk-win64-0.3.45.zip libvosk.dll (Vosk API project code only; statically linked Kaldi/OpenFst/BLAS notices not covered)",
+      "sha256": "bb618af833c817ab01c1564bd3ec75ba4b4f9cf30910a4a2168e30a674ee8cc6"
+    },
+    {
+      "path": "third_party/licenses/gcc-10.2.0-COPYING.RUNTIME.txt",
+      "source_url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-10.2.0/COPYING.RUNTIME",
+      "version": "GCC Runtime Library Exception 3.1",
+      "upstream_tag": "releases/gcc-10.2.0",
+      "covers": "vosk-win64-0.3.45.zip libgcc_s_seh-1.dll, libstdc++-6.dll (build string 'GCC: (GNU) 10-win32 20210110'; GCC 10 series, exact patch level not proven). Use with GPL-3.0.txt.",
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
     }
   ]
 }

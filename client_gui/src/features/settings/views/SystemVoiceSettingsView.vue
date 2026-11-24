@@ -69,6 +69,9 @@
               <div v-if="actionError" class="fgs-row sub">
                 <span class="fgs-error" role="alert" data-testid="voice-action-error">{{ errorText(actionError) }}</span>
               </div>
+              <div v-for="item in status.retired" :key="`${item.service}/${item.model}`" class="fgs-row sub" data-testid="voice-retired">
+                <span class="fgs-hint"><SettingsIcon name="info" size="sm" />{{ t('gui.voice.system.retired', { name: item.name }) }}</span>
+              </div>
             </div>
           </div>
 
@@ -97,7 +100,7 @@
               </div>
 
               <div v-if="selServiceInfo && selModelInfo" class="fgs-row sub">
-                <VoiceLicenseNotice :service="selServiceInfo" :model="selModelInfo" v-model:acknowledged="licenseAck" />
+                <VoiceLicenseNotice :service="selServiceInfo" :model="selModelInfo" />
               </div>
               <!-- Running installation -->
               <div v-if="job" class="fgs-row vx-apply" data-testid="voice-install-progress">
@@ -127,7 +130,7 @@
                 <button
                   type="button"
                   class="fgs-btn sm pri"
-                  :disabled="state.busy || !selModelInfo.available || (selModelInfo.installed && selModelInfo.defaultEligible === false) || (!!selModelInfo.requiresLicenseAck && !selModelInfo.installed && !licenseAck)"
+                  :disabled="state.busy || !selModelInfo.available || (selModelInfo.installed && selModelInfo.defaultEligible === false)"
                   data-testid="voice-apply-go"
                   @click="apply"
                 >{{ applyText }}</button>
@@ -354,8 +357,6 @@ const applyText = computed(() => {
   return t('gui.voice.system.make_default')
 })
 
-const licenseAck = ref(false)
-watch(() => [selService.value, selModel.value], () => { licenseAck.value = false })
 const actionError = ref<string | null>(null)
 const restarting = ref(false)
 const confirmOff = ref(false)
@@ -371,7 +372,7 @@ async function apply(): Promise<void> {
   removedNotice.value = null
   if (selModelInfo.value.installed && selModelInfo.value.defaultEligible === false) return
   if (selModelInfo.value.installed) await guarded(() => chooseDefault(selection))
-  else await guarded(() => installModel(selection, status.value?.defaultSelection && selModelInfo.value?.defaultEligible !== false ? 'default' : null, licenseAck.value))
+  else await guarded(() => installModel(selection, status.value?.defaultSelection && selModelInfo.value?.defaultEligible !== false ? 'default' : null))
 }
 
 const cancel = () => guarded(() => cancelInstall())

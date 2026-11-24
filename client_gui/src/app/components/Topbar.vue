@@ -3,7 +3,7 @@
     <RouterLink to="/" class="gui-brand" :aria-label="t('gui.brand.home_aria')">
       <span class="gui-brandmark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="gui-brand-text">
-        <span class="gui-brand-title">FlowGate</span>
+        <span class="gui-brand-title">{{ PRODUCT_NAME }}</span>
         <span class="gui-brand-sub">{{ t('gui.brand.tagline') }}</span>
       </span>
     </RouterLink>
@@ -51,6 +51,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { PRODUCT_NAME } from '@shared/productName'
 import IconButton from '@/components/ui/IconButton.vue'
 import Input from '@/components/ui/Input.vue'
 import NavGlyph from './NavGlyph.vue'

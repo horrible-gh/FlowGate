@@ -197,10 +197,10 @@ async function run<T>(work: () => Promise<T>): Promise<T> {
  * when it succeeds: make it the system default, or this person's own pick. (The very first model becomes the default
  * and switches voice input on by itself, on the server.)
  */
-export async function installModel(selection: VoiceSelection, then: AfterInstall = null, licenseAck = false): Promise<void> {
+export async function installModel(selection: VoiceSelection, then: AfterInstall = null): Promise<void> {
   state.installError = null
   state.lastInstalled = null
-  const id = await run(() => licenseAck ? startVoiceInstall(selection, true) : startVoiceInstall(selection))
+  const id = await run(() => startVoiceInstall(selection))
   rememberInstall(id)
   afterInstall = { installId: id, then: then === 'default' && findModel(state.catalog, selection)?.defaultEligible === false ? null : then }
   state.install = { installId: id, service: selection.service, model: selection.model, step: 'queued', receivedBytes: 0, totalBytes: 0, done: false, error: null }

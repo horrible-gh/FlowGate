@@ -45,9 +45,9 @@ class Recognizer:
             config.model_config.transducer.joiner = find("joiner*.onnx")
             config.enable_endpoint = 0
         else:
-            config.model_config.sense_voice.model = find("model*.onnx")
-            config.model_config.sense_voice.language = b"auto"
-            config.model_config.sense_voice.use_itn = 1
+            # Only streaming transducer models are in the catalog. The SenseVoice offline
+            # model was removed (F86-7); its ABI struct stays in voice_sherpa_abi.py for layout.
+            raise RuntimeError("Unsupported sherpa-onnx model: streaming encoder/decoder/joiner files are required")
         prefix = "Online" if self.online else "Offline"
         self.create = self.function("SherpaOnnxCreate" + prefix + "Recognizer", [C.POINTER(type(config))], C.c_void_p)
         self.recognizer = self.create(C.byref(config))

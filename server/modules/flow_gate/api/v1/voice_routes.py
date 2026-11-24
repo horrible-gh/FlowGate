@@ -32,10 +32,6 @@ class Selection(BaseModel):
     model: str
 
 
-class InstallSelection(Selection):
-    license_ack: StrictBool = False
-
-
 class Enabled(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
@@ -55,9 +51,9 @@ def catalog(user=Depends(get_current_user)):
 
 @router.post("/installs", status_code=202)
 @guard
-def install(body: InstallSelection, user=Depends(get_current_user)):
+def install(body: Selection, user=Depends(get_current_user)):
     admin(user)
-    return manager.install(body.service, body.model, license_ack=body.license_ack)
+    return manager.install(body.service, body.model)
 
 
 @router.get("/installs/{install_id}")

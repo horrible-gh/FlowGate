@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import thirdPartyNotices from './scripts/third-party-notices'
+import { PRODUCT_NAME } from './src/shared/productName'
 
 const require = createRequire(import.meta.url)
 // Alias target = the package DIRECTORY, never `require.resolve(name)`. The latter returns
@@ -30,7 +31,12 @@ const BUILD_STAMP = [
 // (the /app SPA) and login.html (the sign-in page the server returns for / and /login).
 export default defineConfig({
   base: '/app/',
-  plugins: [vue(), thirdPartyNotices(resolve(__dirname, '..'))],
+  plugins: [
+    vue(),
+    thirdPartyNotices(resolve(__dirname, '..')),
+    // F86-7 U3: the HTML <title> of both entries reads the single product-name constant.
+    { name: 'flowgate-product-name', transformIndexHtml: { order: 'pre', handler: (html: string) => html.replace(/%PRODUCT_NAME%/g, PRODUCT_NAME) } },
+  ],
   define: {
     __FG_GUI_BUILD__: JSON.stringify(BUILD_STAMP),
   },

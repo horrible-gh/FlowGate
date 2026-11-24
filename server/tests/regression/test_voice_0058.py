@@ -289,25 +289,124 @@ def test_legacy_cleanup_is_scoped_and_idempotent(tmp_path):
     assert all((tmp_path / p).read_bytes() == b"data" for p in kept)
 
 
-def test_sensevoice_requires_notice_and_rejects_default_and_offline(manager, tmp_path):
-    spec = vs.specification("sherpa-onnx", "sensevoice-small-int8")
-    assert spec["license"] != "Apache-2.0"
-    assert spec["source"] == "FunASR/SenseVoice"
-    assert spec["license_url"].endswith("/MODEL_LICENSE")
-    for action, code in [
-        (lambda: manager.install("sherpa-onnx", spec["id"]), "voice_license_ack_required"),
-        (lambda: manager.install("sherpa-onnx", spec["id"], tmp_path, license_ack=True), "voice_redistribution_pending"),
-        (lambda: manager.set_default("sherpa-onnx", spec["id"]), "voice_default_restricted"),
+RETIRED = ("sherpa-onnx", "sensevoice-small-int8")
+
+
+def test_sensevoice_is_removed_from_catalog_and_every_request_is_rejected(manager, tmp_path):
+    # F86-7 U1: removed from the product, not "show a notice and install".
+    assert "sense" not in json.dumps(vs.CATALOG).lower()
+    assert all(m.get("kind") != "sense_voice" and not m.get("requires_license_ack")
+               for s in vs.CATALOG["services"] for m in s["models"])
+    assert all(m["id"] != RETIRED[1] for s in manager.catalog(True)["services"] for m in s["models"])
+    for action in [
+        lambda: vs.specification(*RETIRED),
+        lambda: manager.install(*RETIRED),
+        lambda: manager.install(*RETIRED, from_dir=tmp_path),
+        lambda: manager.set_default(*RETIRED),
+        lambda: manager.select(*RETIRED),
+        lambda: manager.transcribe(b"data", *RETIRED, testing=True),
+        lambda: manager.remove(*RETIRED),
     ]:
         with pytest.raises(VoiceError) as exc:
             action()
-        assert exc.value.code == code
+        assert (exc.value.code, exc.value.status_code) == ("voice_model_retired", 410)
     assert manager.jobs == {}
 
 
-def test_stored_sensevoice_default_is_not_activated(monkeypatch):
-    monkeypatch.setattr(vs.system_settings, "get_value", lambda key: json.dumps({"enabled": True, "default": {"service": "sherpa-onnx", "model": "sensevoice-small-int8"}}))
-    assert vs.configuration() == {"enabled": False, "default": None}
+def test_install_api_rejects_sensevoice_and_the_removed_license_ack_field(manager, monkeypatch):
+    app = FastAPI()
+    app.include_router(voice_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u", "is_admin": True}
+    monkeypatch.setattr(voice_routes, "manager", manager)
+    client = TestClient(app)
+    response = client.post("/voice/installs", json={"service": RETIRED[0], "model": RETIRED[1]})
+    assert response.status_code == 410 and response.json()["error"]["code"] == "voice_model_retired"
+    response = client.post("/voice/installs", json={"service": RETIRED[0], "model": RETIRED[1], "license_ack": True})
+    assert response.status_code == 422
+    response = client.put("/voice/default", json={"service": RETIRED[0], "model": RETIRED[1]})
+    assert response.status_code == 410
+    assert manager.jobs == {}
+
+
+def test_stored_sensevoice_default_and_files_are_reported_retired_not_activated_or_deleted(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLOWGATE_VOICE_DIR", str(tmp_path / "voice"))
+    stored = {"enabled": True, "default": {"service": RETIRED[0], "model": RETIRED[1]}}
+    saved = []
+    monkeypatch.setattr(vs.system_settings, "get_value", lambda key: json.dumps(stored))
+    monkeypatch.setattr(vs.system_settings, "set_value", lambda key, value, value_type=None: saved.append(json.loads(value)))
+    config = vs.configuration()
+    assert (config["enabled"], config["default"]) == (False, None)
+    marker = tmp_path / "voice/services/sherpa-onnx/sensevoice-small-int8.installed.json"
+    weights = tmp_path / "voice/services/sherpa-onnx/models/sensevoice-small-int8/model.int8.onnx"
+    for path, data in [(marker, b"{}"), (weights, b"user data")]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    manager = vs.Manager()
+    manager.startup()
+    status = manager.status(True)
+    assert (status["enabled"], status["default"]) == (False, None)
+    assert status["retired"] == [{"service": RETIRED[0], "model": RETIRED[1], "name": "SenseVoiceSmall int8",
+                                  "status": "retired", "installed": True, "was_default": True}]
+    assert manager.status(False)["retired"] == []
+    vs.save_configuration(config)
+    assert saved == [{"enabled": False, "default": None}]
+    # Operational data on the user's disk is never removed automatically.
+    assert weights.read_bytes() == b"user data" and marker.is_file()
+
+
+def test_removing_last_catalog_model_keeps_retired_sensevoice_files(manager):
+    # Deleting the last Zipformer removes the engine and its cache, but never the SenseVoice
+    # weights, installed marker or cached archive the user did not ask to delete.
+    service = "sherpa-onnx"
+    voice = vs.root()
+    base, cache = voice / "services" / service, voice / "downloads" / service
+    archive = vs.RETIRED_MODELS[RETIRED]["filename"]
+    kept = {
+        base / "sensevoice-small-int8.installed.json": b"{}",
+        base / "models/sensevoice-small-int8/model.int8.onnx": b"user weights",
+        base / "models/sensevoice-small-int8/tokens.txt": b"user tokens",
+        cache / archive: b"cached archive",
+        cache / (archive + ".part"): b"partial archive",
+    }
+    removed = [base / "bin/sherpa-onnx-c-api.dll", base / "models/zipformer-en-20m/encoder.onnx",
+               base / "zipformer-en-20m.installed.json", cache / "engine.zip",
+               cache / vs.specification(service, "zipformer-en-20m")["filename"]]
+    for path, data in [*kept.items(), *[(p, b"x") for p in removed]]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    assert manager.installed(service, "zipformer-en-20m")
+    result = manager.remove(service, "zipformer-en-20m")
+    assert result == {"ok": True, "service_removed": True, "voice_disabled": False}
+    assert {p: p.read_bytes() for p in kept if p.is_file()} == kept
+    assert not any(p.exists() for p in removed)
+    assert not (base / "bin").exists() and not (base / "models/zipformer-en-20m").exists()
+    assert [r["model"] for r in manager.retired_models(manager.test_config)] == [RETIRED[1]]
+
+
+def test_removing_last_model_without_retired_files_still_removes_service_dirs(manager):
+    service = "sherpa-onnx"
+    base, cache = vs.root() / "services" / service, vs.root() / "downloads" / service
+    for path in [base / "bin/engine.dll", base / "models/zipformer-en-20m/encoder.onnx",
+                 base / "zipformer-en-20m.installed.json", cache / "engine.zip"]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    assert manager.remove(service, "zipformer-en-20m")["service_removed"] is True
+    assert not base.exists() and not cache.exists()
+
+
+def test_engine_notices_are_pinned_files_but_redistribution_stays_closed():
+    root = Path(__file__).resolve().parents[3]
+    sources = {item["path"]: item for item in json.loads((root / "third_party/license_sources.json").read_text(encoding="utf-8"))["files"]}
+    for service in vs.CATALOG["services"]:
+        engine = next(a for a in service["artifacts"] if a["component_type"] == "engine")
+        assert engine["notices"], service["id"]
+        for notice in engine["notices"]:
+            path = root / "third_party/licenses" / notice["filename"]
+            data = path.read_bytes()
+            assert (len(data), hashlib.sha256(data).hexdigest()) == (notice["size_bytes"], notice["sha256"]), notice
+            assert sources["third_party/licenses/" + notice["filename"]]["source_url"] == notice["source_url"]
+        # Native notices are still incomplete, so the offline export gate stays closed.
+        assert engine["redistribution_allowed"] is False and service["redistribution_status"] == "pending-native-notices"
 
 
 def test_korean_catalog_has_no_kss_and_weight_license_unchanged():
@@ -318,7 +417,7 @@ def test_korean_catalog_has_no_kss_and_weight_license_unchanged():
         assert spec["self_test"] == {"mode": "load_only"}
 
 
-@pytest.mark.parametrize("service,model", [("sherpa-onnx", "zipformer-ko"), ("vosk", "small-ko"), ("sherpa-onnx", "sensevoice-small-int8")])
+@pytest.mark.parametrize("service,model", [("sherpa-onnx", "zipformer-ko"), ("vosk", "small-ko")])
 def test_worker_load_only_and_restricted_first_install(manager, monkeypatch, service, model):
     import tarfile
     spec = vs.specification(service, model)
@@ -331,8 +430,7 @@ def test_worker_load_only_and_restricted_first_install(manager, monkeypatch, ser
         def healthy(self):
             return True
         def transcribe(self, sample):
-            assert model == "sensevoice-small-int8", "Korean model requested a sample"
-            return "country"
+            raise AssertionError("Korean model requested a sample")
     monkeypatch.setattr(vs, "Runtime", Runtime)
     manager.runtime = Runtime()
     monkeypatch.setattr(vs.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 100 * 1024**3})())
@@ -361,11 +459,8 @@ def test_worker_load_only_and_restricted_first_install(manager, monkeypatch, ser
     manager._install_worker(job, None)
     assert manager.jobs[job]["error"] is None, manager.jobs[job]
     assert manager.installed(service, model)
-    if model == "sensevoice-small-int8":
-        assert manager.test_config == {"enabled": False, "default": None}
-    else:
-        assert "jfk.wav" not in fetched
-        assert manager.test_config["enabled"]
+    assert "jfk.wav" not in fetched
+    assert manager.test_config["enabled"]
     if model == "zipformer-ko":
         assert not list(manager.model_path(service, model).rglob("test_wavs"))
         assert not (vs.root() / "downloads" / service / spec["filename"]).exists()
@@ -395,7 +490,7 @@ def test_bundle_copies_only_verified_components_and_exact_notices(tmp_path):
     model = file_spec("model.bin", b"weights") | {"redistribution_allowed": True, "notices": [notice]}
     file_spec("ffmpeg.exe", b"not distributed")
     file_spec("korean-sample.wav", b"not distributed")
-    file_spec("sensevoice.bin", b"not distributed")
+    file_spec("uncatalogued-model.bin", b"not distributed")
     entry = {"artifacts": [engine, {"component_type": "ffmpeg"}, {"component_type": "sample"}]}
     export_bundle(entry, model, source, output)
     assert {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()} == {"engine.bin", "model.bin", "licenses/engine-LICENSE", "licenses/model-NOTICE"}
@@ -408,7 +503,7 @@ def test_bundle_copies_only_verified_components_and_exact_notices(tmp_path):
 
 @pytest.mark.parametrize("service,model", [("whisper.cpp", "base"), ("vosk", "small-ko")])
 def test_local_install_does_not_require_redistribution_notices(manager, tmp_path, monkeypatch, service, model):
-    # 고지 미승인 로컬 파일도 설치 작업에 전달하되 파일 검증은 작업자가 수행한다.
+    # Local files without approved notices still reach the install job; the worker verifies them.
     monkeypatch.setattr(vs, "available", lambda entry: True)
     captured = []
     class Worker:
@@ -422,7 +517,7 @@ def test_local_install_does_not_require_redistribution_notices(manager, tmp_path
 
 
 def test_excluded_paths_blocks_renamed_model_even_when_notices_approved(tmp_path):
-    # 모델 ID를 바꾸거나 고지를 승인해도 제한 원본은 반입과 내보내기를 막는다.
+    # Renaming the model or approving notices never lets a restricted original in or out.
     from modules.flow_gate.services.voice_distribution import validate_local_install, export_bundle
     model = {"id": "renamed-model", "filename": "model.zip", "excluded_paths": ["test_wavs/"],
              "redistribution_allowed": True, "notices": [{"filename": "LICENSE"}]}
