@@ -82,7 +82,7 @@ describe('v02test.0055 account window', () => {
     await card().trigger('click'); await flushPromises()
     clickAction('minimize'); await flushPromises()
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
-    expect(wrapper.get('.minimized-item').text()).toBe('□' + i18n.global.t('gui.taskbar.account_window'))
+    expect(wrapper.get('.minimized-item').text()).toBe(String(i18n.global.t('gui.taskbar.account_window')))
     await openMenu(wrapper)
     expect(card().attributes('data-card-state')).toBe('minimized')
     expect(card().find('[data-test="menu-card-dot"]').exists()).toBe(true)

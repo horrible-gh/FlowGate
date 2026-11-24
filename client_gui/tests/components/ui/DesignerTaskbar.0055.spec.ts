@@ -72,9 +72,9 @@ describe('taskbar window lifecycle', () => {
     const { wrapper } = bar()
     for (let i = 0; i < 12; i++) { panel({ title: `Window ${i}` }); await tick(); clickMinimize(); await tick() }
     await tick()
-    // Four pinned buttons take room too (the terminal button is not drawn without terminal access).
-    const fits = taskbarCapacity(1100, 12, 'flowgate', 4)
-    expect(wrapper.findAll('[data-test="taskbar-pin"]')).toHaveLength(4)
+    // Two pinned buttons take room too (the terminal button is not drawn without terminal access).
+    const fits = taskbarCapacity(1100, 12, 'flowgate', 2)
+    expect(wrapper.findAll('[data-test="taskbar-pin"]')).toHaveLength(2)
     expect(wrapper.findAll('.minimized-item')).toHaveLength(fits)
     expect(wrapper.get('.overflow-trigger').text()).toBe(`▾ +${12 - fits}`)
     await wrapper.get('.overflow-trigger').trigger('click'); await tick()

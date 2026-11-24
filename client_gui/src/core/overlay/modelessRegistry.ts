@@ -2,7 +2,7 @@ import { computed, reactive, ref } from 'vue'
 
 // What a window is about. The taskbar draws one line icon per kind so icon-only styles (modern, dock) can tell
 // windows apart; a window that names no kind gets one from its kind colour, and 'window' when that is unknown too.
-export const MODELESS_KINDS = ['document', 'history', 'change', 'note', 'question', 'git', 'merge', 'ai', 'test', 'plan', 'settings', 'window'] as const
+export const MODELESS_KINDS = ['document', 'history', 'change', 'note', 'question', 'git', 'merge', 'ai', 'test', 'plan', 'settings', 'project', 'window'] as const
 export type ModelessKind = typeof MODELESS_KINDS[number]
 const KIND_BY_COLOR: Record<string, ModelessKind> = { '#4ba3ff': 'document', '#8b9bb2': 'history', '#52b788': 'git', '#a78bfa': 'ai', '#f0a23a': 'test', '#e7a244': 'plan', '#94a3b8': 'settings' }
 

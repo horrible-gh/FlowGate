@@ -1,5 +1,61 @@
 <template>
-  <ModalShell :open="store.dialogOpen" size="lg" @close="store.closeDialog()">
+  <!-- The Designer taskbar's [Open project] opens the same list as a floating window: the canvas and side panels stay
+       usable, and minimizing puts it on the taskbar. Everywhere else it stays the modal dialog. -->
+  <ModelessShell
+    v-if="asWindow"
+    ref="windowRef"
+    kind="project"
+    kind-color="#6478dc"
+    :open="store.dialogOpen"
+    :minimized="windowMinimized"
+    :title="t('gui.project.dialog.title')"
+    :initial-x="windowGeometry.x"
+    :initial-y="windowGeometry.y"
+    :initial-width="windowGeometry.width"
+    :initial-height="windowGeometry.height"
+    :min-width="320"
+    :min-height="260"
+    @update:minimized="windowMinimized = $event"
+    @close="store.closeDialog()"
+  >
+    <div ref="windowBodyRef" class="pd-window" data-test="project-window">
+      <p class="pd-head-sub pd-window-sub">{{ t('gui.project.dialog.subtitle') }}</p>
+      <div v-if="isAdmin" class="pd-intro">
+        <Button type="button" variant="primary" size="sm" @click="createDialogOpen = true">
+          {{ t('gui.project.dialog.new_project') }}
+        </Button>
+      </div>
+      <div class="pd-search">
+        <Input
+          ref="searchInputRef"
+          v-model="searchQuery"
+          type="search"
+          class="pd-search-input"
+          :placeholder="t('gui.project.dialog.search_placeholder')"
+          :aria-label="t('gui.project.dialog.search_aria')"
+          autocomplete="off"
+        />
+      </div>
+      <div class="pd-window-list">
+        <ProjectList
+          :projects="filteredProjects"
+          :loading="store.loading"
+          :error="store.error"
+          :has-any-projects="store.projects.length > 0"
+          :selected-id="selectedId"
+          @retry="store.fetchProjects()"
+          @select="selectProject"
+          @open="openProject"
+        />
+      </div>
+      <div class="pd-foot pd-window-foot">
+        <span><b>Enter</b> {{ t('gui.project.dialog.hint_open') }}</span>
+        <span><b>Esc</b> {{ t('gui.common.close') }}</span>
+      </div>
+    </div>
+  </ModelessShell>
+
+  <ModalShell v-else :open="store.dialogOpen" size="lg" @close="store.closeDialog()">
     <template #header="{ titleId }">
       <div class="pd-head">
         <div class="pd-head-titles">
@@ -74,18 +130,20 @@
 // one-shot explicit-open signal and emits `opened`; this feature stays router-free, so the
 // App Shell (the single mount, reached from both Sidebar and Dashboard) does the move to the
 // Designer.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../components/ui/Button.vue'
 import IconButton from '../../components/ui/IconButton.vue'
 import Input from '../../components/ui/Input.vue'
 import ModalShell from '../../components/ui/ModalShell.vue'
+import ModelessShell from '../../components/ui/ModelessShell.vue'
 import ToastHost, { type ToastHostItem } from '../../components/ui/ToastHost.vue'
 import { useCurrentUser } from '../../core/auth/currentUser'
 import ProjectCreateDialog from './ProjectCreateDialog.vue'
 import ProjectList from './ProjectList.vue'
 import { useProjectStore } from './store'
 import type { Project } from './types'
+import { projectWindowUi } from './windowState'
 
 const emit = defineEmits<{ opened: [project: Project] }>()
 
@@ -100,6 +158,35 @@ const searchQuery = ref('')
 const selectedId = ref<string | null>(null)
 const createDialogOpen = ref(false)
 const searchInputRef = ref<InstanceType<typeof Input> | null>(null)
+
+// Window form (the Designer taskbar's [Open project]): which form is showing, whether it sits on the taskbar, and the
+// place it first opens at -- in the middle, clear of the header and the taskbar.
+const asWindow = computed(() => store.dialogAsWindow)
+const windowMinimized = ref(false)
+const windowRef = ref<InstanceType<typeof ModelessShell> | null>(null)
+const windowBodyRef = ref<HTMLElement | null>(null)
+function placeWindow() {
+  const width = Math.min(560, Math.max(320, window.innerWidth - 48))
+  const height = Math.min(560, Math.max(260, window.innerHeight - 160))
+  return { x: Math.max(16, Math.round((window.innerWidth - width) / 2)), y: 70, width, height }
+}
+const windowGeometry = ref(placeWindow())
+function focusSearch(): void {
+  ;(searchInputRef.value?.$el as HTMLInputElement | undefined)?.focus()
+}
+// The taskbar lights [Open project] while the window is open (also while it is minimized).
+watchEffect(() => { projectWindowUi.open = store.dialogOpen && asWindow.value })
+// Pressing [Open project] again brings the open window back where it was instead of opening a second one.
+watch(
+  () => store.dialogRequest,
+  async () => {
+    if (!asWindow.value || !store.dialogOpen) return
+    windowMinimized.value = false
+    await nextTick()
+    windowRef.value?.bringToFront()
+    focusSearch()
+  },
+)
 // a toast keeps the created Project's name, not a sentence translated at
 // creation time — the sentence is built in the current locale whenever it renders, and the
 // Project name itself is only interpolated, never translated.
@@ -141,17 +228,24 @@ const filteredProjects = computed<Project[]>(() => {
 // it, and the same stale child session would still be showing on the next open.
 watch(
   () => store.dialogOpen,
-  (isOpen) => {
+  async (isOpen) => {
     if (!isOpen) {
       createDialogOpen.value = false
+      windowMinimized.value = false
       return
     }
     searchQuery.value = ''
     selectedId.value = null
+    if (asWindow.value) windowGeometry.value = placeWindow()
     // the Designer's File › New Project opens this Dialog asking for the create
     // child right away. The entry point stays admin-only, so for anyone else the
     // request is dropped and the Dialog opens as it always does.
     createDialogOpen.value = store.takeCreateRequest() && isAdmin.value
+    // The modal focuses its search box itself (data-modal-autofocus); the window does it here.
+    if (asWindow.value && !createDialogOpen.value) {
+      await nextTick()
+      focusSearch()
+    }
   },
 )
 
@@ -189,6 +283,8 @@ function onDocumentKeydown(event: KeyboardEvent): void {
   if (!store.dialogOpen || createDialogOpen.value) return
   const active = document.activeElement
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+  // The window shares the page with the canvas, so "/" only reaches its search box while the keyboard is in the window.
+  if (asWindow.value && (windowMinimized.value || !(active instanceof Node && windowBodyRef.value?.contains(active)))) return
   event.preventDefault()
   // The shared Input primitive does not expose a `focus()` method (it never
   // defineExpose()s one) -- `$el` is always available on a component's template ref
@@ -261,5 +357,31 @@ function handleCreated(project: Project): void {
 
 .pd-foot b {
   color: var(--fg2-control-fg);
+}
+
+/* Window form: the same parts in a column that fills the window; only the list scrolls. */
+.pd-window {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 12px 16px 0;
+}
+
+.pd-window-sub {
+  margin: 0;
+}
+
+.pd-window-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pd-window-foot {
+  flex: none;
+  padding: 8px 0 12px;
 }
 </style>
