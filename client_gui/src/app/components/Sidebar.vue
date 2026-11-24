@@ -17,6 +17,11 @@
           </span>
         </a>
       </RouterLink>
+      <details class="gui-notices">
+        <summary>{{ t('gui.nav.notices.title') }}</summary>
+        <a :href="`${baseUrl}THIRD_PARTY_NOTICES.txt`" target="_blank" rel="noopener">{{ t('gui.nav.notices.third_party') }}</a>
+        <a :href="`${baseUrl}LICENSE.txt`" target="_blank" rel="noopener">{{ t('gui.nav.notices.project_license') }}</a>
+      </details>
     </nav>
 
     <div class="gui-sidebar-bottom">
@@ -42,6 +47,7 @@ import { APP_NAV_ITEMS, type AppNavItem, type AppNavKey } from '../navigation'
 import NavGlyph from './NavGlyph.vue'
 
 const { t } = useI18n()
+const baseUrl = import.meta.env.BASE_URL
 const route = useRoute()
 const projectStore = useProjectStore()
 
@@ -83,6 +89,11 @@ function onNavClick(item: AppNavItem, navigate: (e: MouseEvent) => void, event: 
 </script>
 
 <style scoped>
+.gui-notices { color: #e6eef8; padding: 10px 14px; flex: 0 0 auto; }
+.gui-notices summary { cursor: pointer; }
+.gui-notices a { display: block; color: #9ecbff; padding: 8px 0; text-decoration: underline; }
+.gui-notices :focus-visible { outline: 2px solid #9ecbff; outline-offset: 3px; }
+
 .gui-sidebar {
   display: flex;
   flex-direction: column;

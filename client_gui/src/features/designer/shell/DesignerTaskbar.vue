@@ -1,7 +1,7 @@
 <template>
   <div ref="root" class="designer-taskbar" :class="{ 'is-compact': compact }" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
     <div class="taskbar-group">
-    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :aria-label="t('gui.taskbar.menu')" :title="iconOnly || compact ? undefined : t('gui.taskbar.menu')" v-on="iconOnly || compact ? tipFor(t('gui.taskbar.menu')) : {}" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
+    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :aria-label="t('gui.taskbar.menu')" :title="iconOnly || compact ? undefined : t('gui.taskbar.menu')" v-on="iconOnly || compact ? tipFor(t('gui.taskbar.menu')) : {}" @click="toggle('menu')"><svg v-if="modelessStyle === 'modern'" class="flowgate-menu-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V5h9M5 12h7M12 9l4 3-4 3M19 5v14" /></svg><svg v-else viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
     <!-- Pinned buttons: icon-only in every style, the name shows at once above the button on hover or focus. -->
     <button v-for="pin in pins" :key="pin.key" type="button" class="taskbar-item pin-item" :class="{ 'is-on': pin.on }" data-test="taskbar-pin" :data-pin="pin.key" :aria-label="pin.label" :aria-disabled="pin.disabled ? 'true' : undefined" v-on="tipFor(pin.label)" @click="pressPin(pin)"><svg class="item-glyph" viewBox="0 0 24 24" aria-hidden="true"><path :d="PIN_ICONS[pin.key]" /></svg><i v-if="pin.on" class="pin-dot" aria-hidden="true" /></button>
     <span v-if="!compact" class="taskbar-separator pins-separator" aria-hidden="true" />
@@ -349,7 +349,7 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="modern"] .taskbar-item { position: relative; width: 44px; height: 40px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; box-shadow: none; text-align: center; }
 [data-taskbar-style="modern"] .taskbar-item:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
 [data-taskbar-style="modern"] .item-text, [data-taskbar-style="modern"] .item-label, [data-taskbar-style="modern"] .designer-item i { display: none; }
-[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-text); }
 [data-taskbar-style="modern"] .menu-trigger[aria-expanded="true"] { background: color-mix(in srgb, var(--fg2-text) 10%, transparent); }
 [data-taskbar-style="modern"] .item-icon { width: 24px; height: 24px; border-radius: 6px; font-size: 14px; }
 [data-taskbar-style="modern"] .designer-item { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }

@@ -278,6 +278,7 @@ export default {
     user_role_member: '사용자',
   },
   nav: {
+    notices: {"title": "오픈소스 고지", "third_party": "제3자 라이선스 전문", "project_license": "프로젝트 LICENSE"},
     aria: '주요 화면',
     dashboard: { title: '대시보드', sub: '홈으로 돌아가기' },
     projects: { title: '프로젝트', sub: '프로젝트 관리' },

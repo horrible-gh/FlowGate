@@ -275,6 +275,7 @@ export default {
     user_role_member: 'Member',
   },
   nav: {
+    notices: {"title": "Open-source notices", "third_party": "Third-party license texts", "project_license": "Project LICENSE"},
     aria: 'Main screens',
     dashboard: { title: 'Dashboard', sub: 'Back to home' },
     projects: { title: 'Projects', sub: 'Manage projects' },

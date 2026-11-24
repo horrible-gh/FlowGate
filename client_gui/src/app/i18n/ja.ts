@@ -275,6 +275,7 @@ export default {
     user_role_member: 'ユーザー',
   },
   nav: {
+    notices: {"title": "オープンソース表記", "third_party": "第三者ライセンス全文", "project_license": "プロジェクト LICENSE"},
     aria: '主要画面',
     dashboard: { title: 'ダッシュボード', sub: 'ホームに戻る' },
     projects: { title: 'プロジェクト', sub: 'プロジェクト管理' },
