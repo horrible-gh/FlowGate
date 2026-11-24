@@ -1,3 +1,4 @@
+<!-- @third-party Phosphor: https://github.com/phosphor-icons/core; MIT. Full text: third_party/licenses/phosphor-LICENSE.txt at repository root. -->
 <template>
   <!-- 0017-CH: [AI 호출] is the robot icon (Phosphor Icons, MIT — the same `robot` glyph v0.1 used), its
        words the tooltip; a running call turns it into a spinner. the earlier change: moved out of InspectorSlotList as it

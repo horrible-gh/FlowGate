@@ -1,3 +1,4 @@
+<!-- @third-party Phosphor: https://github.com/phosphor-icons/core; MIT. Full text: third_party/licenses/phosphor-LICENSE.txt at repository root. -->
 <template>
   <!-- flowgate.v02.0068 T#1 — the [업로드][다운로드] group (0068 D §2.1 / §6): display only. It is handed whether each
        button is usable, why not (the tooltip) and whether it runs (a spinner, no second press), and tells the

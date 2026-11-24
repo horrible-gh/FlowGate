@@ -1,3 +1,4 @@
+<!-- @third-party Lucide: https://github.com/lucide-icons/lucide; ISC (including upstream inherited notices). Full text: third_party/licenses/lucide-LICENSE.txt at repository root. -->
 <template>
   <div class="wpe" data-test="wp-edit-body" :data-phase="phase">
     <p v-if="phase === 'loading'" class="wpe-line" data-test="wp-edit-loading">{{ t('loading') }}</p>
