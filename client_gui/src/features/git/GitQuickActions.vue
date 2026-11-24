@@ -364,6 +364,9 @@ const stopFixes = computed<Fix[]>(() => (plan.value?.error && REASONS[plan.value
 const noticeLines = computed(() => (['apply', 'push'] as const).flatMap(area => {
   const n = wt.state.notices[area]
   if (!n) return []
+  // flowgate.v02test.0068: 「충돌 — 위 카드에서 해결하세요」 points at the conflict card: never said while no card is shown
+  // (the open-session line above then says what is open and how to end it).
+  if (n.code === 'merge_conflict' && !conflict.value) return []
   const params = n.params ?? {}
   const failedCode = n.code === 'failed' ? String(params.code ?? '') : ''
   const known = reasonText(failedCode) ?? (n.tone === 'error' ? reasonText(n.code) : null)

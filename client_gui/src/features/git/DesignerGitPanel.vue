@@ -147,6 +147,8 @@ const emit = defineEmits<{
   'windows-change': [windows: GitWindowDescriptor[]]
   /** flowgate.v02test.0068: the shown Flow's Git run for its Flow tab (null = no mark). */
   'git-activity': [flowId: string, activity: GitTabActivity | null]
+  /** flowgate.v02test.0068: the shown Flow's conflict appeared, changed or went (its Flow tab reads its mark again). */
+  'git-conflict-change': [flowId: string]
 }>()
 
 const { t } = useI18n()
@@ -207,7 +209,39 @@ useInspectorEvents(
   {
     events: GIT_LEDGER_EVENTS,
     matches: (frame, scope) => frame.groupId === scope.flowId,
-    changed: () => void session.refresh(),
+    changed: () => {
+      void session.refresh()
+      // flowgate.v02test.0068: an open session worktree status names may have just ended (resolved, aborted, swept):
+      // read it again too, or its line / card would stay until the next worktree read.
+      if (worktree.state.status?.blockers.some((b) => b.code === 'session_open')) worktree.refresh()
+    },
+  },
+)
+// flowgate.v02test.0068: the open session worktree status names for the shown Flow goes to the Git session, which shows
+// a 받아오기 conflict in the conflict card even when git/status has no conflict row for it.
+watch(
+  () => {
+    const groupId = session.state.flow?.groupId ?? null
+    const status = worktree.state.status
+    const open = status?.groupId === groupId ? status?.blockers.find((b) => b.code === 'session_open' && b.mergeId != null && !!b.sessionKind) : undefined
+    return groupId && open ? JSON.stringify([groupId, open.mergeId, open.sessionKind]) : ''
+  },
+  (key) => {
+    if (!key) return session.adoptOpenSession(null)
+    const [groupId, mergeId, kind] = JSON.parse(key) as [string, number, string]
+    session.adoptOpenSession({ groupId, mergeId, kind })
+  },
+  { immediate: true },
+)
+// flowgate.v02test.0068: the shown Flow's conflict appeared, changed or went as the panel reads it (a resolve, an abort,
+// 세션 중단): its Flow tab reads its conflict mark again now instead of waiting for a server event that may not come.
+watch(
+  () => {
+    const row = session.pendingRow.value
+    return [session.state.flow?.groupId ?? null, row?.status === 'conflict' ? `${row.mergeId ?? ''}|${row.reviewState ?? ''}` : null] as const
+  },
+  ([groupId, conflict], [prevGroup, prevConflict]) => {
+    if (groupId && groupId === prevGroup && conflict !== prevConflict) emit('git-conflict-change', groupId)
   },
 )
 const pendingConfirm = shallowRef<GitConfirmRequest | null>(null)
