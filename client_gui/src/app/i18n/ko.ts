@@ -3368,7 +3368,6 @@ export default {
       agents: '시스템 에이전트',
       projects: '전체 프로젝트',
       voice: '음성 입력',
-      terminal: '웹 터미널',
     },
     me_nav: {
       account: '계정 · 화면',

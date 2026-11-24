@@ -87,12 +87,6 @@ const settingsRoute: RouteRecordRaw = {
       meta: { settingsAccess: 'admin' },
     },
     {
-      path: 'system/terminal',
-      name: 'settings-system-terminal',
-      component: () => import('@/features/settings/views/SystemTerminalSettingsView.vue'),
-      meta: { settingsAccess: 'admin' },
-    },
-    {
       path: 'system/users',
       name: 'settings-system-users',
       component: () => import('@/features/settings/views/SystemUsersView.vue'),

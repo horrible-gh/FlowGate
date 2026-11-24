@@ -41,8 +41,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   { key: 'general', scope: 'system', routeName: 'settings-system-general', path: '/settings/system/general', labelKey: 'gui.settings.system_nav.general', icon: 'gear', groupKey: 'gui.settings.system_groups.ops' },
   { key: 'agents', scope: 'system', adminOnly: true, routeName: 'settings-system-agents', path: '/settings/system/agents', labelKey: 'gui.settings.system_nav.agents', icon: 'bot', groupKey: 'gui.settings.system_groups.resources' },
   { key: 'voice', scope: 'system', adminOnly: true, routeName: 'settings-system-voice', path: '/settings/system/voice', labelKey: 'gui.settings.system_nav.voice', icon: 'mic', groupKey: 'gui.settings.system_groups.resources' },
-  // 0078 · 0015-T B: 웹 터미널 right under 음성 입력 (the same 실행 자원 group, administrators only).
-  { key: 'terminal', scope: 'system', adminOnly: true, routeName: 'settings-system-terminal', path: '/settings/system/terminal', labelKey: 'gui.settings.system_nav.terminal', icon: 'code', groupKey: 'gui.settings.system_groups.resources' },
   { key: 'users', scope: 'system', routeName: 'settings-system-users', path: '/settings/system/users', labelKey: 'gui.settings.users.title', icon: 'users', groupKey: 'gui.settings.system_groups.accounts' },
   { key: 'projects', scope: 'system', routeName: 'settings-system-projects', path: '/settings/system/projects', labelKey: 'gui.settings.system_nav.projects', icon: 'folder', groupKey: 'gui.settings.system_groups.accounts' },
 ]
