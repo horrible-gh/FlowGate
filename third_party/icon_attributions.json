@@ -1,0 +1,26 @@
+{
+  "Phosphor": {
+    "files": [
+      "client_gui/src/features/designer/inspector/parts/InspectorAiButton.vue",
+      "client_gui/src/features/documentWindow/DocumentIoButtons.vue",
+      "client_gui/src/features/workPlanWindow/WorkPlanEditWindow.vue"
+    ],
+    "license_file": "third_party/licenses/phosphor-LICENSE.txt"
+  },
+  "Lucide": {
+    "files": [
+      "client_gui/src/features/workPlanWindow/WorkPlanEditWindow.vue",
+      "client_gui/src/features/workPlanWindow/WorkPlanEditBody.vue",
+      "client_gui/src/features/workPlanWindow/WorkPlanStepEditWindow.vue",
+      "client_gui/src/components/ui/LineIcon.vue",
+      "client_gui/src/features/conversation/ConversationComposer.vue"
+    ],
+    "license_file": "third_party/licenses/lucide-LICENSE.txt"
+  },
+  "Feather": {
+    "files": [
+      "client_gui/src/login/components/LoginForm.vue"
+    ],
+    "license_file": "third_party/licenses/feather-LICENSE.txt"
+  }
+}

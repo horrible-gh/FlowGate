@@ -43,6 +43,10 @@ COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r server/requirements.txt
 
+# Project and third-party notices; retain installed Python dist-info licenses.
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
+COPY third_party/ ./third_party/
+
 # Server source.
 COPY server/ ./server/
 
