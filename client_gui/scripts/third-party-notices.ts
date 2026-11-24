@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import type { Plugin } from 'vite'
+import { PRODUCT_NAME } from '../src/shared/productName.ts'
 
 const text = (path: string) => readFileSync(path, 'utf8')
 // Start at the actual module path, including nested/scoped installations. Never
@@ -87,7 +88,7 @@ export function collectNotices(moduleIds: string[], repoRoot: string): string {
     }
     walk(licenses)
   }
-  return `FlowGate — third-party notices\nGenerated from emitted Rollup modules; Vue Flow dependency closure is included conservatively.\n\n${sections.join('\n\n========================================\n\n')}\n`
+  return `${PRODUCT_NAME} — third-party notices\nGenerated from emitted Rollup modules; Vue Flow dependency closure is included conservatively.\n\n${sections.join('\n\n========================================\n\n')}\n`
 }
 export default function thirdPartyNotices(repoRoot: string): Plugin {
   return {

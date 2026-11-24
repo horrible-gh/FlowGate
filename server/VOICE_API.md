@@ -6,9 +6,9 @@ Errors use `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
 
 | Method/path | Input | Response / purpose |
 | --- | --- | --- |
-| GET `/voice/status` | — | `enabled`, `state`, `default`, `error`, `can_manage` |
+| GET `/voice/status` | — | `enabled`, `state`, `default`, `error`, `can_manage`, `retired` (administrators only) |
 | GET `/voice/catalog` | — | `services[].models[]`; ordinary users see installed models only |
-| POST `/voice/installs` | JSON `service`, `model`, optional `license_ack` | 202, `install_id`; continues after browser closes |
+| POST `/voice/installs` | JSON `service`, `model` (other fields are rejected with 422) | 202, `install_id`; continues after browser closes |
 | GET `/voice/installs/{id}` | — | `step`, `received_bytes`, `total_bytes`, `done`, `error` |
 | DELETE `/voice/installs/{id}` | — | Request cancellation; poll until `done` |
 | DELETE `/voice/services/{service}/models/{model}` | — | `service_removed`, `voice_disabled` |
@@ -39,8 +39,7 @@ a realtime-capable installed model. Responses retain the existing settings envel
 
 Realtime-capable models: `sherpa-onnx` / `zipformer-en-20m` (English) and
 `zipformer-ko` (Korean), and every `vosk` model (`small-ko`, `small-en-us`).
-Whisper models and SenseVoiceSmall are not. SenseVoiceSmall supports Chinese,
-English, Japanese, Korean and Cantonese.
+Whisper models are not.
 
 1. POST `/voice/streams` with JSON `{}` or paired `service`/`model`.
 2. Receive `stream_id`, `sample_rate:16000`, `channels:1`, `format:"pcm_s16le"`.
@@ -74,17 +73,22 @@ install reuses verified downloads and resumes its partial files.
 
 Local `--from-dir` installation does not require redistribution approval or
 LICENSE/NOTICE files. It retains catalog hash and size verification and rejects
-SenseVoice and originals with catalog `excluded_paths` (including KSS archives).
+originals with catalog `excluded_paths` (including KSS archives).
 Rehosting exports still fail closed with `voice_redistribution_pending` until
 exact-artifact and native dependency notices are reviewed. This is not a
 determination that a component has no license or commercial use is prohibited.
 
 `--export-bundle DEST --from-dir SOURCE` copies only approved, hash-verified
 catalog components and their pinned `licenses/` LICENSE/NOTICE files. It does not
-copy an entire cache. SenseVoice, the original Korean Zipformer archive (which
-contains KSS), samples and FFmpeg are excluded. No production catalog component
-has been approved for redistribution by this change. Native SDL2, ONNX Runtime,
-GCC runtime and other DLL notices must be completed before approval.
+copy an entire cache. The original Korean Zipformer archive (which contains KSS),
+samples and FFmpeg are excluded. No production catalog component has been approved
+for redistribution. Each engine artifact's `notices[]` lists the upstream texts
+secured at pinned versions (whisper.cpp 1.8.2, SDL2 2.28.5, sherpa-onnx 1.12.20,
+ONNX Runtime 1.17.1, cargs 1.0.3, Vosk API 0.3.45, GCC runtime exception) with size
+and SHA-256; sources are in `third_party/license_sources.json`. Statically linked
+and vendored native code (whisper-server headers, sherpa-onnx-c-api.dll and
+libvosk.dll dependencies, libwinpthread-1.dll) is still unresolved, so every
+artifact keeps `redistribution_allowed: false`.
 FFmpeg 8.0 (Gyan GPL-3.0-or-later) remains an upstream direct download; there is no
 FFmpeg redistribution path or GPL section 6 source offer made by this installer.
 The catalog records source commit `140fd653ae` for follow-up review.
@@ -92,7 +96,7 @@ The catalog records source commit `140fd653ae` for follow-up review.
 Catalog contents (`services/voice_catalog.json`, the only source of the list):
 whisper.cpp carries the six multilingual base models of the pinned upstream
 revision (tiny, base, small, medium, large-v3-turbo, large-v3) and no quantized,
-English-only `.en` or older large-v1/v2 builds; sherpa-onnx carries SenseVoiceSmall and the English and Korean
+English-only `.en` or older large-v1/v2 builds; sherpa-onnx carries the English and Korean
 streaming Zipformers; Vosk carries the small Korean and US English models.
 
 The first eligible model installs and activates its runtime. Korean Zipformer and
@@ -107,14 +111,16 @@ archive (also on error/cancellation). Startup and subsequent installation clean
 known application-owned legacy KSS paths and archive caches. User recordings and
 read-only import directories are not cleaned or modified.
 
-SenseVoice is labelled "FunASR model license — scope pending", linking to
-https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE and the upstream
-FunASR/SenseVoice project. The API requires `license_ack: true` before a direct
-install; CLI requires `--ack-model-license` after reading `--list`. Both UI install
-surfaces show the notice first. SenseVoice cannot be suggested or assigned as the
-system default, and a stored default is ignored with voice disabled. A direct
-SenseVoice install alone stays off; an administrator can test it explicitly.
-Model terms are not inferred from the engine's Apache-2.0 label.
+SenseVoiceSmall (`sherpa-onnx` / `sensevoice-small-int8`) was removed in v0.2
+(F86-7, operator decision U1). It is not in the catalog, and install, default,
+selection, transcription and removal requests for it return `voice_model_retired`
+(410). The former `license_ack` request field and `--ack-model-license` CLI option
+were removed with it. If an older installation left its files on disk or stored it as
+the default, voice input stays off for it and `GET /voice/status` lists it under
+`retired` for administrators, who see it as "no longer supported". The server never
+deletes those user files automatically. `SherpaOnnxOfflineSenseVoiceModelConfig`
+remains in `voice_sherpa_abi.py` only because it is part of the sherpa-onnx C struct
+layout. Model terms are never inferred from an engine's license label.
 
 Deleting the default switches voice off; deleting a service's last model removes
 that runtime and its download cache. Shell arguments are never accepted from users.

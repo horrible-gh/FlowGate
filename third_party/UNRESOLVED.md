@@ -21,4 +21,17 @@ Until these are closed, the all-row/full-text criterion and actual-image SBOM ac
 
 All three have `dev: true` in client_gui/package-lock.json. This is evidence of declared development scope, not a measured runtime module graph. Before redistributing development dependencies, obtain exact original permission notices or replace them with approved alternatives. Before claiming exclusion from a web release, check its actual bundler module graph.
 
-The Python artifact snapshots do not close target-specific locking, all psycopg2 native notices, source/relinking obligations, or actual image verification. Cargo lock evidence is missing; see NATIVE_INVENTORY.md. U1–U5 are tracked in the root ledger and remain unresolved.
+The Python artifact snapshots do not close target-specific locking, all psycopg2 native notices, source/relinking obligations, or actual image verification. Cargo lock evidence is missing; see NATIVE_INVENTORY.md. U1–U5 operator decisions are recorded in the root ledger (F86-7); they are decision records, not legal conclusions.
+
+## Voice engine native notices (F86-7, rechecked 2026-11-24)
+
+Secured at pinned versions and listed in the catalog `notices[]`: whisper.cpp 1.8.2, SDL2 2.28.5, sherpa-onnx 1.12.20, ONNX Runtime 1.17.1 (LICENSE and ThirdPartyNotices from the official release wheel), cargs 1.0.3, Vosk API 0.3.45, GCC Runtime Library Exception 3.1 (with GPLv3). Still open, so every voice artifact keeps `redistribution_allowed=false` and stays out of offline bundles:
+
+- `whisper-server.exe`: vendored cpp-httplib and nlohmann/json notices are in upstream headers at v1.8.2 and have not been extracted into separate files.
+- `sherpa-onnx-c-api.dll`: statically linked dependencies (kaldi-native-fbank, OpenFst, kaldi-decoder, etc.) not enumerated against the v1.12.20 build.
+- `libvosk.dll`: statically linked Kaldi, OpenFst and BLAS/LAPACK code; notices and exact revisions not enumerated.
+- `libwinpthread-1.dll`: mingw-w64 version not provable from the binary; notice not secured.
+- `libgcc_s_seh-1.dll`, `libstdc++-6.dll`: build string `GCC: (GNU) 10-win32 20210110`; the exception text is taken from releases/gcc-10.2.0, exact patch level not proven.
+- `github.com/microsoft/onnxruntime` returned 404 from this environment; the ONNX Runtime texts therefore come from the PyPI release wheel (hash in license_sources.json), whose build date and version match the DLL's PE version 1.17.20240223.5.8f5c79c.
+
+The three npm packages above were rechecked on 2026-11-24 against their exact npm tarballs and pinned upstream trees: still no license text, so they remain blocked as described.

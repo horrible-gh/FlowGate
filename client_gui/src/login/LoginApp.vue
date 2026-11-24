@@ -4,9 +4,9 @@
   </nav>
   <main class="fg-login-viewport">
     <section class="fg-login-card" aria-labelledby="fg-login-title">
-      <header class="fg-login-brand" aria-label="FlowGate">
+      <header class="fg-login-brand" :aria-label="PRODUCT_NAME">
         <span class="fg-login-logo">FG</span>
-        <span class="fg-login-wordmark">FlowGate</span>
+        <span class="fg-login-wordmark">{{ PRODUCT_NAME }}</span>
       </header>
 
       <LoginForm
@@ -72,7 +72,7 @@
         <p v-for="line in status.lines" :key="line">{{ line }}</p>
       </div>
 
-      <footer class="fg-login-footer">FlowGate v0.2</footer>
+      <footer class="fg-login-footer">{{ PRODUCT_NAME }} v0.2</footer>
     </section>
   </main>
 </template>
@@ -80,6 +80,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { PRODUCT_NAME } from '@shared/productName'
 import { MAX_LOGIN_ATTEMPTS, useAuthStore, type LoginCredentials } from './stores/auth'
 import BackupCodeStep from './components/BackupCodeStep.vue'
 import InviteStep from './components/InviteStep.vue'

@@ -43,6 +43,16 @@ export interface VoiceStatus {
   defaultSelection: VoiceSelection | null
   error: { code: string; message: string } | null
   canManage: boolean
+  /** Removed models still on disk or stored as the default; shown as retired, never activated. */
+  retired: readonly VoiceRetiredModel[]
+}
+
+export interface VoiceRetiredModel {
+  service: string
+  model: string
+  name: string
+  installed: boolean
+  wasDefault: boolean
 }
 
 export interface VoiceModel {
@@ -61,7 +71,6 @@ export interface VoiceModel {
   source?: string
   sourceUrl?: string
   defaultEligible?: boolean
-  requiresLicenseAck?: boolean
 }
 
 export interface VoiceService {
@@ -197,6 +206,12 @@ export function toVoiceStatus(raw: unknown): VoiceStatus {
     defaultSelection: toSelection(value.default),
     error: toErrorInfo(value.error),
     canManage: value.can_manage === true,
+    retired: Array.isArray(value.retired) ? value.retired.flatMap((raw) => {
+      const r = raw as Record<string, unknown> | null
+      return r && typeof r.service === 'string' && typeof r.model === 'string'
+        ? [{ service: r.service, model: r.model, name: text(r.name) || r.model, installed: r.installed === true, wasDefault: r.was_default === true }]
+        : []
+    }) : [],
   }
 }
 
@@ -217,7 +232,6 @@ function toModel(raw: Record<string, unknown>): VoiceModel {
     source: text(raw.source),
     sourceUrl: text(raw.source_url),
     defaultEligible: raw.default_eligible !== false,
-    requiresLicenseAck: raw.requires_license_ack === true,
   }
 }
 
@@ -281,8 +295,8 @@ export const fetchVoiceStatus = async (): Promise<VoiceStatus> => toVoiceStatus(
 
 export const fetchVoiceCatalog = async (): Promise<VoiceService[]> => toVoiceCatalog(await call(() => getRequest<unknown>(`${VOICE}/catalog`)))
 
-export async function startVoiceInstall(selection: VoiceSelection, licenseAck = false): Promise<string> {
-  const data = await call(() => postRequest<{ install_id?: unknown }>(`${VOICE}/installs`, licenseAck ? { ...selection, license_ack: true } : selection))
+export async function startVoiceInstall(selection: VoiceSelection): Promise<string> {
+  const data = await call(() => postRequest<{ install_id?: unknown }>(`${VOICE}/installs`, selection))
   if (typeof data?.install_id !== 'string') throw new VoiceRequestError('install id missing', null, null)
   return data.install_id
 }
