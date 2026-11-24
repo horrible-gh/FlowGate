@@ -2718,9 +2718,10 @@ def _in_write_session(handler, request: Request, raw: str, body: dict) -> JSONRe
             from modules.flow_gate.graph_workflow.services import first_names_hooks
             try:
                 token = token_service.inspect_for_replay(raw)
-                # new.title belongs exclusively to the registered document.
+                # new.title belongs exclusively to the registered document; a card submission
+                # only names the flow (the card and chats are named from their own content).
                 naming_title = body.get("title") if body.get("action") == "edit" else body.get("flow_title")
-                first_names_hooks.submitted(token, naming_title, body.get("doc_id"))
+                first_names_hooks.submitted(token, None, body.get("doc_id"), flow_title=naming_title)
             except Exception as exc:
                 logging.getLogger(__name__).warning("flow naming submission exception_type=%s", type(exc).__name__)
         return response

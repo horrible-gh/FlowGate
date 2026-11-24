@@ -849,10 +849,12 @@ def test_noncard_new_rejection_alias_stays_an_ignored_extra(agent, monkeypatch):
 def test_optional_shared_title_survives_card_edit_boundary(agent, monkeypatch, via):
     from modules.flow_gate.graph_workflow.services import first_names_hooks
     received = []
-    def submitted(token, title, doc_id):
+    def submitted(token, title, doc_id, flow_title=None):
         assert documents.get_by_id(D)["revision_no"] == 1
         assert tokens.get_by_id(agent.issued["token_id"])["consumed_at"]
-        received.append((token["group_id"], title, doc_id))
+        # A card edit's title names only the flow (0080); it never names a chat.
+        assert title is None
+        received.append((token["group_id"], flow_title, doc_id))
     monkeypatch.setattr(first_names_hooks, "submitted", submitted)
     body = payload(title="로그인 오류 수정")
     if via == "cli":

@@ -1,4 +1,4 @@
-"""Storage boundary for the shared first-run naming operation (0071)."""
+"""Storage boundary for first-run naming (0071); each target is named from its own content (0080)."""
 from __future__ import annotations
 import json
 import logging
@@ -21,7 +21,7 @@ def guard(flow_id, body):
     return with_flow_guard(flow_id, body)
 
 
-def targets(flow_id, chat_doc_id, *, chat_only=False):
+def targets(flow_id, chat_doc_id, *, chat_only=False, root=True):
     require_writable(flow_id)
     group = groups.get_by_id(flow_id)
     if not group:
@@ -29,7 +29,7 @@ def targets(flow_id, chat_doc_id, *, chat_only=False):
     record = ledger.load(flow_id)
     out = {"flow": {"id": flow_id, "title": group["title"],
                     "manual": bool(record.get("flow_manual"))}}
-    if not chat_only:
+    if not chat_only and root:
         try:
             draft = definition_store.draft(flow_id)
             latest = definition_store.latest_revision_no(flow_id)
@@ -95,3 +95,4 @@ def apply(flow_id, kind, expected, title, actor):
              expected.get("meta") or ""])
         if changed != 1:
             raise RuntimeError("chat_title_changed")
+

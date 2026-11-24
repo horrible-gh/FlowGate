@@ -2620,6 +2620,8 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         body["commit_message"] = tool_input["commit_message"]
     if isinstance(tool_input.get("title"), str):
         body["title"] = tool_input["title"]
+    if isinstance(tool_input.get("flow_title"), str):
+        body["flow_title"] = tool_input["flow_title"]
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),

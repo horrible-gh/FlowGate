@@ -216,168 +216,262 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     }
 
 
-# One first-run title shared by the Flow, its start card and the existing chat.
-# Reply and card submission ports call this after their own commit.
+# First-run names: the Flow, its start card and each chat are named separately, each from
+# its own content (0080). Reply and card submission ports call this after their own commit.
+#   flow  -- the whole task: the first request (first chat message / root body) or a
+#            submitted ``flow_title``.
+#   root  -- the start card: the body of the document bound to it.
+#   chat  -- one chat: its own first user message or the ``title`` a reply in it submitted.
 FIRST_NAMES_LEASE_SEC = 180
+NAME_KINDS = ("chat", "flow", "root")
+
+def _safe_reason(reason: Optional[str]) -> str:
+    safe = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
+        "remote_cli_unsupported", "title_missing", "timeout", "transport_failed",
+        "provider_launch_failed", "execution_failed", "internal_error", "cancelled_by_user"}
+    return reason if reason in safe else "title_missing" if not reason else "unknown"
+
+
+def _bounded(text: str) -> str:
+    text = str(text or "").strip()
+    return text[:MESSAGE_MAX_CHARS] if len(text) > MESSAGE_MAX_CHARS else text
+
+
+_RULES = (
+    "- Use the same language as the text.\n"
+    f"- At most {TITLE_MAX_CHARS} characters on one line, no quotes, no trailing period.\n"
+    "- Never include document IDs, flow IDs, card numbers, or internal identifiers.\n"
+    "- Use only facts in the text. If no concrete subject can be identified, reply NO_TITLE.\n"
+    "- Reply with the title only. Do not call tools, read or modify files, or run commands.\n"
+)
+
+
+def build_name_prompt(kind: str, text: str) -> str:
+    """The naming prompt of one target; each target reads only its own content."""
+    if kind == "chat":
+        return build_prompt(text) + "\nIf no concrete subject can be identified, reply NO_TITLE."
+    intro, label = {
+        "flow": ("Write a short name for a workflow whose overall task is described below. "
+                 "It names the whole task, not a single step, card or document.", "Task"),
+        "root": ("Write a short title for the document below that says what the document is about. "
+                 "It is shown as the title of the card holding this document.", "Document"),
+    }[kind]
+    return f"{intro}\n{_RULES}\n{label}:\n<<<\n{_bounded(text)}\n>>>"
+
+
+_LINE_MARKS = re.compile(r"^(?:#+|[-*+>]|\d+[.)])\s*")
+
+
+def heading_title(kind: str, text: str, doc_type: Optional[str] = None) -> Optional[str]:
+    """A model-free name: the first meaningful line of a document body (heading marks removed)."""
+    from modules.flow_gate.graph_workflow.services.flow_default_names import is_default_title
+    for raw in str(text or "").splitlines():
+        line = _LINE_MARKS.sub("", raw.strip()).strip()
+        if sum(ch.isalnum() for ch in line) < 2:
+            continue
+        title = clean_flow_title(line)
+        checkable = kind != "root" or doc_type in ("R", "B")
+        if title and not (checkable and is_default_title(title, kind, doc_type=doc_type)):
+            return title
+    return None
+
+
+def _root_text(flow_id: str, provider_id: str) -> str:
+    from modules.flow_gate.graph_workflow.store import definition_store
+    from .first_names_triggers import run_context
+    try:
+        return run_context(flow_id, definition_store.latest_revision_no(flow_id), provider_id)[1] or ""
+    except Exception as exc:
+        logger.warning("flow_auto_title reason=root_read_failed flow=%s exception_type=%s",
+                       flow_id, type(exc).__name__)
+        return ""
 
 
 def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str = "",
                         chat_doc_id: Optional[str] = None, title: Optional[str] = None,
-                        allow_fallback: bool = True) -> dict:
-    """One durable candidate per flow, shared by every eligible target."""
-    result = _generate_names(flow_id, user, provider_id, message, chat_doc_id,
-                             seed=clean_flow_title(title),
+                        allow_fallback: bool = True, flow_title: Optional[str] = None,
+                        kinds: Optional[tuple] = None) -> dict:
+    """Name every eligible target from its own content; ``title`` seeds only the chat,
+    ``flow_title`` only the Flow. Best effort, durable and retryable per target."""
+    targets, changed = {}, []
+    for kind in (kinds or NAME_KINDS):
+        if kind == "chat" and not chat_doc_id:
+            continue
+        state = _name_target(flow_id, user, provider_id, kind, message, chat_doc_id,
+                             seed=clean_flow_title(title if kind == "chat" else flow_title if kind == "flow" else None),
                              allow_fallback=allow_fallback)
-    changed = result.get("changed", [])
+        if state == "changed":
+            changed.append("card" if kind == "root" else kind)
+            state = "done"
+        if state != "missing":
+            targets[kind] = state
     if changed:
         try:
             from .first_names_triggers import notify
             notify(flow_id, changed, chat_doc_id if "chat" in changed else None)
         except Exception as exc:
             logger.warning("flow naming notification exception_type=%s", type(exc).__name__)
-    return {k: v for k, v in result.items() if k in ("status", "targets")}
+    states = set(targets.values())
+    status = ("pending" if "pending" in states else "done" if "done" in states
+              else "failed" if "failed" in states else "unchanged")
+    return {"status": status, "targets": targets}
 
 
-def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "",
-                        chat_doc_id: Optional[str] = None, seed: Optional[str] = None,
-                        allow_fallback: bool = True) -> dict:
-    """Best effort, durable, retryable per target. Call outside an open transaction.
+def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message: str,
+                 chat_doc_id: Optional[str], seed: Optional[str], allow_fallback: bool) -> str:
+    """changed | done | skipped | pending | unchanged | failed | missing for one target.
 
-    The caller supplies actual root/request content, or the existing chat's first
-    user message is read. Blank content never invokes the model. A cached candidate
-    is reused for failed saves, including after a process restart.
+    Each target has its own ledger slot (``names.flow``, ``names.root``, ``names.chat:<id>``)
+    with its own candidate, lease and one supplementary model call. A saved candidate is
+    reused after a failed save, including after a process restart.
     """
     import time
     import uuid
     from . import first_names_ports as p
-    key = flow_id
+    slot = f"chat:{chat_doc_id}" if kind == "chat" else kind
     ticket = uuid.uuid4().hex
-    changed = []
+
+    def live():
+        group, found = p.targets(flow_id, chat_doc_id if kind == "chat" else None,
+                                 chat_only=kind == "chat", root=kind == "root")
+        return group, found.get(kind)
+
+    def slot_of(record):
+        return record.setdefault("names", {}).setdefault(slot, {})
+
     try:
         def claim():
-            group, targets = p.targets(flow_id, chat_doc_id)
+            group, target = live()
             if not legacy_adapter.has_permission(user, UPDATE_PERMISSION, group["project_id"]):
                 raise PermissionError("no_update_permission")
-            record = p.ledger.load(key)
-            # A later conversation reuses the flow candidate; its own done/manual
-            # marker protects it after the ledger moves on to another chat.
-            if record.get("candidate"):
-                # A root created/missed after the first attempt still uses the saved candidate.
-                for kind, target in targets.items():
-                    previous = record.setdefault("targets", {}).get(kind, {})
-                    if (previous.get("id") != target["id"] or previous.get("state") != "done") and p.eligible(kind, target):
-                        record["targets"][kind] = {**target, "state": "pending"}
-                p.ledger.save(key, record)
-                return group, record
-            if not seed and record.get("lease_until", 0) > time.time():
-                return group, {"busy": True}
-            text = ((_first_user_message(chat_doc_id) if chat_doc_id else None)
-                    or str(message or "").strip())
-            if not seed and not allow_fallback:
-                return group, None
-            if not seed and record.get("fallback_requested"):
-                logger.warning("flow_auto_title no_title flow=%s reason=title_missing", flow_id)
-                return group, None
-            if not seed and not any(ch.isalnum() for ch in text):
-                return group, None
-            pending = {kind: {**target, "state": "pending" if p.eligible(kind, target) else "skipped"}
-                       for kind, target in targets.items()}
-            if not any(t["state"] == "pending" for t in pending.values()):
-                return group, {"ineligible": pending}
-            record.update(ticket=ticket, lease_until=time.time() + FIRST_NAMES_LEASE_SEC,
-                          targets=pending, chat_doc_id=chat_doc_id)
-            if seed:
-                record["candidate"] = seed
-                record["lease_until"] = 0
-            p.ledger.save(key, record)
-            return group, {**record, "message": text}
-        group, record = p.guard(flow_id, claim)
-        if record is None:
-            return {"status": "unchanged"}
-        if record.get("busy"):
-            return {"status": "unchanged", "busy": True}
-        if "ineligible" in record:
-            return {"status": "unchanged", "targets": {k: "skipped" for k in record["ineligible"]}}
-        if not record.get("candidate"):
-            prompt = build_prompt(record["message"]) + (
-                "\nThis title also names the workflow and its start card. "
-                "Use only the supplied task facts. If no concrete task can be identified, reply NO_TITLE.")
-            if legacy_adapter.naming_remote_provider(group["project_id"], provider_id):
-                answer, reason = None, "title_missing"
-            else:
-                # Persist the one supplementary-call budget before execution. Even a
-                # timeout/process loss cannot spend it again; a later reply supplies title.
-                def spend_fallback():
-                    current = p.ledger.load(key)
-                    if current.get("ticket") != ticket or current.get("fallback_requested"):
-                        return False
-                    current["fallback_requested"] = True
-                    p.ledger.save(key, current)
-                    return True
-                if not p.guard(flow_id, spend_fallback):
-                    return {"status": "unchanged"}
-                answer, reason = legacy_adapter.complete_prompt(group["project_id"], provider_id, prompt,
-                                                                timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
-            title = clean_flow_title(answer)
-            def remember():
-                current = p.ledger.load(key)
-                if current.get("ticket") != ticket:
-                    return None
-                current["lease_until"] = 0
-                if title:
-                    current["candidate"] = title
-                p.ledger.save(key, current)
-                return current if title else None
-            record = p.guard(flow_id, remember)
-            if record is None:
-                safe_reasons = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
-                    "remote_cli_unsupported", "title_missing", "timeout", "transport_failed",
-                    "provider_launch_failed", "execution_failed", "internal_error", "cancelled_by_user"}
-                logger.warning("flow_auto_title no_title flow=%s reason=%s", flow_id,
-                               reason if reason in safe_reasons else "title_missing" if not reason else "unknown")
-                return {"status": "unchanged"}
-        # Independent transactions: a failed target cannot roll back completed ones.
-        for kind in record["targets"]:
-            try:
-                def save_one():
-                    current = p.ledger.load(key)
-                    target = current["targets"][kind]
-                    if target["state"] != "pending":
-                        return
-                    _, live = p.targets(flow_id, chat_doc_id if kind == "chat" else None,
-                                        chat_only=kind == "chat")
-                    now = live.get(kind)
-                    if (now is None or now["id"] != target["id"] or now["title"] != target["title"]
-                            or not p.eligible(kind, now)):
-                        target["state"] = "skipped"
-                    else:
-                        p.apply(flow_id, kind, now, current["candidate"], str(user.get("user_id") or ""))
-                        target["state"] = "done"
-                    p.ledger.save(key, current)
-                    return target["state"] == "done"
-                if p.guard(flow_id, save_one):
-                    changed.append("card" if kind == "root" else kind)
-            except Exception as exc:
-                logger.warning("flow_auto_title save flow=%s target=%s exception_type=%s",
-                               flow_id, kind, type(exc).__name__)
-        final = p.guard(flow_id, lambda: p.ledger.load(key))
-        states = {k: v["state"] for k, v in final["targets"].items()}
-        return {"status": "pending" if "pending" in states.values() else "done", "targets": states,
-                "changed": changed, "candidate": final.get("candidate")}
+            if target is None:
+                return group, None, "missing"
+            record = p.ledger.load(flow_id)
+            entry = slot_of(record)
+            if entry.get("state") == "done" and entry.get("id") == target["id"]:
+                return group, target, "done"
+            if not p.eligible(kind, target):
+                return group, target, "skipped"
+            if entry.get("id") != target["id"]:
+                # Another root document (or a first visit): its own name, its own budget.
+                entry.clear()
+                entry["id"] = target["id"]
+            if seed and not entry.get("candidate"):
+                entry["candidate"] = seed
+            if entry.get("candidate"):
+                entry["state"] = "pending"
+                p.ledger.save(flow_id, record)
+                return group, target, "apply"
+            if entry.get("lease_until", 0) > time.time():
+                return group, target, "busy"
+            if entry.get("fallback_requested") and kind != "root":
+                return group, target, "unchanged"
+            entry.update(state="pending", ticket=ticket, lease_until=time.time() + FIRST_NAMES_LEASE_SEC)
+            p.ledger.save(flow_id, record)
+            return group, target, "generate"
 
+        group, target, step = p.guard(flow_id, claim)
+        if step in ("missing", "done", "skipped"):
+            return step
+        if step in ("busy", "unchanged"):
+            logger.info("flow naming skipped reason=%s flow=%s target=%s", step, flow_id, kind)
+            return "unchanged"
+        if step == "generate":
+            title = _generate_candidate(flow_id, group, provider_id, kind, target, message,
+                                        chat_doc_id, ticket, allow_fallback, slot)
+
+            def remember():
+                record = p.ledger.load(flow_id)
+                entry = slot_of(record)
+                if entry.get("ticket") != ticket:
+                    return None
+                entry["lease_until"] = 0
+                if title and not entry.get("candidate"):
+                    entry["candidate"] = title
+                p.ledger.save(flow_id, record)
+                return entry.get("candidate")
+            if not p.guard(flow_id, remember):
+                return "unchanged"
+
+        def save_one():
+            record = p.ledger.load(flow_id)
+            entry = slot_of(record)
+            if entry.get("state") == "done":
+                return "done"
+            _, now = live()
+            if (now is None or now["id"] != target["id"] or now["title"] != target["title"]
+                    or not p.eligible(kind, now) or not entry.get("candidate")):
+                entry["state"] = "skipped"
+                p.ledger.save(flow_id, record)
+                return "skipped"
+            p.apply(flow_id, kind, now, entry["candidate"], str((user or {}).get("user_id") or ""))
+            entry["state"] = "done"
+            p.ledger.save(flow_id, record)
+            return "changed"
+        try:
+            return p.guard(flow_id, save_one)
+        except Exception as exc:
+            # Independent transactions: one failed target never rolls back another.
+            logger.warning("flow_auto_title save flow=%s target=%s exception_type=%s",
+                           flow_id, kind, type(exc).__name__)
+            return "pending"
     except Exception as exc:
-        # Release only our own generation lease; the next reply can retry immediately.
         def release():
-            current = p.ledger.load(key)
-            if current.get("ticket") == ticket:
-                current["lease_until"] = 0
-                p.ledger.save(key, current)
+            record = p.ledger.load(flow_id)
+            entry = slot_of(record)
+            if entry.get("ticket") == ticket:
+                entry["lease_until"] = 0
+                p.ledger.save(flow_id, record)
         try:
             p.guard(flow_id, release)
         except Exception:
             pass
-        logger.warning("flow_auto_title flow=%s exception_type=%s", flow_id, type(exc).__name__)
-        return {"status": "failed"}
+        logger.warning("flow_auto_title flow=%s target=%s exception_type=%s", flow_id, kind, type(exc).__name__)
+        return "failed"
+
+
+def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat_doc_id,
+                        ticket, allow_fallback, slot) -> Optional[str]:
+    """A candidate from the target's own content: at most one model call per target."""
+    from . import first_names_ports as p
+    if kind == "chat":
+        text = _first_user_message(chat_doc_id) or ""
+    elif kind == "flow":
+        text = ((_first_user_message(chat_doc_id) if chat_doc_id else None)
+                or str(message or "").strip() or _root_text(flow_id, provider_id))
+    else:
+        text = _root_text(flow_id, provider_id)
+    if not any(ch.isalnum() for ch in text):
+        return None
+    remote = legacy_adapter.naming_remote_provider(group["project_id"], provider_id)
+    if kind == "root":
+        # The card shows its document: without a model call, the document's own first line.
+        heading = heading_title("root", text, target.get("doc_type"))
+        if remote or not allow_fallback:
+            return heading
+    elif remote or not allow_fallback:
+        if remote:
+            logger.warning("flow_auto_title no_title flow=%s target=%s reason=title_missing", flow_id, kind)
+        return None
+
+    def spend():
+        # Persisted before execution: a timeout or process loss cannot spend it again.
+        record = p.ledger.load(flow_id)
+        entry = record.setdefault("names", {}).setdefault(slot, {})
+        if entry.get("ticket") != ticket or entry.get("fallback_requested"):
+            return False
+        entry["fallback_requested"] = True
+        p.ledger.save(flow_id, record)
+        return True
+    if not p.guard(flow_id, spend):
+        return heading if kind == "root" else None
+    answer, reason = legacy_adapter.complete_prompt(group["project_id"], provider_id,
+                                                    build_name_prompt(kind, text),
+                                                    timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+    title = clean_flow_title(answer)
+    if not title:
+        logger.warning("flow_auto_title no_title flow=%s target=%s reason=%s", flow_id, kind, _safe_reason(reason))
+    return title or (heading if kind == "root" else None)
 
 
 # Bounded background entry point: no DB lock/model call on the sending thread.
@@ -400,3 +494,4 @@ def schedule_flow_names(flow_id: str, user: dict, provider_id: str, message: str
     except Exception:
         _first_names_slots.release()
         return False
+

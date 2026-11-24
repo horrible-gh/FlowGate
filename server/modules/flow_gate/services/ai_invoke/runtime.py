@@ -405,7 +405,8 @@ _CHAT_TOOL_DESC = "Send the assistant reply for this chat conversation."
 _CHAT_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        "title": {"type": "string", "description": "Optional short title shared by the flow, start card and chat."},
+        "title": {"type": "string", "description": "Optional short title for what this chat is about (names only this chat)."},
+        "flow_title": {"type": "string", "description": "Optional short name for the whole task of the flow (names only the flow)."},
         "body": {"type": "string", "description": "Complete assistant reply text"},
         # the chat commit point.
         "commit_message": {
@@ -469,7 +470,7 @@ _REGISTER_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "Document title"},
-        "flow_title": {"type": "string", "description": "Optional short task name shared by the flow, start card and chat; separate from document title"},
+        "flow_title": {"type": "string", "description": "Optional short name for the whole task of the flow (names only the flow); separate from document title"},
         "content": {"type": "string", "description": "Full markdown content of the document"},
         "doc_type": {"type": "string", "description": "Document type code, e.g. NR, D, P, L, T, TR"},
     },

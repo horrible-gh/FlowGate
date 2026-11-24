@@ -1,4 +1,4 @@
-"""First-run adapters. Both entry points share auto_title's durable claim."""
+"""First-run adapters: the flow, its start card and each chat are named from their own content."""
 from __future__ import annotations
 import logging
 from . import auto_title, activity, legacy_adapter, contracts as c
@@ -6,29 +6,87 @@ from . import auto_title, activity, legacy_adapter, contracts as c
 log = logging.getLogger(__name__)
 
 
-def title_request(flow_id, locale="ko", action="chat"):
+_REQUEST_RULE = {
+    "ko": "실제 작업 사실에 기반한 30자 이내로 쓰고, 문서 번호·플로우 ID·카드 번호를 넣지 마세요.",
+    "en": "Base it on actual task facts, at most 30 characters. Never include document IDs, flow IDs or card numbers.",
+    "ja": "実際の作業内容に基づく30文字以内で書き、文書番号・フローID・カード番号を含めないでください。",
+}
+_REQUEST_TEXT = {
+    "new": {
+        "ko": "결과 제출 시 `flow_title`에 플로우 전체 작업을 나타내는 이름을 반드시 함께 보내세요. 플로우 이름으로만 쓰며, 카드와 채팅 이름은 각자 내용으로 따로 정합니다. 문서 제목 필드 `title`은 그대로 유지하세요.",
+        "en": "When submitting the result, you must also send a name for the whole task of the flow in the `flow_title` field. It names only the flow; cards and chats are named from their own content. Preserve `title` as the document title.",
+        "ja": "結果の送信時に `flow_title` でフロー全体の作業を表す名前を必ず送信してください。フロー名にのみ使い、カードとチャットの名前はそれぞれの内容で別に決めます。文書名フィールド `title` はそのまま維持してください。",
+    },
+    "edit": {
+        "ko": "편집 제출 시 선택 필드 `title`에 플로우 전체 작업을 나타내는 이름을 보내세요. 플로우 이름으로만 씁니다.",
+        "en": "When submitting the edit, send a name for the whole task of the flow in the optional `title` field. It names only the flow.",
+        "ja": "編集の送信時に任意フィールド `title` でフロー全体の作業を表す名前を送信してください。フロー名にのみ使います。",
+    },
+    "chat": {
+        "ko": "답변 제출 시 선택 필드 `title`에 이 채팅에서 다루는 내용을 나타내는 제목을 보내세요. 이 채팅의 이름으로만 씁니다.",
+        "en": "When submitting your answer, send a title for what this chat is about in the optional `title` field. It names only this chat.",
+        "ja": "回答の送信時に任意フィールド `title` でこのチャットの内容を表すタイトルを送信してください。このチャットの名前にのみ使います。",
+    },
+    "flow": {
+        "ko": "선택 필드 `flow_title`에는 이 채팅 한 건이 아니라 플로우 전체 작업을 나타내는 이름을 보내세요. 플로우 이름으로만 씁니다.",
+        "en": "In the optional `flow_title` field, send a name for the whole task of the flow, not just this chat. It names only the flow.",
+        "ja": "任意フィールド `flow_title` には、このチャット1件ではなくフロー全体の作業を表す名前を送信してください。フロー名にのみ使います。",
+    },
+}
+_REQUEST_NEW_DOC = {
+    "ko": "문서 등록(new)의 `title`은 문서 제목이므로 이 용도로 바꾸지 마세요.",
+    "en": "The `title` of document registration (new) is document metadata; preserve that document title.",
+    "ja": "文書登録(new)の `title` は文書名なので、この用途で変更しないでください。",
+}
+
+
+def _wanted_names(flow_id, doc_id):
+    """(flow still needs a name, chat still needs a name) for the next request."""
     from . import first_names_ports as p
-    # new uses flow_title; document title remains metadata.
+
+    def read():
+        _, found = p.targets(flow_id, None, root=False)
+        names = p.ledger.load(flow_id).get("names", {})
+        want_flow = p.eligible("flow", found["flow"]) and not names.get("flow", {}).get("candidate")
+        want_chat = True
+        if doc_id:
+            try:
+                chat = p.targets(flow_id, doc_id, chat_only=True)[1]["chat"]
+                want_chat = (p.eligible("chat", chat)
+                             and not names.get("chat:" + doc_id, {}).get("candidate"))
+            except ValueError:
+                want_chat = False
+        return want_flow, want_chat
+    return p.guard(flow_id, read)
+
+
+def title_request(flow_id, locale="ko", action="chat", doc_id=None):
+    """Naming guidance: the flow name (``flow_title``) and, in a chat, that chat's own title."""
     if action not in ("chat", "edit", "new"):
         return ""
     if not legacy_adapter.has_graph_definition(flow_id):
         return ""
-    if p.guard(flow_id, lambda: p.ledger.load(flow_id).get("candidate")):
-        return ""
+    want_flow, want_chat = _wanted_names(flow_id, doc_id if action == "chat" else None)
     locale = str(locale or "ko").lower().split("-")[0]
-    if action == "new":
-        return {
-            "ko": "결과 제출 시 `flow_title`에 실제 작업 내용을 나타내는 30자 이내 이름을 반드시 함께 보내세요. 플로우·시작 카드·채팅의 공통 이름으로 사용합니다. 문서 번호·플로우 ID·카드 번호를 이름에 넣지 마세요. 문서 제목 필드 `title`은 그대로 유지하세요.",
-            "en": "When submitting the result, you must also send a name of at most 30 characters based on actual task facts in the `flow_title` field. Never include document IDs, flow IDs or card numbers. It names the flow, start card and chat together. Preserve `title` as the document title.",
-            "ja": "結果の送信時に `flow_title` で実際の作業内容を表す30文字以内の名前を必ず送信してください。文書番号・フローID・カード番号を名前に含めないでください。フロー・開始カード・チャットの共通名に使います。文書名フィールド `title` はそのまま維持してください。",
-        }.get(locale, "결과 제출 시 `flow_title`에 30자 이내 작업 이름을 반드시 보내세요. `title`은 문서 제목으로 유지하세요.")
-    return {
-        "ko": "답변 제출 시 선택 필드 `title`에 실제 작업 사실에 기반한 30자 이내 작업 제목을 보내세요. 문서 번호·플로우 ID·카드 번호를 제목에 넣지 마세요. 플로우·시작 카드·채팅의 공통 이름으로 사용합니다. 문서 등록(new)의 `title`은 문서 제목이므로 이 용도로 바꾸지 마세요.",
-        "ja": "回答の送信時に任意フィールド `title` で実際の作業内容に基づく30文字以内の作業名を送信してください。文書番号・フローID・カード番号を名前に含めないでください。フロー・開始カード・チャットの共通名に使います。文書登録(new)の `title` は文書名なので、この用途で変更しないでください。",
-        "en": "When submitting your answer, send a task title of at most 30 characters based on actual task facts in the optional `title` field. Never include document IDs, flow IDs or card numbers. It names the flow, start card and chat together. The `title` of document registration (new) is document metadata; preserve that document title.",
-    }.get(locale, "답변의 선택 필드 `title`에 실제 작업 사실에 기반한 30자 이내 작업 제목을 보내세요. 문서 번호·플로우 ID·카드 번호를 제목에 넣지 마세요. 문서 등록(new)의 `title`은 문서 제목으로 유지하세요.")
+    locale = locale if locale in _REQUEST_RULE else "ko"
+    parts = []
+    if action == "chat":
+        if want_chat:
+            parts.append(_REQUEST_TEXT["chat"][locale])
+        if want_flow:
+            parts.append(_REQUEST_TEXT["flow"][locale])
+    elif want_flow:
+        parts.append(_REQUEST_TEXT[action][locale])
+    if not parts:
+        return ""
+    parts.append(_REQUEST_RULE[locale])
+    if action == "chat":
+        parts.append(_REQUEST_NEW_DOC[locale])
+    return " ".join(parts)
 
-def submitted_title(token, title, doc_id=None):
+
+def submitted_title(token, title, doc_id=None, flow_title=None):
+    """A submitted ``title`` names only the chat it was posted in; ``flow_title`` only the flow."""
     flow_id = token.get("group_id")
     if not flow_id or not legacy_adapter.has_graph_definition(flow_id):
         return
@@ -40,23 +98,17 @@ def submitted_title(token, title, doc_id=None):
         log.warning("flow_auto_title reason=reply_context_missing flow=%s", flow_id)
         return
     doc = legacy_adapter.get_document(doc_id) if doc_id else None
-    chat_id = doc_id if doc and doc.get("type_code") == "CH" else legacy_adapter.naming_chat(flow_id)
-    cleaned = auto_title.clean_flow_title(title)
-    if cleaned:
-        auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, "",
-                                       chat_id, title=cleaned)
-        return
-    # Read actual task facts for the single local fallback, never the report header.
-    message = auto_title._first_user_message(chat_id) if chat_id else ""
-    if not message:
-        try:
-            from modules.flow_gate.graph_workflow.store import definition_store
-            _, message, _ = run_context(flow_id, definition_store.latest_revision_no(flow_id), provider)
-        except Exception:
-            message = ""
-            log.warning("flow_auto_title reason=root_read_failed flow=%s", flow_id)
-    # A local fallback must not delay delivery of an already committed reply.
-    _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, message, chat_id)
+    chat_id = doc_id if doc and doc.get("type_code") == "CH" else None
+    chat_seed = auto_title.clean_flow_title(title) if chat_id else None
+    flow_seed = auto_title.clean_flow_title(flow_title)
+    user = {"user_id": user_id}
+    seeded = tuple(k for k, seed in (("chat", chat_seed), ("flow", flow_seed)) if seed)
+    if seeded:
+        auto_title.generate_flow_names(flow_id, user, provider, "", chat_id, title=chat_seed,
+                                       flow_title=flow_seed, kinds=seeded)
+    rest = tuple(k for k in auto_title.NAME_KINDS if k not in seeded and (k != "chat" or chat_id))
+    # Document reads and the local fallback must not delay delivery of a committed reply.
+    _schedule(auto_title.generate_flow_names, flow_id, user, provider, "", chat_id, None, True, None, rest)
 
 
 def notify(flow_id, targets=None, doc_id=None):
@@ -86,8 +138,11 @@ def chat(doc_id, user, body):
     if not any(t.get("speaker") == "ai" and str(t.get("body") or "").strip()
                for t in legacy_adapter.first_turns(doc_id, 20)):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_NO_MESSAGE, "no AI reply yet")
-    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id)
-    if result["status"] in ("failed", "pending", "unchanged"):
+    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id, kinds=("chat",))
+    # The flow and start card are named from their own content in the background.
+    _schedule(auto_title.generate_flow_names, flow_id, dict(user), provider, "", doc_id, None, True, None,
+              ("flow", "root"))
+    if result["targets"].get("chat", "unchanged") in ("failed", "pending", "unchanged"):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_UNAVAILABLE, "naming pending")
     saved = legacy_adapter.get_document(doc_id) or doc
     return {"ok": True, "doc_id": doc_id, "title": saved["title"], "updated_at": saved.get("updated_at")}
@@ -205,3 +260,4 @@ def schedule_reply(doc_id, turn):
         log.debug("flow naming skipped reason=reply_context_missing doc=%s", doc_id)
         return False
     return _schedule(_reply, doc_id, user_id, provider_id)
+
