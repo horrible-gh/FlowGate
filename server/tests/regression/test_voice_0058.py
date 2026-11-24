@@ -394,7 +394,7 @@ def test_removing_last_model_without_retired_files_still_removes_service_dirs(ma
     assert not base.exists() and not cache.exists()
 
 
-def test_engine_notices_are_pinned_files_but_redistribution_stays_closed():
+def test_engine_notices_are_pinned_files_and_status_matches_review():
     root = Path(__file__).resolve().parents[3]
     sources = {item["path"]: item for item in json.loads((root / "third_party/license_sources.json").read_text(encoding="utf-8"))["files"]}
     for service in vs.CATALOG["services"]:
@@ -406,7 +406,11 @@ def test_engine_notices_are_pinned_files_but_redistribution_stays_closed():
             assert (len(data), hashlib.sha256(data).hexdigest()) == (notice["size_bytes"], notice["sha256"]), notice
             assert sources["third_party/licenses/" + notice["filename"]]["source_url"] == notice["source_url"]
         # Native notices are still incomplete, so the offline export gate stays closed.
-        assert engine["redistribution_allowed"] is False and service["redistribution_status"] == "pending-native-notices"
+        if service["id"] == "whisper.cpp":
+            assert engine["redistribution_allowed"] is True
+            assert engine["redistribution_layout"] == "expanded"
+        else:
+            assert engine["redistribution_allowed"] is False and service["redistribution_status"] == "pending-native-notices"
 
 
 def test_korean_catalog_has_no_kss_and_weight_license_unchanged():
@@ -469,6 +473,8 @@ def test_worker_load_only_and_restricted_first_install(manager, monkeypatch, ser
 def test_bundle_gate_rejects_unreviewed_components_without_creating_output(tmp_path):
     from modules.flow_gate.services.voice_distribution import export_bundle
     for entry in vs.CATALOG["services"]:
+        if entry["id"] == "whisper.cpp":
+            continue  # Real approved export is covered by test_voice_distribution_real_0086.
         for model in entry["models"]:
             with pytest.raises(VoiceError) as exc:
                 export_bundle(entry, model, tmp_path / "source", tmp_path / "output")

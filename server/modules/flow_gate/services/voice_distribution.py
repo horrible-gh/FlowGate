@@ -34,7 +34,7 @@ def cleanup_legacy_samples(root: Path):
 def validate_local_install(entry, model):
     """로컬 반입은 재배포 승인을 요구하지 않되 제한 원본은 차단한다."""
     components = entry["artifacts"] + [model]
-    if model.get("default_eligible") is False or any(c.get("excluded_paths") for c in components):
+    if model.get("default_eligible") is False or any(c.get("excluded_paths") and not c.get("sanitized") for c in components):
         raise VoiceError("voice_redistribution_pending", "Restricted original excluded from offline installation", 422)
 
 
@@ -45,6 +45,8 @@ def redistribution_components(entry, model):
     files (including every bundled native dependency). Unknown is not permission.
     """
     validate_local_install(entry, model)
+    from .voice_sanitized import local_model
+    model = local_model(model)
     components = [a for a in entry["artifacts"] if a.get("component_type") not in ("ffmpeg", "sample")] + [model]
     for component in components:
         if not component.get("redistribution_allowed") or not component.get("notices"):
@@ -53,35 +55,72 @@ def redistribution_components(entry, model):
     return components
 
 
+def notice_path(directory, notice):
+    from .voice_sanitized import safe_relative
+    relative = safe_relative(notice["filename"])
+    supplied = directory / "licenses" / relative
+    if supplied.exists() or supplied.is_symlink():
+        return supplied
+    return Path(__file__).resolve().parents[4] / "third_party/licenses" / relative
+
+
 def validate_bundle(entry, model, directory):
     from .voice_download import verify
     components = redistribution_components(entry, model)
     for component in components:
         for notice in component["notices"]:
             # Paths and digests come only from the source-controlled catalog.
-            if not verify(directory / "licenses" / notice["filename"], notice):
+            if not verify(notice_path(directory, notice), notice):
                 raise VoiceError("voice_offline_notice_invalid", "Missing or changed component notice", 422)
     return components
 
 
 def export_bundle(entry, model, source, destination):
-    """Copy only reviewed catalog files plus their exact notices; never copy a whole cache."""
+    """Publish only reviewed files and notices; verify bytes after copying too."""
+    import zipfile
     from .voice_download import verify
+    from .voice_sanitized import safe_relative
     source, destination = Path(source), Path(destination)
     components = validate_bundle(entry, model, source)
-    files = []
+    files, expected = [], []
     for component in components:
-        path = source / component["filename"]
-        if not verify(path, component):
-            raise VoiceError("voice_offline_file_invalid", "Unverified bundle component", 422)
-        files.append((path, Path(component["filename"])))
-        files.extend((source / "licenses" / n["filename"], Path("licenses") / n["filename"]) for n in component["notices"])
+        relative = Path(safe_relative(component['filename']))
+        path = source / relative
+        if component.get('redistribution_layout') == 'expanded':
+            # Export a functional, reviewed runtime subset, never unrelated tools
+            # from the upstream ZIP. All required DLLs remain present.
+            archive = path if verify(path, component) else None
+            for member in component['expanded']:
+                relative = Path(safe_relative(member['relative_path']))
+                candidate = next((p for p in source.rglob(member['filename']) if verify(p, member)), None)
+                if candidate is None and archive is None:
+                    raise VoiceError('voice_offline_file_invalid', 'Unverified runtime member', 422)
+                files.append((candidate or archive, relative, member['relative_path'] if candidate is None else None))
+                expected.append((relative, member))
+        else:
+            if not verify(path, component):
+                raise VoiceError('voice_offline_file_invalid', 'Unverified bundle component', 422)
+            files.append((path, relative, None))
+            expected.append((relative, component))
+        for notice in component['notices']:
+            relative = Path('licenses') / Path(safe_relative(notice['filename']))
+            files.append((notice_path(source, notice), relative, None))
+            expected.append((relative, notice))
     destination.mkdir(parents=True, exist_ok=False)
     try:
-        for source_file, relative in files:
+        for source_file, relative, member in files:
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source_file, target)
+            if member:
+                with zipfile.ZipFile(source_file) as archive:
+                    with archive.open(member) as src, target.open('wb') as dst:
+                        shutil.copyfileobj(src, dst)
+            else:
+                shutil.copyfile(source_file, target)
+        for relative, spec in expected:
+            if not verify(destination / relative, spec):
+                raise VoiceError('voice_offline_file_invalid', 'File changed while exporting', 422)
+        return destination
     except Exception:
         shutil.rmtree(destination)
         raise

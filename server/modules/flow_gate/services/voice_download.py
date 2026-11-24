@@ -15,7 +15,8 @@ CHUNK = 1024 * 1024
 
 
 def verify(path: Path, spec: dict) -> bool:
-    if not path.is_file() or path.stat().st_size != spec["size_bytes"]:
+    if (path.is_symlink() or any(p.is_symlink() for p in path.parents)
+            or not path.is_file() or path.stat().st_size != spec["size_bytes"]):
         return False
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -106,9 +107,9 @@ def fetch(spec, directory: Path, cancel, progress, from_dir: Path | None = None)
 
 def extract(archive: Path, destination: Path, cancel, excluded_parts=()):
     """Only regular files/directories; reject absolute paths, links and zip bombs."""
-    if archive.name.endswith(".tar.bz2"):
+    if archive.name.endswith((".tar.bz2", ".tar")):
         import tarfile
-        with tarfile.open(archive, "r:bz2") as source:
+        with tarfile.open(archive, "r:*") as source:
             total = 0
             for item in source:
                 check_cancel(cancel)

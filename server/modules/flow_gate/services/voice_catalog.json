@@ -55,8 +55,8 @@
           ],
           "component_type": "engine",
           "license": "MIT",
-          "distribution": "direct-upstream-only",
-          "redistribution_allowed": false,
+          "distribution": "reviewed-runtime-subset",
+          "redistribution_allowed": true,
           "notices": [
             {
               "filename": "whisper.cpp-1.8.2-LICENSE.txt",
@@ -69,8 +69,33 @@
               "size_bytes": 884,
               "sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927",
               "source_url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.28.5/LICENSE.txt"
+            },
+            {
+              "filename": "cpp-httplib-0.20.0-LICENSE.txt",
+              "size_bytes": 1075,
+              "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+              "source_url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.20.0/LICENSE"
+            },
+            {
+              "filename": "nlohmann-json-3.11.2-LICENSE.txt",
+              "size_bytes": 1076,
+              "sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14",
+              "source_url": "https://raw.githubusercontent.com/nlohmann/json/v3.11.2/LICENSE.MIT"
+            },
+            {
+              "filename": "whisper.cpp-1.8.2-source-attributions.txt",
+              "size_bytes": 22020,
+              "sha256": "14320383405e043af3d215bf2704ccff9d050473b6ef9526650f1dc1bce163e3",
+              "source_url": "https://github.com/ggml-org/whisper.cpp/tree/4979e04f5dcaccb36057e059bbaed8a2f5288315"
+            },
+            {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
             }
-          ]
+          ],
+          "redistribution_layout": "expanded"
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -127,8 +152,16 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "base",
@@ -147,8 +180,16 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "small",
@@ -167,8 +208,16 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "medium",
@@ -187,8 +236,16 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "large-v3-turbo",
@@ -207,8 +264,16 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "large-v3",
@@ -227,14 +292,22 @@
           "realtime": false,
           "gpu_required": false,
           "component_type": "weights",
-          "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         }
       ],
-      "redistribution_status": "pending-native-notices",
+      "redistribution_status": "reviewed-cpu-runtime-subset",
       "native_notices": [
-        "SDL2.dll 2.28.5: zlib license text secured (SDL2-2.28.5-LICENSE.txt)",
-        "whisper-server.exe vendored cpp-httplib/nlohmann-json notices: not yet extracted; redistribution stays off"
+        "Six exact-artifact runtime files only; source attribution comments and MIT/zlib/Apache texts supplied.",
+        "Microsoft VC++ x64 runtime and OpenMP (MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140) are separately provisioned system prerequisites, not bundled."
       ]
     },
     {
@@ -363,7 +436,61 @@
           "redistribution_allowed": false,
           "excluded_paths": [
             "test_wavs/"
-          ]
+          ],
+          "sanitized": {
+            "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.no-kss.tar",
+            "size_bytes": 446904320,
+            "sha256": "23bddf71915710fcccc350486cc2350502ff3504e18627857e35b2012005a93f",
+            "format": "ustar-v1",
+            "members": [
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/joiner-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 2581421,
+                "sha256": "128b80a66a1f718488af8560f9d15895109b99ff3e573f0a0130e03774ef1ced"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/decoder-epoch-99-avg-1.onnx",
+                "size_bytes": 11309084,
+                "sha256": "b29cfb4575141e50a30a22b2c4579934f3d4f45b83c9c8c08c3aef5a3fa7abfc"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/encoder-epoch-99-avg-1.onnx",
+                "size_bytes": 292543537,
+                "sha256": "9d407aec62d2b935168dcb0bdbfe65a26948fbeae95d77bc94e5e6b1c8221717"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/encoder-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 126968852,
+                "sha256": "8d0b1aa24fbedd4e3948564ab7facd151b8ce9b0c48fc987c541de2de3af5697"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/joiner-epoch-99-avg-1.onnx",
+                "size_bytes": 10260467,
+                "sha256": "dffb3a863fddc402920a15e2a1ca9f6f3f7445583718a2bef2006fd6d932d60b"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/tokens.txt",
+                "size_bytes": 60246,
+                "sha256": "016bdf0965029263b7ad01b742366ee542ef0bef38261510e8176ff6f2e9e668"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/decoder-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 2844692,
+                "sha256": "68ea197936aabd249f38b53a87c775422bca64428ad4427d0e6e8092593e71fb"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/bpe.model",
+                "size_bytes": 314212,
+                "sha256": "1491bc92c47dfda4225f5b8930fba3cfa34c3b1ccd25e7d96c630a262f3e918d"
+              }
+            ],
+            "license_member": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/LICENSE",
+            "license": {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            }
+          }
         }
       ],
       "redistribution_status": "pending-native-notices",
