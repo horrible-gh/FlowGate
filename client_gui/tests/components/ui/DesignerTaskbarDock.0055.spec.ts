@@ -18,7 +18,7 @@ function bar() {
   const wrapper = mount(DesignerTaskbar, { global: { plugins: [i18n, router] }, attachTo: document.body })
   mounted.push(wrapper); return wrapper
 }
-const launchpad = () => document.querySelector<HTMLElement>('.taskbar-popup.launchpad')
+const grid = () => document.querySelector<HTMLElement>('.taskbar-popup.dock-grid')
 
 describe('dock taskbar style', () => {
   it('is a known style whose icon tiles fit more windows than FlowGate cards', () => {
@@ -27,7 +27,7 @@ describe('dock taskbar style', () => {
     expect(taskbarCapacity(2000, 5, 'dock')).toBe(5)
     expect(taskbarCapacity(400, 20, 'dock')).toBeLessThan(20)
   })
-  it('groups icon-only items with hover names and opens a full-screen launchpad with all six icons', async () => {
+  it('groups icon-only items with hover names and opens a small icon grid above the dock with all six icons', async () => {
     const wrapper = bar()
     await flushPromises()
     expect(wrapper.get('[data-test="designer-taskbar"]').attributes('data-taskbar-style')).toBe('dock')
@@ -37,47 +37,61 @@ describe('dock taskbar style', () => {
     expect(wrapper.get('.designer-item').attributes('title')).toBe(String(i18n.global.t('gui.nav.designer.title')))
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
-    const pad = launchpad()
-    expect(pad).not.toBeNull()
-    expect(pad!.parentElement).toBe(document.body)
+    const panel = grid()
+    expect(panel).not.toBeNull()
+    // It is an ordinary popup inside the taskbar, not a full-screen layer over the page.
+    expect(wrapper.element.contains(panel)).toBe(true)
+    expect(document.querySelector('.launchpad')).toBeNull()
     expect(wrapper.find('.menu-board').exists()).toBe(false)
-    expect([...pad!.querySelectorAll('.launch-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
-    // No group headings above the icons, as on a real launchpad: one grid holds all six tiles.
-    expect(pad!.querySelectorAll('.launch-grid')).toHaveLength(1)
-    expect(pad!.querySelector('.launch-grid')!.querySelectorAll('.launch-tile')).toHaveLength(6)
-    const padText = pad!.textContent ?? ''
-    expect(padText).not.toContain(String(i18n.global.t('gui.taskbar.group_ai')))
-    expect(padText).not.toContain(String(i18n.global.t('gui.taskbar.group_settings')))
+    expect([...panel!.querySelectorAll('.dock-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
+    // One grid holds all six tiles, with no group headings above them.
+    expect(panel!.querySelectorAll('.dock-grid-tiles')).toHaveLength(1)
+    const panelText = panel!.textContent ?? ''
+    expect(panelText).not.toContain(String(i18n.global.t('gui.taskbar.group_ai')))
+    expect(panelText).not.toContain(String(i18n.global.t('gui.taskbar.group_settings')))
     expect(document.activeElement?.getAttribute('data-card')).toBe('my-ai')
   })
-  it('closes when an empty area is pressed or Esc is pressed, but not when an icon is pressed', async () => {
+  it('moves through the tiles with the arrow keys', async () => {
     const wrapper = bar()
     await flushPromises()
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
-    launchpad()!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    await nextTick()
-    expect(launchpad()).toBeNull()
+    const key = async (name: string) => { (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true })); await nextTick() }
+    await key('ArrowRight')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('question-policy')
+    await key('ArrowDown')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('theme')
+    await key('ArrowLeft')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('question-policy')
+  })
+  it('closes when the page outside is pressed or Esc is pressed, but not when an icon is pressed', async () => {
+    const wrapper = bar()
+    await flushPromises()
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
-    launchpad()!.querySelector('.launch-tile')!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     await nextTick()
-    expect(launchpad()).not.toBeNull()
+    expect(grid()).toBeNull()
+    await wrapper.get('.menu-trigger').trigger('click')
+    await nextTick()
+    grid()!.querySelector('.dock-tile')!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(grid()).not.toBeNull()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await nextTick()
-    expect(launchpad()).toBeNull()
+    expect(grid()).toBeNull()
   })
-  it('opens the chosen window from the launchpad and closes it', async () => {
+  it('opens the chosen window from the grid and closes it', async () => {
     const wrapper = bar()
     await flushPromises()
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
-    ;(launchpad()!.querySelector('[data-card="theme"]') as HTMLButtonElement).click()
+    ;(grid()!.querySelector('[data-card="theme"]') as HTMLButtonElement).click()
     await flushPromises()
-    expect(launchpad()).toBeNull()
+    expect(grid()).toBeNull()
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
-    expect(launchpad()!.querySelector('[data-card="theme"]')?.getAttribute('data-card-state')).toBe('open')
+    expect(grid()!.querySelector('[data-card="theme"]')?.getAttribute('data-card-state')).toBe('open')
   })
   it('gives modeless windows the dock title bar while the taskbar is shown', async () => {
     bar()
