@@ -21,7 +21,7 @@
       class="explorer-row"
       :class="{ 'is-selected': selected, 'is-active': active }"
       :style="{ paddingLeft: `${indent}px` }"
-      :title="label"
+      :title="tooltip ?? label"
       @click.stop="onRowClick"
       @dblclick.stop="onRowDblclick"
     >
@@ -53,6 +53,8 @@ const props = defineProps<{
   /** aria-level: 1 = Project, 2 = Group, 3 = Flow. Also drives the indentation. */
   level: number
   label: string
+  /** The row's hover text when it says more than `label` (flowgate.v02test.0077: a Group's module key). */
+  tooltip?: string
   expandable: boolean
   expanded: boolean
   selected: boolean

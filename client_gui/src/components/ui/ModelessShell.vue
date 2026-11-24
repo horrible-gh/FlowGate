@@ -363,6 +363,121 @@ defineExpose({ bringToFront, geometry, setGeometry })
   background: color-mix(in srgb, var(--modeless-kind-color) 8%, var(--fg2-panel));
 }
 
+/* Modern: flat title bar, rounder window, no kind stripe; − and × stay on the right. */
+.ui-modeless-panel[data-taskbar-style="modern"] {
+  border-radius: 10px;
+  border-color: var(--fg2-line);
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar {
+  padding: 6px 6px 6px 14px;
+  border-bottom-color: transparent;
+  background: color-mix(in srgb, var(--fg2-text) 4%, var(--fg2-panel));
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep(button) {
+  border-radius: 6px;
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]:hover) {
+  background: #c42b1c;
+  color: #fff;
+}
+
+/* Dock: rounder window, centred title, round close / minimize buttons on the left (close first). */
+.ui-modeless-panel[data-taskbar-style="dock"] {
+  border-radius: 11px;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
+}
+
+[data-taskbar-style="dock"] .ui-modeless-titlebar {
+  flex-direction: row-reverse;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--fg2-text) 6%, var(--fg2-panel)), color-mix(in srgb, var(--fg2-text) 2%, var(--fg2-panel)));
+}
+
+[data-taskbar-style="dock"] .ui-modeless-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+[data-taskbar-style="dock"] .ui-modeless-titlebar-actions {
+  min-width: 44px;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  order: -1;
+  width: 13px;
+  min-width: 0;
+  height: 13px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  background: #febc2e;
+  color: transparent;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]) {
+  order: -2;
+  background: #ff5f57;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  color: rgba(0, 0, 0, 0.65);
+  filter: brightness(1.05);
+}
+
+/* Classic: glossy blue title bar with white title; − and × stay on the right, × is a wide red button. */
+.ui-modeless-panel[data-taskbar-style="classic"] {
+  border-radius: 7px;
+  border-color: #4d6f9c;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 14px 36px rgba(0, 0, 0, 0.6);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar {
+  padding: 4px 6px 4px 12px;
+  border-bottom-color: #3c5a82;
+  background: linear-gradient(180deg, #7095c9, #3f6296 50%, #2d4d7d 51%, #45699e);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-title {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep(button) {
+  color: #fff;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  width: 28px;
+  min-width: 0;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.06));
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]) {
+  width: 42px;
+  border-color: #7a2010;
+  background: linear-gradient(180deg, #e8907f, #c8432f 50%, #b02a18 51%, #d7543a);
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  filter: brightness(1.18);
+}
+
 .is-minimized .ui-modeless-titlebar {
   border-bottom: none;
 }
@@ -398,3 +513,4 @@ defineExpose({ bringToFront, geometry, setGeometry })
   cursor: nwse-resize;
 }
 </style>
+

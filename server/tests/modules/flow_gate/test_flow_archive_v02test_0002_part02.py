@@ -19,17 +19,25 @@ from tests.modules.flow_gate.test_flow_archive_v02test_0002 import (
     subprocess,
 )
 
-def test_old_run_success_cannot_qualify_current_run(env):
+def test_old_run_success_does_not_complete_current_run(env):
     seed_run(env, "old", active=False)
     seed_decision(env, "old")
     seed_run(env)
-    assert call(env)["reason"] == "no_gate_decision"
+    view = call(env)
+    assert view["eligible"] is True and view["reason"] is None
+    assert view["completed"] is False
     sql(env, "UPDATE graph_runs SET status='running' WHERE run_id='current'")
-    assert call(env)["reason"] == "run_not_completed"
+    view = call(env)
+    assert view["eligible"] is True and view["reason"] is None
+    assert view["completed"] is False
 def test_current_run_missing_with_any_history_is_not_legacy(env):
     seed_run(env, status="idle", active=False)
-    assert call(env)["reason"] == "run_not_completed"
+    view = call(env)
+    assert view["eligible"] is True and view["reason"] is None
+    assert view["completed"] is False
 def test_legacy_live_root_only(env):
-    assert call(env)["eligible"] is True
+    view = call(env)
+    assert view["eligible"] is True and view["completed"] is True
     sql(env, "UPDATE documents SET superseded_by='successor'")
-    assert call(env)["eligible"] is False
+    view = call(env)
+    assert view["eligible"] is True and view["completed"] is False

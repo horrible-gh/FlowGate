@@ -1,12 +1,42 @@
 <template>
   <div ref="root" class="designer-taskbar" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
-    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>{{ t('gui.taskbar.menu') }}</button>
-    <button class="taskbar-item designer-item" type="button" aria-pressed="true"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
+    <div class="taskbar-group">
+    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :title="t('gui.taskbar.menu')" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
+    <button class="taskbar-item designer-item" type="button" aria-pressed="true" :title="t('gui.nav.designer.title')"><span class="item-icon">▦</span><span class="item-text"><small>{{ t('gui.taskbar.screen') }}</small><b>{{ t('gui.nav.designer.title') }}</b></span><i /></button>
     <span v-if="minimized.length" class="taskbar-separator" role="separator" />
     <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :style="{ '--kind-color': entry.color }" :title="entry.title" @click="restore(entry)"><span class="item-icon">□</span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
-    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu', 'overflow-list': popup === 'overflow' }" @keydown="menuKey">
-      <template v-if="popup === 'menu'">
+    </div>
+    <Teleport to="body" :disabled="!launchpad">
+    <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'start-classic': popup === 'menu' && modelessStyle === 'classic', launchpad, 'overflow-list': popup === 'overflow' }" :data-blur="launchpad ? (plainBackdrop ? 'off' : 'on') : undefined" :aria-label="launchpad ? t('gui.taskbar.menu') : undefined" @keydown="menuKey" @pointerdown="launchpadPointer">
+      <template v-if="launchpad">
+        <div class="launch-grid" role="group" :aria-label="t('gui.taskbar.menu')">
+          <template v-for="group in menuGroups" :key="group.key">
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="launch-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="launch-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="launch-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+          </template>
+        </div>
+        <p class="launchpad-hint">{{ t('gui.taskbar.launchpad_hint') }}</p>
+      </template>
+      <template v-else-if="popup === 'menu' && modelessStyle === 'modern'">
+        <template v-for="group in menuGroups" :key="group.key">
+          <div class="start-group-label">{{ t(group.label) }}</div>
+          <div class="start-group-row" role="group" :aria-label="t(group.label)">
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="start-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="start-tile-icon" aria-hidden="true">{{ card.icon }}</span><span class="start-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+          </div>
+        </template>
+      </template>
+      <template v-else-if="popup === 'menu' && modelessStyle === 'classic'">
+        <!-- A two-level start menu: the white pane lists one "group ▸" line per group, and pointing at or pressing a line
+             opens that group's cards in a sub-menu beside it. The user stays on the glass side. -->
+        <div class="start-classic-list">
+          <button v-for="group in menuGroups" :key="group.key" :ref="(el) => setGroupRef(group.key, el)" type="button" role="menuitem" class="classic-group" :class="{ active: classicGroup === group.key }" :style="{ '--card-color': group.color }" aria-haspopup="menu" :aria-expanded="classicGroup === group.key" :data-group="group.key" @pointerenter="hoverGroup(group.key)" @pointerleave="cancelHover" @click="openGroup(group.key)"><span class="classic-group-icon" aria-hidden="true">{{ group.icon }}</span><b>{{ t(group.label) }}</b><i v-if="group.cards.some(card => cardState(card.key) !== 'closed')" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /><span class="classic-group-arrow" aria-hidden="true">▸</span></button>
+        </div>
+        <div v-if="user" class="start-classic-side"><span class="classic-avatar" aria-hidden="true">{{ user.username.charAt(0).toUpperCase() }}</span><b>{{ user.username }}</b></div>
+        <div v-if="classicSub" ref="classicSubRoot" class="start-classic-sub" role="menu" :aria-label="t(classicSub.label)" :data-group="classicSub.key" :style="classicSubPos" @pointerenter="cancelHover">
+          <button v-for="card in classicSub.cards" :key="card.key" type="button" role="menuitem" class="classic-card" :style="{ '--card-color': classicSub.color }" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="classic-card-icon" aria-hidden="true">{{ card.icon }}</span><span class="classic-card-text"><b>{{ t(card.title) }}</b><small>{{ t(card.body) }}</small></span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+        </div>
+      </template>
+      <template v-else-if="popup === 'menu'">
         <template v-for="group in menuGroups" :key="group.key">
           <div class="menu-group-label" :style="{ '--card-color': group.color }"><i aria-hidden="true" />{{ t(group.label) }}</div>
           <div class="menu-group-row" role="group" :aria-label="t(group.label)">
@@ -16,6 +46,7 @@
       </template>
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
+    </Teleport>
     <MyAiWindow :ref="(el) => setWindowRef('my-ai', el)" :open="windows['my-ai'].open" v-model:minimized="windows['my-ai'].minimized" @close="windows['my-ai'].open = false" />
     <QuestionPolicyWindow :ref="(el) => setWindowRef('question-policy', el)" :open="windows['question-policy'].open" v-model:minimized="windows['question-policy'].minimized" @close="windows['question-policy'].open = false" />
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
@@ -48,10 +79,24 @@ const width = ref(0)
 const popup = ref<'menu' | 'overflow' | null>(null)
 const id = Symbol('taskbar')
 const minimized = computed(() => modelessWindows.value.filter(entry => entry.minimized))
-const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length))
+const capacity = computed(() => taskbarCapacity(width.value, minimized.value.length, modelessStyle.value))
 const visible = computed(() => minimized.value.slice(0, capacity.value))
 const overflow = computed(() => minimized.value.slice(capacity.value))
 watch(overflow, (entries) => { if (!entries.length && popup.value === 'overflow') close() })
+// Dock opens the menu as a full-screen launchpad (teleported to body so no ancestor clips it).
+const launchpad = computed(() => popup.value === 'menu' && modelessStyle.value === 'dock')
+// The launchpad blurs everything behind it. Where that is likely to stutter (few cores or little
+// memory) or the user asked for less transparency, it only darkens the screen instead.
+const plainBackdrop = (() => {
+  if (typeof window === 'undefined') return false
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-transparency: reduce)').matches
+  return reduced || (nav.hardwareConcurrency > 0 && nav.hardwareConcurrency <= 2) || (typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 2)
+})()
+function launchpadPointer(event: PointerEvent) {
+  // Pressing an empty part of the launchpad (anything but an icon) closes it.
+  if (launchpad.value && event.target instanceof Element && !event.target.closest('button')) close(true)
+}
 
 function close(focus = false) {
   const trigger = popup.value === 'menu' ? menuTrigger.value : overflowTrigger.value
@@ -69,9 +114,9 @@ function restore(entry: ModelessEntry) { close(); entry.restore() }
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
 type CardKey = 'my-ai' | 'question-policy' | 'theme' | 'agents' | 'account' | 'security'
-const menuGroups: { key: string; label: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
-  { key: 'ai', label: 'gui.taskbar.group_ai', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
-  { key: 'settings', label: 'gui.taskbar.group_settings', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: '◈', title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
+const menuGroups: { key: string; label: string; icon: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
+  { key: 'ai', label: 'gui.taskbar.group_ai', icon: '❖', color: '#a78bfa', cards: [{ key: 'my-ai', icon: '✦', title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: '✎', title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
+  { key: 'settings', label: 'gui.taskbar.group_settings', icon: '⚙', color: '#94a3b8', cards: [{ key: 'theme', icon: '◐', title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: '▣', title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: '☺', title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: '◈', title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
 ]
 const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false }, security: { open: false, minimized: false } })
 const windowRefs: Partial<Record<CardKey, { bringToFront?: () => void } | null>> = {}
@@ -84,12 +129,17 @@ function openCard(key: CardKey) {
   windowRefs[key]?.bringToFront?.()
 }
 function outside(event: Event) {
-  if (event.target instanceof Node && !root.value?.contains(event.target)) close()
+  if (event.target instanceof Node && !root.value?.contains(event.target) && !popupRoot.value?.contains(event.target)) close()
 }
 function escape(event: KeyboardEvent) {
-  if (popup.value && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true) }
+  if (!popup.value || event.key !== 'Escape') return
+  event.preventDefault(); event.stopPropagation()
+  // Esc steps back one level: an open classic sub-menu closes first, then the menu itself.
+  if (classicGroup.value) closeGroup(true)
+  else close(true)
 }
 function menuKey(event: KeyboardEvent) {
+  if (popup.value === 'menu' && modelessStyle.value === 'classic') { classicKey(event); return }
   const buttons = [...(popupRoot.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
   const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
   let index: number
@@ -101,6 +151,76 @@ function menuKey(event: KeyboardEvent) {
   event.preventDefault()
   buttons[index]?.focus()
 }
+// Classic sub-menus: which group's cards are open beside the first-level line, and where.
+const classicGroup = ref<string | null>(null)
+const classicSub = computed(() => menuGroups.find(group => group.key === classicGroup.value) ?? null)
+const classicSubRoot = ref<HTMLElement | null>(null)
+const classicSubPos = ref<Record<string, string>>({})
+const groupRefs: Record<string, HTMLButtonElement | null> = {}
+function setGroupRef(key: string, el: unknown) { groupRefs[key] = el as HTMLButtonElement | null }
+let hoverTimer: ReturnType<typeof setTimeout> | undefined
+function cancelHover() { clearTimeout(hoverTimer); hoverTimer = undefined }
+// A short pause before following the pointer, so crossing the other line on the way to a sub-menu does not swap it.
+function hoverGroup(key: string) { cancelHover(); if (classicGroup.value !== key) hoverTimer = setTimeout(() => { void openGroup(key) }, 150) }
+async function openGroup(key: string, focusFirst = false) {
+  cancelHover()
+  classicGroup.value = key
+  classicSubPos.value = { visibility: 'hidden' }
+  await nextTick()
+  placeSub()
+  // Wait for the placed (now visible) sub-menu to render: a hidden button cannot take focus.
+  await nextTick()
+  if (focusFirst && classicGroup.value === key) classicSubRoot.value?.querySelector<HTMLButtonElement>('button')?.focus()
+}
+function closeGroup(focusLine = false) {
+  const line = classicGroup.value ? groupRefs[classicGroup.value] : null
+  cancelHover()
+  classicGroup.value = null
+  if (focusLine) line?.focus()
+}
+// The sub-menu opens to the right of its line with its top level with the line. It moves up when it would run past
+// the taskbar, moves left when the screen is too narrow, and scrolls on its own when it is taller than the screen.
+function placeSub() {
+  const line = classicGroup.value ? groupRefs[classicGroup.value] : null
+  const pane = popupRoot.value
+  const sub = classicSubRoot.value
+  if (!line || !pane || !sub) return
+  const paneRect = pane.getBoundingClientRect()
+  const lineRect = line.getBoundingClientRect()
+  const listRect = (line.parentElement ?? line).getBoundingClientRect()
+  const barTop = root.value?.getBoundingClientRect().top ?? window.innerHeight
+  const gap = 8
+  const maxHeight = Math.max(120, barTop - gap * 2)
+  const width = sub.offsetWidth
+  // Full content height plus borders, even if an earlier placement capped it.
+  const height = Math.min(sub.scrollHeight + sub.offsetHeight - sub.clientHeight, maxHeight)
+  const left = Math.max(gap, Math.min(listRect.right - 2, window.innerWidth - width - gap))
+  const top = Math.max(gap, Math.min(lineRect.top - 1, barTop - height))
+  classicSubPos.value = { left: `${left - paneRect.left}px`, top: `${top - paneRect.top}px`, maxHeight: `${maxHeight}px` }
+}
+function classicKey(event: KeyboardEvent) {
+  const active = document.activeElement as HTMLElement | null
+  const inSub = !!(active && classicSubRoot.value?.contains(active))
+  const lines = menuGroups.map(group => groupRefs[group.key]).filter((el): el is HTMLButtonElement => !!el)
+  const buttons = inSub ? [...(classicSubRoot.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])] : lines
+  const current = buttons.indexOf(active as HTMLButtonElement)
+  const line = !inSub ? lines[current] : null
+  const lineKey = line?.dataset.group
+  if (event.key === 'ArrowRight' && lineKey) { event.preventDefault(); void openGroup(lineKey, true); return }
+  if ((event.key === 'Enter' || event.key === ' ') && lineKey) { event.preventDefault(); void openGroup(lineKey, true); return }
+  if (event.key === 'ArrowLeft' && inSub) { event.preventDefault(); closeGroup(true); return }
+  let index: number
+  if (event.key === 'ArrowDown') index = (current + 1) % buttons.length
+  else if (event.key === 'ArrowUp') index = (current - 1 + buttons.length) % buttons.length
+  else if (event.key === 'Home') index = 0
+  else if (event.key === 'End') index = buttons.length - 1
+  else return
+  event.preventDefault()
+  buttons[index]?.focus()
+}
+watch(popup, (value) => { if (value !== 'menu') closeGroup() })
+watch(modelessStyle, () => closeGroup())
+
 let observer: ResizeObserver | null = null
 function measure() {
   width.value = root.value?.clientWidth ?? 0
@@ -119,15 +239,18 @@ onMounted(() => {
   measure()
   if (typeof ResizeObserver !== 'undefined') { observer = new ResizeObserver(measure); observer.observe(root.value!) }
   window.addEventListener('resize', measure)
+  window.addEventListener('resize', placeSub)
   document.addEventListener('pointerdown', outside)
   document.addEventListener('focusin', outside)
   document.addEventListener('keydown', escape, true)
 })
 onBeforeUnmount(() => {
   readSeq++
+  cancelHover()
   observer?.disconnect()
   removeModelessTaskbar(id)
   window.removeEventListener('resize', measure)
+  window.removeEventListener('resize', placeSub)
   document.removeEventListener('pointerdown', outside)
   document.removeEventListener('focusin', outside)
   document.removeEventListener('keydown', escape, true)
@@ -166,4 +289,102 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 .card-port { position: absolute; right: -5px; top: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--fg2-panel); border: 1.5px solid var(--card-color, #94a3b8); }
 .overflow-list { right: 10px; width: min(360px, calc(100vw - 48px)); max-height: min(400px, 60vh); overflow: auto; }
 .overflow-list button { width: 100%; margin: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Modern: a flat bar whose icon-only items gather in the middle; names show on hover (title). */
+.designer-taskbar[data-taskbar-style="modern"] { justify-content: center; gap: 4px; background: color-mix(in srgb, var(--fg2-panel) 88%, var(--fg2-bg)); border-top-color: var(--fg2-line); }
+[data-taskbar-style="modern"] .taskbar-item { position: relative; width: 44px; height: 40px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; box-shadow: none; text-align: center; }
+[data-taskbar-style="modern"] .taskbar-item:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="modern"] .item-text, [data-taskbar-style="modern"] .item-label, [data-taskbar-style="modern"] .designer-item i { display: none; }
+[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .menu-trigger[aria-expanded="true"] { background: color-mix(in srgb, var(--fg2-text) 10%, transparent); }
+[data-taskbar-style="modern"] .item-icon { width: 24px; height: 24px; border-radius: 6px; font-size: 14px; }
+[data-taskbar-style="modern"] .designer-item { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="modern"] .designer-item::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .minimized-item::after { content: ''; position: absolute; left: 50%; bottom: 3px; width: 6px; height: 3px; margin-left: -3px; border-radius: 2px; background: var(--fg2-muted, #94a3b8); }
+[data-taskbar-style="modern"] .overflow-trigger { width: 48px; font-size: 11px; }
+[data-taskbar-style="modern"] .taskbar-separator { height: 20px; margin: 0 2px; }
+[data-taskbar-style="modern"] .taskbar-popup { border-radius: 12px; }
+[data-taskbar-style="modern"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
+/* Dock: a floating rounded group in the middle with large icon tiles; open windows get a dot below. */
+.taskbar-group { display: contents; }
+.designer-taskbar[data-taskbar-style="dock"] { justify-content: center; height: 54px; flex-basis: 54px; padding: 3px 10px; background: transparent; border-top-color: var(--fg2-line); }
+[data-taskbar-style="dock"] .taskbar-group { display: flex; align-items: center; gap: 4px; min-width: 0; height: 48px; padding: 0 8px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--fg2-text) 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--fg2-panel) 72%, transparent); backdrop-filter: blur(20px); box-shadow: 0 6px 18px #0003; }
+[data-taskbar-style="dock"] .taskbar-item { position: relative; width: 44px; height: 42px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; box-shadow: none; text-align: center; overflow: visible; }
+[data-taskbar-style="dock"] .taskbar-item:hover { background: transparent; }
+[data-taskbar-style="dock"] .item-text, [data-taskbar-style="dock"] .item-label, [data-taskbar-style="dock"] .designer-item i { display: none; }
+[data-taskbar-style="dock"] .menu-trigger svg { width: 32px; height: 32px; box-sizing: border-box; padding: 7px; border-radius: 8px; color: #fff; background: linear-gradient(160deg, #5b6b82, #2d3a4f); box-shadow: 0 2px 6px #0006; }
+[data-taskbar-style="dock"] .item-icon { width: 32px; height: 32px; border-radius: 8px; font-size: 15px; box-shadow: 0 2px 6px #0006; }
+[data-taskbar-style="dock"] .designer-item .item-icon { color: #fff; background: linear-gradient(160deg, #2b5ea8, #163a6e); }
+[data-taskbar-style="dock"] .minimized-item .item-icon { color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--kind-color, #4ba3ff) 85%, #fff), color-mix(in srgb, var(--kind-color, #4ba3ff) 70%, #0a1a33)); }
+[data-taskbar-style="dock"] .minimized-item { opacity: .85; }
+[data-taskbar-style="dock"] .menu-trigger svg, [data-taskbar-style="dock"] .item-icon { transition: transform .15s; }
+[data-taskbar-style="dock"] .taskbar-item:hover svg, [data-taskbar-style="dock"] .taskbar-item:hover .item-icon, [data-taskbar-style="dock"] .menu-trigger[aria-expanded="true"] svg { transform: translateY(-3px) scale(1.12); }
+[data-taskbar-style="dock"] .designer-item::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--fg2-text); }
+[data-taskbar-style="dock"] .taskbar-separator { height: 30px; margin: 0 6px; background: color-mix(in srgb, var(--fg2-text) 22%, transparent); }
+[data-taskbar-style="dock"] .overflow-trigger { width: 48px; height: 38px; border-radius: 10px; font-size: 11px; background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+[data-taskbar-style="dock"] .taskbar-popup { border-radius: 14px; }
+[data-taskbar-style="dock"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
+@media (prefers-reduced-transparency: reduce) { [data-taskbar-style="dock"] .taskbar-group { backdrop-filter: none; background: var(--fg2-panel); } }
+.taskbar-popup.launchpad { position: fixed; inset: 0; bottom: 0; z-index: 100000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 8%; border: 0; border-radius: 0; box-shadow: none; color: #f2f6fc; background-color: rgba(10, 18, 32, .38); backdrop-filter: blur(26px) saturate(1.4) brightness(.8); -webkit-backdrop-filter: blur(26px) saturate(1.4) brightness(.8); overflow: auto; animation: launchpad-in .2s ease-out; }
+.taskbar-popup.launchpad[data-blur="off"] { backdrop-filter: none; -webkit-backdrop-filter: none; background-color: rgba(6, 12, 24, .82); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .taskbar-popup.launchpad { background-color: rgba(6, 12, 24, .82); } }
+@keyframes launchpad-in { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .taskbar-popup.launchpad { animation: none; } }
+/* Like a real launchpad: one icon grid with no group headings above it. */
+.launch-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 28px 40px; max-width: min(100%, 1048px); }
+.taskbar-popup .launch-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 112px; padding: 6px 0 12px; border: 0; border-radius: 14px; background: transparent; color: inherit; text-align: center; }
+.taskbar-popup .launch-tile:hover { background: transparent; }
+.launch-tile-icon { display: grid; place-items: center; width: 84px; height: 84px; border-radius: 20px; font-size: 34px; color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--card-color, #94a3b8) 85%, #fff), color-mix(in srgb, var(--card-color, #94a3b8) 70%, #0a1a33)); box-shadow: 0 8px 22px #0007, inset 0 1px 0 #fff6; transition: transform .15s; }
+.launch-tile:hover .launch-tile-icon, .launch-tile:focus-visible .launch-tile-icon { transform: scale(1.06); }
+.launch-tile:active .launch-tile-icon { filter: brightness(.75); }
+.launch-tile-name { max-width: 112px; font-size: 13px; color: #f2f6fc; text-shadow: 0 1px 3px #000b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.launch-tile .menu-card-dot { position: absolute; left: 50%; bottom: 0; width: 5px; height: 5px; margin: 0 0 0 -2.5px; background: #fff; box-shadow: none; }
+.launchpad-hint { position: absolute; left: 0; right: 0; bottom: 14px; margin: 0; font-size: 11px; text-align: center; color: rgba(255, 255, 255, .6); pointer-events: none; }
+.start-box { left: 50%; transform: translateX(-50%); width: 440px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; box-sizing: border-box; padding: 18px 22px; }
+.start-group-label { margin: 14px 4px 8px; font-size: 12px; font-weight: 700; color: var(--fg2-text); }
+.start-group-label:first-child { margin-top: 0; }
+.start-group-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.taskbar-popup .start-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: center; }
+.taskbar-popup .start-tile:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
+.start-tile-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; font-size: 18px; color: var(--card-color, #94a3b8); background: color-mix(in srgb, var(--card-color, #94a3b8) 18%, var(--fg2-panel)); }
+.start-tile-name { max-width: 100%; font-size: 11.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.start-tile .menu-card-dot { position: absolute; top: 8px; right: 12px; margin: 0; }
+/* Classic: a glossy bar; the round [Menu] button and every item keep their names, aligned left. */
+.designer-taskbar[data-taskbar-style="classic"] { height: 44px; flex-basis: 44px; padding: 4px 8px; gap: 6px; border-top: 1px solid #5a7aa6; color: #eaf2ff; background: linear-gradient(180deg, #3d5b84 0%, #1d3354 48%, #0b1626 52%, #0d1b2e 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18); }
+[data-taskbar-style="classic"] .taskbar-item { height: 36px; border: 1px solid rgba(140, 175, 220, .35); border-radius: 4px; color: #eaf2ff; background: linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .03) 50%, rgba(0, 0, 0, .08) 51%, rgba(255, 255, 255, .05)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+[data-taskbar-style="classic"] .taskbar-item:hover { background: linear-gradient(180deg, rgba(150, 200, 255, .3), rgba(120, 170, 240, .12) 50%, rgba(60, 110, 190, .18) 51%, rgba(120, 170, 240, .22)); }
+[data-taskbar-style="classic"] .menu-trigger, [data-taskbar-style="classic"] .menu-trigger:hover { width: auto; padding: 0 15px 0 11px; gap: 7px; border: 1px solid #6fa3e0; border-radius: 18px; color: #fff; font-size: 12.5px; font-weight: 700; background: radial-gradient(circle at 50% 30%, #5fa8ff 0%, #1f5fb8 55%, #123b75 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 0 8px rgba(80, 150, 255, .5); }
+[data-taskbar-style="classic"] .menu-trigger:hover, [data-taskbar-style="classic"] .menu-trigger[aria-expanded="true"] { filter: brightness(1.18); }
+[data-taskbar-style="classic"] .designer-item { width: auto; padding: 0 14px 0 9px; border-color: #8fc0ff; background: linear-gradient(180deg, rgba(150, 200, 255, .38), rgba(100, 160, 240, .2) 50%, rgba(40, 100, 190, .3) 51%, rgba(100, 160, 240, .32)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 0 10px rgba(90, 160, 255, .45); }
+[data-taskbar-style="classic"] .item-text small, [data-taskbar-style="classic"] .designer-item i { display: none; }
+[data-taskbar-style="classic"] .item-icon { width: 20px; height: 20px; border-radius: 4px; font-size: 12px; }
+[data-taskbar-style="classic"] .designer-item .item-icon { color: #9ccaff; background: #1b3558; }
+[data-taskbar-style="classic"] .minimized-item { width: 180px; opacity: .72; }
+[data-taskbar-style="classic"] .minimized-item:hover { opacity: 1; }
+[data-taskbar-style="classic"] .minimized-item .item-icon { color: #fff; background: color-mix(in srgb, var(--kind-color, #4ba3ff) 70%, #0b1626); }
+[data-taskbar-style="classic"] .taskbar-separator { height: 26px; background: rgba(255, 255, 255, .2); }
+[data-taskbar-style="classic"] .overflow-trigger { text-align: center; }
+[data-taskbar-style="classic"] .overflow-list { border-radius: 6px; }
+/* The classic [Menu] opens a start menu that sits right on the bar, above the round button. */
+.taskbar-popup.start-classic { left: 4px; bottom: 100%; display: flex; width: min(430px, calc(100vw - 16px)); max-height: calc(100vh - 120px); box-sizing: border-box; padding: 8px; border: 1px solid #6d8fbd; border-radius: 8px 8px 0 0; color: #eaf2ff; background: linear-gradient(180deg, rgba(70, 110, 160, .94), rgba(25, 45, 75, .97) 40%, rgba(14, 28, 48, .98)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 0 1px rgba(0, 0, 0, .6), 0 -10px 36px rgba(0, 0, 0, .55); }
+.start-classic-list { flex: 0 1 264px; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; padding: 6px; border: 1px solid #9fb5d3; border-radius: 5px; color: #14243a; background: linear-gradient(180deg, #f4f7fb, #e6ecf4); box-shadow: inset 0 0 0 1px #fff; }
+.taskbar-popup .classic-group { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; box-sizing: border-box; padding: 4px 8px 4px 10px; border: 1px solid transparent; border-radius: 4px; color: #14243a; background: transparent; }
+.taskbar-popup .classic-group:hover, .taskbar-popup .classic-group:focus-visible, .taskbar-popup .classic-group.active { border-color: #7da2ce; background: linear-gradient(180deg, #eaf3fe, #cfe3fb); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .8); }
+.classic-group-icon { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; font-size: 15px; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #fff), var(--card-color, #94a3b8) 55%, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #000)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 1px 3px rgba(0, 0, 0, .35); }
+.classic-group b { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-group .menu-card-dot { margin-left: auto; }
+.classic-group-arrow { flex: none; margin-left: auto; padding-left: 8px; font-size: 11px; color: #3c5679; }
+.classic-group .menu-card-dot + .classic-group-arrow { margin-left: 0; }
+.start-classic-sub { position: absolute; z-index: 1; display: flex; flex-direction: column; gap: 2px; width: min(290px, calc(100vw - 16px)); overflow-y: auto; box-sizing: border-box; padding: 6px; border: 1px solid #6d8fbd; border-radius: 4px; color: #14243a; background: linear-gradient(180deg, #f4f7fb, #e6ecf4); box-shadow: inset 0 0 0 1px #fff, 2px 4px 16px rgba(0, 0, 0, .45); }
+.taskbar-popup .classic-card { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; box-sizing: border-box; padding: 6px 12px; border: 1px solid transparent; border-radius: 4px; color: #14243a; background: transparent; }
+.taskbar-popup .classic-card:hover, .taskbar-popup .classic-card:focus-visible { border-color: #7da2ce; background: linear-gradient(180deg, #eaf3fe, #cfe3fb); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .8); }
+.classic-card-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 7px; font-size: 17px; color: #fff; background: linear-gradient(180deg, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #fff), var(--card-color, #94a3b8) 55%, color-mix(in srgb, var(--card-color, #94a3b8) 70%, #000)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 1px 3px rgba(0, 0, 0, .35); }
+.classic-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.classic-card-text b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-card-text small { font-size: 11px; color: #4f627c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.classic-card .menu-card-dot { margin-left: auto; }
+.start-classic-side { flex: 1 1 140px; min-width: 0; display: flex; align-items: center; align-self: flex-start; gap: 10px; padding: 4px 4px 4px 12px; }
+.classic-avatar { flex: none; display: grid; place-items: center; width: 44px; height: 44px; box-sizing: border-box; border: 2px solid #dfe9f7; border-radius: 6px; font-size: 18px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #6aa9ff, #2a5aa8); box-shadow: 0 2px 6px rgba(0, 0, 0, .5); }
+.start-classic-side b { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
+

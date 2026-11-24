@@ -17,7 +17,7 @@ function view() { return mount(MeThemeSettingsView, { global: { plugins: [i18n],
 describe('personal taskbar style', () => {
   it('shows only implemented choices and PATCHes only the style, updating shared appearance', async () => {
     const w = view(); await flushPromises()
-    expect(w.findAll('option').map(o => o.text())).toEqual(['FlowGate'])
+    expect(w.findAll('option').map(o => o.text())).toEqual(['FlowGate', 'Modern', 'Dock', 'Classic'])
     expect((w.get('select').element as HTMLSelectElement).value).toBe('flowgate')
     await w.get('button').trigger('click'); await flushPromises()
     expect(patchRequest).toHaveBeenCalledTimes(1)

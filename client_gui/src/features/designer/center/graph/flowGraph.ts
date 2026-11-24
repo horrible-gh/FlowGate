@@ -36,7 +36,7 @@
 //
 // a Graph node's card title state (`titleState`), the base of the card's inline title edit.
 
-import type { RoleRunFields } from '@/features/project'
+import type { FlowCardRef, RoleRunFields } from '@/features/project'
 
 export interface FlowGraphNode {
   /** Unique within the Graph — the server node identity for a server Graph. */
@@ -72,6 +72,11 @@ export interface FlowGraphNode {
    * (document / gate / custom) has one; null / absent elsewhere and from an older server — its title is not editable.
    */
   readonly titleState?: FlowGraphTitleState | null
+  /**
+   * flowgate.v02test.0077: the card's display ids (`#12`, `F77-12`, the full `flowgate.v02test.F77-12`) as the server
+   * sent them; null / absent while it has no number (a card not saved yet, an older server). Display and copy only.
+   */
+  readonly cardRef?: FlowCardRef | null
   /**
    * the `tmp_` key the node had until its draft save answered its server key (draft remapGraph).
    * The Canvas keeps dragging a card held through that rename under the name it grabbed it with. Absent otherwise.

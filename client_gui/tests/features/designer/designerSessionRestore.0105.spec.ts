@@ -18,6 +18,7 @@ import { clearStoredAuth } from '@/core/auth/logout'
 import { setCurrentUser } from '@/core/auth/currentUser'
 import { DesignerShell } from '@/features/designer'
 import DesignerCenter from '@/features/designer/center/DesignerCenter.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useProjectStore, type Project } from '@/features/project'
 import { parseDesignerSession } from '@/features/project/designerSessionStorage'
 import { answerFlowCanvas } from './flowCanvasResponse'
@@ -745,12 +746,14 @@ describe('Q #510 contract and browser tab isolation (NR 0101-0003 §5.5 / §5.6)
 
 
 describe('archive session read-only viewing', () => {
-  function installArchiveServer() {
+  // v02test.0083: `completed` is the server's new field; `undefined` leaves it out of the answer (read as not completed).
+  function installArchiveServer(completed: boolean | undefined = true) {
     let archived = false
     const oldGet = getRequest.getMockImplementation()!
     getRequest.mockImplementation(async (url: string, params: any = {}) => {
       if (url.endsWith('/archive')) return { data: { ok: true, archived, archived_at: archived ? '2026-01-01' : null,
-        archived_by: archived ? 'test' : null, eligible: !archived, reason: archived ? 'already_archived' : null } }
+        archived_by: archived ? 'test' : null, eligible: !archived, reason: archived ? 'already_archived' : null,
+        ...(completed === undefined ? {} : { completed }) } }
       if (url.endsWith('/groups/tree')) {
         return { data: { data: { nodes: (TREES.p as any[]).filter((n) => n.id !== 'p.ui.0002' || !archived || params.include_archived === 'true')
           .map((n) => n.id === 'p.ui.0002' ? { ...n, archived_at: archived ? '2026-01-01' : null } : n) } } }
@@ -854,5 +857,53 @@ describe('archive session read-only viewing', () => {
     const nodes = useProjectStore().getCachedGroupTree('p', true, true)!
     expect(nodes.some((n) => n.id === 'p.ui.0002')).toBe(true)
     expect(tabIds(w)).toEqual(['p.ui.0002'])
+  })
+  // v02test.0083: a Flow that is not completed is archived from the toolbar only after one confirmation.
+  const archivePosts = () => postRequest.mock.calls.filter(([url]) => String(url).endsWith('/archive'))
+  const archiveConfirm = (w: VueWrapper<any>) => w.findAllComponents(ConfirmDialog).find((c) => c.props('title') === '플로우 아카이브')!
+  for (const completed of [false, undefined]) {
+    it(`asks once before archiving a Flow that is not completed (completed: ${completed})`, async () => {
+      installArchiveServer(completed)
+      seed({ tabs: [tab('p.ui.0002', 'Canvas')], activeFlowId: 'p.ui.0002' })
+      const w = await reload()
+      const confirm = archiveConfirm(w)
+      expect(confirm.props('open')).toBe(false)
+      const archive = w.get('[data-test="designer-tool-archive"]')
+      expect((archive.element as HTMLButtonElement).disabled).toBe(false)
+      await archive.trigger('click')
+      await settle()
+      expect(confirm.props('open')).toBe(true)
+      expect(confirm.props('message')).toBe('완료되지 않은 플로우입니다. 아카이브할까요? 우클릭 → 복원으로 되돌릴 수 있습니다.')
+      expect(confirm.props('confirmLabel')).toBe('아카이브')
+      expect(confirm.props('cancelLabel')).toBe('취소')
+      expect(archivePosts()).toHaveLength(0)
+      confirm.vm.$emit('confirm')
+      await settle()
+      expect(confirm.props('open')).toBe(false)
+      expect(archivePosts()).toHaveLength(1)
+      expect(w.findComponent(DesignerCenter).props('center').isFlowReadOnly('p.ui.0002')).toBe(true)
+    })
+  }
+  it('cancelling the confirmation archives nothing', async () => {
+    installArchiveServer(false)
+    seed({ tabs: [tab('p.ui.0002', 'Canvas')], activeFlowId: 'p.ui.0002' })
+    const w = await reload()
+    await w.get('[data-test="designer-tool-archive"]').trigger('click')
+    await settle()
+    const confirm = archiveConfirm(w)
+    expect(confirm.props('open')).toBe(true)
+    confirm.vm.$emit('cancel')
+    await settle()
+    expect(confirm.props('open')).toBe(false)
+    expect(archivePosts()).toHaveLength(0)
+  })
+  it('archives a completed Flow at once, without the confirmation', async () => {
+    installArchiveServer(true)
+    seed({ tabs: [tab('p.ui.0002', 'Canvas')], activeFlowId: 'p.ui.0002' })
+    const w = await reload()
+    await w.get('[data-test="designer-tool-archive"]').trigger('click')
+    await settle()
+    expect(archiveConfirm(w).props('open')).toBe(false)
+    expect(archivePosts()).toHaveLength(1)
   })
 })

@@ -2,7 +2,7 @@
 // (see ./index.ts). Copy follows the approved 01-dashboard.html; lines broken with \n
 // in the mockup are "\n" here and rendered with white-space: pre-line.
 export default {
-  taskbar: {"label": "태스크바", "menu": "메뉴", "more": "최소화한 창 {count}개 더 보기", "theme": "테마", "theme_hint": "태스크바와 메뉴, 창 제목줄 모양을 고릅니다.", "style": "태스크바 스타일", "screen": "화면", "theme_window": "내 설정 · 테마", "group_ai": "내 AI 관리", "group_settings": "내 설정", "my_ai": "내 AI", "my_ai_desc": "기본 AI · 순서 · 추가", "my_ai_window": "AI 관리 · 내 AI", "question_policy": "질의 방침", "question_policy_desc": "AI가 내게 물어볼 기준", "question_policy_window": "AI 관리 · 질의 방침", "agents": "에이전트", "agents_desc": "개인 에이전트 목록 · 등록", "account": "계정·화면", "account_window": "내 설정 · 계정·화면", "account_desc": "로그인 정보와 표시 언어", "agents_window": "내 설정 · 에이전트", "security": "보안·세션", "security_desc": "비밀번호 변경 · 로그인 세션", "security_window": "내 설정 · 보안·세션"},
+  taskbar: {"label": "태스크바", "menu": "메뉴", "more": "최소화한 창 {count}개 더 보기", "theme": "테마", "theme_hint": "태스크바와 메뉴, 창 제목줄 모양을 고릅니다.", "style": "태스크바 스타일", "screen": "화면", "theme_window": "내 설정 · 테마", "group_ai": "내 AI 관리", "group_settings": "내 설정", "my_ai": "내 AI", "my_ai_desc": "기본 AI · 순서 · 추가", "my_ai_window": "AI 관리 · 내 AI", "question_policy": "질의 방침", "question_policy_desc": "AI가 내게 물어볼 기준", "question_policy_window": "AI 관리 · 질의 방침", "agents": "에이전트", "agents_desc": "개인 에이전트 목록 · 등록", "account": "계정·화면", "account_window": "내 설정 · 계정·화면", "account_desc": "로그인 정보와 표시 언어", "agents_window": "내 설정 · 에이전트", "security": "보안·세션", "security_desc": "비밀번호 변경 · 로그인 세션", "style_flowgate": "FlowGate", "style_modern": "모던", "style_dock": "독", "style_classic": "클래식", "launchpad_hint": "빈 곳을 누르거나 Esc를 누르면 닫힙니다", "security_window": "내 설정 · 보안·세션"},
   agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "비어 있으면 작업을 받을 수 없습니다. 에이전트 PC에서 작업 폴더를 만들 위치를 지정하세요. 예: /data/flowgate, C:\\flowgate", "sec_basic": "기본 정보", "sec_run": "실행", "sec_workdir": "작업 폴더", "create_sub": "이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.", "not_connected": "아직 이 PC와 연결되지 않았습니다", "enabled_on": "켜져 있으면 이 에이전트가 작업을 받습니다.", "enabled_off": "작업을 받지 않습니다.", "unit_jobs": "개", "running_now": "지금 {running}개 실행 중", "queued_now": "대기 {count}개", "workdir_label": "작업 폴더 위치", "workdir_preview": "작업마다 {path} 폴더를 새로 만듭니다.", "cleanup_on": "작업이 끝나고 {hours}시간 뒤 폴더를 지웁니다 (1~720).", "cleanup_off": "끄면 작업 폴더를 지우지 않고 그대로 둡니다.", "cli_missing_detail": "이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다. 설치하면 다음 접속부터 자동으로 작업을 받습니다.", "token_title": "등록 토큰", "token_until": "{at}까지", "no_token": "토큰이 없습니다 · 10분간 유효", "no_token_hint": "창을 닫았거나 10분이 지나 토큰이 만료됐습니다. 지우고 다시 등록할 필요 없이 새로 발급하면 됩니다.", "no_changes": "변경 사항 없음", "changes": "저장하지 않은 변경 {count}개", "changes_one": "저장하지 않은 변경 1개", "workdir_shared": "지금은 모든 작업이 {path} 폴더 하나를 같이 씁니다. 이 칸을 고쳐 저장하면 작업마다 폴더를 나눕니다."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
   connection_banner: {"reconnecting": "서버 연결이 끊겼습니다 · 자동으로 다시 연결하는 중…", "hint": "연결되면 목록과 대화가 저절로 돌아오고, 보내지 못한 메시지도 다시 보냅니다.", "unknown_error": "알 수 없는 오류가 발생했습니다", "reload": "새로 고침"},
@@ -642,11 +642,15 @@ export default {
       unavailable: '아카이브 상태를 확인할 수 없습니다.',
       failed: '아카이브 상태를 변경하지 못했습니다.',
       group_restore_failed: '그룹을 복원하지 못했습니다.',
+      // v02test.0083: asked once before archiving a Flow that is not completed.
+      confirm_title: '플로우 아카이브',
+      confirm_incomplete: '완료되지 않은 플로우입니다. 아카이브할까요? 우클릭 → 복원으로 되돌릴 수 있습니다.',
+      cancel: '취소',
     },
     project_explorer: {
       title: '프로젝트',
       refresh: '새로고침',
-      search_placeholder: '프로젝트, 그룹, 플로우 검색',
+      search_placeholder: '프로젝트, 그룹, 플로우, F77-12 검색',
       search_clear: '검색어 지우기',
       loading: '프로젝트 구조를 불러오는 중...',
       load_failed: '프로젝트 구조를 불러오지 못했습니다.',
@@ -657,6 +661,11 @@ export default {
       group_menu: '그룹 메뉴',
       no_results: '일치하는 프로젝트, 그룹, 플로우가 없습니다.',
       reconnecting: '다시 연결하는 중…',
+      // flowgate.v02test.0077 — Flow / card numbers in the sidebar.
+      module_key: '{name} · ID에 쓰는 이름: {key}',
+      archived: '아카이브',
+      cards: '카드',
+      enter_open: 'Enter 열기',
     },
     // flowgate.v02.0024 T0005 — Designer File Explorer.
     file_explorer: {
@@ -769,6 +778,11 @@ export default {
         more: '더보기',
         copy_id: 'ID 복사',
         copied: 'ID 복사됨',
+        // flowgate.v02test.0077 — the card id chip (F74-1) and the bound document's own id in the ⋯ menu.
+        card_id_copy: '누르면 {id} 복사',
+        card_id_copied: '복사됨',
+        copy_doc_id: '문서 ID 복사',
+        doc_id_copied: '문서 ID 복사됨',
         kind_bug: '버그',
         // flowgate.v02.0052 묶음 A — the status pill tooltip: the server values behind the one label.
         state_tip: '문서 상태: {doc} / 실행 상태: {run}',

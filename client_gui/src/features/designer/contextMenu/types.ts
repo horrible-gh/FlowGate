@@ -21,7 +21,7 @@ export const COMMANDS = [
   'multi.editSettings', 'multi.copy', 'multi.arrange', 'multi.delete',
   'edge.disconnect', 'palette.addCard',
 ] as const
-/** flowgate.v02gui.0003: `node.copyId` (the card's document id, as the Inspector's ID 복사) is outside the mockup's 40 as well. */
+/** flowgate.v02gui.0003: `node.copyId` (the card's full display id, as the Inspector's ID 복사 — v02test.0077) is outside the mockup's 40 as well. */
 /** `group.archive` / `group.restore` (the Group's display-only archive) are outside the 40 too. */
 /** `group.delete` (an empty Group only; never a Flow, document or run) as well. */
 export type MenuCommand = typeof COMMANDS[number] | 'flow.baseBranch' | 'flow.archive' | 'flow.restore' | 'node.copyId' | 'group.archive' | 'group.restore' | 'group.delete'
@@ -82,6 +82,8 @@ interface ItemDisplay {
   readonly danger?: boolean
   readonly disabled?: boolean
   readonly disabledReason?: DisabledReason
+  /** v02test.0083 F83-5: a ready-to-show text a disabled item gives as its tooltip and accessible description (the Flow Archive's reason, the toolbar's text); a `disabledReason` wins over it. */
+  readonly tooltip?: string
   /** v02gui.0027 (0008-T): a small line under the label (a message key of the menu and its values), e.g. Delete Group's state. */
   readonly hint?: { readonly key: string; readonly params?: Readonly<Record<string, string | number>> }
 }

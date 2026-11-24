@@ -4,12 +4,15 @@
        Enter / the caret / Left-Right open or close it too.
        the trailing ⋯ opens the same Group menu as a right click (shown on hover, selection
        or focus). Its click stops at the button, so it never selects or toggles the row. An archived Group (only in
-       an "아카이브 포함" tree) is drawn dimmed, like an archived Flow. -->
+       an "아카이브 포함" tree) is drawn dimmed, like an archived Flow, and says 「아카이브」.
+       flowgate.v02test.0077: hovering the row shows the module key ids are written with (`v02test`), not the
+       changeable display name. -->
   <ExplorerRowFrame
     :class="{ 'is-archived': group.archived }"
     :row-id="group.id"
     :level="2"
     :label="group.name"
+    :tooltip="t('gui.designer.project_explorer.module_key', { name: group.name, key: group.moduleName })"
     :expandable="true"
     :expanded="expanded"
     :selected="selected"
@@ -20,6 +23,7 @@
   >
     <ExplorerIcon class="row-icon" :name="expanded ? 'folder-open' : 'folder'" />
     <span class="row-label" data-test="project-explorer-label">{{ group.name }}</span>
+    <span v-if="group.archived" class="row-archived" data-test="project-explorer-archived">{{ t('gui.designer.project_explorer.archived') }}</span>
     <span class="row-count" aria-hidden="true">{{ group.flows.length }}</span>
     <button
       type="button"
@@ -76,6 +80,16 @@ const { t } = useI18n()
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.row-archived {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--fg2-muted);
 }
 
 .row-count {
