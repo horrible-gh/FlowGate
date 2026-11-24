@@ -143,7 +143,7 @@ function toggleSettings(): void {
       : props.settings.contextTurnsPresets.includes(props.settings.contextTurns)
         ? String(props.settings.contextTurns)
         : 'custom'
-  draftTurnsText.value = String(draftRange.value === 'checkpoint_recent' ? (props.settings.checkpointMaxTurns ?? 10) : props.settings.contextTurns)
+  draftTurnsText.value = String(draftRange.value === 'checkpoint_recent' ? (props.settings.checkpointMaxTurns ?? 5) : props.settings.contextTurns)
   shownRange = draftRange.value
   open.value = true
 }
@@ -153,7 +153,7 @@ function toggleSettings(): void {
 function onRangeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   if (value === 'custom' && /^\d+$/.test(shownRange)) draftTurnsText.value = shownRange
-  if (value === 'checkpoint_recent') draftTurnsText.value = String(props.settings.checkpointMaxTurns ?? 10)
+  if (value === 'checkpoint_recent') draftTurnsText.value = String(props.settings.checkpointMaxTurns ?? 5)
   shownRange = value
 }
 
