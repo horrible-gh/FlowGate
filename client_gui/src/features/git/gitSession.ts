@@ -575,9 +575,27 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
       state.conflictLoad = 'ready'
     } catch (error) {
       if (myCtx !== ctx || disposed) return
+      // flowgate.v02test.0068: a conflict card built from worktree status' open session (no git/status conflict row) can outlive
+      // the session: resolving closes it while worktree status still names it for a moment. The server answers 404 for a
+      // session that is not open — that is "the session ended", not a failure: drop the stale name and read Git again.
+      const err = gitErrorOf(error)
+      if (!err.network && err.status === 404 && isAdoptedOnly(groupId, mergeId)) {
+        state.conflictLoad = 'idle'
+        state.openSession = null
+        void load({ forceConflicts: true })
+        return
+      }
       state.conflictLoad = 'error'
       reportError(state.windows.some((w) => w.kind === 'conflict') ? 'window' : 'conflict', error)
     }
+  }
+
+  // The session is shown only because worktree status names it: git/status has no conflict row for this merge.
+  function isAdoptedOnly(groupId: string, mergeId: number): boolean {
+    const open = state.openSession
+    if (!open || open.groupId !== groupId || open.mergeId !== mergeId) return false
+    const row = state.status?.pending.find((item) => item.groupId === groupId)
+    return !(row?.status === 'conflict' && row.mergeId === mergeId)
   }
 
   async function loadReviewFor(myCtx: number, groupId: string, mergeId: number): Promise<void> {
