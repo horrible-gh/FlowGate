@@ -1,5 +1,5 @@
-/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / ready / lit; 0015-T C: the system setting
- *  off hides it for admins too), the `>_` mark on
+/** flowgate.v02test.0078 (터미널 화면): the toolbar's [터미널] button (hidden / ready / lit; F85: no on/off setting —
+ *  an administrator always gets it), the `>_` mark on
  *  Flow tabs and in the tab list, the three-session notice, and the WebSocket frames. The terminal server may not exist
  *  yet, so the API is mocked; the terminal window is replaced by a stand-in (xterm.js needs a real layout). */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -29,9 +29,9 @@ vi.mock('@/features/designer/flowTerminal/FlowTerminalWindow.vue', async () => {
     default: defineComponent({
       name: 'FlowTerminalWindow',
       props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex', 'designer', 'fillTarget'],
-      emits: ['focus', 'close', 'reopen', 'designer', 'disabled'],
+      emits: ['focus', 'close', 'reopen', 'designer'],
       setup(props, { expose, emit }) {
-        expose({ reveal: () => {}, requestClose: () => emit('close'), dispose: () => {} })
+        expose({ reveal: () => {}, requestClose: () => emit('close') })
         return () => h('div', {
           'data-test': 'terminal-standin', 'data-flow-id': props.flowId, 'data-visible': String(props.visible), 'data-cwd': props.session?.cwd,
         })
@@ -55,7 +55,6 @@ const status = (over: Partial<TerminalStatus> = {}): TerminalStatus => ({
   enabled: true, allowed: true, reason: null, max_sessions: 3, active_sessions: 0, flow_session_id: null, ...over,
 })
 const NOT_ADMIN = status({ allowed: false, reason: 'not_admin' })
-const DISABLED = status({ enabled: false, allowed: false, reason: 'disabled' })
 const conflict = (code: string) => Object.assign(new Error(code), { isAxiosError: true, response: { status: 409, data: { detail: { code } } } })
 
 let wrapper: VueWrapper<any> | null = null
@@ -77,11 +76,11 @@ afterEach(() => {
 })
 
 describe('terminalButtonState', () => {
-  it('hides for a non-admin, an unknown status or the system setting off (0015-T C-1), lights an open one', () => {
+  it('hides for a non-admin or an unknown status, lights an open one; `enabled` is not read (F85: always on)', () => {
     expect(terminalButtonState(null, false)).toBe('hidden')
     expect(terminalButtonState(NOT_ADMIN, false)).toBe('hidden')
-    expect(terminalButtonState(DISABLED, false)).toBe('hidden')
-    expect(terminalButtonState(DISABLED, true)).toBe('hidden')
+    expect(terminalButtonState(status({ enabled: false }), false)).toBe('ready')
+    expect(terminalButtonState(status({ enabled: undefined }), true)).toBe('on')
     expect(terminalButtonState(status(), false)).toBe('ready')
     expect(terminalButtonState(status(), true)).toBe('on')
   })
@@ -116,16 +115,9 @@ describe('toolbar [터미널] button', () => {
     expect(button().find('span').text()).toBe('터미널')
   })
 
-  it('is not drawn at all (no gap, no dimmed button) when the system setting is off, for an admin too', async () => {
-    flowTerminalUi.status = DISABLED
+  it('is always drawn for an administrator: no setting to turn on (F85)', async () => {
+    flowTerminalUi.status = status({ enabled: false })   // even a leftover off value from an older server is ignored
     mountToolbar()
-    await nextTick()
-    expect(button().exists()).toBe(false)
-    expect(wrapper!.find('.designer-tool-terminal').exists()).toBe(false)
-    const group = wrapper!.get('[data-test="flow-attachments-open"]').element.parentElement!
-    expect(group.lastElementChild).toBe(wrapper!.get('[data-test="flow-attachments-open"]').element)
-    // Turned on again: it comes back.
-    flowTerminalUi.status = status()
     await nextTick()
     expect(button().exists()).toBe(true)
   })
@@ -314,49 +306,6 @@ describe('terminal Host', () => {
     expect(wrapper!.findComponent({ name: 'FlowTerminalWindow' }).props('session')).toMatchObject({ session_id: 's2' })
   })
 
-  it('the setting turned off: a status read with enabled=false closes the open terminals (no DELETE) and hides the button', async () => {
-    api.readTerminalStatus.mockResolvedValue(status())
-    api.openTerminalSession.mockResolvedValue(session())
-    mountHost()
-    flowTerminalUi.open!()
-    await flushPromises()
-    expect(standins()).toHaveLength(1)
-    api.readTerminalStatus.mockResolvedValue(DISABLED)
-    await wrapper!.vm.refreshStatus()
-    await flushPromises()
-    expect(standins()).toHaveLength(0)
-    expect(flowTerminalUi.openFlows).toEqual({})
-    expect(terminalButtonState(flowTerminalUi.status, flowTerminalUi.currentOpen)).toBe('hidden')
-    expect(api.closeTerminalSession).not.toHaveBeenCalled()
-  })
-
-  it('a WebSocket closed for terminal_disabled (the window\'s `disabled`) closes that terminal without a notice and reads the status again', async () => {
-    api.readTerminalStatus.mockResolvedValue(status())
-    api.openTerminalSession.mockResolvedValue(session())
-    mountHost()
-    flowTerminalUi.open!()
-    await flushPromises()
-    api.readTerminalStatus.mockClear()
-    api.readTerminalStatus.mockResolvedValue(DISABLED)
-    wrapper!.findComponent({ name: 'FlowTerminalWindow' }).vm.$emit('disabled')
-    await flushPromises()
-    expect(standins()).toHaveLength(0)
-    expect(api.readTerminalStatus).toHaveBeenCalledWith('p.m.0001')
-    expect(flowTerminalUi.status).toEqual(DISABLED)
-    expect(document.body.textContent).not.toContain('세션이 끝났습니다')
-  })
-
-  it('opening refused with terminal_disabled shows no notice (the button hides after the status read)', async () => {
-    api.readTerminalStatus.mockResolvedValue(DISABLED)
-    api.openTerminalSession.mockRejectedValue(conflict('terminal_disabled'))
-    mountHost()
-    flowTerminalUi.open!()
-    await flushPromises()
-    expect(standins()).toHaveLength(0)
-    expect(document.body.textContent).not.toContain('다시 시도해 주세요')
-    expect(terminalButtonState(flowTerminalUi.status, false)).toBe('hidden')
-  })
-
   it('clears the shared state on unmount (sign-out / another Project)', async () => {
     api.readTerminalStatus.mockResolvedValue(status())
     api.openTerminalSession.mockResolvedValue(session())
@@ -373,7 +322,7 @@ describe('terminal contract helpers', () => {
     expect(openFailureOf(conflict('terminal_session_limit'))).toBe('limit')
     expect(openFailureOf(conflict('terminal_flow_session_exists'))).toBe('exists')
     expect(openFailureOf(conflict('terminal_not_admin'))).toBe('not_admin')
-    expect(openFailureOf(conflict('terminal_disabled'))).toBe('disabled')
+    expect(openFailureOf(conflict('terminal_disabled'))).toBe('failed')   // F85: no such refusal any more
     expect(openFailureOf(conflict('terminal_cwd_unavailable'))).toBe('no_cwd')
     expect(openFailureOf(new Error('boom'))).toBe('failed')
   })
@@ -392,6 +341,8 @@ describe('terminal contract helpers', () => {
     expect(parseServerMessage('{"type":"card_running","value":false}')).toEqual({ type: 'card_running', value: false })
     expect(parseServerMessage('{"type":"exit","reason":"idle_timeout","code":null}')).toEqual({ type: 'exit', reason: 'idle_timeout', code: null })
     expect(parseServerMessage('{"type":"exit","reason":"weird","code":1}')).toEqual({ type: 'exit', reason: 'error', code: 1 })
+    expect(parseServerMessage('{"type":"exit","reason":"error","code":null,"message":"Run `pip install -r server/requirements.txt`"}'))
+      .toEqual({ type: 'exit', reason: 'error', code: null, message: 'Run `pip install -r server/requirements.txt`' })
     expect(parseServerMessage('not json')).toBeNull()
     expect(parseServerMessage('{"type":"busy","value":"yes"}')).toBeNull()
     expect(JSON.parse(inputFrame('ㅎ'))).toEqual({ type: 'input', data: 'ㅎ' })

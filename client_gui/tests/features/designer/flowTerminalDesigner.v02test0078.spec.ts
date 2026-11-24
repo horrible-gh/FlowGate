@@ -72,9 +72,9 @@ vi.mock('@/features/designer/flowTerminal/FlowTerminalWindow.vue', async () => {
   return { default: define({
     name: 'FlowTerminalWindow',
     props: ['flowId', 'title', 'session', 'position', 'visible', 'focused', 'zIndex', 'designer', 'fillTarget'],
-    emits: ['focus', 'close', 'reopen', 'designer', 'disabled'],
+    emits: ['focus', 'close', 'reopen', 'designer'],
     setup(props, { expose, emit }) {
-      expose({ reveal: () => { xterm.reveals.push(props.flowId) }, requestClose: () => emit('close'), dispose: () => {} })
+      expose({ reveal: () => { xterm.reveals.push(props.flowId) }, requestClose: () => emit('close') })
       return () => render('div', {
         'data-test': 'terminal-standin', 'data-flow-id': props.flowId, 'data-visible': String(props.visible),
         'data-designer': String(!!props.designer), 'data-session': props.session?.session_id,
@@ -285,15 +285,14 @@ describe('terminal Host — 모달리스 ↔ 디자이너', () => {
     expect(standinOf('p.m.0001').attributes('data-designer')).toBe('false')
   })
 
-  it('a terminal closed for terminal_disabled in 디자이너 mode gives the Designer back', async () => {
+  it('a terminal closed in 디자이너 mode gives the Designer back', async () => {
     api.openTerminalSession.mockResolvedValue(session())
     mountHost()
     flowTerminalUi.open!()
     await flushPromises()
     windowOf('p.m.0001').vm.$emit('designer', true)
     await flushPromises()
-    api.readTerminalStatus.mockResolvedValue(status({ enabled: false, allowed: false, reason: 'disabled' }))
-    windowOf('p.m.0001').vm.$emit('disabled')
+    windowOf('p.m.0001').vm.$emit('close')
     await flushPromises()
     expect(standinOf('p.m.0001').exists()).toBe(false)
     expect(wrapper!.vm.designerActive('p.m.0001')).toBe(false)

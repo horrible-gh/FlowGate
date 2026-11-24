@@ -191,7 +191,7 @@ describe('V01 메뉴 — hub, scope tabs and 시스템 sub-navigation', () => {
 
     const page = await enterDirectly('/settings/system/users')
     expect(page.findAll('[data-scope]').map((t) => t.attributes('data-scope'))).toEqual(['me', 'project', 'system'])
-    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'terminal', 'users', 'projects'])
+    expect(page.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'users', 'projects'])
     // (mockup ⑩): the four pages under their group headings — headings only, no extra entry.
     expect(page.findAll('.subnav-group').map((g) => g.text())).toEqual(['운영', '실행 자원', '계정 · 프로젝트'])
     for (const href of hrefs(page)) expect(href).not.toMatch(/\/settings\/(workspaces|system\/security)/)
