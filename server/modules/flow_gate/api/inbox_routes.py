@@ -2712,7 +2712,18 @@ def _in_write_session(handler, request: Request, raw: str, body: dict) -> JSONRe
     Stop's ``stopping`` commits, or are refused at Step 3 after it. Other tokens take no hold."""
     from modules.flow_gate.services import graph_source_hooks
     with graph_source_hooks.write_session():
-        return handler(request, raw, body)
+        response = handler(request, raw, body)
+        if (isinstance(body, dict) and body.get("action") in ("new", "edit")
+                and not _truthy(body.get("dry_run")) and 200 <= response.status_code < 300):
+            from modules.flow_gate.graph_workflow.services import first_names_hooks
+            try:
+                token = token_service.inspect_for_replay(raw)
+                # new.title belongs exclusively to the registered document.
+                naming_title = body.get("title") if body.get("action") == "edit" else None
+                first_names_hooks.submitted(token, naming_title, body.get("doc_id"))
+            except Exception as exc:
+                logging.getLogger(__name__).warning("flow naming submission exception_type=%s", type(exc).__name__)
+        return response
 
 
 # ── Step 3: the one context-binding check ──────────

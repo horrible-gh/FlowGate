@@ -133,6 +133,8 @@ def on_chat_run_cancel(run: dict, announce) -> None:
 
 def on_conversation_reply_appended(doc_id: str, turn: dict) -> None:
     activity.on_turn_appended(doc_id, turn)
+    if turn.get("_naming_handled"):
+        return
     # A reply can arrive after its composer/tab was closed. Use the same durable claim.
     try:
         from .first_names_triggers import schedule_reply
@@ -165,6 +167,8 @@ def register() -> None:
     from .first_names_triggers import schedule_run, schedule_completed
     first_names_hooks.register(schedule_run)
     first_names_hooks.register_completion(schedule_completed)
+    from .first_names_triggers import submitted_title, title_request
+    first_names_hooks.register_title(submitted_title, title_request)
     for name, handler in HANDLERS.items():
         hooks.register(name, handler)
 
@@ -173,6 +177,7 @@ def unregister() -> None:
     from modules.flow_gate.graph_workflow.services import first_names_hooks
     first_names_hooks.register(None)
     first_names_hooks.register_completion(None)
+    first_names_hooks.register_title(None, None)
     for name in HANDLERS:
         hooks.unregister(name)
 

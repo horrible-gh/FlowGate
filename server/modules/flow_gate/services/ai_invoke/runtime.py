@@ -405,6 +405,7 @@ _CHAT_TOOL_DESC = "Send the assistant reply for this chat conversation."
 _CHAT_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
+        "title": {"type": "string", "description": "Optional short title shared by the flow, start card and chat."},
         "body": {"type": "string", "description": "Complete assistant reply text"},
         # the chat commit point.
         "commit_message": {

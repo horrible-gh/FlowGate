@@ -27,7 +27,7 @@ def test_both_orders_name_chat_from_its_own_message(wired, first):
     (chat if first == "chat" else run)()
     (run if first == "chat" else chat)()
     assert titles(wired) == (TITLE, TITLE, TITLE)
-    assert wired["calls"] == (1 if first == "chat" else 2)
+    assert wired["calls"] == 1
 
 
 def test_unflagged_chat_participates(wired):
@@ -43,31 +43,32 @@ def test_chat_before_ai_reply_does_not_generate(wired, monkeypatch):
     assert wired["calls"] == 0
 
 
-def test_run_notification_is_after_commit_and_scoped(wired, monkeypatch):
+def test_reply_notification_is_after_commit_and_scoped(wired, monkeypatch):
     from modules.flow_gate.db.connection import in_transaction
     events = []
     def publish(event):
         assert not in_transaction()
-        assert titles(wired) == (TITLE, TITLE, "새 대화")
-        assert event.payload["targets"] == ["flow", "card"]
+        assert titles(wired) == (TITLE, TITLE, TITLE)
+        assert event.payload["targets"] == ["flow", "card", "chat"]
         events.append(event)
     monkeypatch.setattr(publisher, "broadcast_event_nowait", publish)
-    t._run(FA, USER["user_id"], 1)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"}, TITLE, wired["chat"])
     assert len(events) == 1
     assert events[0].group_id == FA
 
 
-def test_chat_and_run_overlap_keep_independent_claims(wired):
+def test_chat_and_run_overlap_share_one_claim(wired):
     wired["hook"] = lambda: t._run(FA, USER["user_id"], 1)
     t.chat(wired["chat"], USER, {"provider_id": "provider"})
-    assert wired["calls"] == 2 and titles(wired) == (TITLE, TITLE, TITLE)
+    assert wired["calls"] == 1 and titles(wired) == (TITLE, TITLE, TITLE)
 
 
 def test_run_without_chat_does_not_create_chat(wired, monkeypatch):
     monkeypatch.setattr(t, "run_context", lambda *args: ("provider", TEXT, None))
     before = documents.list_documents("p", group_id=FA, type_code="CH")
     t._run(FA, USER["user_id"], 1)
-    assert titles(wired) == (TITLE, TITLE, "새 대화")
+    assert titles(wired) == ("새 플로우", None, "새 대화")
+    assert wired["calls"] == 0
     assert documents.list_documents("p", group_id=FA, type_code="CH") == before
 
 
