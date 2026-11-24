@@ -3354,7 +3354,6 @@ export default {
       agents: 'System agents',
       projects: 'All projects',
       voice: 'Voice input',
-      terminal: 'Web terminal',
     },
     me_nav: {
       account: 'Account · display',

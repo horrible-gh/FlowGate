@@ -3,8 +3,7 @@
     :flow-id="win.id" :title="titleOf(win.id)" :session="win.session" :position="i"
     :visible="win.id === flowId" :focused="win.id === focusedId" :z-index="win.z"
     :designer="designerNow(win.id)" :fill-target="fillTarget ?? null"
-    @focus="focus(win.id)" @close="close(win.id)" @reopen="reopen(win.id)" @designer="on => setDesigner(win.id, on)"
-    @disabled="onDisabled(win.id)" />
+    @focus="focus(win.id)" @close="close(win.id)" @reopen="reopen(win.id)" @designer="on => setDesigner(win.id, on)" />
   <ToastHost v-if="toasts.length" :toasts="toasts" :dismiss-label="w.dismiss" @dismiss="dismissToast" />
 </template>
 
@@ -14,12 +13,11 @@
 // shell keeps running, opening that Flow again shows it. Closing a Flow tab closes its terminal (the user could no
 // longer reach it, and it would hold one of the three sessions until the idle timeout).
 // The button is decided by GET /terminal/status of the open Flow. A login token that is not an admin's never asks
-// (the server answers not_admin anyway): the button is not drawn. The system setting off hides it for admins too.
+// (the server answers not_admin anyway): the button is not drawn. There is no on/off setting (F85): an administrator
+// always gets the button.
 // 0015-T A: 모달리스 ↔ 디자이너. A terminal can fill the whole Designer area under the Flow tab strip (`fillTarget`,
 // given by the Center column) and go back to its floating window, without ending the shell. Which Flow's terminal fills
 // the Designer is kept here per Flow (dock.ts); the Center column asks `designerActive` to show the fill place.
-// 0015-T C: the system setting turned off while a terminal is open — its WebSocket closes with 4403 /
-// terminal_disabled; that terminal is just closed (no "세션이 끝났습니다") and the status is read again (button hidden).
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
@@ -84,8 +82,6 @@ async function refreshStatus() {
     const status = await readTerminalStatus(id)
     if (!alive || seq !== statusSeq) return
     flowTerminalUi.status = status
-    // 0015-T C-2: turned off — no terminal stays on screen (the server has closed their sessions already).
-    if (status && status.enabled === false) closeAll()
   } catch {
     if (alive && seq === statusSeq) flowTerminalUi.status = null
   }
@@ -132,15 +128,6 @@ function close(id: string) {
   drop(id)
   void refreshStatus()
 }
-function closeAll() {
-  for (const win of [...windows.value]) refs.get(win.id)?.dispose()
-  for (const win of [...windows.value]) drop(win.id)
-}
-/** The setting was turned off while this terminal was open (WebSocket 4403 / terminal_disabled). */
-function onDisabled(id: string) {
-  drop(id)
-  void refreshStatus()
-}
 /** [새로 열기] of an ended terminal: a new session for the same Flow, in the same place (floating / Designer). */
 async function reopen(id: string) {
   windows.value = windows.value.filter(x => x.id !== id)
@@ -167,12 +154,10 @@ watch(() => !!props.flowId && windows.value.some(x => x.id === props.flowId), on
 /* ── notices ── */
 const toasts = ref<ToastHostItem[]>([])
 let toastSeq = 0
-const FAILURE_WORD: Record<Exclude<OpenFailure, 'disabled'>, 'limit' | 'exists' | 'notAdmin' | 'noCwd' | 'failed'> = {
+const FAILURE_WORD: Record<OpenFailure, 'limit' | 'exists' | 'notAdmin' | 'noCwd' | 'failed'> = {
   limit: 'limit', exists: 'exists', not_admin: 'notAdmin', no_cwd: 'noCwd', failed: 'failed',
 }
 function notify(failure: OpenFailure) {
-  // Turned off meanwhile: no notice — the status read that follows hides the button (0015-T C).
-  if (failure === 'disabled') return
   const tone = failure === 'failed' ? 'danger' : 'warning'
   toasts.value = [...toasts.value, { id: ++toastSeq, tone, message: w.value[FAILURE_WORD[failure]] }]
 }

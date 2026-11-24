@@ -1,8 +1,8 @@
 /** flowgate.v02test.0078 (터미널 테스트): the floating terminal window itself — the part the screen card replaced with a
  *  stand-in. xterm.js and the WebSocket are replaced by recording fakes, so this checks what the window does with the
  *  agreed frames: the ticket-only address, the title-bar folder, input / resize frames, Hangul output, the card band,
- *  the close confirmation while a command runs (DELETE once), and "세션이 끝났습니다" + [새로 열기] after an end — but not
- *  after a close for terminal_disabled (4403, 0015-T C-2): that window just asks to be closed. */
+ *  the close confirmation while a command runs (DELETE once), and "세션이 끝났습니다" + [새로 열기] after an end, with the
+ *  server's start-failure message when the shell could not start (F85). */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -242,26 +242,14 @@ describe('FlowTerminalWindow — ended session', () => {
   })
 })
 
-describe('FlowTerminalWindow — the system setting turned off (0015-T C-2)', () => {
-  it('a close with 4403 / terminal_disabled shows no "세션이 끝났습니다" nor [새로 열기]: it asks to be closed, sends no DELETE', async () => {
-    const { socket, term } = await mountWindow()
+describe('FlowTerminalWindow — a close and a start failure (F85: no on/off setting)', () => {
+  it('a close with the old 4403 / terminal_disabled is just "세션이 끝났습니다" now (no hidden path)', async () => {
+    const { socket } = await mountWindow()
     socket.open()
     socket.dropWith(4403, 'terminal_disabled')
     await nextTick()
-    expect(q('flow-terminal-ended')).toBeNull()
-    expect(q('flow-terminal-reopen')).toBeNull()
-    expect(wrapper!.emitted('disabled')).toHaveLength(1)
-    expect(term.disposed).toBe(true)
-    expect(api.closeTerminalSession).not.toHaveBeenCalled()
-  })
-
-  it('the reason alone is enough too', async () => {
-    const { socket } = await mountWindow()
-    socket.open()
-    socket.dropWith(1000, 'terminal_disabled')
-    await nextTick()
-    expect(wrapper!.emitted('disabled')).toHaveLength(1)
-    expect(q('flow-terminal-ended')).toBeNull()
+    expect(q('flow-terminal-ended')!.dataset.reason).toBe('closed')
+    expect(q('flow-terminal-reopen')).not.toBeNull()
   })
 
   it('any other close is still "세션이 끝났습니다"', async () => {
@@ -269,7 +257,18 @@ describe('FlowTerminalWindow — the system setting turned off (0015-T C-2)', ()
     socket.open()
     socket.dropWith(1006, '')
     await nextTick()
-    expect(wrapper!.emitted('disabled')).toBeUndefined()
     expect(q('flow-terminal-ended')!.dataset.reason).toBe('closed')
+    expect(q('flow-terminal-ended-message')).toBeNull()
+  })
+
+  it('a shell that could not start shows the server message (pywinpty missing → pip install hint)', async () => {
+    const { socket } = await mountWindow()
+    socket.open()
+    socket.frame({ type: 'exit', reason: 'error', code: null,
+      message: 'The Windows terminal component (pywinpty) is not installed. Run `pip install -r server/requirements.txt` on the server and restart it.' })
+    await nextTick()
+    expect(q('flow-terminal-ended')!.dataset.reason).toBe('error')
+    expect(q('flow-terminal-ended')!.textContent).toContain('오류로 끝났습니다')
+    expect(q('flow-terminal-ended-message')!.textContent).toContain('pip install -r server/requirements.txt')
   })
 })
