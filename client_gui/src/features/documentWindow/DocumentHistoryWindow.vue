@@ -1,5 +1,6 @@
 <template>
   <ModelessShell kind-color="#8b9bb2"
+    :badge="documentNumberBadge(win.docId)"
     ref="shell"
     :open="true"
     :initial-x="win.x"
@@ -135,6 +136,7 @@ import { documentErrorOf, documentHistoryRead, type DocumentHistory, type Docume
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import { documentNumberBadge } from '@/core/overlay/modelessRegistry'
 import {
   DOCUMENT_HISTORY_FILTERS,
   documentHistoryCounts,

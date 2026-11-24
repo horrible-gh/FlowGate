@@ -32,6 +32,18 @@ export interface GitExecution {
   detail?: string | null
   // A step passed over without stopping the run (only 받아오기), with the server's code.
   skipped?: Partial<Record<GitExecutionStep, string>>
+  // flowgate.v02test.0068: the AI resolver of the conflict session this run waits on (`mergeId`): running, or
+  // failed (it ended with conflicts left) with the server's refusal code and the lines it lost. null = none.
+  conflictAi?: GitConflictAi | null
+}
+export interface GitConflictAi {
+  state: 'running' | 'failed'
+  runId?: string | null
+  code?: string | null
+  path?: string | null
+  lines?: readonly string[]
+  lineCount?: number
+  provider?: string | null
 }
 /** flowgate.v02test.0068: what the Git panel tells the Designer's Flow tab about the shown Flow's run (`git-activity`). */
 export interface GitTabActivity {

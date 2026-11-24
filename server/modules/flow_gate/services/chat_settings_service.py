@@ -69,7 +69,7 @@ SEND_ACTION_DEFAULT = "none"
 # "checkpoint" = the chat's context checkpoint decides the window (message menu: from this
 # message / from the next one). Without a checkpoint in that chat the last CONTEXT_CHECKPOINT_FALLBACK_TURNS go.
 CONTEXT_MODE_DOMAIN = ("recent", "all", "checkpoint", "checkpoint_recent")
-CONTEXT_MODE_DEFAULT = "recent"
+CONTEXT_MODE_DEFAULT = "checkpoint_recent"
 CONTEXT_CHECKPOINT_FALLBACK_TURNS = 5
 
 # -- the design domain -- kept in its own separate storage ------
@@ -118,7 +118,7 @@ def defaults() -> dict:
         "send_action": SEND_ACTION_DEFAULT,
         "context_mode": CONTEXT_MODE_DEFAULT,
         "context_turns": CONTEXT_TURNS_DEFAULT,
-        "checkpoint_max_turns": 10,
+        "checkpoint_max_turns": 5,
         "updated_at": None,
     }
 
@@ -219,7 +219,7 @@ def resolve_chat_settings(user_id: Optional[str], scope: Optional[tuple[str, str
             row.get("context_mode"), CONTEXT_MODE_DOMAIN, CONTEXT_MODE_DEFAULT
         ),
         "context_turns": _normalize_turns(row.get("context_turns")),
-        "checkpoint_max_turns": _normalize_turns(row.get("checkpoint_max_turns", 10)),
+        "checkpoint_max_turns": _normalize_turns(row.get("checkpoint_max_turns", 5)),
         "updated_at": row.get("updated_at"),
         "source_access_mode": source_access_mode,
         "command_policy": command_policy,

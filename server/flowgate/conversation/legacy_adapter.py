@@ -321,6 +321,21 @@ def complete_prompt(project_id: str, provider_id: str, prompt: str, *, timeout: 
     return outcome.text, None
 
 
+def naming_remote_provider(project_id: str, provider_id: str) -> bool:
+    """Check effective provider metadata without invoking the connection-test path."""
+    from modules.flow_gate.services import ai_connection_test_service as connection
+    view = connection._effective(project_id)
+    provider = next((p for p in view.get("providers", []) if p.get("id") == provider_id), {})
+    return provider.get("exec_type") == "cli" and provider.get("exec_location") == "remote"
+
+
+def naming_chat(flow_id):
+    from modules.flow_gate.db.connection import get_store
+    row = get_store()._fetch_one(
+        "SELECT doc_id FROM documents WHERE group_id = ? AND type_code = 'CH' ORDER BY doc_id LIMIT 1", [flow_id])
+    return row["doc_id"] if row else None
+
+
 # ── conversation turns ───────────────────────────────────────────────────────
 
 def current_head_seq(doc_id: str) -> int:

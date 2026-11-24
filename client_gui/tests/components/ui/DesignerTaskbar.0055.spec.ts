@@ -36,7 +36,7 @@ describe('taskbar window lifecycle', () => {
     expect(element.style.display).toBe('none')
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
     // A taskbar item shows the window title only, with no status word next to it.
-    expect(wrapper.get('.minimized-item').text()).toBe('□Document')
+    expect(wrapper.get('.minimized-item').text()).toBe('Document')
     expect(wrapper.find('[role="separator"]').exists()).toBe(true)
     await wrapper.get('.minimized-item').trigger('click'); await tick()
     expect([element.style.left, element.style.top, element.style.width, element.style.height]).toEqual(before)
@@ -72,10 +72,13 @@ describe('taskbar window lifecycle', () => {
     const { wrapper } = bar()
     for (let i = 0; i < 12; i++) { panel({ title: `Window ${i}` }); await tick(); clickMinimize(); await tick() }
     await tick()
-    expect(wrapper.findAll('.minimized-item')).toHaveLength(taskbarCapacity(1100, 12))
-    expect(wrapper.get('.overflow-trigger').text()).toBe(`▾ +${12 - taskbarCapacity(1100, 12)}`)
+    // Two pinned buttons take room too (the terminal button is not drawn without terminal access).
+    const fits = taskbarCapacity(1100, 12, 'flowgate', 2)
+    expect(wrapper.findAll('[data-test="taskbar-pin"]')).toHaveLength(2)
+    expect(wrapper.findAll('.minimized-item')).toHaveLength(fits)
+    expect(wrapper.get('.overflow-trigger').text()).toBe(`▾ +${12 - fits}`)
     await wrapper.get('.overflow-trigger').trigger('click'); await tick()
-    expect(wrapper.findAll('[role="menuitem"]')).toHaveLength(12 - taskbarCapacity(1100, 12))
+    expect(wrapper.findAll('[role="menuitem"]')).toHaveLength(12 - fits)
     await wrapper.get('[role="menuitem"]').trigger('click'); await tick()
     expect(modelessWindows.value.filter(entry => entry.minimized)).toHaveLength(11)
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)

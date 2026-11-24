@@ -721,6 +721,8 @@ def append_turn(
     timing: Optional[TurnTiming] = None,
     images: Optional[list[str]] = None,
     audio_id: Optional[str] = None,
+    naming_title: Optional[str] = None,
+    naming_flow_title: Optional[str] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     if audio_id is not None:
@@ -856,8 +858,13 @@ def append_turn(
             from modules.flow_gate.services import chat_run_hooks
             if chat_run_hooks.registered(chat_run_hooks.ON_CONVERSATION_REPLY_APPENDED):
                 token = actor.get("token") or {}
+                from modules.flow_gate.graph_workflow.services import first_names_hooks
+                naming_handled = actor.get("kind") == "worker"
+                if naming_handled:
+                    first_names_hooks.submitted(token, naming_title, doc_id, flow_title=naming_flow_title)
                 naming_context = {k: token.get(k) for k in ("ai_run_id", "issued_to", "provider_id", "doc_ref")}
-                chat_run_hooks.conversation_reply_appended(doc_id, {**row, "_naming_context": naming_context})
+                chat_run_hooks.conversation_reply_appended(doc_id, {**row, "_naming_context": naming_context,
+                                                                  "_naming_handled": naming_handled})
             else:
                 from modules.flow_gate.services import chat_activity_anchor_service
                 chat_activity_anchor_service.on_turn_appended(doc_id, row)
