@@ -128,7 +128,7 @@ import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
-import { clearGitTabResult, gitTabActivity, observeGitTabActivity, pruneGitTabActivity } from './gitTabActivity'
+import { gitTabActivity, observeGitTabActivity, pruneGitTabActivity, setActiveGitTab } from './gitTabActivity'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
 import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
@@ -264,8 +264,10 @@ const tabChatEnds = computed(() => {
   for (const [flowId, mark] of Object.entries(tabMarks.marks)) if (mark.chat) ends[flowId] = mark.chat
   return ends
 })
-// flowgate.v02test.0068: a Git result mark stays on its tab until the tab is activated again (left and come back) or closed.
-watch(() => props.center.state.activeFlowId, (flowId) => { if (flowId) clearGitTabResult(flowId) })
+// flowgate.v02test.0068: the shown tab keeps no Git result (the Git panel's run box says it); another tab keeps its result
+// until it is activated or closed.
+watch(() => props.center.state.activeFlowId, (flowId) => { setActiveGitTab(flowId ?? null) }, { immediate: true })
+onUnmounted(() => setActiveGitTab(null))
 watch(() => props.center.state.tabs.map((tab) => tab.flowId).join('\n'), () => {
   pruneGitTabActivity(new Set(props.center.state.tabs.map((tab) => tab.flowId)))
 })
