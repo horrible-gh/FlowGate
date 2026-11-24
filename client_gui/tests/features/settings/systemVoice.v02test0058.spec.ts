@@ -6,6 +6,7 @@ import { registerAppMessages } from '@/app/i18n'
 import type { VoiceService, VoiceStatus } from '@/features/conversation/voice/api'
 import { resetVoiceStore } from '@/features/conversation/voice/voiceStore'
 import SystemVoiceSettingsView from '@/features/settings/views/SystemVoiceSettingsView.vue'
+import ComposerVoiceSettings from '@/features/conversation/ComposerVoiceSettings.vue'
 
 // 시스템 › 음성 입력: state and on/off, install (with progress and cancel), make default, test, delete.
 const net = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const net = vi.hoisted(() => ({
   setDefault: vi.fn(),
   setEnabled: vi.fn(),
   restart: vi.fn(),
+  test: vi.fn(),
 }))
 vi.mock('@/features/conversation/voice/api', async (original) => ({
   ...(await original<typeof import('@/features/conversation/voice/api')>()),
@@ -32,6 +34,7 @@ vi.mock('@/features/conversation/voice/api', async (original) => ({
   setVoiceDefault: net.setDefault,
   setVoiceEnabled: net.setEnabled,
   restartVoice: net.restart,
+  testTranscribe: net.test,
 }))
 vi.mock('@/features/settings/components/systemNav', () => ({ useSystemNav: () => computed(() => []) }))
 
@@ -44,7 +47,7 @@ const catalog = (installed: string[] = [], defaultId: string | null = null): Voi
   { id: 'whisper.cpp', name: 'whisper.cpp', version: '1.8.2', license: 'MIT', installed: installed.length > 0, available: true, unavailableReason: null,
     models: ['small', 'base'].map((id) => model(id, { installed: installed.includes(id), isDefault: id === defaultId })) },
 ]
-const status = (extra: Partial<VoiceStatus> = {}): VoiceStatus => ({ enabled: false, state: 'not_installed', defaultSelection: null, error: null, canManage: true, ...extra })
+const status = (extra: Partial<VoiceStatus> = {}): VoiceStatus => ({ enabled: false, state: 'not_installed', defaultSelection: null, error: null, canManage: true, retired: [], ...extra })
 const ON = status({ enabled: true, state: 'on', defaultSelection: { service: 'whisper.cpp', model: 'small' } })
 
 let wrappers: VueWrapper[] = []
@@ -192,4 +195,60 @@ describe('installed', () => {
     expect(net.restart).toHaveBeenCalled()
     expect(w.get('[data-testid="voice-state"]').text()).toBe('켜짐')
   })
+})
+
+
+describe('retired SenseVoice (F86-7 U1)', () => {
+  const RETIRED = { service: 'sherpa-onnx', model: 'sensevoice-small-int8', name: 'SenseVoiceSmall int8', installed: true, wasDefault: true }
+  it('shows a leftover install or stored default as no longer supported, never as a choice', async () => {
+    net.status.mockResolvedValue(status({ retired: [RETIRED] }))
+    net.catalog.mockResolvedValue([{ ...catalog()[0], id: 'sherpa-onnx', license: 'Apache-2.0', models: [model('zipformer-en-20m')] }])
+    const w = open()
+    await flushPromises()
+    expect(w.get('[data-testid="voice-retired"]').text()).toContain('SenseVoiceSmall int8')
+    expect(w.get('[data-testid="voice-retired"]').text()).toContain('지원 종료')
+    expect(w.findAll('[data-testid="voice-model"] option').map((o) => o.attributes('value'))).toEqual(['zipformer-en-20m'])
+    expect(w.text()).not.toContain('FunASR')
+    expect(w.find('[data-testid="voice-license-notice"] input').exists()).toBe(false)
+  })
+  it('shows nothing retired in the normal case', async () => {
+    net.status.mockResolvedValue(status())
+    net.catalog.mockResolvedValue(catalog())
+    const w = open()
+    await flushPromises()
+    expect(w.find('[data-testid="voice-retired"]').exists()).toBe(false)
+  })
+})
+
+
+it('uploads user audio to a Korean model without a bundled sample', async () => {
+  net.status.mockResolvedValue(status())
+  net.catalog.mockResolvedValue([{ ...catalog()[0], id: 'vosk', models: [model('small-ko', { installed: true })] }])
+  net.test.mockResolvedValue({ text: '사용자 음성', elapsedMs: 100 })
+  const w = open()
+  await flushPromises()
+  const file = new File(['user-audio'], 'my-recording.wav', { type: 'audio/wav' })
+  const input = w.get('[data-testid="voice-test-upload"]')
+  Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+  await input.trigger('change')
+  await flushPromises()
+  expect(net.test).toHaveBeenCalledWith(file, file.name, { service: 'vosk', model: 'small-ko' })
+  expect(w.get('[data-testid="voice-test-out"]').text()).toContain('사용자 음성')
+})
+
+it('installs from the composer without an acknowledgement step', async () => {
+  net.status.mockResolvedValue(status())
+  net.catalog.mockResolvedValue([{ ...catalog()[0], id: 'sherpa-onnx', models: [model('zipformer-en-20m')] }])
+  net.install.mockResolvedValue('vi_composer')
+  const w = mount(ComposerVoiceSettings, { global: { plugins: [i18n] } })
+  wrappers.push(w)
+  await flushPromises()
+  await w.get('[data-test="conv-voice-model"]').trigger('click')
+  const button = w.get('[data-test="conv-voice-install-zipformer-en-20m"]')
+  expect(button.attributes('disabled')).toBeUndefined()
+  expect(w.find('[data-testid="voice-license-notice"] input').exists()).toBe(false)
+  await button.trigger('click')
+  await flushPromises()
+  expect(net.install.mock.calls[0]).toEqual([{ service: 'sherpa-onnx', model: 'zipformer-en-20m' }])
+  expect(net.setDefault).not.toHaveBeenCalled()
 })

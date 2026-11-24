@@ -3,7 +3,7 @@
 import { flushPromises } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGitSession, type GitSession } from '@/features/git/gitSession'
-import { G, P, createFakeGitSource, manualSleep, row, status } from './fakeGitSource'
+import { G, P, createFakeGitSource, gitError, manualSleep, row, status } from './fakeGitSource'
 
 let session: GitSession | null = null
 afterEach(() => { session?.dispose(); session = null })
@@ -79,5 +79,28 @@ describe('conflict card of an open 받아오기 session git/status has no row fo
     s.adoptOpenSession({ groupId: G, mergeId: 553, kind: 'group_update' })
     expect(s.groupCard.value).toBe('conflict')
     expect(s.pendingRow.value?.mergeId).toBe(553)
+  })
+
+  it('a session that already ended (404 on its files) is not an error: the name is dropped and Git is read again', async () => {
+    const fake = createFakeGitSource({ status: status({ pending: [] }) })
+    const s = await open(fake)
+    fake.source.fetchConflicts.mockRejectedValueOnce(gitError(404, 'not_found'))
+    const reads = fake.source.loadStatus.mock.calls.length
+    s.adoptOpenSession({ groupId: G, mergeId: 553, kind: 'group_update' })
+    await flushPromises()
+    expect(s.state.notices.conflict).toBeUndefined()
+    expect(s.state.openSession).toBeNull()
+    expect(s.groupCard.value).toBeNull()
+    expect(s.state.conflictLoad).toBe('idle')
+    // The adopt read plus the one read after the 404 — and no loop.
+    expect(fake.source.loadStatus.mock.calls.length).toBe(reads + 2)
+  })
+
+  it('a 404 on the files of a conflict row git/status does give is still shown as an error', async () => {
+    const fake = createFakeGitSource({ status: status({ pending: [row()] }) })
+    fake.source.fetchConflicts.mockRejectedValue(gitError(404, 'not_found'))
+    const s = await open(fake)
+    expect(s.state.conflictLoad).toBe('error')
+    expect(s.state.notices.conflict).toMatchObject({ code: 'failed', params: { code: 'not_found' } })
   })
 })

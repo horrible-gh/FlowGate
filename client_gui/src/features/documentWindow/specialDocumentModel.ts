@@ -5,6 +5,7 @@
 // of a test report as its saved text says them.
 import type { TestSpecDocument, TestSpecEvidence, TestSpecRecordRow, TestSpecResultRow, WorkPlanDocument, WorkPlanQuantity } from '@/features/document'
 import { splitDocumentSource } from './documentWindowModel'
+import { PRODUCT_NAME } from '@shared/productName'
 
 // --- Document type names ---------------------------------------------------------------------------
 
@@ -287,7 +288,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
     none: '없음',
     source: 'source',
     carried: '이전 기록에서 유지: {run_id}',
-    footer: '*이 시험성적서는 결과 기록 {run_id} 로부터 FlowGate가 조립했다. 종합 판정은 문서 본문이 아니라 서버 기록으로 결정된다.*',
+    footer: `*이 시험성적서는 결과 기록 {run_id} 로부터 ${PRODUCT_NAME}가 조립했다. 종합 판정은 문서 본문이 아니라 서버 기록으로 결정된다.*`,
     yes: '필수',
     no: '선택',
     pending: {
@@ -304,7 +305,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
       no_result: '결과 없음',
       kept: '{status} (이전 기록 유지)',
       reported: '{status} (이번 run 결과)',
-      footer: '*이 레포트는 시험 run {run_id} 접수 시 FlowGate가 만들었다. 종합 판정은 결과가 기록된 뒤 서버 기록으로 결정된다.*',
+      footer: `*이 레포트는 시험 run {run_id} 접수 시 ${PRODUCT_NAME}가 만들었다. 종합 판정은 결과가 기록된 뒤 서버 기록으로 결정된다.*`,
     },
     basis: ['현재 소스와 같음', '실행 후 소스가 바뀌어 이 결과는 현재 소스에 유효하지 않음 — 다시 실행 필요', '현재 소스를 측정할 수 없어 유효 여부를 확인하지 못함 — 사람 판단 필요'],
   },
@@ -328,7 +329,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
     none: 'none',
     source: 'source',
     carried: 'carried over from {run_id}',
-    footer: '*FlowGate assembled this test report from result record {run_id}. The overall verdict is decided by the server record, not by this text.*',
+    footer: `*${PRODUCT_NAME} assembled this test report from result record {run_id}. The overall verdict is decided by the server record, not by this text.*`,
     yes: 'required',
     no: 'optional',
     pending: {
@@ -345,7 +346,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
       no_result: 'no result',
       kept: '{status} (earlier record kept)',
       reported: '{status} (this run)',
-      footer: '*FlowGate opened this report when test run {run_id} was admitted. The overall verdict is decided by the server record once results are recorded.*',
+      footer: `*${PRODUCT_NAME} opened this report when test run {run_id} was admitted. The overall verdict is decided by the server record once results are recorded.*`,
     },
     basis: ['matches the current source', 'the source changed after execution; this result is not valid for the current source — run again', 'the current source could not be measured; validity unknown — needs a human'],
   },
@@ -369,7 +370,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
     none: 'なし',
     source: 'source',
     carried: '以前の記録から維持: {run_id}',
-    footer: '*この試験成績書は結果記録 {run_id} からFlowGateが組み立てた。総合判定は本文ではなくサーバー記録で決まる。*',
+    footer: `*この試験成績書は結果記録 {run_id} から${PRODUCT_NAME}が組み立てた。総合判定は本文ではなくサーバー記録で決まる。*`,
     yes: '必須',
     no: '任意',
     pending: {
@@ -386,7 +387,7 @@ const REPORT_WORDS: Readonly<Record<'ko' | 'en' | 'ja', ReportWords>> = {
       no_result: '結果なし',
       kept: '{status} (以前の記録を維持)',
       reported: '{status} (今回のrun結果)',
-      footer: '*このレポートは試験run {run_id} の受付時にFlowGateが作成した。総合判定は結果記録後にサーバー記録で決まる。*',
+      footer: `*このレポートは試験run {run_id} の受付時に${PRODUCT_NAME}が作成した。総合判定は結果記録後にサーバー記録で決まる。*`,
     },
     basis: ['現在のソースと一致', '実行後にソースが変わったため、この結果は現在のソースに対して有効ではありません — 再実行が必要', '現在のソースを測定できず有効性を確認できません — 人の判断が必要'],
   },
