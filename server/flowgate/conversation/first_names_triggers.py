@@ -172,6 +172,13 @@ def run_context(flow_id, revision_no, provider_id=None):
             break
     binding = assignment_store.root_binding(flow_id) or {}
     root = documents.get_by_id(binding.get("doc_id")) if binding.get("doc_id") else None
+    if not binding.get("doc_id"):
+        # A draft card can already hold a document before confirmation persists a
+        # run binding. Reuse the naming target's resolution; never guess among roots.
+        from .first_names_ports import root_binding_context
+        _, preview = root_binding_context(flow_id)
+        if preview.status in ("bindable", "inherited") and preview.doc_id:
+            root = documents.get_by_id(preview.doc_id)
     text = ""
     if root:
         path, _ = paths.locate_storage_path(root.get("file_path") or "", root["project_id"],
