@@ -1,3 +1,4 @@
+<!-- @third-party Lucide: https://github.com/lucide-icons/lucide; ISC (including upstream inherited notices). Full text: third_party/licenses/lucide-LICENSE.txt at repository root. -->
 <template>
   <!-- bottom of the Conversation. Every control drives an existing
        contract through the session; nothing here opens a dialog — settings, the

@@ -166,7 +166,17 @@ def tmp_storage(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def seed_data(tmp_db):
+def _card_write_ports():
+    """Use the application's real write protection for this legacy inbox fixture."""
+    from flowgate.card_document_edit import integration
+    from modules.flow_gate.graph_workflow.services import card_document_ports
+    with patch.dict(card_document_ports._handlers):
+        integration.register()
+        yield
+
+
+@pytest.fixture(scope="module")
+def seed_data(tmp_db, _card_write_ports):
     """Seed test project + user + permissions."""
     from modules.flow_gate.db import projects, users
     from modules.flow_gate.db.connection import get_store, now_iso
@@ -1633,7 +1643,7 @@ class TestInboxEditDuplicateBodyGuard:
     def _post_new(
         self, tmp_path, group: str, doc_ref: str, doc_code: str,
         content: str | None = None, doc_path: str | None = None, dry_run: bool = False,
-        doc_type: str = "NR",
+        doc_type: str = "NR", title: str | None = None, flow_title: str | None = None,
     ):
         from modules.flow_gate.api import inbox_routes
         from modules.flow_gate.services import token_service
@@ -1649,6 +1659,10 @@ class TestInboxEditDuplicateBodyGuard:
             "project": "testprj", "module": "__ALL__", "group": group,
             "action": "new", "target_id": doc_ref, "doc_type": doc_type,
         }
+        if flow_title is not None:
+            payload["flow_title"] = flow_title
+        if title is not None:
+            payload["title"] = title
         if content is not None:
             payload["content"] = content
         if doc_path is not None:
@@ -1687,6 +1701,21 @@ class TestInboxEditDuplicateBodyGuard:
     _COLLAPSED_HEADER_NORMALIZATIONS = [
         {"kind": "collapsed_next_header", "line_start": 1, "inserted_breaks": 6}
     ]
+
+    @pytest.mark.parametrize("flow_title", [None, "로그인 오류 수정"])
+    def test_new_preserves_document_title_without_naming_seed(self, seed_data, tmp_path, monkeypatch, flow_title):
+        from modules.flow_gate.db import documents
+        from modules.flow_gate.graph_workflow.services import first_names_hooks
+        seeds = []
+        monkeypatch.setattr(first_names_hooks, "_title_handler", lambda token, title, doc_id: seeds.append(title))
+        report_title = "서버 수정 · 레포트"
+        response = self._post_new(tmp_path, "0001", "R0001", "NR7698" if flow_title else "NR7699",
+                                  content="# Report body\n", title=report_title, flow_title=flow_title)
+        assert response.status_code == 201, response.text
+        doc = documents.get_by_id(response.json()["doc_id"])
+        assert doc["title"] == report_title
+        assert Path(response.json()["stored_path"]).read_text(encoding="utf-8") == "# Report body\n"
+        assert seeds == [flow_title]
 
     def test_new_normalizes_collapsed_header_and_saves_repaired_body(self, seed_data, tmp_path):
         """'s cited collapsed one-liner is repaired to 7 LF lines before any

@@ -489,10 +489,8 @@
    ],
    "pageHeight": 1508,
    "capture": {
-    "file": "capture_wide1026.png",
-    "sha256": "ab8d29f102b410adb2e8054aad315e16a915b2b28c5c1b07c8ca3c3f9378e2d4",
-    "width": 1140,
-    "height": 1532
+    "status": "removed_corrupt_png",
+    "reason": "R7-1: historical PNG bytes were corrupted; retained measurements are historical, not new visual proof."
    }
   },
   "normal910": {
@@ -971,10 +969,8 @@
    ],
    "pageHeight": 1508,
    "capture": {
-    "file": "capture_normal910.png",
-    "sha256": "e4bdcb4452a84f3cb2209dbfb54e6bb97ff840edb2ad908bdbebe954149e0a2f",
-    "width": 1024,
-    "height": 1532
+    "status": "removed_corrupt_png",
+    "reason": "R7-1: historical PNG bytes were corrupted; retained measurements are historical, not new visual proof."
    }
   },
   "mid570": {
@@ -1455,10 +1451,8 @@
    ],
    "pageHeight": 1508,
    "capture": {
-    "file": "capture_mid570.png",
-    "sha256": "abbf2ceeb10ec5b107f58afaad02a8ddfb68719b868718f4520d280bfe7685d2",
-    "width": 660,
-    "height": 1532
+    "status": "removed_corrupt_png",
+    "reason": "R7-1: historical PNG bytes were corrupted; retained measurements are historical, not new visual proof."
    }
   },
   "narrow392": {
@@ -1937,10 +1931,8 @@
    ],
    "pageHeight": 1508,
    "capture": {
-    "file": "capture_narrow392.png",
-    "sha256": "9a39a172aea48c1fe075e776ccf3ca96f81ff0702db46c761114a8844d5f155a",
-    "width": 482,
-    "height": 1532
+    "status": "removed_corrupt_png",
+    "reason": "R7-1: historical PNG bytes were corrupted; retained measurements are historical, not new visual proof."
    }
   },
   "min236": {
@@ -2421,10 +2413,8 @@
    ],
    "pageHeight": 1508,
    "capture": {
-    "file": "capture_min236.png",
-    "sha256": "5c737e3722695e23b65a44de76dcde773021e0eb984d89c575594c7873b65b72",
-    "width": 326,
-    "height": 1532
+    "status": "removed_corrupt_png",
+    "reason": "R7-1: historical PNG bytes were corrupted; retained measurements are historical, not new visual proof."
    }
   }
  }

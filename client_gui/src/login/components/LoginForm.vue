@@ -1,3 +1,4 @@
+<!-- @third-party Feather; user icon: https://github.com/feathericons/feather; MIT. Full text: third_party/licenses/feather-LICENSE.txt at repository root. -->
 <template>
   <div class="fg-login-step">
     <h1 id="fg-login-title" class="fg-login-title">{{ t('auth.login.title') }}</h1>

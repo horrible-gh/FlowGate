@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from unidecode import unidecode
+from anyascii import anyascii
 
 # Allowed characters: a-z, 0-9, -, _
 ALLOWED = re.compile(r'[a-z0-9\-_]')
@@ -68,11 +68,12 @@ def romanize_to_slug(text: str) -> str:
     """
     Transliterate non-ASCII text (Korean, Japanese, Chinese, etc.) into a slug per M031 policy (`[a-z0-9_-]`).
     Raises ValueError on empty input or if transliteration yields an empty slug.
-    Intended for cases where the user can edit the result.
+    Intended only for new suggestions the user can edit; never re-key stored IDs.
+    AnyAscii 0.3.3 (ISC) may differ from legacy Unidecode output.
     """
     if not text:
         raise ValueError("text is empty")
-    romanized = unidecode(text)
+    romanized = anyascii(text)
     # Reuse existing slug conversion pipeline (lowercase, spaces→hyphens, allowed-character filter)
     return project_name_to_slug(romanized)
 

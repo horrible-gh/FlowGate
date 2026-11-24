@@ -8,7 +8,7 @@
         <!-- A small drawing of the style: a window title bar above a taskbar, in CSS only. -->
         <span class="pv" :data-preview="style" aria-hidden="true">
           <span class="pv-win"><span class="pv-title"><span class="pv-name" /><span class="pv-btns"><i /><i /></span></span></span>
-          <span class="pv-bar"><span class="pv-group"><i class="pv-menu" /><i /><i /></span></span>
+          <span class="pv-bar"><span class="pv-group"><svg v-if="style === 'modern'" class="pv-menu-mark" viewBox="0 0 24 24"><path d="M5 19V5h9M5 12h7M12 9l4 3-4 3M19 5v14" /></svg><i v-else class="pv-menu" /><i /><i /></span></span>
         </span>
         <span class="theme-name">{{ t(`gui.taskbar.style_${style}`) }}</span>
         <span v-if="selected === style" class="theme-check" aria-hidden="true">✓</span>
@@ -115,7 +115,7 @@ onMounted(load)
 [data-preview="modern"] .pv-title { border-bottom-color: transparent; background: color-mix(in srgb, var(--fg2-text) 5%, var(--fg2-panel)); }
 [data-preview="modern"] .pv-bar { justify-content: center; }
 [data-preview="modern"] .pv-group i { width: 7px; height: 7px; }
-[data-preview="modern"] .pv-group .pv-menu { background: var(--fg2-blue, #4ba3ff); }
+.pv-menu-mark { width: 9px; height: 9px; fill: none; stroke: var(--fg2-text); stroke-width: 2; }
 
 /* Dock: centred title, round buttons, and a floating rounded group of icons above the bottom edge. */
 [data-preview="dock"] .pv-win { border-radius: 6px; }

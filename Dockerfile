@@ -19,6 +19,9 @@ WORKDIR /build/client_gui
 COPY client_gui/package.json client_gui/package-lock.json* ./
 RUN npm install
 COPY client_gui/ ./
+# The Vite notice plugin reads the repository root, one level above client_gui.
+COPY LICENSE THIRD_PARTY_NOTICES.md /build/
+COPY third_party/ /build/third_party/
 RUN printf 'VITE_API_BASE_URL=/flowgate\n' > .env.production.local && npm run build
 
 # ── Stage 2: Python runtime ─────────────────────────────────────────────────
@@ -42,6 +45,10 @@ RUN apt-get update \
 COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r server/requirements.txt
+
+# Project and third-party notices; retain installed Python dist-info licenses.
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
+COPY third_party/ ./third_party/
 
 # Server source.
 COPY server/ ./server/

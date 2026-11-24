@@ -72,6 +72,7 @@
           <span class="cvs-name">
             {{ item.name }}<span v-if="item.realtime" class="cvs-tag rt">{{ t('gui.voice.settings.realtime_tag') }}</span><span v-if="item.isDefault" class="cvs-tag">{{ t('gui.voice.settings.default_tag') }}</span>
           </span>
+          <VoiceLicenseNotice v-if="browsingServiceInfo" :service="browsingServiceInfo" :model="item" @click.stop />
           <span class="cvs-r">
             <template v-if="installingThis(item.id)">
               <span class="cvs-prog"><i :style="{ width: `${progressPercent}%` }"></i></span>
@@ -126,6 +127,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VoicePrefs } from './voice/api'
+import VoiceLicenseNotice from './voice/VoiceLicenseNotice.vue'
 import { formatBytes, voiceErrorKey } from './voice/messages'
 import { errorCodeOf } from './voice/useVoiceInput'
 import { cancelInstall, findService, installModel, loadVoice, sameSelection, updatePrefs, useVoice } from './voice/voiceStore'

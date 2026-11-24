@@ -55,12 +55,22 @@ describe('status and catalog', () => {
     net.getRequest.mockResolvedValue({ data: { ok: true, enabled: true, state: 'on', default: { service: 'whisper.cpp', model: 'small' }, error: null, can_manage: true } })
     const status = await fetchVoiceStatus()
     expect(net.getRequest).toHaveBeenCalledWith('/api/v1/voice/status')
-    expect(status).toEqual({ enabled: true, state: 'on', defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: true })
+    expect(status).toEqual({ enabled: true, state: 'on', defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: true, retired: [] })
   })
 
   it('treats an unknown state as an error and a missing default as none', async () => {
     net.getRequest.mockResolvedValue({ data: { state: 'weird', default: null } })
-    expect(await fetchVoiceStatus()).toMatchObject({ state: 'error', defaultSelection: null, enabled: false, canManage: false })
+    expect(await fetchVoiceStatus()).toMatchObject({ state: 'error', defaultSelection: null, enabled: false, canManage: false, retired: [] })
+  })
+
+  it('maps retired models reported by the server (shown as no longer supported)', async () => {
+    net.getRequest.mockResolvedValue({ data: { state: 'off', default: null, can_manage: true, retired: [
+      { service: 'sherpa-onnx', model: 'sensevoice-small-int8', name: 'SenseVoiceSmall int8', status: 'retired', installed: true, was_default: false },
+      { bogus: true },
+    ] } })
+    expect((await fetchVoiceStatus()).retired).toEqual([
+      { service: 'sherpa-onnx', model: 'sensevoice-small-int8', name: 'SenseVoiceSmall int8', installed: true, wasDefault: false },
+    ])
   })
 
   it('maps the two-level catalog (service → models)', async () => {
@@ -112,9 +122,9 @@ describe('transcription and voice messages', () => {
 
   it('sends a paired service and model when given', async () => {
     net.postFormRequest.mockResolvedValue({ data: { text: 'x' } })
-    await transcribeAudio(new Blob(['x']), 'recording.m4a', { service: 'sherpa-onnx', model: 'sensevoice-small-int8' })
+    await transcribeAudio(new Blob(['x']), 'recording.m4a', { service: 'sherpa-onnx', model: 'zipformer-en-20m' })
     const form = formOf(net.postFormRequest.mock.calls[0])
-    expect([form.get('service'), form.get('model')]).toEqual(['sherpa-onnx', 'sensevoice-small-int8'])
+    expect([form.get('service'), form.get('model')]).toEqual(['sherpa-onnx', 'zipformer-en-20m'])
   })
 
   it('uploads a voice message to the Flow and returns the audio with its transcript', async () => {
@@ -184,7 +194,7 @@ describe('personal settings and the model in use', () => {
   it('uses the person\'s installed pick, else the administrator default', async () => {
     net.getRequest.mockResolvedValue({ data: CATALOG })
     const catalog = await fetchVoiceCatalog()
-    const status = { enabled: true, state: 'on' as const, defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: false }
+    const status = { enabled: true, state: 'on' as const, defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: false, retired: [] }
     const prefs = { action: 'text' as const, service: 'sherpa-onnx', model: 'zipformer-en-20m', realtime: true }
     expect(effectiveSelection(prefs, status, catalog)).toEqual({ service: 'sherpa-onnx', model: 'zipformer-en-20m' })
     // A deleted (or never installed) personal pick falls back to the default.
@@ -200,4 +210,21 @@ describe('personal settings and the model in use', () => {
     expect(voiceErrorKey('voice_disk_full', () => true)).toBe('gui.voice.errors.voice_disk_full')
     expect(voiceErrorKey('something_new', () => false)).toBe('gui.voice.errors.failed')
   })
+})
+
+
+it('preserves model terms independently of engine terms and installs without an acknowledgement field', async () => {
+  net.getRequest.mockResolvedValue({ data: { services: [{ id: 'sherpa-onnx', license: 'Apache-2.0', components: [
+    { filename: 'ffmpeg.zip', component_type: 'ffmpeg', license: 'GPL-3.0-or-later', distribution: 'direct-upstream-only', url: 'https://example.test/ffmpeg' },
+  ], native_notices: ['onnxruntime.dll 1.17.1: notices secured'], models: [
+    { id: 'zipformer-ko', license: 'Apache-2.0' },
+  ] }] } })
+  const [service] = await fetchVoiceCatalog()
+  expect(service.license).toBe('Apache-2.0')
+  expect(service.models[0]).toMatchObject({ license: 'Apache-2.0', defaultEligible: true })
+  expect(service.models[0]).not.toHaveProperty('requiresLicenseAck')
+  expect(service.components?.[0]).toMatchObject({ componentType: 'ffmpeg', license: 'GPL-3.0-or-later' })
+  net.postRequest.mockResolvedValue({ data: { install_id: 'vi_x' } })
+  await startVoiceInstall({ service: service.id, model: service.models[0].id })
+  expect(net.postRequest).toHaveBeenCalledWith('/api/v1/voice/installs', { service: 'sherpa-onnx', model: 'zipformer-ko' })
 })
