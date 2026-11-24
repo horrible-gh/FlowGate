@@ -1,3 +1,4 @@
+<!-- @third-party Lucide: https://github.com/lucide-icons/lucide; ISC (including upstream inherited notices). Full text: third_party/licenses/lucide-LICENSE.txt at repository root. -->
 <template>
   <ModelessShell kind-color="#e7a244" ref="shell" :open="true" :initial-x="Math.min(win.x, Math.max(0, viewportWidth - initialWidth - 16))" :initial-y="Math.min(win.y, Math.max(0, viewportHeight - initialHeight - 16))" :initial-width="initialWidth" :initial-height="initialHeight"
     :min-width="540" :min-height="350" :minimized="win.minimized" @update:minimized="win.minimized = $event" @close="requestClose">

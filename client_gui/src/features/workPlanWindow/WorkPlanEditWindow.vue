@@ -1,3 +1,5 @@
+<!-- @third-party Phosphor: https://github.com/phosphor-icons/core; MIT. Full text: third_party/licenses/phosphor-LICENSE.txt at repository root. -->
+<!-- @third-party Lucide: https://github.com/lucide-icons/lucide; ISC (including upstream inherited notices). Full text: third_party/licenses/lucide-LICENSE.txt at repository root. -->
 <template>
   <ModelessShell kind-color="#e7a244"
     ref="shell"

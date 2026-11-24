@@ -1,0 +1,83 @@
+{
+  "retrieved_on": "2026-11-24",
+  "files": [
+    {
+      "path": "third_party/licenses/phosphor-LICENSE.txt",
+      "sha256": "b5b1f1da112d18ea2147decfd48ddc1bf2b5aeb6c265381579340e95b15a2bb2",
+      "source_url": "https://raw.githubusercontent.com/phosphor-icons/core/2b75f3ad12b420c9504ef05df8d2564a28f8500e/LICENSE",
+      "upstream_commit": "2b75f3ad12b420c9504ef05df8d2564a28f8500e"
+    },
+    {
+      "path": "third_party/licenses/lucide-LICENSE.txt",
+      "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+      "source_url": "https://raw.githubusercontent.com/lucide-icons/lucide/c26ce5515667640ca2753e095ba319d225fc0d8d/LICENSE",
+      "upstream_commit": "c26ce5515667640ca2753e095ba319d225fc0d8d"
+    },
+    {
+      "path": "third_party/licenses/feather-LICENSE.txt",
+      "sha256": "308028e93fcf84972523cdf6e616f73168546b4953895f516d01287f16fe7bee",
+      "source_url": "https://raw.githubusercontent.com/feathericons/feather/1b002399e8758fb2bccea4d07312dc9e0f43dcb8/LICENSE",
+      "upstream_commit": "1b002399e8758fb2bccea4d07312dc9e0f43dcb8"
+    },
+    {
+      "path": "third_party/licenses/sherpa-onnx-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE",
+      "upstream_commit": "5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f"
+    },
+    {
+      "path": "third_party/licenses/psycopg2-binary-2.9.12-LICENSE.txt",
+      "sha256": "9614b85dfc9a72c5b2ca33144c1d7e1ed3b1c297459d9fb28a6a5762c2e8d71b",
+      "source_url": "https://files.pythonhosted.org/packages/b0/55/44df3965b5f297c50cc0b1b594a31c67d6127a9d133045b8a66611b14dfb/psycopg2_binary-2.9.12-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+      "artifact_sha256": "9fe06d93e72f1c048e731a2e3e7854a5bfaa58fc736068df90b352cefe66f03f",
+      "archive_member": "psycopg2_binary-2.9.12.dist-info/licenses/LICENSE",
+      "version": "2.9.12"
+    },
+    {
+      "path": "third_party/licenses/certifi-2026.11.20-LICENSE.txt",
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "source_url": "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl",
+      "artifact_sha256": "7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f",
+      "archive_member": "certifi-2026.11.20.dist-info/licenses/LICENSE",
+      "version": "2026.11.20"
+    },
+    {
+      "path": "third_party/licenses/pillow-13.0.0-LICENSE.txt",
+      "sha256": "dda12a98c1979cf3d94df1cff45d27a4cb3f04a60c76f76902ac54cac03ec0ce",
+      "source_url": "https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "artifact_sha256": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca",
+      "archive_member": "pillow-13.0.0.dist-info/licenses/LICENSE",
+      "version": "13.0.0"
+    },
+    {
+      "path": "third_party/licenses/passlib-1.7.4-LICENSE.txt",
+      "sha256": "a95ba8f1af88ff8d5f0d0c33519f430b7f9d8992b69d4bc369ac0423a7a05a89",
+      "source_url": "https://files.pythonhosted.org/packages/3b/a4/ab6b7589382ca3df236e03faa71deac88cae040af60c071a78d254a62172/passlib-1.7.4-py2.py3-none-any.whl",
+      "artifact_sha256": "aa6bca462b8d8bda89c70b382f0c298a20b5560af6cbfa2dce410c0a2fb669f1",
+      "archive_member": "passlib-1.7.4.dist-info/LICENSE",
+      "version": "1.7.4"
+    },
+    {
+      "path": "third_party/licenses/marked-18.0.5-LICENSE.txt",
+      "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+      "source_url": "https://registry.npmjs.org/marked/-/marked-18.0.5.tgz",
+      "upstream_commit": "4063c638cb621c09091d41b26f323ff074416bb9",
+      "archive_member": "package/LICENSE"
+    },
+    {
+      "path": "third_party/licenses/MPL-2.0.txt",
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+      "source_url": "https://www.mozilla.org/media/MPL/2.0/index.txt"
+    },
+    {
+      "path": "third_party/licenses/LGPL-3.0.txt",
+      "sha256": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1",
+      "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/LGPL-3.0-or-later.txt"
+    },
+    {
+      "path": "third_party/licenses/GPL-3.0.txt",
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+      "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/GPL-3.0-or-later.txt"
+    }
+  ]
+}
