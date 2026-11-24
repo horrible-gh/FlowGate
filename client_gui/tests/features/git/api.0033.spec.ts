@@ -45,6 +45,8 @@ describe('reads', () => {
         target_branch: 'v0.2',
         files: [{ path: 'a\\b.ts', content: '<<<<<<< x', conflict_count: 1 }, { path: 'c.ts', content: '', conflict_count: 0 }],
         resolved_paths: ['c.ts'],
+        // flowgate.v02test.0068: the server's record of the last failed AI attempt.
+        resolver_attempt: { run_id: 'r1', state: 'failed', code: 'conflict_side_dropped', path: 'c.ts', lines: ['x = 1'], line_count: 1, provider: 'opus', at: 't' },
       },
     })
     await expect(fetchConflicts('p.m.0001', 7)).resolves.toEqual({
@@ -60,6 +62,7 @@ describe('reads', () => {
       ],
       // the two additive answers (none here)
       abortFailure: null,
+      resolverAttempt: { runId: 'r1', state: 'failed', code: 'conflict_side_dropped', path: 'c.ts', lines: ['x = 1'], lineCount: 1, provider: 'opus' },
       companionFiles: [],
     })
     expect(getRequest).toHaveBeenCalledWith('/api/v1/groups/p.m.0001/git/merge/7/conflicts')

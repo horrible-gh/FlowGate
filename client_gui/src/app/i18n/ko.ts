@@ -1551,6 +1551,10 @@ export default {
       ai_close: '닫기',
       ai_server_default: '서버 기본 AI',
       ai_ended: 'AI 해결 종료({status}) · {name} · 남은 충돌 {n}개',
+      ai_failed: 'AI 해결 실패 · {why}',
+      ai_failed_next: '다른 AI로 다시 하거나 직접 해결하세요.',
+      ai_why: { dropped: '한쪽 변경이 빠짐', lines: '빠진 줄 {n}개', markers: '충돌 표시가 남음', ended: '해결하지 못하고 끝남', cancelled: '중지됨' },
+      abort_short: '중단',
       blocked: {
         missing_merge: '충돌 번호 없음 · Git 상태를 새로고침하세요',
         load_failed: '충돌 파일을 불러오지 못해 해결할 수 없음 · 아래 오류를 확인하세요',

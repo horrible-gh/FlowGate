@@ -1538,6 +1538,10 @@ export default {
       ai_close: '閉じる',
       ai_server_default: 'サーバー既定 AI',
       ai_ended: 'AI 解決終了({status}) · {name} · 残り競合 {n} 件',
+      ai_failed: 'AI 解決失敗 · {why}',
+      ai_failed_next: '別の AI でやり直すか、直接解決してください。',
+      ai_why: { dropped: '片側の変更が欠落', lines: '欠落 {n} 行', markers: '競合マーカーが残存', ended: '解決できずに終了', cancelled: '停止' },
+      abort_short: '中断',
       blocked: {
         missing_merge: '競合番号なし · Git 状態を更新してください',
         load_failed: '競合ファイルを読み込めないため解決できません · 下のエラーを確認してください',
