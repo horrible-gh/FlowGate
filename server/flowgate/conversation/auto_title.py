@@ -252,9 +252,8 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
                 return group, record
             if not seed and record.get("lease_until", 0) > time.time():
                 return group, {"busy": True}
-            text = (_first_user_message(chat_doc_id) or "") if chat_doc_id else str(message or "").strip()
-            if not text and chat_doc_id:
-                text = _first_user_message(chat_doc_id) or ""
+            text = ((_first_user_message(chat_doc_id) if chat_doc_id else None)
+                    or str(message or "").strip())
             if not seed and not allow_fallback:
                 return group, None
             if not seed and record.get("fallback_requested"):
