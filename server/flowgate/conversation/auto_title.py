@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 UPDATE_PERMISSION = "perm_document_update"
 META_KEY = "chat_auto_title"
 OWED, CLAIMED, DONE, FAILED, MANUAL = "owed", "claimed", "done", "failed", "manual"
-TITLE_MAX_CHARS = 40
+TITLE_MAX_CHARS = 30  # Shared names must fit graph_node_title_states (1..30).
 MESSAGE_MAX_CHARS = 2000
 TIMEOUT_SEC = 90
 MAX_TOKENS = 60
@@ -91,6 +91,7 @@ def build_prompt(message: str) -> str:
         "Write a short title for a conversation that begins with the user message below.\n"
         "- Use the same language as the message.\n"
         f"- At most {TITLE_MAX_CHARS} characters on one line, no quotes, no trailing period.\n"
+        "- Never include document IDs, flow IDs, card numbers, or internal identifiers.\n"
         "- Reply with the title only. Do not call tools, read or modify files, or run commands.\n"
         "\n"
         "User message:\n"
@@ -109,6 +110,25 @@ def clean_title(text: Optional[str], limit: int) -> Optional[str]:
     if len(line) > limit:
         line = line[: limit - 1].rstrip() + "…"
     return line or None
+
+
+# Check before truncation: a long task prefix must not hide an identifier suffix.
+_INTERNAL_ID = re.compile(
+    r"(?<![\w])(?:[a-z][\w-]*\.[a-z][\w-]*\.(?:\d{4,}|F\d+)"
+    r"(?:\.\d+-[a-z]+)?|\d{4,}-[a-z]{1,4}|F\d+(?:-\d+)?)(?![\w])",
+    re.IGNORECASE,
+)
+
+
+def clean_flow_title(text: Optional[str]) -> Optional[str]:
+    """Validate the shared candidate before any target or ledger is written."""
+    if not isinstance(text, str):
+        return None
+    line = clean_title(text, max(len(text), 1))
+    if not line or line.upper() == "NO_TITLE" or _INTERNAL_ID.search(line):
+        return None
+    from modules.flow_gate.graph_workflow.services.node_title_names import normalize_title, TITLE_MAX_CHARS as card_limit
+    return clean_title(normalize_title(line), min(TITLE_MAX_CHARS, card_limit, legacy_adapter.title_max_len()))
 
 
 def _first_user_message(doc_id: str) -> Optional[str]:
@@ -206,8 +226,7 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                         allow_fallback: bool = True) -> dict:
     """One durable candidate per flow, shared by every eligible target."""
     result = _generate_names(flow_id, user, provider_id, message, chat_doc_id,
-                             seed=clean_title(title, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len()))
-                                  if isinstance(title, str) else None,
+                             seed=clean_flow_title(title),
                              allow_fallback=allow_fallback)
     changed = result.get("changed", [])
     if changed:
@@ -299,9 +318,7 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
                     return {"status": "unchanged"}
                 answer, reason = legacy_adapter.complete_prompt(group["project_id"], provider_id, prompt,
                                                                 timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
-            title = clean_title(answer, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len()))
-            if title == "NO_TITLE":
-                title = None
+            title = clean_flow_title(answer)
             def remember():
                 current = p.ledger.load(key)
                 if current.get("ticket") != ticket:

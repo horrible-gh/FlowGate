@@ -414,3 +414,54 @@ def test_api_new_flow_title_reaches_shared_names(naming, monkeypatch, manual):
     body["flow_title"] = "후속 이름"
     inbox_routes._in_write_session(lambda *args: JSONResponse({"ok": True}, status_code=201), None, "raw", body)
     assert titles(naming) == expected
+
+
+@pytest.mark.parametrize("source", ["submission", "fallback"])
+@pytest.mark.parametrize("answer", ["Build a task management application", "가" * 41, "𠮷" * 35])
+def test_shared_long_title_fits_real_card_constraint(naming, source, answer):
+    naming["answer"] = answer
+    kwargs = {"title": answer} if source == "submission" else {}
+    result = a.generate_flow_names(FA, USER, "p", TEXT, naming["chat"], **kwargs)
+    assert result["targets"] == {"flow": "done", "root": "done", "chat": "done"}
+    expected = answer[:29] + "…"
+    assert titles(naming) == (expected, expected, expected)
+    assert ledger.load(FA)["candidate"] == expected
+    assert naming["calls"] == (0 if source == "submission" else 1)
+
+
+@pytest.mark.parametrize("bad", [
+    "flowgate.v02test.0080.0006-CH task", "Task flowgate.v02test.F80",
+    "0006-CH task", "F80-12 task", "NO_TITLE",
+    "Build an application with a very long prefix flowgate.v02test.0080.0006-CH",
+])
+def test_bad_submission_uses_task_fallback(naming, monkeypatch, bad):
+    monkeypatch.setattr(legacy_adapter, "get_run_record", lambda _: None)
+    monkeypatch.setattr(legacy_adapter, "persisted_naming_run", lambda _: None)
+    monkeypatch.setattr(t, "_schedule", lambda fn, *args: fn(*args))
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "p"},
+                      bad, naming["chat"])
+    assert titles(naming) == (TITLE, TITLE, TITLE)
+    assert naming["calls"] == 1
+    assert ledger.load(FA)["candidate"] == TITLE
+
+
+@pytest.mark.parametrize("source", ["submission", "fallback"])
+def test_invalid_candidate_never_reaches_any_target(naming, monkeypatch, source):
+    bad = "flowgate.v02test.0080.0006-CH title"
+    naming["answer"] = bad
+    if source == "submission":
+        monkeypatch.setattr(legacy_adapter, "naming_remote_provider", lambda *args: True)
+    result = a.generate_flow_names(FA, USER, "p", TEXT, naming["chat"],
+                                   title=bad if source == "submission" else None)
+    assert result["status"] == "unchanged"
+    assert titles(naming) == ("새 플로우", None, "새 대화")
+    assert not ledger.load(FA).get("candidate")
+    assert a.generate_flow_names(FA, USER, "p", TEXT, naming["chat"], title=TITLE)["status"] == "done"
+    assert titles(naming) == (TITLE, TITLE, TITLE)
+
+
+@pytest.mark.parametrize("locale, word", [("ko", "문서 번호"), ("en", "document IDs"), ("ja", "文書番号")])
+@pytest.mark.parametrize("action", ["chat", "edit", "new"])
+def test_title_guidance_bounds_and_excludes_identifiers(naming, locale, word, action):
+    guidance = t.title_request(FA, locale, action)
+    assert "30" in guidance and word in guidance
