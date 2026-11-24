@@ -95,6 +95,7 @@
           :active="!collapsed && !unselected && tool === 'git'"
           :station-request="gitStationRequest"
           @git-activity="setGitTabActivity"
+          @git-conflict-change="refreshFlowTabConflicts"
         />
       </div>
     </div>
@@ -120,6 +121,7 @@ import PalettePanel from '../palette/PalettePanel.vue'
 import type { PaletteItemDefinition } from '../palette/paletteCatalog'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'
 import { setGitTabActivity } from '../center/gitTabActivity'
+import { refreshFlowTabConflicts } from '../center/flowTabConflicts'
 
 const props = withDefaults(
   defineProps<{
