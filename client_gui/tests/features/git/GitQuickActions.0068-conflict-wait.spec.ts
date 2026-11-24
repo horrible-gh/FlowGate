@@ -50,11 +50,11 @@ describe('0068 run waiting on a conflict session', () => {
     expect(loadExecution.mock.calls.length).toBeGreaterThan(1)
     expect(loadStatus.mock.calls.length).toBeGreaterThan(before)
   })
-  it('says the AI is resolving and that it goes on in other tabs', async () => {
+  it('says the AI is resolving concisely', async () => {
     await setup(run({ status: 'running', mergeId: 7, conflictAi: { state: 'running' } }), true)
     const waiting = w!.find('[data-test=git-execution-waiting]')
     expect(waiting.attributes('data-ai')).toBe('running')
-    expect(waiting.text()).toContain('AI 해결 중 · 다른 탭에 가도 계속됨')
+    expect(waiting.text()).toContain('AI 해결 중')
   })
   it('says the AI failed and why, with the lost lines on hover, instead of waiting silently', async () => {
     await setup(run({ status: 'running', mergeId: 7, conflictAi: { state: 'failed', code: 'conflict_supersede_invalid', path: 'a.py', lines: ['logger.info(1)'], lineCount: 2 } }), true)
