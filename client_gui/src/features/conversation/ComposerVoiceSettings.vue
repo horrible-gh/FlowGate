@@ -72,6 +72,7 @@
           <span class="cvs-name">
             {{ item.name }}<span v-if="item.realtime" class="cvs-tag rt">{{ t('gui.voice.settings.realtime_tag') }}</span><span v-if="item.isDefault" class="cvs-tag">{{ t('gui.voice.settings.default_tag') }}</span>
           </span>
+          <VoiceLicenseNotice v-if="browsingServiceInfo" :service="browsingServiceInfo" :model="item" :acknowledged="licenseAcks[item.id] === true" @update:acknowledged="licenseAcks[item.id] = $event" @click.stop />
           <span class="cvs-r">
             <template v-if="installingThis(item.id)">
               <span class="cvs-prog"><i :style="{ width: `${progressPercent}%` }"></i></span>
@@ -84,7 +85,7 @@
               type="button"
               class="cvs-ins"
               :data-test="`conv-voice-install-${item.id}`"
-              :disabled="!!activeInstall || state.busy"
+              :disabled="!!activeInstall || state.busy || (!!item.requiresLicenseAck && !licenseAcks[item.id])"
               @click.stop="install(item.id)"
             >{{ t('gui.voice.settings.install') }} {{ formatBytes(item.sizeBytes) }}</button>
           </span>
@@ -126,6 +127,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VoicePrefs } from './voice/api'
+import VoiceLicenseNotice from './voice/VoiceLicenseNotice.vue'
 import { formatBytes, voiceErrorKey } from './voice/messages'
 import { errorCodeOf } from './voice/useVoiceInput'
 import { cancelInstall, findService, installModel, loadVoice, sameSelection, updatePrefs, useVoice } from './voice/voiceStore'
@@ -133,6 +135,7 @@ import { cancelInstall, findService, installModel, loadVoice, sameSelection, upd
 const { t, te } = useI18n()
 const { state, selection, model } = useVoice()
 
+const licenseAcks = ref<Record<string, boolean>>({})
 const openList = ref<'svc' | 'mdl' | null>(null)
 /** The service whose models are listed; differs from the one in use while an uninstalled service is browsed. */
 const browsingService = ref('')
@@ -215,7 +218,7 @@ async function install(modelId: string): Promise<void> {
   justInstalled.value = null
   const target = { service: browsingService.value, model: modelId }
   try {
-    await installModel(target, 'personal')
+    await installModel(target, 'personal', licenseAcks.value[modelId] === true)
   } catch (error) {
     errorCode.value = errorCodeOf(error)
   }

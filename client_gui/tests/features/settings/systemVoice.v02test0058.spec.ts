@@ -6,6 +6,7 @@ import { registerAppMessages } from '@/app/i18n'
 import type { VoiceService, VoiceStatus } from '@/features/conversation/voice/api'
 import { resetVoiceStore } from '@/features/conversation/voice/voiceStore'
 import SystemVoiceSettingsView from '@/features/settings/views/SystemVoiceSettingsView.vue'
+import ComposerVoiceSettings from '@/features/conversation/ComposerVoiceSettings.vue'
 
 // 시스템 › 음성 입력: state and on/off, install (with progress and cancel), make default, test, delete.
 const net = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const net = vi.hoisted(() => ({
   setDefault: vi.fn(),
   setEnabled: vi.fn(),
   restart: vi.fn(),
+  test: vi.fn(),
 }))
 vi.mock('@/features/conversation/voice/api', async (original) => ({
   ...(await original<typeof import('@/features/conversation/voice/api')>()),
@@ -32,6 +34,7 @@ vi.mock('@/features/conversation/voice/api', async (original) => ({
   setVoiceDefault: net.setDefault,
   setVoiceEnabled: net.setEnabled,
   restartVoice: net.restart,
+  testTranscribe: net.test,
 }))
 vi.mock('@/features/settings/components/systemNav', () => ({ useSystemNav: () => computed(() => []) }))
 
@@ -192,4 +195,80 @@ describe('installed', () => {
     expect(net.restart).toHaveBeenCalled()
     expect(w.get('[data-testid="voice-state"]').text()).toBe('켜짐')
   })
+})
+
+
+describe('pending model license', () => {
+  function pendingCatalog(installed = false): VoiceService[] {
+    return [{ ...catalog()[0], id: 'sherpa-onnx', license: 'Apache-2.0', models: [
+      model('sensevoice-small-int8', { installed, license: 'FunASR model license — scope pending', source: 'FunASR/SenseVoice', sourceUrl: 'https://github.com/FunAudioLLM/SenseVoice', licenseUrl: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE', defaultEligible: false, requiresLicenseAck: true }),
+      model('zipformer-en-20m'),
+    ] }]
+  }
+  it('does not suggest SenseVoice and requires the notice before a direct download', async () => {
+    net.status.mockResolvedValue(status())
+    net.catalog.mockResolvedValue(pendingCatalog())
+    net.install.mockResolvedValue('vi_pending')
+    const w = open()
+    await flushPromises()
+    expect((w.get('[data-testid="voice-model"]').element as HTMLSelectElement).value).toBe('zipformer-en-20m')
+    await w.get('[data-testid="voice-model"]').setValue('sensevoice-small-int8')
+    expect(w.get('[data-testid="voice-apply-go"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-testid="voice-license-notice"]').text()).toContain('FunASR/SenseVoice')
+    expect(w.get('a[href$="MODEL_LICENSE"]').exists()).toBe(true)
+    await w.get('[data-testid="voice-license-notice"] input').setValue(true)
+    await w.get('[data-testid="voice-apply-go"]').trigger('click')
+    await flushPromises()
+    expect(net.install).toHaveBeenCalledWith({ service: 'sherpa-onnx', model: 'sensevoice-small-int8' }, true)
+    expect(net.setDefault).not.toHaveBeenCalled()
+  })
+  it('disables default selection for an installed pending model', async () => {
+    net.status.mockResolvedValue(status())
+    net.catalog.mockResolvedValue(pendingCatalog(true))
+    const w = open()
+    await flushPromises()
+    await w.get('[data-testid="voice-model"]').setValue('sensevoice-small-int8')
+    expect(w.get('[data-testid="voice-apply-go"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-testid="voice-test-upload"]').attributes('disabled')).toBeUndefined()
+    expect(net.setDefault).not.toHaveBeenCalled()
+  })
+})
+
+
+it('uploads user audio to a Korean model without a bundled sample', async () => {
+  net.status.mockResolvedValue(status())
+  net.catalog.mockResolvedValue([{ ...catalog()[0], id: 'vosk', models: [model('small-ko', { installed: true })] }])
+  net.test.mockResolvedValue({ text: '사용자 음성', elapsedMs: 100 })
+  const w = open()
+  await flushPromises()
+  const file = new File(['user-audio'], 'my-recording.wav', { type: 'audio/wav' })
+  const input = w.get('[data-testid="voice-test-upload"]')
+  Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+  await input.trigger('change')
+  await flushPromises()
+  expect(net.test).toHaveBeenCalledWith(file, file.name, { service: 'vosk', model: 'small-ko' })
+  expect(w.get('[data-testid="voice-test-out"]').text()).toContain('사용자 음성')
+})
+
+it('requires source notice acknowledgement in the composer before downloading', async () => {
+  net.status.mockResolvedValue(status())
+  net.catalog.mockResolvedValue([{ ...catalog()[0], id: 'sherpa-onnx', models: [model('sensevoice-small-int8', {
+    license: 'FunASR 모델 라이선스 — 적용 범위 확인 중', source: 'FunASR/SenseVoice',
+    licenseUrl: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE',
+    defaultEligible: false, requiresLicenseAck: true,
+  })] }])
+  net.install.mockResolvedValue('vi_composer')
+  const w = mount(ComposerVoiceSettings, { global: { plugins: [i18n] } })
+  wrappers.push(w)
+  await flushPromises()
+  await w.get('[data-test="conv-voice-model"]').trigger('click')
+  const button = w.get('[data-test="conv-voice-install-sensevoice-small-int8"]')
+  expect(button.attributes('disabled')).toBeDefined()
+  expect(w.get('[data-testid="voice-license-notice"]').text()).toContain('FunASR/SenseVoice')
+  expect(w.get('[data-testid="voice-license-notice"]').text()).toContain('확인 중')
+  await w.get('[data-testid="voice-license-notice"] input').setValue(true)
+  await button.trigger('click')
+  await flushPromises()
+  expect(net.install).toHaveBeenCalledWith({ service: 'sherpa-onnx', model: 'sensevoice-small-int8' }, true)
+  expect(net.setDefault).not.toHaveBeenCalled()
 })

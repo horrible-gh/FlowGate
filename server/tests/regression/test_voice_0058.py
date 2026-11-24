@@ -230,9 +230,9 @@ def test_catalog_entries_are_pinned_unique_and_testable():
         for model in service["models"]:
             assert prefs.valid("voice_model", model["id"]), model["id"]
             assert isinstance(model["realtime"], bool) and model["languages"]
-            # A model that cannot read the English sample must name its own sample.
+            # Korean models prove installation/loading without redistributing KSS audio.
             if not {"en", "multilingual"} & set(model["languages"]):
-                assert model["self_test"]["sample"] and model["self_test"]["expect"], model["id"]
+                assert model["self_test"] == {"mode": "load_only"}, model["id"]
     whisper = {m["id"]: m for m in vs.specification("whisper.cpp")["models"]}
     # Only the six multilingual base models: no quantized, English-only or older large builds.
     assert list(whisper) == ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
@@ -246,3 +246,190 @@ def test_catalog_response_hides_download_and_self_test_details(manager):
     models = [m for s in manager.catalog(True)["services"] for m in s["models"]]
     assert len(models) == sum(len(s["models"]) for s in vs.CATALOG["services"])
     assert not any({"url", "sha256", "filename", "self_test"} & set(m) for m in models)
+
+
+@pytest.mark.parametrize("kind", ["tar", "zip"])
+def test_korean_archive_excludes_samples_preserves_weights_and_notices(tmp_path, kind):
+    import tarfile
+    members = {"model/test_wavs/3.wav": b"restricted", "model/weights.onnx": b"weights", "model/LICENSE": b"license"}
+    archive = tmp_path / ("model.tar.bz2" if kind == "tar" else "model.zip")
+    if kind == "tar":
+        with tarfile.open(archive, "w:bz2") as stream:
+            for name, data in members.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+    else:
+        with zipfile.ZipFile(archive, "w") as stream:
+            for name, data in members.items():
+                stream.writestr(name, data)
+    output = tmp_path / "out"
+    dl.extract(archive, output, threading.Event(), excluded_parts=("test_wavs",))
+    assert not list(output.rglob("*.wav"))
+    assert (output / "model/weights.onnx").read_bytes() == b"weights"
+    assert (output / "model/LICENSE").read_bytes() == b"license"
+
+
+def test_legacy_cleanup_is_scoped_and_idempotent(tmp_path):
+    from modules.flow_gate.services.voice_distribution import cleanup_legacy_samples, KOREAN_ARCHIVE
+    removed = ["services/vosk/korean-sample.wav", "downloads/vosk/korean-sample.wav.part",
+               "services/sherpa-onnx/models/zipformer-ko/model/test_wavs/3.wav",
+               "downloads/sherpa-onnx/" + KOREAN_ARCHIVE,
+               "downloads/sherpa-onnx/" + KOREAN_ARCHIVE + ".part",
+               "staging/old/models/zipformer-ko/model/test_wavs/3.wav"]
+    kept = ["recordings/korean-sample.wav", "services/sherpa-onnx/models/zipformer-ko/model/weights.onnx",
+            "services/sherpa-onnx/models/zipformer-en-20m/model/test_wavs/0.wav"]
+    for name in removed + kept:
+        file = tmp_path / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b"data")
+    cleanup_legacy_samples(tmp_path)
+    cleanup_legacy_samples(tmp_path)
+    assert all(not (tmp_path / p).exists() for p in removed)
+    assert all((tmp_path / p).read_bytes() == b"data" for p in kept)
+
+
+def test_sensevoice_requires_notice_and_rejects_default_and_offline(manager, tmp_path):
+    spec = vs.specification("sherpa-onnx", "sensevoice-small-int8")
+    assert spec["license"] != "Apache-2.0"
+    assert spec["source"] == "FunASR/SenseVoice"
+    assert spec["license_url"].endswith("/MODEL_LICENSE")
+    for action, code in [
+        (lambda: manager.install("sherpa-onnx", spec["id"]), "voice_license_ack_required"),
+        (lambda: manager.install("sherpa-onnx", spec["id"], tmp_path, license_ack=True), "voice_redistribution_pending"),
+        (lambda: manager.set_default("sherpa-onnx", spec["id"]), "voice_default_restricted"),
+    ]:
+        with pytest.raises(VoiceError) as exc:
+            action()
+        assert exc.value.code == code
+    assert manager.jobs == {}
+
+
+def test_stored_sensevoice_default_is_not_activated(monkeypatch):
+    monkeypatch.setattr(vs.system_settings, "get_value", lambda key: json.dumps({"enabled": True, "default": {"service": "sherpa-onnx", "model": "sensevoice-small-int8"}}))
+    assert vs.configuration() == {"enabled": False, "default": None}
+
+
+def test_korean_catalog_has_no_kss_and_weight_license_unchanged():
+    assert "korean-sample.wav" not in json.dumps(vs.CATALOG)
+    for service, model in [("sherpa-onnx", "zipformer-ko"), ("vosk", "small-ko")]:
+        spec = vs.specification(service, model)
+        assert spec["license"] == "Apache-2.0"
+        assert spec["self_test"] == {"mode": "load_only"}
+
+
+@pytest.mark.parametrize("service,model", [("sherpa-onnx", "zipformer-ko"), ("vosk", "small-ko"), ("sherpa-onnx", "sensevoice-small-int8")])
+def test_worker_load_only_and_restricted_first_install(manager, monkeypatch, service, model):
+    import tarfile
+    spec = vs.specification(service, model)
+    fetched = []
+    class Runtime:
+        def start(self, directory, model):
+            assert model.exists()
+        def stop(self):
+            pass
+        def healthy(self):
+            return True
+        def transcribe(self, sample):
+            assert model == "sensevoice-small-int8", "Korean model requested a sample"
+            return "country"
+    monkeypatch.setattr(vs, "Runtime", Runtime)
+    manager.runtime = Runtime()
+    monkeypatch.setattr(vs.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 100 * 1024**3})())
+    def fetch(item, directory, cancel, progress, from_dir=None):
+        directory.mkdir(parents=True, exist_ok=True)
+        fetched.append(item["filename"])
+        if item is spec:
+            target = directory / item["filename"]
+            if item["filename"].endswith(".tar.bz2"):
+                with tarfile.open(target, "w:bz2") as archive:
+                    for name in ["model/weights.onnx", "model/test_wavs/3.wav"]:
+                        member = tarfile.TarInfo(name)
+                        member.size = 4
+                        archive.addfile(member, io.BytesIO(b"data"))
+            else:
+                with zipfile.ZipFile(target, "w") as archive:
+                    archive.writestr("model/weights", b"data")
+        else:
+            target = directory / (item["filename"] + ".fixture")
+            target.write_bytes(b"data")
+        return target
+    monkeypatch.setattr(dl, "fetch", fetch)
+    job = "vi_" + "b" * 32
+    manager.jobs[job] = dict(service=service, model=model, done=False, error=None)
+    manager.cancel_events[job] = threading.Event()
+    manager._install_worker(job, None)
+    assert manager.jobs[job]["error"] is None, manager.jobs[job]
+    assert manager.installed(service, model)
+    if model == "sensevoice-small-int8":
+        assert manager.test_config == {"enabled": False, "default": None}
+    else:
+        assert "jfk.wav" not in fetched
+        assert manager.test_config["enabled"]
+    if model == "zipformer-ko":
+        assert not list(manager.model_path(service, model).rglob("test_wavs"))
+        assert not (vs.root() / "downloads" / service / spec["filename"]).exists()
+
+
+def test_bundle_gate_rejects_unreviewed_components_without_creating_output(tmp_path):
+    from modules.flow_gate.services.voice_distribution import export_bundle
+    for entry in vs.CATALOG["services"]:
+        for model in entry["models"]:
+            with pytest.raises(VoiceError) as exc:
+                export_bundle(entry, model, tmp_path / "source", tmp_path / "output")
+            assert exc.value.code == "voice_redistribution_pending"
+            assert not (tmp_path / "output").exists()
+
+
+def test_bundle_copies_only_verified_components_and_exact_notices(tmp_path):
+    from modules.flow_gate.services.voice_distribution import export_bundle
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    (source / "licenses").mkdir()
+    def file_spec(filename, data, directory=source):
+        (directory / filename).write_bytes(data)
+        return {"filename": filename, "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    license = file_spec("engine-LICENSE", b"fixture license", source / "licenses")
+    notice = file_spec("model-NOTICE", b"fixture notice", source / "licenses")
+    engine = file_spec("engine.bin", b"engine") | {"redistribution_allowed": True, "notices": [license], "component_type": "engine"}
+    model = file_spec("model.bin", b"weights") | {"redistribution_allowed": True, "notices": [notice]}
+    file_spec("ffmpeg.exe", b"not distributed")
+    file_spec("korean-sample.wav", b"not distributed")
+    file_spec("sensevoice.bin", b"not distributed")
+    entry = {"artifacts": [engine, {"component_type": "ffmpeg"}, {"component_type": "sample"}]}
+    export_bundle(entry, model, source, output)
+    assert {p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()} == {"engine.bin", "model.bin", "licenses/engine-LICENSE", "licenses/model-NOTICE"}
+    (source / "licenses/engine-LICENSE").write_bytes(b"tampered")
+    with pytest.raises(VoiceError) as exc:
+        export_bundle(entry, model, source, tmp_path / "bad")
+    assert exc.value.code == "voice_offline_notice_invalid"
+    assert not (tmp_path / "bad").exists()
+
+
+@pytest.mark.parametrize("service,model", [("whisper.cpp", "base"), ("vosk", "small-ko")])
+def test_local_install_does_not_require_redistribution_notices(manager, tmp_path, monkeypatch, service, model):
+    # 고지 미승인 로컬 파일도 설치 작업에 전달하되 파일 검증은 작업자가 수행한다.
+    monkeypatch.setattr(vs, "available", lambda entry: True)
+    captured = []
+    class Worker:
+        def __init__(self, target, args, **kwargs):
+            captured.append(args)
+        def start(self):
+            pass
+    monkeypatch.setattr(vs.threading, "Thread", Worker)
+    result = manager.install(service, model, from_dir=tmp_path)
+    assert captured == [(result["install_id"], tmp_path)]
+
+
+def test_excluded_paths_blocks_renamed_model_even_when_notices_approved(tmp_path):
+    # 모델 ID를 바꾸거나 고지를 승인해도 제한 원본은 반입과 내보내기를 막는다.
+    from modules.flow_gate.services.voice_distribution import validate_local_install, export_bundle
+    model = {"id": "renamed-model", "filename": "model.zip", "excluded_paths": ["test_wavs/"],
+             "redistribution_allowed": True, "notices": [{"filename": "LICENSE"}]}
+    entry = {"artifacts": []}
+    for action in [lambda: validate_local_install(entry, model),
+                   lambda: export_bundle(entry, model, tmp_path, tmp_path / "out")]:
+        with pytest.raises(VoiceError) as exc:
+            action()
+        assert exc.value.code == "voice_redistribution_pending"
+    assert not (tmp_path / "out").exists()

@@ -201,3 +201,19 @@ describe('personal settings and the model in use', () => {
     expect(voiceErrorKey('something_new', () => false)).toBe('gui.voice.errors.failed')
   })
 })
+
+
+it('preserves model terms independently of engine terms and sends explicit acknowledgement', async () => {
+  net.getRequest.mockResolvedValue({ data: { services: [{ id: 'sherpa-onnx', license: 'Apache-2.0', components: [
+    { filename: 'ffmpeg.zip', component_type: 'ffmpeg', license: 'GPL-3.0-or-later', distribution: 'direct-upstream-only', url: 'https://example.test/ffmpeg' },
+  ], native_notices: ['ONNX Runtime notice pending'], models: [
+    { id: 'sensevoice-small-int8', license: 'Scope pending', license_url: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE', source: 'FunASR/SenseVoice', default_eligible: false, requires_license_ack: true },
+  ] }] } })
+  const [service] = await fetchVoiceCatalog()
+  expect(service.license).toBe('Apache-2.0')
+  expect(service.models[0]).toMatchObject({ license: 'Scope pending', defaultEligible: false, requiresLicenseAck: true, source: 'FunASR/SenseVoice' })
+  expect(service.components?.[0]).toMatchObject({ componentType: 'ffmpeg', license: 'GPL-3.0-or-later' })
+  net.postRequest.mockResolvedValue({ data: { install_id: 'vi_pending' } })
+  await startVoiceInstall({ service: service.id, model: service.models[0].id }, true)
+  expect(net.postRequest).toHaveBeenCalledWith('/api/v1/voice/installs', { service: 'sherpa-onnx', model: 'sensevoice-small-int8', license_ack: true })
+})

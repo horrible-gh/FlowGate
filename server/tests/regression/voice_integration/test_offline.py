@@ -25,18 +25,12 @@ def test_stg_offline_bundle_integrity(request, tmp_path, monkeypatch):
         raise AssertionError("Offline install attempted a network download")
     monkeypatch.setattr(dl.urllib.request, "urlopen", no_network)
     manager = vs.Manager()
-    job_id = manager.install("whisper.cpp", selected["id"], source)["install_id"]
-    deadline = time.monotonic() + 300
-    while not manager.job(job_id)["done"] and time.monotonic() < deadline:
-        time.sleep(0.25)
     try:
-        job = manager.job(job_id)
-        assert job["done"], job
-        if job["error"]:
-            assert job["error"]["code"] == "voice_offline_file_invalid", job
-            assert not manager.installed("whisper.cpp", selected["id"])
-        else:
-            assert manager.status()["enabled"]
+        from modules.flow_gate.services.voice_errors import VoiceError
+        with pytest.raises(VoiceError) as error:
+            manager.install("whisper.cpp", selected["id"], source)
+        assert error.value.code == "voice_redistribution_pending"
+        assert not manager.installed("whisper.cpp", selected["id"])
     finally:
         manager.shutdown()
     after = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in source.rglob("*") if p.is_file()}

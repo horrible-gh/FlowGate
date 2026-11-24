@@ -19,13 +19,26 @@ def main():
     parser.add_argument("--model", default="base")
     parser.add_argument("--from-dir", type=Path, help="Offline directory containing the exact catalog archives, model and jfk.wav; never modified")
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--ack-model-license", action="store_true", help="Acknowledge the pending license and upstream source printed by --list")
+    parser.add_argument("--export-bundle", type=Path, help="Export reviewed redistribution files and notices from --from-dir")
     options = parser.parse_args()
     if options.list:
         print(json.dumps(manager.catalog(True), ensure_ascii=False, indent=2))
         return 0
     job_id = None
     try:
-        result = manager.install(options.service, options.model, options.from_dir)
+        from modules.flow_gate.services.voice_service import specification
+        spec = specification(options.service, options.model)
+        print(json.dumps({"model": options.model, "license": spec["license"],
+                          "source": spec.get("source", spec["url"]), "license_url": spec.get("license_url"),
+                          "distribution": "offline-redistribution" if options.from_dir else "direct-upstream"}, ensure_ascii=False), flush=True)
+        if options.export_bundle:
+            if not options.from_dir:
+                parser.error("--export-bundle requires --from-dir")
+            from modules.flow_gate.services.voice_distribution import export_bundle
+            export_bundle(specification(options.service), spec, options.from_dir, options.export_bundle)
+            return 0
+        result = manager.install(options.service, options.model, options.from_dir, license_ack=options.ack_model_license)
         job_id = result["install_id"]
         previous = None
         while True:
