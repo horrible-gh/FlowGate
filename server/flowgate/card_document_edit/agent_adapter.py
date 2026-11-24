@@ -15,7 +15,7 @@ from .revise import revise
 
 _log = logging.getLogger(__name__)
 MODEL_FIELDS = ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
-                "rejection_review_id", "node_title", "commit_message")
+                "rejection_review_id", "node_title", "commit_message", "title")
 CLI_FIELDS = frozenset(MODEL_FIELDS) | {"action", "project", "module", "group_name", "group", "doc_id",
     "doc_path", "linked_doc_id", "body_sha256", "body_chars", "force_encoding_reason", "dry_run", "review_id"}
 

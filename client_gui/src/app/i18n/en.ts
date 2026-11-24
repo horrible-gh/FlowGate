@@ -1541,6 +1541,10 @@ export default {
       ai_close: 'Close',
       ai_server_default: 'server default AI',
       ai_ended: 'AI resolve ended ({status}) · {name} · {n} conflicts left',
+      ai_failed: 'AI failed · {why}',
+      ai_failed_next: 'Try another AI or resolve it yourself.',
+      ai_why: { dropped: 'one side was dropped', lines: '{n} lines missing', markers: 'conflict markers left', ended: 'ended unresolved', cancelled: 'stopped' },
+      abort_short: 'Abort',
       blocked: {
         missing_merge: 'Merge ID missing · refresh Git status',
         load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',

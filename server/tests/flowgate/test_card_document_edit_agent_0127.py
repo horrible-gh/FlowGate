@@ -331,6 +331,8 @@ def test_v1_full_and_fragment_reads_use_snapshot(agent,monkeypatch):
     from modules.flow_gate.api.v1 import document_routes
     app=FastAPI();app.include_router(document_routes.router,prefix="/flowgate")
     monkeypatch.setattr(document_routes,"verify_bearer",lambda req:{"_is_user_jwt":True,"issued_to":"user"})
+    # Partial reads also check project access; this test supplies auth explicitly.
+    monkeypatch.setattr(document_routes,"can_read_project",lambda auth, project: project == "flowgate")
     client=TestClient(app)
     response=client.get("/flowgate/api/v1/document/"+D)
     assert response.status_code==200,response.text
@@ -841,3 +843,34 @@ def test_noncard_new_rejection_alias_stays_an_ignored_extra(agent, monkeypatch):
     history=json.loads(documents.get_by_id(D)["rejection_history"])
     assert not history[0].get("ai_response")
     assert history[1]["ai_response"]=="legacy latest response"
+
+
+@pytest.mark.parametrize("via", ["cli", "api"])
+def test_optional_shared_title_survives_card_edit_boundary(agent, monkeypatch, via):
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    received = []
+    def submitted(token, title, doc_id, flow_title=None):
+        assert documents.get_by_id(D)["revision_no"] == 1
+        assert tokens.get_by_id(agent.issued["token_id"])["consumed_at"]
+        # A card edit's title names only the flow (0080); it never names a chat.
+        assert title is None
+        received.append((token["group_id"], flow_title, doc_id))
+    monkeypatch.setattr(first_names_hooks, "submitted", submitted)
+    body = payload(title="로그인 오류 수정")
+    if via == "cli":
+        response = agent.post(body)
+        status, value = response.status_code, response.json()
+    else:
+        status, value = worker._inbox_register(agent.run, agent.raw, model(body))
+    assert status == 200, value
+    assert received == [(F, "로그인 오류 수정", D)]
+    assert agent.env.path.read_text() == body["content"]
+
+
+def test_shared_title_dry_run_does_not_call_naming(agent, monkeypatch):
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    monkeypatch.setattr(first_names_hooks, "submitted", lambda *args: pytest.fail("dry run naming"))
+    response = agent.post(payload(title="로그인 오류 수정", dry_run=True))
+    assert response.status_code == 200, response.text
+    assert response.json()["dry_run"]
+    assert documents.get_by_id(D)["revision_no"] == 0

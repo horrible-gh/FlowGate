@@ -112,7 +112,6 @@
           :selected-palette-id="selectedPalette?.itemId ?? null"
           :source-locked="sourceLocked"
           :flow-running="flowRunning"
-          :git-station-request="gitStationRequest"
           @update:tool="layout.activeRightTool = $event"
           @palette-select="selectedPalette = $event"
           @palette-drag-start="selectedPalette = null"
@@ -1023,14 +1022,12 @@ function onDensity(level: DesignerDensity) {
 /** the step a card drag moves in at the chosen density (null = freeform, none). */
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
 
-// The taskbar's pinned buttons run the same paths as the File menu and the toolbar; [Git] shows the Git tab (so its
-// panel is there) and opens the Git station window.
-const gitStationRequest = ref(0)
-function onTaskbarPin(pin: Exclude<TaskbarPin, 'search'>) {
-  if (pin === 'project') onTopCommand('project.open')
+// The taskbar's pinned buttons run the same paths as the toolbar; [Open project] opens the project list as a floating
+// window (File › Open project keeps the modal dialog).
+function onTaskbarPin(pin: TaskbarPin) {
+  if (pin === 'project') projectStore.openDialog({ window: true })
   else if (pin === 'attachments') onTopCommand('view.attachments')
   else if (pin === 'terminal') onTopCommand('view.terminal')
-  else if (pin === 'git' && hasWorkTarget.value) { onShowTab('git'); gitStationRequest.value += 1 }
 }
 
 function onTopCommand(command: DesignerTopCommand) {
