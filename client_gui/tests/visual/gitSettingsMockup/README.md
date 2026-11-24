@@ -47,3 +47,12 @@ T-b (TR0013 rev 1) remeasured three states after combining with T-a (Self-check
 `scr_067776f9c5a44bc78430a265`, final-tree remeasurement
 `scr_45e9f35dd87641639b1aa0c1`). Those artifacts are outside the repository;
 measurements and hashes are in TR0013 §4.4.
+
+## R7-1 evidence correction
+
+The five historical `capture_*.png` files were removed because their PNG signatures
+and binary payload were corrupted. No application source uses these images.
+`results.json` retains historical measurements but now marks each capture as
+`removed_corrupt_png`; these measurements are not evidence for the current UI.
+Use the existing measurement script and approved mockup to capture replacements
+in a scratch directory. Do not repair binary images by changing only their header.

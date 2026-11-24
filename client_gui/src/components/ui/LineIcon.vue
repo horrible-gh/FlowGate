@@ -1,3 +1,4 @@
+<!-- @third-party Lucide; folder, folder-plus, archive, triangle-alert (alert), external-link (external), log-out (logout), upload, download, paperclip: https://github.com/lucide-icons/lucide; ISC (including upstream inherited notices). Full text: third_party/licenses/lucide-LICENSE.txt at repository root. -->
 <template>
   <svg
     class="ui-line-icon"

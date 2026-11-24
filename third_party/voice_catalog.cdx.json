@@ -1,0 +1,571 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "FlowGate voice catalog",
+      "version": "F86-9"
+    },
+    "properties": [
+      {
+        "name": "scope",
+        "value": "Catalog inventory, not an attestation that every listed combination has been exported or tested"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "file",
+      "name": "whisper-bin-x64.zip",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b1514ebc099765e39fa37eb780b92a140a94c86bb0b3b3d98226b38825979732"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "engine"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-runtime-subset"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ffmpeg-8.0-essentials_build.zip",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "ffmpeg"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "jfk.wav",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "sample"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-tiny.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-base.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-small.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-medium.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-large-v3-turbo.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-large-v3.bin",
+      "version": "1.8.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "whisper.cpp"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "true"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "reviewed-weights"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2",
+      "version": "1.12.20",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c10a095df39d10d48d97e22d9297ebd3bc12cca80ec3be70eb71f7a5b4a2f6c3"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "sherpa-onnx"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "engine"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ffmpeg-8.0-essentials_build.zip",
+      "version": "1.12.20",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "sherpa-onnx"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "ffmpeg"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "jfk.wav",
+      "version": "1.12.20",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "sherpa-onnx"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "sample"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+      "version": "1.12.20",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9c559283e8498d3fe95913c79ca1cb454bb26281ac2b102b41306c7d752765d9"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "sherpa-onnx"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
+      "version": "1.12.20",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e346a5882a409650472be17326237e24df7bf409db6b4a8a52e1a61422bf2500"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "sherpa-onnx"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "vosk-win64-0.3.45.zip",
+      "version": "0.3.45",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "vosk"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "engine"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ffmpeg-8.0-essentials_build.zip",
+      "version": "0.3.45",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "vosk"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "ffmpeg"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "jfk.wav",
+      "version": "0.3.45",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "vosk"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "sample"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream-only"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "vosk-model-small-ko-0.22.zip",
+      "version": "0.3.45",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eea36124087fed26c59996a4761519458e3bd185e8ea9d9865ad8760c4a1d989"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "vosk"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "vosk-model-small-en-us-0.15.zip",
+      "version": "0.3.45",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+        }
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "value": "vosk"
+        },
+        {
+          "name": "redistribution_allowed",
+          "value": "false"
+        },
+        {
+          "name": "component_type",
+          "value": "weights"
+        },
+        {
+          "name": "distribution",
+          "value": "direct-upstream"
+        }
+      ]
+    }
+  ]
+}

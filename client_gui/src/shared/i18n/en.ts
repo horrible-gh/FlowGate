@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from '../productName'
+
 export default {
   common: {
     reset: 'Revert',
@@ -7,7 +9,7 @@ export default {
   },
   auth: {
     login: {
-      title: 'FlowGate Sign In',
+      title: `${PRODUCT_NAME} Sign In`,
       password: 'Password',
       show_password: 'Show password',
       hide_password: 'Hide password',
