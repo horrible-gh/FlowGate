@@ -2,9 +2,25 @@ import type { GitWorktreeSource } from './gitSource'
 import type { WorktreeSelection, WorktreeStatus } from './types'
 import { worktreeErrorOf } from './api'
 
+export interface GitExecutionRequest {
+  scope: GitExecutionScope
+  target: string | null
+  message: string
+  provider_id: string | null
+  paths?: string[]
+  all?: boolean
+  request_id: string
+  resume_from?: string
+  commit_remaining?: boolean
+}
+
 export type GitExecutionScope = 'commit' | 'merge' | 'push'
 export type GitExecutionStep = 'commit' | 'update' | 'merge' | 'push'
 export interface GitExecution {
+  jobId?: string
+  jobStatus?: string
+  mergeId?: number | null
+  childJobId?: string | null
   scope: GitExecutionScope
   target: string | null
   steps: GitExecutionStep[]
@@ -17,6 +33,12 @@ export interface GitExecution {
   // A step passed over without stopping the run (only 받아오기), with the server's code.
   skipped?: Partial<Record<GitExecutionStep, string>>
 }
+/** flowgate.v02test.0068: what the Git panel tells the Designer's Flow tab about the shown Flow's run (`git-activity`). */
+export interface GitTabActivity {
+  readonly state: 'running' | 'done' | 'skipped' | 'remaining' | 'failed'
+  readonly step: GitExecutionStep | null
+  readonly code: string | null
+}
 export function executionSteps(scope: GitExecutionScope): GitExecutionStep[] {
   return scope === 'commit' ? ['commit'] : scope === 'merge'
     ? ['commit', 'update', 'merge'] : ['commit', 'update', 'merge', 'push']
@@ -25,11 +47,12 @@ export function newExecution(scope: GitExecutionScope, target: string | null): G
   return { scope, target, steps: executionSteps(scope), cursor: 0, completed: [], status: 'running', error: null, detail: null, skipped: {} }
 }
 // 받아오기 is a convenience before the merge, not a precondition of it: a refusal caused by the
-// server's base checkout, its locks or the Flow's start-point record passes over the step and the
-// merge runs (it checks the target itself). Conflicts and the Flow's own files still stop the run.
+// server's base checkout or the Flow's start-point record passes over the step and the merge runs
+// (it checks the target itself). Conflicts and the Flow's own files still stop the run. The same
+// list as the server's UPDATE_SKIP (services/git/execution.py): a busy lock (git_busy, a lease, an
+// AI run, a branch merge claim) is waited out there, so it stops here and the run is resumed.
 export const UPDATE_SKIP_CODES: readonly string[] = [
-  'git_error', 'base_dirty', 'base_diverged', 'git_busy', 'merge_conflict_open', 'group_lease_active',
-  'run_already_active', 'branch_merge_claim_active', 'update_unavailable',
+  'git_error', 'base_dirty', 'base_diverged', 'merge_conflict_open', 'update_unavailable',
   'group_work_base_unverified', 'group_work_base_diverged', 'group_work_base_source_rewritten',
   'group_work_base_record_failed',
 ]
@@ -123,8 +146,14 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
         await request(() => api.fetchRefs(input.projectId, input.groupId))
         const results = await request(() => api.loadMergeResults(input.groupId))
         const row = results.results.find(r => r.target.targetBranch === plan.target)
-        if (!row || !row.remote.measured) throw new Stopped('status_unavailable')
-        if (row.remote.containsMergeCommit !== true || (row.remote.localAheadCount ?? 0) > 0) {
+        if (!row) {
+          // Never merged into the target: nothing ahead means nothing to push (the server run does the same).
+          const view = await request(() => api.loadManualMerge(input.groupId, plan.target))
+          if (view.aheadOfTarget === null) throw new Stopped('status_unavailable')
+          if (view.aheadOfTarget > 0) throw new Stopped('merge_result_missing')
+        } else if (!row.remote.measured) {
+          throw new Stopped('status_unavailable')
+        } else if (row.remote.containsMergeCommit !== true || (row.remote.localAheadCount ?? 0) > 0) {
           if (!row.pushAvailable || !row.mergeCommit) throw new Stopped(row.pushBlockedReason ?? 'push_blocked')
           const result = await request(() => api.pushMergeResult(input.groupId, row.mergeId, row.mergeCommit!))
           if (!result.pushedHead && !result.alreadyPublished) throw new Stopped(result.jobId ? 'queued' : 'push_unconfirmed')
@@ -145,7 +174,8 @@ export async function executeGit(plan: GitExecution, api: GitWorktreeSource, inp
       await request(() => api.fetchRefs(input.projectId, input.groupId))
       const results = await request(() => api.loadMergeResults(input.groupId))
       const row = results.results.find(r => r.target.targetBranch === plan.target)
-      remains ||= !row?.remote.measured || row.remote.containsMergeCommit !== true || row.remote.localAheadCount !== 0
+      // No merge result: commits not merged yet are already counted by aheadOfTarget above.
+      if (row) remains ||= !row.remote.measured || row.remote.containsMergeCommit !== true || row.remote.localAheadCount !== 0
     }
     plan.status = remains ? 'remaining' : 'complete'
   } catch (error) {

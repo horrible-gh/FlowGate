@@ -30,6 +30,7 @@
 // server `message` is never surfaced (0033-D §4.5).
 import { getRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeGitError, type NormalizedGitError } from '@shared/gitErrors'
+import type { GitExecution, GitExecutionRequest } from './gitExecution'
 import type {
   GitApproveResult,
   GitBaseCommitResult,
@@ -722,6 +723,25 @@ async function resultOf(request: () => Promise<{ data: ResultEnvelope; status?: 
   return isRecord(data.result) ? data.result : {}
 }
 
+function executionOf(raw: Record<string, unknown>): GitExecution | null {
+  const value = raw.execution
+  if (!isRecord(value) || typeof value.jobId !== 'string' || !Array.isArray(value.steps)
+    || !Array.isArray(value.completed) || typeof value.cursor !== 'number'
+    || !['commit', 'merge', 'push'].includes(String(value.scope))
+    || !['running', 'stopped', 'remaining', 'complete'].includes(String(value.status))) return null
+  return value as unknown as GitExecution
+}
+
+export async function fetchGitExecution(groupId: string): Promise<GitExecution | null> {
+  return executionOf(await resultOf(() => getRequest<ResultEnvelope>(`${groupGit(groupId)}/execution`)))
+}
+
+export async function startGitExecution(groupId: string, input: GitExecutionRequest): Promise<GitExecution> {
+  const result = executionOf(await resultOf(() => postRequest<ResultEnvelope>(`${groupGit(groupId)}/execution`, input)))
+  if (!result) throw new Error('Invalid Git execution response')
+  return result
+}
+
 const STAGE_LETTERS: readonly string[] = ['A', 'M', 'D', 'T', 'U']
 const WORK_LETTERS: readonly string[] = ['M', 'D', 'T']
 
@@ -793,7 +813,13 @@ function toWorktreeStatus(raw: Record<string, unknown>, groupId: string): Worktr
     },
     ownership: { available: flag(ownership.available), reason: str(ownership.reason) },
     blockers: records(raw.blockers)
-      .map((b) => ({ code: str(b.code), operations: strings(b.operations) }))
+      .map((b) => ({
+        code: str(b.code),
+        operations: strings(b.operations),
+        // session_open (flowgate.v02test.0068): carried only when the server names the session.
+        ...(str(b.session_kind) !== null ? { sessionKind: str(b.session_kind) } : {}),
+        ...(num(b.merge_id) !== null ? { mergeId: num(b.merge_id) } : {}),
+      }))
       .filter((b): b is WorktreeBlocker => b.code !== null),
   }
 }

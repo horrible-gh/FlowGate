@@ -30,10 +30,12 @@
       :active-flow-id="center.state.activeFlowId"
       :run-states="tabRunStates"
       :chat-states="tabChatStates"
+      :terminal-states="flowTerminalUi.openFlows"
       :archived="tabArchived"
       :run-ends="tabRunEnds"
       :chat-ends="tabChatEnds"
       :conflicts="tabConflictMarks"
+      :git-activity="gitTabActivity"
       @activate="center.activateFlow"
       @close="center.closeFlow"
       @reorder="center.moveFlow"
@@ -113,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watchEffect } from 'vue'
+import { computed, onUnmounted, reactive, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '../../../components/ui/Button.vue'
 import ErrorState from '../../../components/ui/ErrorState.vue'
@@ -122,9 +124,11 @@ import FlowCanvas from './canvas/FlowCanvas.vue'
 import type { DesignerCenterSession, FlowCardMenuKey } from './designerCenterSession'
 import { useFlowChatActivity } from '@/features/conversation/flowChatActivity'
 import FlowTabStrip, { type FlowTabRunState } from './FlowTabStrip.vue'
+import { flowTerminalUi } from '../flowTerminal/state'
 import { RUN_LOCKED_STATUSES } from './run/flowRunLock'
 import { useFlowTabConflicts } from './flowTabConflicts'
 import { useFlowTabMarks, type FlowTabChatEnd, type FlowTabRunEnd, type FlowTabRunFacts } from './flowTabMarks'
+import { gitTabActivity, observeGitTabActivity, pruneGitTabActivity, setActiveGitTab } from './gitTabActivity'
 import { cardNodeRun } from './graph/cardStateView'
 import type { FlowGraphNodeRun } from './graph/flowGraph'
 import { gateHeaderState } from '../inspector/features/gateCard/gateHeaderModel'
@@ -260,6 +264,15 @@ const tabChatEnds = computed(() => {
   for (const [flowId, mark] of Object.entries(tabMarks.marks)) if (mark.chat) ends[flowId] = mark.chat
   return ends
 })
+// flowgate.v02test.0068: the shown tab keeps no Git result (the Git panel's run box says it); another tab keeps its result
+// until it is activated or closed.
+watch(() => props.center.state.activeFlowId, (flowId) => { setActiveGitTab(flowId ?? null) }, { immediate: true })
+onUnmounted(() => setActiveGitTab(null))
+watch(() => props.center.state.tabs.map((tab) => tab.flowId).join('\n'), () => {
+  pruneGitTabActivity(new Set(props.center.state.tabs.map((tab) => tab.flowId)))
+})
+// A run goes on in the server after the Git panel lets go of it: the open tabs read it until the Center goes.
+onUnmounted(observeGitTabActivity(() => props.center.state.tabs.map((tab) => tab.flowId)))
 const timeMachine = props.center.timeMachine
 /** the dialog's Flow's card titles by node key (its shown Graph). */
 const timeMachineTitles = computed(() => {

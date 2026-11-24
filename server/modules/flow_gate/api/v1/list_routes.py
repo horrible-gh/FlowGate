@@ -17,6 +17,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.services import card_ids, display_names
 from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project, readable_projects
 from modules.flow_gate.utils.help_url import help_url
 
@@ -200,6 +201,8 @@ def list_groups(
                 "module": r.get("module"),
                 "status": r.get("status"),
                 "seq": None,
+                "flow_label": card_ids.flow_label(r["group_id"]),
+                "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
                 "created_at": r.get("created_at"),
             }
             for r in rows
@@ -237,6 +240,8 @@ def list_groups(
             "module": r.get("module"),
             "status": r.get("status"),
             "seq": None,  # groups table has no seq column
+            "flow_label": card_ids.flow_label(r["group_id"]),
+            "flow_name": display_names.flow_name(r["group_id"], r.get("title")),
             "created_at": r.get("created_at"),
         }
         for r in rows
@@ -394,7 +399,11 @@ def search_documents(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    flow: Optional[str] = None,
 ):
+    """Title / doc_id search. A Flow or card display id (``F77-12``, ``flowgate.v02test.F77``, ``#12`` with
+    ``flow``) also matches exactly: those items come first on the first page, ``match`` = card / flow, with
+    ``card`` telling what opens it. ``flow`` (a group id) is the context a module-less id is read in."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -410,6 +419,7 @@ def search_documents(
 
     if project and not can_read_project(auth, project):
         return _fail(404, f"Project {project} does not exist")
+    ref_items = _ref_items(auth, query, project, flow)
     allowed_projects = [project] if project else readable_projects(auth)
     rows, total = db_docs.search_documents(
         q=query, project=project, doc_type=type, status=status,
@@ -439,6 +449,11 @@ def search_documents(
         }
         for r in rows
     ]
+    if ref_items:
+        exact = {(i["doc_id"], i["group_id"]) for i in ref_items}
+        kept = [i for i in items if (i["doc_id"], i["group_id"]) not in exact]
+        total += len(ref_items) - (len(items) - len(kept))
+        items = ref_items + kept if offset == 0 else kept
     _add_group_titles(items)
     return JSONResponse(content={
         "ok": True, "query": query, "total": total,
@@ -459,28 +474,17 @@ def search_documents_content(
     offset: int = 0,
     context_lines: Optional[int] = None,
     hits_per_doc: Optional[int] = None,
-    include_matches: bool = True,
+    include_matches: Optional[bool] = None,
+    doc_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+    sort: str = "desc",
+    cursor: Optional[str] = None,
 ):
-    """Full document search incl. body text (Phase 2). Same auth/validation/paging
-    as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
-    (body|title|doc_id), and ``match_kind`` (``document_body``|``conversation_turn``).
-
-    0370 set 2 (P0002 scenarios 9-11): each item additionally carries ``match_total`` and
-    ``matches`` — where in the document each hit is (a locator identical in shape to the
-    one ``/outline`` and ``/section`` return) plus the matched line and its neighbours. The
-    pre-existing keys keep their meaning *and their values*, so a screen reading this
-    response today needs no change; ``include_matches=false`` drops the two new keys
-    entirely for callers that want the old payload byte for byte.
-
-    Reads document bodies from the filesystem via a self-healing mtime cache — no
-    schema/migration, multi-dialect safe. A migrated CH conversation's turns (T4,
-    L0004 §2-15) are searched separately and appended after the document-body page:
-    ``total``/``offset``/``limit`` keep their original document-body-only meaning
-    (paging contract preserved for existing callers), and the bounded conversation-turn
-    matches (at most ``content_search_service.SEARCH_TURN_LIMIT``, capped per document
-    at ``SEARCH_TURNS_PER_DOC``) ride along uncounted and unpaged — the same fixed
-    bound applies to every page rather than needing a second cursor. They are omitted
-    entirely when an explicit ``type`` facet rules out CH."""
+    """Search bodies and turns. A single CH doc defaults to compact turn results
+    with a snapshot-bounded total across cursor pages. Explicit include_matches=true
+    restores detailed matches. Other searches preserve document-body paging and
+    default detailed results, with turns ranked per conversation before the cap.
+    """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -493,6 +497,23 @@ def search_documents_content(
     query = (q or "").strip()
     if not query:
         return _fail(400, "q is required")
+
+    if doc_id is not None:
+        doc_id = doc_id.strip()
+        if not doc_id:
+            return _fail(400, "doc_id must not be empty")
+    if group_id is not None:
+        group_id = group_id.strip()
+        if not group_id:
+            return _fail(400, "group_id must not be empty")
+    if doc_id and group_id:
+        return _fail(400, "doc_id and group_id are mutually exclusive")
+    if sort not in {"asc", "desc"}:
+        return _fail(400, "sort must be asc or desc")
+    if cursor is not None and not doc_id:
+        return _fail(400, "cursor requires doc_id")
+    if cursor is not None and type and not "CH".startswith(type.strip().upper()):
+        return _fail(400, "cursor requires a conversation type")
 
     from modules.flow_gate.services import content_search_service
 
@@ -511,27 +532,62 @@ def search_documents_content(
     if project and not can_read_project(auth, project):
         return _fail(404, f"Project {project} does not exist")
     allowed_projects = [project] if project else readable_projects(auth)
-    items, total = content_search_service.search_document_bodies(
-        q=query, project=project, doc_type=type, status=status,
-        limit=limit, offset=offset,
-        include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
-        allowed_projects=allowed_projects,
-    )
-    turn_items: list = []
-    if not type or "CH".startswith(type.strip().upper()):
-        turn_items = content_search_service.search_conversation_turns(
-            q=query, project=project, status=status,
-            include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
-            allowed_projects=allowed_projects,
+    scoped_doc = db_docs.get_by_id(doc_id) if doc_id else None
+    is_conversation = bool(scoped_doc and scoped_doc.get("type_code") == "CH")
+    if cursor is not None and not is_conversation:
+        return _fail(400, "cursor requires a conversation document")
+    from modules.flow_gate.db import conversation_turns
+
+    # Only migrated conversations have searchable seq-based turns. Legacy files
+    # (pending, in progress, failed, or no migration row) retain body/title/id
+    # search and its original response contract until migration completes.
+    conversation_scope = is_conversation and conversation_turns.migration_state(doc_id) == "migrated"
+    detailed = include_matches if include_matches is not None else not conversation_scope
+    compact = conversation_scope and not detailed
+    items, total = [], 0
+    if not conversation_scope:
+        items, total = content_search_service.search_document_bodies(
+            q=query, project=project, doc_type=type, status=status,
+            limit=limit, offset=offset,
+            include_matches=detailed, context_lines=ctx, hits_per_doc=per_doc_hits,
+            allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
         )
-    _add_group_titles(items + turn_items)
-    return JSONResponse(content={
+    next_cursor = None
+    turn_items: list = []
+    page_info: dict = {}
+    if not type or "CH".startswith(type.strip().upper()):
+        try:
+            turn_items, next_cursor = content_search_service.search_conversation_turns_page(
+                q=query, project=project, status=status,
+                limit=limit if doc_id else content_search_service.SEARCH_TURN_LIMIT,
+                include_matches=detailed, context_lines=ctx, hits_per_doc=per_doc_hits,
+                allowed_projects=allowed_projects, doc_id=doc_id, group_id=group_id,
+                sort=sort, cursor=cursor, compact=compact,
+                page_info=page_info if conversation_scope else None,
+            )
+        except ValueError as exc:
+            return _fail(400, str(exc))
+    if conversation_scope:
+        total = page_info.get("total", 0)
+    if not compact:
+        _add_group_titles(items + turn_items)
+    response = {
         "ok": True, "query": query, "scope": "content", "total": total,
         "offset": offset, "limit": limit,
-        "context_lines": ctx, "hits_per_doc": per_doc_hits,
         "items": items + turn_items,
         "turn_total": len(turn_items),
-    })
+        "next_cursor": next_cursor,
+    }
+    if not conversation_scope or detailed:
+        response.update(context_lines=ctx, hits_per_doc=per_doc_hits)
+    if conversation_scope:
+        response.update(
+            doc_id=doc_id,
+            turn_read=(f"GET /flowgate/api/v1/conversation/{doc_id}/turns"
+                       "?after_seq=<seq-1>&through_seq=<seq>&limit=1"),
+        )
+    return JSONResponse(content=response)
+
 
 
 # ── 3-5. GET /list/doc-types ─────────────────────────────────────────────────
@@ -591,15 +647,65 @@ def get_group(request: Request, group_id: str):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+    requested = group_id
     group = db_groups.get_by_id(group_id)
+    card = None
+    if group is None:
+        # A Flow / card display id (F77, flowgate.v02test.F77, F77-12): the stored group id is still the key.
+        found = _readable_refs(auth, group_id)
+        if len(found) == 1:
+            group_id, card = found[0]["group_id"], found[0] if found[0]["kind"] == "card" else None
+            group = db_groups.get_by_id(group_id)
     if group is None or not can_read_project(auth, group.get("project_id")):
-        return _fail(404, f"Group {group_id} does not exist")
+        return _fail(404, f"Group {requested} does not exist")
     count = get_store()._fetch_one(
         "SELECT COUNT(*) AS cnt FROM documents WHERE group_id = ?", [group_id])
-    return JSONResponse(content={
+    body = {
         "ok": True,
         **{key: group.get(key) for key in (
             "group_id", "title", "module", "status", "parent_id",
             "created_at", "updated_at", "closed_at")},
         "document_count": count["cnt"] if count else 0,
-    })
+        "flow_ref": card_ids.flow_ref(group_id),
+        # How AI text names this Flow to the user (F77(name)); API calls keep group_id.
+        "flow_name": display_names.flow_name(group_id, group.get("title")),
+    }
+    if requested != group_id:
+        body["requested_id"] = requested
+    if card is not None:
+        body["card"] = {key: card[key] for key in ("node_key", "card_ref", "doc_id")}
+    return JSONResponse(content=body)
+
+
+def _readable_refs(auth, text: str, context_flow_id: Optional[str] = None, *, allow_bare: bool = True) -> list:
+    """The Flows / cards a typed display id names, limited to the projects this caller reads."""
+    from modules.flow_gate.services import card_numbers
+    return card_numbers.resolve(text, context_flow_id=context_flow_id, allowed_projects=readable_projects(auth),
+                                allow_bare=allow_bare)
+
+
+def _ref_items(auth, query: str, project: Optional[str], flow: Optional[str]) -> list:
+    """Search items for an exact Flow / card id match (they come first): the representative document plus
+    ``match`` (card / flow) and ``card`` (what opens the card: group_id, node_key, its display ids)."""
+    items = []
+    for ref in _readable_refs(auth, query, flow):
+        if project and ref["project_id"] != project:
+            continue
+        doc = db_docs.get_by_id(ref["doc_id"]) if ref.get("doc_id") else None
+        items.append({
+            "doc_id": ref.get("doc_id"),
+            "type": (doc or {}).get("type_code"),
+            "title": (doc or {}).get("title"),
+            "status": (doc or {}).get("status"),
+            "project_id": ref["project_id"],
+            "group_id": ref["group_id"],
+            "revision_no": (doc or {}).get("revision_no", 0),
+            "owner_id": (doc or {}).get("owner_id"),
+            "created_at": (doc or {}).get("created_at"),
+            "updated_at": (doc or {}).get("updated_at"),
+            "snippet": None,
+            "match": ref["kind"],
+            "card": {"group_id": ref["group_id"], "node_key": ref.get("node_key"),
+                     "flow_ref": ref["flow_ref"], "card_ref": ref.get("card_ref")},
+        })
+    return items

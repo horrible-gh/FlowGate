@@ -26,6 +26,7 @@ from typing import Optional
 from modules.flow_gate.db import conversation_turns
 from modules.flow_gate.services import chat_doc_settings_service
 from modules.flow_gate.services import chat_settings_service
+from modules.flow_gate.services import display_names
 
 # Mirrors client SECTION_SEPARATOR / MESSAGES_SEPARATOR (mentionMessages.ts).
 SECTION_SEPARATOR = "\n\n"
@@ -170,8 +171,8 @@ def _chat_lookup_sections(
             sections.append(section)
 
     search_lines = [
-        f"List flows with names: GET {base}/list/projects/{project}/groups",
-        f"Read flow basic information: GET {base}/list/groups/<group_id>",
+        f"List flows with names: GET {base}/list/projects/{project}/groups (flow_label F77, flow_name F77(name))",
+        f"Read flow basic information: GET {base}/list/groups/<group_id> (also takes F77 / F77-12; answers flow_ref, flow_name)",
         "Flow/document lookup is allowed in projects the requesting user can read; other flow canvases remain restricted.",
         f"Search documents by title/doc id: GET {base}/search/documents?q=<keyword>&project={project}",
         f"List documents in this group: GET {base}/list/groups/{group_name}/documents?limit=5",
@@ -375,6 +376,8 @@ def build_conversation_mention(
         "",
         "Read the conversation context selected for this invocation:",
         f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1{window_query}",
+        f"Search within this conversation: GET {api_base}/search/documents/content?q=<keyword>&doc_id={doc_id}&sort=desc (asc for oldest first; continue with cursor=<next_cursor> using the same query until next_cursor is null).",
+        "Search results carry only seq, speaker, display_name, created_at and a short snippet; read the turns you need by seq (turns?after_seq=<seq-1>&through_seq=<seq>&limit=1).",
         f"Authorization: Bearer {raw_token}",
         "",
         *_start_paragraph(folded),
@@ -438,7 +441,9 @@ def build_conversation_mention(
     body = "\n".join(lines)
     body = "\n".join(line for line in body.splitlines() if line != auth)
     body = (auth + "\nUse this Authorization for all API calls below; never log the Bearer.\n"
-            + f"Bound flow_id: {group_name}. Read cards/state help to discover node keys when needed.\n\n"
+            + display_names.bound_flow_line(group_name, _group_title(group_name))
+            + " Read cards/state help to discover node keys when needed.\n"
+            + display_names.NAMING_RULE + "\n\n"
             + body)
     text = compose([body], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
@@ -446,6 +451,15 @@ def build_conversation_mention(
         return message_image_delivery.ConversationMention(text, context)
     notice = message_image_delivery.copy_notice(context)
     return terminal_prompt.finalize(text + ("\n\n" + notice if notice else ""))
+
+def _group_title(group_id: str) -> Optional[str]:
+    """The bound Flow's name for the naming line; None when it cannot be read (the line still names F<n>)."""
+    try:
+        from modules.flow_gate.db import groups as db_groups
+        return (db_groups.get_by_id(group_id) or {}).get("title")
+    except Exception:  # a missing table / store must never break the chat mention
+        return None
+
 
 def _single_line(value: Optional[str]) -> str:
     """Collapse stored text to one safe line for a bullet.

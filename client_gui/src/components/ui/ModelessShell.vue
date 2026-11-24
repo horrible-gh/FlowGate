@@ -344,6 +344,8 @@ defineExpose({ bringToFront, geometry, setGeometry })
   box-shadow: var(--fg2-overlay-shadow);
   overflow: hidden;
   outline: none;
+  /* One close-hover red for every style, from the app palette rather than any OS. */
+  --modeless-close-hover: #d64a5c;
 }
 
 .ui-modeless-titlebar {
@@ -361,6 +363,118 @@ defineExpose({ bringToFront, geometry, setGeometry })
 [data-taskbar-style="flowgate"] .ui-modeless-titlebar {
   box-shadow: inset 0 3px 0 var(--modeless-kind-color);
   background: color-mix(in srgb, var(--modeless-kind-color) 8%, var(--fg2-panel));
+}
+
+/* Window looks per taskbar style. Every look is drawn here in CSS with the app's own colours: no OS
+   images, icons, fonts or exact OS colour values, and − / × keep the same place and order in every style. */
+
+/* Modern: flat title bar, rounder window, no kind stripe. */
+.ui-modeless-panel[data-taskbar-style="modern"] {
+  border-radius: 10px;
+  border-color: var(--fg2-line);
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar {
+  padding: 6px 6px 6px 14px;
+  border-bottom-color: transparent;
+  background: color-mix(in srgb, var(--fg2-text) 4%, var(--fg2-panel));
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep(button) {
+  border-radius: 6px;
+}
+
+[data-taskbar-style="modern"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]:hover) {
+  background: var(--modeless-close-hover);
+  color: #fff;
+}
+
+/* Dock: rounder window with a soft shadow, centred title, small round − and × on the right in one quiet colour. */
+.ui-modeless-panel[data-taskbar-style="dock"] {
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+[data-taskbar-style="dock"] .ui-modeless-titlebar {
+  /* The left padding matches the button group so the centred title sits in the middle of the window. */
+  padding: 6px 10px 6px 62px;
+  background: color-mix(in srgb, var(--fg2-text) 5%, var(--fg2-panel));
+}
+
+[data-taskbar-style="dock"] .ui-modeless-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  width: 22px;
+  min-width: 0;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg2-text) 12%, transparent);
+  color: var(--fg2-muted);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  background: color-mix(in srgb, var(--fg2-text) 22%, transparent);
+  color: var(--fg2-text);
+}
+
+.ui-modeless-panel[data-taskbar-style="dock"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]:hover) {
+  background: var(--modeless-close-hover);
+  color: #fff;
+}
+
+/* Classic: a deep navy title bar with a white title; − and × are equal square buttons on the right. */
+.ui-modeless-panel[data-taskbar-style="classic"] {
+  border-radius: 6px;
+  border-color: #34507a;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar {
+  padding: 4px 6px 4px 12px;
+  border-bottom-color: #2a4266;
+  background: linear-gradient(180deg, #33527f, #223b5f);
+}
+
+[data-taskbar-style="classic"] .ui-modeless-title {
+  color: #fff;
+}
+
+[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep(button) {
+  color: #e6eefb;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]) {
+  width: 26px;
+  min-width: 0;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:hover),
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action]:focus-visible) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.ui-modeless-panel[data-taskbar-style="classic"] .ui-modeless-titlebar-actions :deep([data-modeless-action="close"]:hover) {
+  border-color: transparent;
+  background: var(--modeless-close-hover);
+  color: #fff;
 }
 
 .is-minimized .ui-modeless-titlebar {
@@ -398,3 +512,4 @@ defineExpose({ bringToFront, geometry, setGeometry })
   cursor: nwse-resize;
 }
 </style>
+

@@ -66,10 +66,29 @@
       <slot name="kind">
         <span class="inspector-header-kind" data-test="designer-inspector-kind">{{ t(kindLabelKey) }}</span>
       </slot>
+      <!-- flowgate.v02test.0077: the card's short id (`F74-1`) after the kind chip, before the title. A press copies the full
+           id (`flowgate.v02test.F74-1`) and says 복사됨 for a moment; none while the card has no number. -->
+      <button
+        v-if="target.cardRef"
+        type="button"
+        class="inspector-header-card-id"
+        :class="{ 'is-copied': copiedWhat === 'card' }"
+        :disabled="!clipboard"
+        :title="t('gui.designer.inspector.header.card_id_copy', { id: target.cardRef.full })"
+        :aria-label="t('gui.designer.inspector.header.card_id_copy', { id: target.cardRef.full })"
+        data-test="designer-inspector-card-id"
+        :data-full-id="target.cardRef.full"
+        @click="copyText(target.cardRef?.full, 'card')"
+      >{{ target.cardRef.short }}<span class="inspector-header-card-id-glyph" aria-hidden="true">{{ copiedWhat === 'card' ? '✓' : '⧉' }}</span></button>
+      <span
+        v-if="target.cardRef && copiedWhat === 'card'"
+        class="inspector-header-card-id-copied"
+        role="status"
+        data-test="designer-inspector-card-id-copied"
+      >{{ t('gui.designer.inspector.header.card_id_copied') }}</span>
       <!-- The title area: one header item holding the title (or its input) and the note right of it, so they share
            the title's room and shrink together instead of pushing the ✎ 메모 and ⋯ off the line. -->
       <span
-        v-if="editing || !titleRepeatsKind || titleEditable || note"
         class="inspector-header-title-area"
         :class="{ 'is-editing': editing }"
         data-test="designer-inspector-title-area"
@@ -103,11 +122,12 @@
           @keydown="onTitleKeydown"
         >{{ target.title }}</span>
         <button
-          v-else-if="titleEditable"
+          v-else
           type="button"
           class="inspector-header-title-edit"
-          :aria-label="t('gui.designer.nodeTitle.edit')"
-          :title="t('gui.designer.nodeTitle.edit')"
+          :disabled="!titleEditable"
+          :aria-label="titleEditTooltip"
+          :title="titleEditTooltip"
           data-test="designer-inspector-title-edit"
           @click="openEdit"
         >✎</button>
@@ -191,8 +211,21 @@
             class="inspector-header-menu-item"
             :disabled="!canCopy"
             data-test="designer-inspector-copy-id"
+            :data-copy-id="copyTarget ?? ''"
             @click="copyId"
-          >{{ t(copied ? 'gui.designer.inspector.header.copied' : 'gui.designer.inspector.header.copy_id') }}</button>
+          >{{ t(copiedWhat === 'menu' ? 'gui.designer.inspector.header.copied' : 'gui.designer.inspector.header.copy_id') }}</button>
+          <!-- flowgate.v02test.0077: with a card number ID 복사 copies the card id; the bound document's own id stays
+               copyable here. -->
+          <button
+            v-if="target.cardRef && target.docId"
+            type="button"
+            role="menuitem"
+            class="inspector-header-menu-item"
+            :disabled="!clipboard"
+            :title="target.docId"
+            data-test="designer-inspector-copy-doc-id"
+            @click="copyText(target.docId, 'doc')"
+          >{{ t(copiedWhat === 'doc' ? 'gui.designer.inspector.header.doc_id_copied' : 'gui.designer.inspector.header.copy_doc_id') }}</button>
           <slot name="menu" :close="close" />
         </template>
       </Dropdown>
@@ -203,9 +236,11 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isDefaultCardTitle } from '../cardDefaultTitle'
 import Dropdown from '../../../components/ui/Dropdown.vue'
 import IconButton from '../../../components/ui/IconButton.vue'
 import { flowNodeKindView, flowNodeStateDisplay } from '../center/canvas/flowNodeKinds'
+import { cardCopyId } from '../center/graph/cardIds'
 import { cardStateReasonText } from './inspectorTarget'
 import { INSPECTOR_HOST } from './inspectorHost'
 import { NODE_TITLE_MAX_CHARS, checkNodeTitle, inspectorCardState, type InspectorTarget, type NodeTitleSaveOutcome } from './inspectorTarget'
@@ -352,25 +387,31 @@ const pill = computed<HeaderPill | null>(() => {
   return { label, tone, sub: sub || null, title }
 })
 
-// ⋯ → ID 복사: the bound document's id to the clipboard. Nothing to copy without a document or
-// without the clipboard API (an insecure context): the item stays, disabled.
+// ⋯ → ID 복사: flowgate.v02test.0077 — the card's full display id (`flowgate.v02test.F74-1`) to the clipboard; while the
+// card has no number, the bound document's id as before. Nothing to copy (neither), or no clipboard API (an insecure
+// context): the item stays, disabled. The header's `F74-1` chip copies the same full id.
 const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-const canCopy = computed(() => !!props.target.docId && !!clipboard)
-const copied = ref(false)
+const copyTarget = computed(() => cardCopyId(props.target.cardRef, props.target.docId))
+const canCopy = computed(() => !!copyTarget.value && !!clipboard)
+/** What was just copied (its 복사됨 shows for a moment): the ⋯ item, the header chip, or the document id item. */
+const copiedWhat = ref<'menu' | 'card' | 'doc' | null>(null)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
-async function copyId() {
-  const docId = props.target.docId
-  if (!docId || !clipboard) return
+function copyId() {
+  void copyText(copyTarget.value, 'menu')
+}
+
+async function copyText(text: string | null | undefined, what: 'menu' | 'card' | 'doc') {
+  if (!text || !clipboard) return
   try {
-    await clipboard.writeText(docId)
+    await clipboard.writeText(text)
   } catch {
     return
   }
-  copied.value = true
+  copiedWhat.value = what
   if (copiedTimer !== null) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => {
-    copied.value = false
+    copiedWhat.value = null
   }, 1500)
 }
 
@@ -378,9 +419,16 @@ async function copyId() {
 
 const host = inject(INSPECTOR_HOST, null)
 
-/** The title only repeats the kind name of the badge: not shown again (the ✎ entry stays when it may be edited). */
-const titleRepeatsKind = computed(() => props.target.nodeType !== 'gate' && props.target.title.trim() === t(kindLabelKey.value).trim())
+/** Default titles are hidden in every locale; their ✎ entry stays visible, including when locked. */
+const titleRepeatsKind = computed(() => props.target.nodeType !== 'gate' && isDefaultCardTitle(props.target.title, kindLabelKey.value))
 const titleEditable = computed(() => props.target.canEditTitle === true && !!host?.saveTitle)
+const titleEditTooltip = computed(() => {
+  if (titleEditable.value) return t('gui.designer.nodeTitle.edit')
+  if (props.target.titleLock === 'running') return t('gui.designer.nodeTitle.locked')
+  if (props.target.readOnly === 'conflict') return t('gui.designer.inspector.header.read_only_conflict')
+  if (props.target.readOnly === 'revision') return t('gui.designer.inspector.header.read_only_revision')
+  return t('gui.designer.inspector.header.read_only')
+})
 
 const editing = ref(false)
 const draft = ref('')
@@ -572,6 +620,51 @@ onScopeDispose(() => {
   height: 14px;
 }
 
+/* flowgate.v02test.0077: the card's short id chip (mockup v2 `.cid`) — monospace, keeps its width; a press copies. */
+.inspector-header-card-id {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid #2f5d99;
+  border-radius: 4px;
+  background: #15293d;
+  color: #cfe3ff;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.inspector-header-card-id:hover:not(:disabled) {
+  border-color: #4b8fe0;
+  background: #1a3452;
+}
+
+.inspector-header-card-id:disabled {
+  cursor: default;
+}
+
+.inspector-header-card-id-glyph {
+  color: #86a9cc;
+  font-size: 11px;
+}
+
+.inspector-header-card-id.is-copied .inspector-header-card-id-glyph {
+  color: #4fd18e;
+}
+
+.inspector-header-card-id-copied {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  color: #4fd18e;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
 .inspector-header-kind {
   display: inline-flex;
   flex: 0 0 auto;
@@ -689,8 +782,13 @@ onScopeDispose(() => {
   cursor: pointer;
 }
 
-.inspector-header-title-edit:hover {
+.inspector-header-title-edit:hover:not(:disabled) {
   color: var(--fg2-text);
+}
+
+.inspector-header-title-edit:disabled {
+  cursor: not-allowed;
+  opacity: var(--fg2-control-disabled-opacity);
 }
 
 /* The length, a refusal or the lock note: small text right of the title, inside the title area; a long sentence

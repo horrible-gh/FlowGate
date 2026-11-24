@@ -1,0 +1,30 @@
+-- 211_graph_card_numbers.sql — card numbers of a Flow (SQLite)
+-- The display id of a card is F<flow number>-<card number> (F77-12). The Flow number comes from the group id and is
+-- never stored; the card number is stored here per card (Flow, node_key) from a per-Flow counter that only goes up,
+-- so a number never changes and the number of a deleted card is never handed out again. node_key has no FK (nodes
+-- change with the draft / revisions; a deleted node's row stays, like its title state and memos).
+-- No stored id (group id, document id, work plan card id, node key) is changed by this migration.
+-- Additive; rollback: DROP TRIGGER trg_graph_card_numbers_group_deleted; DROP TABLE graph_card_numbers;
+-- DROP TABLE graph_card_counters (the numbers shown so far go with them).
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS graph_card_counters (
+    group_id      TEXT PRIMARY KEY REFERENCES groups(group_id) ON DELETE CASCADE,
+    next_card_no  INTEGER NOT NULL DEFAULT 1 CHECK (next_card_no >= 1),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS graph_card_numbers (
+    group_id    TEXT NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
+    node_key    TEXT NOT NULL,
+    card_no     INTEGER NOT NULL CHECK (card_no >= 1),
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (group_id, node_key),
+    CONSTRAINT uq_graph_card_numbers_no UNIQUE (group_id, card_no)
+);
+
+-- SQLite only (149_graph_node_memos pattern): FK-independent cleanup for hard deletes run with foreign_keys OFF.
+CREATE TRIGGER IF NOT EXISTS trg_graph_card_numbers_group_deleted AFTER DELETE ON groups BEGIN DELETE FROM graph_card_numbers WHERE group_id = OLD.group_id; DELETE FROM graph_card_counters WHERE group_id = OLD.group_id; END;
+
+COMMIT;

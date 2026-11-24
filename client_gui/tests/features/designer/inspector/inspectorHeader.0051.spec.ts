@@ -94,6 +94,74 @@ describe('InspectorHeader (flowgate.v02.0051)', () => {
     }
   })
 
+  // flowgate.v02test.0077 — the card number after the kind chip, and ID 복사 copying the full card id.
+  describe('the card id (v02test.0077)', () => {
+    const CARD_REF = { cardNo: 1, local: '#1', short: 'F74-1', moduleRef: 'v02test.F74-1', full: 'flowgate.v02test.F74-1' }
+    const mountWithRef = (selection: (typeof SELECTIONS)[keyof typeof SELECTIONS]) => {
+      wrapper = mount(InspectorHeader, { attachTo: document.body, props: { target: { ...targetOf(selection), cardRef: CARD_REF } }, global: { plugins: [i18n] } })
+      return wrapper
+    }
+
+    it('shows F74-1 between the kind chip and the title; a press copies the full id and says 복사됨 for a moment', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = mountWithRef(SELECTIONS.v01)
+        const chip = get(w, 'designer-inspector-card-id')
+        expect(chip.text()).toContain('F74-1')
+        expect(chip.attributes('title')).toBe('누르면 flowgate.v02test.F74-1 복사')
+        const order = [...get(w, 'designer-inspector-header').element.children].map((el) => el.getAttribute('data-test') ?? '')
+        const at = (test: string) => order.indexOf(test)
+        expect(at('designer-inspector-kind')).toBeLessThan(at('designer-inspector-card-id'))
+        expect(at('designer-inspector-card-id')).toBeLessThan(at('designer-inspector-title-area'))
+        expect(w.find('[data-test="designer-inspector-card-id-copied"]').exists()).toBe(false)
+        await chip.trigger('click')
+        await flushPromises()
+        expect(writeText).toHaveBeenCalledWith('flowgate.v02test.F74-1')
+        expect(get(w, 'designer-inspector-card-id-copied').text()).toBe('복사됨')
+        vi.advanceTimersByTime(1600)
+        await flushPromises()
+        expect(w.find('[data-test="designer-inspector-card-id-copied"]').exists()).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('⋯ → ID 복사 copies the full card id; the document id stays copyable as its own item', async () => {
+      const w = mountWithRef(SELECTIONS.v01)
+      const item = await openMenu(w)
+      expect(item.disabled).toBe(false)
+      item.click()
+      await flushPromises()
+      expect(writeText).toHaveBeenLastCalledWith('flowgate.v02test.F74-1')
+      const docItem = document.body.querySelector<HTMLButtonElement>('[data-test="designer-inspector-copy-doc-id"]')
+      expect(docItem?.textContent).toBe('문서 ID 복사')
+      docItem!.click()
+      await flushPromises()
+      expect(writeText).toHaveBeenLastCalledWith('flowgate.v02.0048.0011-TR')
+      expect(docItem!.textContent).toBe('문서 ID 복사됨')
+    })
+
+    it('a numbered card without a document: ID 복사 enabled (its card id), no document id item', async () => {
+      const w = mountWithRef(SELECTIONS.graphGate)
+      const item = await openMenu(w)
+      expect(item.disabled).toBe(false)
+      expect(document.body.querySelector('[data-test="designer-inspector-copy-doc-id"]')).toBeNull()
+      item.click()
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledWith('flowgate.v02test.F74-1')
+    })
+
+    it('a card without a number (no card_ref sent) shows no chip and does not break; ID 복사 keeps the document id', async () => {
+      const w = mountHeader(SELECTIONS.v01)
+      expect(w.find('[data-test="designer-inspector-card-id"]').exists()).toBe(false)
+      const item = await openMenu(w)
+      expect(document.body.querySelector('[data-test="designer-inspector-copy-doc-id"]')).toBeNull()
+      item.click()
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledWith('flowgate.v02.0048.0011-TR')
+    })
+  })
+
   it('a Node without a document keeps the item, disabled', async () => {
     const w = mountHeader(SELECTIONS.graphGate)
     const item = await openMenu(w)

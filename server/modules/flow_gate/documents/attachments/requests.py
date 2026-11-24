@@ -920,7 +920,7 @@ def preview(request_id: str, user: dict) -> dict:
         raise RequestError(410, "attachment_request_file_missing", "the staged file is gone")
     with open(path, "rb") as fh:
         data = fh.read(ATTACH_PREVIEW_MAX_BYTES + 1)
-    # Fixed 1 MiB — independent of FLOWGATE_ATTACH_READ_MAX_BYTES (constants §1-1a).
+    # Fixed 1 MiB — independent of the attach_read_max_mb system setting.
     truncated = len(data) > ATTACH_PREVIEW_MAX_BYTES
     data = data[:ATTACH_PREVIEW_MAX_BYTES]
     base = {"ok": True, "request_id": row["request_id"], "filename": row["filename"], "size": int(row["size"])}

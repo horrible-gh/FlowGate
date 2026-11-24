@@ -174,6 +174,8 @@ export function toFlowGraph(canvas: FlowCanvas): FlowGraph {
       ...(node.cardDocuments ? { cardDocuments: node.cardDocuments } : {}),
       // the card title state, as sent (absent from an older server).
       ...(node.titleState !== undefined ? { titleState: node.titleState } : {}),
+      // flowgate.v02test.0077: the card's display ids, as sent (absent from an older server).
+      ...(node.cardRef !== undefined ? { cardRef: node.cardRef } : {}),
     })),
     edges: canvas.edges.map((edge) => ({
       id: edge.edgeId,

@@ -99,7 +99,7 @@ describe('taskbar window lifecycle', () => {
     expect(router.currentRoute.value.path).toBe('/')
     expect(wrapper.find('[role="menu"]').exists()).toBe(false)
     expect(document.querySelectorAll('[data-test="me-theme-window"]')).toHaveLength(1)
-    expect(document.querySelector('[data-test="me-theme-window"] select')).not.toBeNull()
+    expect(document.querySelectorAll('[data-test="me-theme-window"] [data-test="taskbar-style-card"]')).toHaveLength(4)
     clickMinimize(); await tick()
     expect(wrapper.findAll('.minimized-item')).toHaveLength(1)
     await wrapper.get('.menu-trigger').trigger('click'); await tick()

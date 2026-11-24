@@ -162,8 +162,9 @@ HANDLERS = {
 def register() -> None:
     """Connect every Conversation handler to its port (idempotent)."""
     from modules.flow_gate.graph_workflow.services import first_names_hooks
-    from .first_names_triggers import schedule_run
+    from .first_names_triggers import schedule_run, schedule_completed
     first_names_hooks.register(schedule_run)
+    first_names_hooks.register_completion(schedule_completed)
     for name, handler in HANDLERS.items():
         hooks.register(name, handler)
 
@@ -171,6 +172,7 @@ def register() -> None:
 def unregister() -> None:
     from modules.flow_gate.graph_workflow.services import first_names_hooks
     first_names_hooks.register(None)
+    first_names_hooks.register_completion(None)
     for name in HANDLERS:
         hooks.unregister(name)
 

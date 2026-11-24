@@ -74,7 +74,7 @@ DESIGNER_SIZE_FIELDS = {
 # Validation order is fixed so a request with several bad fields always reports the same
 # one.
 TASKBAR_STYLE_FIELD = "designer_taskbar_style"
-TASKBAR_STYLE_DOMAIN = ("flowgate",)
+TASKBAR_STYLE_DOMAIN = ("flowgate", "modern", "dock", "classic")
 TASKBAR_STYLE_DEFAULT = "flowgate"
 PATCH_FIELDS = (RETENTION_FIELD, *DESIGNER_SIZE_FIELDS, TASKBAR_STYLE_FIELD, *voice_preferences.DEFAULTS)
 

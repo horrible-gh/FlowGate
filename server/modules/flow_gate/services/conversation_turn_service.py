@@ -855,7 +855,9 @@ def append_turn(
             # Neither ever fails the append.
             from modules.flow_gate.services import chat_run_hooks
             if chat_run_hooks.registered(chat_run_hooks.ON_CONVERSATION_REPLY_APPENDED):
-                chat_run_hooks.conversation_reply_appended(doc_id, row)
+                token = actor.get("token") or {}
+                naming_context = {k: token.get(k) for k in ("ai_run_id", "issued_to", "provider_id", "doc_ref")}
+                chat_run_hooks.conversation_reply_appended(doc_id, {**row, "_naming_context": naming_context})
             else:
                 from modules.flow_gate.services import chat_activity_anchor_service
                 chat_activity_anchor_service.on_turn_appended(doc_id, row)

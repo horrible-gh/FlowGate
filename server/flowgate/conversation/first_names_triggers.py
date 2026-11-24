@@ -6,7 +6,7 @@ from . import auto_title, activity, legacy_adapter, contracts as c
 log = logging.getLogger(__name__)
 
 
-def notify(flow_id):
+def notify(flow_id, targets=None, doc_id=None):
     """Post-commit hints; clients read authoritative values, never apply event titles."""
     from modules.flow_gate.api.v1.events.publisher import broadcast_event_nowait, FlowEvent
     from modules.flow_gate.api.v1.events.event_types import EventType
@@ -14,7 +14,8 @@ def notify(flow_id):
     if not group:
         return
     broadcast_event_nowait(FlowEvent(event_type=EventType.GROUP_VIEW_REFRESH,
-        payload={"group_id": flow_id, "reason": "first_names"},
+        payload={"group_id": flow_id, "reason": "first_names", "targets": targets or [],
+                 **({"doc_id": doc_id} if doc_id else {})},
         project=group["project_id"], group_id=flow_id, audience="*"))
 
 
@@ -39,7 +40,7 @@ def chat(doc_id, user, body):
     return {"ok": True, "doc_id": doc_id, "title": saved["title"], "updated_at": saved.get("updated_at")}
 
 
-def run_context(flow_id, revision_no):
+def run_context(flow_id, revision_no, provider_id=None):
     """Read the accepted revision's configured AI and bound root, never a guessed task."""
     from modules.flow_gate.storage import paths
     from modules.flow_gate.db import documents
@@ -49,8 +50,8 @@ def run_context(flow_id, revision_no):
     from flowgate.ai_roles import resolve
     definition = definition_store.revision(flow_id, revision_no) or {}
     group = legacy_adapter.get_group(flow_id) or {}
-    provider = None
-    for node in definition.get("nodes", []):
+    provider = provider_id
+    for node in ([] if provider else definition.get("nodes", [])):
         if stage_assignment.enabled() and stage_assignment.role_card(node):
             # Current Designer roles live in role slots, not legacy run_ai settings.
             # A person/unavailable role must never fall back to a stale legacy AI.
@@ -73,58 +74,91 @@ def run_context(flow_id, revision_no):
             if text.startswith("---"):
                 parts = text.split("---", 2)
                 text = parts[2] if len(parts) == 3 else ""
-    group = legacy_adapter.get_group(flow_id)
-    chats = documents.list_documents(group["project_id"], group_id=flow_id, type_code="CH", limit=100)
-    live = [doc for doc in chats if doc.get("status") != "cancelled" and not doc.get("superseded_by")]
-    # Stable first conversation; subsequent chats never replace the ledger's first target.
-    first = min(live, key=lambda d: (d.get("created_at") or "", d["doc_id"])) if live else None
-    return provider, text, first["doc_id"] if first else None
+    return provider, text, None
 
 
-def _run(flow_id, user_id, revision_no):
+def _run(flow_id, user_id, revision_no, provider_id=None):
     try:
-        provider, text, chat_id = run_context(flow_id, revision_no)
+        provider, text, chat_id = (run_context(flow_id, revision_no, provider_id) if provider_id
+                                   else run_context(flow_id, revision_no))
+        provider = provider_id or provider
         if provider:
-            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text, chat_id)
+            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text)
+        else:
+            log.info("flow naming skipped reason=provider_missing flow=%s", flow_id)
     except Exception as exc:
         log.warning("flow naming setup exception_type=%s", type(exc).__name__)
 
 
-def schedule_run(flow_id, user_id, revision_no):
-    # Reuse the same bounded pool, including context reads; the run response never waits.
+def _schedule(fn, *args):
     if not auto_title._first_names_slots.acquire(blocking=False):
+        log.info("flow naming skipped reason=pool_full")
         return False
     try:
-        future = auto_title._first_names_pool.submit(_run, flow_id, user_id, revision_no)
+        future = auto_title._first_names_pool.submit(fn, *args)
         future.add_done_callback(lambda _: auto_title._first_names_slots.release())
         return True
-    except Exception:
+    except Exception as exc:
         auto_title._first_names_slots.release()
+        log.info("flow naming skipped reason=pool_unavailable exception_type=%s", type(exc).__name__)
         return False
+
+
+def schedule_run(flow_id, user_id, revision_no):
+    return _schedule(_run, flow_id, user_id, revision_no)
+
+
+def schedule_completed(run):
+    flow_id, user_id, provider = run.get("group_id"), run.get("issued_to"), run.get("provider_id")
+    if not flow_id or not user_id or not provider:
+        log.info("flow naming skipped reason=run_context_missing")
+        return False
+    return _schedule(_completed, flow_id, user_id, provider, run.get("doc_ref"))
+
+
+def _completed(flow_id, user_id, provider, doc_id):
+    if not legacy_adapter.has_graph_definition(flow_id):
+        log.info("flow naming skipped reason=not_graph flow=%s", flow_id)
+        return
+    doc = legacy_adapter.get_document(doc_id) if doc_id else None
+    if doc and doc.get("type_code") == "CH":
+        # Reply append owns chat naming, including the first-reply requirement.
+        log.info("flow naming skipped reason=reply_owns_chat doc=%s", doc_id)
+        return
+    from modules.flow_gate.graph_workflow.store import definition_store
+    _run(flow_id, user_id, definition_store.latest_revision_no(flow_id), provider)
 
 
 def _reply(doc_id, user_id, provider_id):
     try:
         doc = legacy_adapter.get_document(doc_id)
-        if doc and doc.get("group_id") and legacy_adapter.has_graph_definition(doc["group_id"]):
-            auto_title.generate_flow_names(doc["group_id"], {"user_id": user_id}, provider_id, chat_doc_id=doc_id)
+        if not doc:
+            log.info("flow naming skipped reason=doc_missing doc=%s", doc_id)
+            return
+        if not doc.get("group_id") or not legacy_adapter.has_graph_definition(doc["group_id"]):
+            log.info("flow naming skipped reason=not_graph doc=%s", doc_id)
+            return
+        auto_title.generate_flow_names(doc["group_id"], {"user_id": user_id}, provider_id, chat_doc_id=doc_id)
     except Exception as exc:
         log.warning("flow naming reply exception_type=%s", type(exc).__name__)
 
 
 def schedule_reply(doc_id, turn):
     if turn.get("speaker") != "ai" or not str(turn.get("body") or "").strip():
+        log.info("flow naming skipped reason=not_ai_reply doc=%s", doc_id)
         return False
-    run = legacy_adapter.get_run_record(turn.get("source_run_id")) or {}
+    run_id = turn.get("source_run_id")
+    # The append service supplies verified worker-token fields, never request body fields.
+    # Bound token fields only fill gaps; non-None fields from the live or persisted run record win when present.
+    token = turn.get("_naming_context") or {}
+    bound_token = bool(run_id and token.get("ai_run_id") == run_id
+                       and token.get("doc_ref") == doc_id)
+    run = legacy_adapter.get_run_record(run_id) or legacy_adapter.persisted_naming_run(run_id) or {}
+    if bound_token:
+        run = {**{k: token[k] for k in ("issued_to", "provider_id", "doc_ref") if token.get(k)},
+               **{k: v for k, v in run.items() if v is not None}}
     user_id, provider_id = run.get("issued_to"), run.get("provider_id")
     if not user_id or not provider_id or run.get("doc_ref") != doc_id:
+        log.info("flow naming skipped reason=reply_context_missing doc=%s", doc_id)
         return False
-    if not auto_title._first_names_slots.acquire(blocking=False):
-        return False
-    try:
-        future = auto_title._first_names_pool.submit(_reply, doc_id, user_id, provider_id)
-        future.add_done_callback(lambda _: auto_title._first_names_slots.release())
-        return True
-    except Exception:
-        auto_title._first_names_slots.release()
-        return False
+    return _schedule(_reply, doc_id, user_id, provider_id)

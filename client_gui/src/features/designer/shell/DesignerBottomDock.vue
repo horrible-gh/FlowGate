@@ -14,14 +14,16 @@
     data-test="designer-bottom-dock"
     :style="{ height: `${height}px`, gridTemplateColumns: DESIGNER_BOTTOM_DOCK_COLUMNS }"
   >
-    <DesignerInspector
-      :selection="inspector?.selection() ?? null"
-      :unselected="unselected"
-      :save-title="inspector?.saveTitle ?? null"
-      :flow-run-lock="inspector?.flowRunLock ?? null"
-      :card-run="inspector?.cardRun ?? null"
-      @host="inspector?.host($event)"
-    />
+    <div class="designer-bottom-main" data-test="designer-bottom-main">
+      <DesignerInspector
+        :selection="inspector?.selection() ?? null"
+        :unselected="unselected"
+        :save-title="inspector?.saveTitle ?? null"
+        :flow-run-lock="inspector?.flowRunLock ?? null"
+        :card-run="inspector?.cardRun ?? null"
+        @host="inspector?.host($event)"
+      />
+    </div>
     <aside
       class="designer-bottom-minimap"
       :class="{ 'is-unavailable': unselected }"
@@ -112,6 +114,16 @@ const emit = defineEmits<{ 'minimap-viewport': [viewport: CanvasViewport, commit
   overflow: hidden;
   border-top: 1px solid var(--fg2-line-strong);
   background: var(--fg2-panel);
+}
+
+/* The Inspector takes the left grid cell (7 of 7 : 3). */
+.designer-bottom-main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .designer-bottom-minimap {

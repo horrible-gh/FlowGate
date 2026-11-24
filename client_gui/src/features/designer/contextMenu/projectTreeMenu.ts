@@ -11,16 +11,20 @@
 
 import { action as a, makeMenu, separator as s } from './model'
 import type { PartInput, ProjectTarget } from './types'
-export interface ProjectAvailability { readonly currentProject: boolean; readonly disposed?: boolean; readonly gitEnabled?: boolean; readonly archived?: boolean; readonly archiveEligible?: boolean; readonly archiveBusy?: boolean; readonly groupArchived?: boolean; readonly groupArchivable?: boolean; readonly groupArchiveBusy?: boolean }
+export interface ProjectAvailability { readonly currentProject: boolean; readonly disposed?: boolean; readonly gitEnabled?: boolean; readonly archived?: boolean; readonly archiveEligible?: boolean; readonly archiveBusy?: boolean; readonly archiveReason?: string; readonly groupArchived?: boolean; readonly groupArchivable?: boolean; readonly groupArchiveBusy?: boolean }
 export function projectTreeMenu({ target, available: v, connected }: PartInput<ProjectTarget, ProjectAvailability>) {
   const groupArchive = v.groupArchivable === false ? [] : [s('group-archive'), a(v.groupArchived ? 'group.restore' : 'group.archive', v.groupArchived ? 'groupRestore' : 'groupArchive', '▣', !v.currentProject || !!v.groupArchiveBusy)]
+  // F83-5: a Flow Archive that is off says why — the toolbar's text (`archiveReason`); Restore and an enabled item stay as they were.
+  const archiveOff = !v.currentProject || !!v.archiveBusy || (!v.archived && !v.archiveEligible)
+  const flowArchive = { ...a(v.archived ? 'flow.restore' : 'flow.archive', v.archived ? 'restore' : 'archive', '▣', archiveOff),
+    ...(archiveOff && !v.archived && v.archiveReason ? { tooltip: v.archiveReason } : {}) }
   const groupDelete = v.groupArchivable === false ? []
     : [s('group-delete'), a('group.delete', 'groupDelete', '×', !v.currentProject, true)]
   const items = target.kind === 'project'
     ? [a('project.newGroup', 'newGroup', '＋', !v.currentProject), s('project-info'), a('project.info', 'projectInfo', 'ⓘ')]
     : target.kind === 'group'
       ? [a('group.newFlow', 'newFlow', '＋', !v.currentProject), s('group-info'), a('group.rename', 'rename', '✎', !v.currentProject), a('group.info', 'info', 'ⓘ'), ...groupArchive, ...groupDelete]
-      : [a('flow.rename', 'rename', '✎', !!v.disposed || !!v.archived), ...(v.gitEnabled === false ? [] : [a('flow.baseBranch', 'baseBranch', '⑂', !!v.archived)]), s('flow-archive'), a(v.archived ? 'flow.restore' : 'flow.archive', v.archived ? 'restore' : 'archive', '▣', !v.currentProject || !!v.archiveBusy || (!v.archived && !v.archiveEligible)), s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed || !!v.archived, true)]
+      : [a('flow.rename', 'rename', '✎', !!v.disposed || !!v.archived), ...(v.gitEnabled === false ? [] : [a('flow.baseBranch', 'baseBranch', '⑂', !!v.archived)]), s('flow-archive'), flowArchive, s('flow-delete'), a('flow.delete', 'delete', '×', !v.currentProject || !!v.disposed || !!v.archived, true)]
   // flow.delete requests the existing DC workflow; it never performs permanent deletion.
   return makeMenu(target, items, connected)
 }

@@ -114,6 +114,13 @@ def test_open_session_blocks_stage_and_unstage(repo, monkeypatch):
     assert status(repo)["blockers"][0]["code"] == "session_open"
     for op in ("stage", "unstage"):
         assert write(repo, op, {"all": True}, 409)["code"] == "invalid_state"
+def test_open_session_blocker_names_the_session(repo, monkeypatch):
+    # flowgate.v02test.0068: the Git tab names the session and offers its abort even with no conflict card.
+    monkeypatch.setattr(gs.db_git, "get_open_session_by_group",
+                        lambda _: {"merge_id": 41, "kind": "branch_merge", "status": "open"})
+    blocker = status(repo)["blockers"][0]
+    assert blocker["code"] == "session_open"
+    assert blocker["session_kind"] == "branch_merge" and blocker["merge_id"] == 41
 def test_floor_metadata_is_filtered_for_hidden_paths(repo, monkeypatch):
     def bad(*args, **kwargs):
         raise GitServiceError(409, "group_work_base_unverified", "Floor unavailable",

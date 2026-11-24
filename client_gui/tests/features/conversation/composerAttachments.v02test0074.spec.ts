@@ -9,7 +9,7 @@ import ConversationComposer from '@/features/conversation/ConversationComposer.v
 import { ConversationPanel } from '@/features/conversation'
 import { createFakeSource, turn } from './fakeConversationSource'
 
-// v02test.0074 card 1: the 📎 button of the chat input (right of the AI picker and the source mode icons). It asks
+// v02test.0074 card 1 (0011-T: drawn like the mockup — paperclip line icon, bordered square, corner badge): the attachments button of the chat input (right of the AI picker and the source mode icons). It asks
 // the container to open / close the Flow's attachment window and shows the waiting AI upload requests as a yellow badge.
 registerAppMessages(i18n)
 
@@ -60,15 +60,30 @@ describe('📎 button of the chat input', () => {
     expect(follows(wrapper!.findComponent({ name: 'ComposerModelPicker' }).element, button)).toBe(true)
     expect(follows(wrapper!.findComponent({ name: 'ComposerSourceModes' }).element, button)).toBe(true)
     expect(follows(button, wrapper!.get('.conv-assist-spacer').element)).toBe(true)
-    expect(find('conv-attachments').text()).toContain('📎')
   })
 
-  it('is the shared Button (ghost) and has an accessible name', () => {
+  // 0011-T: the emoji is gone; the button draws the shared Lucide paperclip line icon (LineIcon), like the mode icons.
+  it('draws the paperclip line icon (an SVG), not the 📎 emoji', () => {
     mountComposer()
     const button = find('conv-attachments')
-    expect(button.classes()).toEqual(expect.arrayContaining(['ui-btn', 'ui-btn--ghost']))
+    expect(button.text()).not.toContain('📎')
+    const icon = button.find('svg')
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('data-icon')).toBe('paperclip')
+    expect(icon.attributes('aria-hidden')).toBe('true')
+    expect(icon.classes()).toContain('conv-attach-icon')
+    expect(icon.find('path').exists()).toBe(true)
+  })
+
+  it('is a plain bordered button (not the ghost Button) with an accessible name and title', () => {
+    mountComposer()
+    const button = find('conv-attachments')
+    expect(button.element.tagName).toBe('BUTTON')
+    expect(button.classes()).toContain('conv-attach')
+    expect(button.classes()).not.toContain('ui-btn--ghost')
     expect(button.attributes('type')).toBe('button')
     expect(button.attributes('aria-label')).toBe('첨부파일')
+    expect(button.attributes('title')).toBe('첨부파일')
   })
 
   it('asks the container to toggle the window on every press', async () => {
@@ -88,9 +103,29 @@ describe('📎 button of the chat input', () => {
   it('shows pressed while the window is open', async () => {
     mountComposer({ attachmentsOpen: false })
     expect(find('conv-attachments').attributes('aria-pressed')).toBe('false')
+    expect(find('conv-attachments').classes()).not.toContain('is-open')
     await wrapper!.setProps({ attachmentsOpen: true })
     expect(find('conv-attachments').attributes('aria-pressed')).toBe('true')
     expect(find('conv-attachments').classes()).toContain('is-open')
+    await wrapper!.setProps({ attachmentsOpen: false })
+    expect(find('conv-attachments').attributes('aria-pressed')).toBe('false')
+    expect(find('conv-attachments').classes()).not.toContain('is-open')
+  })
+
+  it('puts the badge inside the button (its top-right corner), after the icon', async () => {
+    mountComposer({ attachmentsPending: 2 })
+    const badge = find('conv-attachments-badge')
+    expect(badge.element.parentElement).toBe(find('conv-attachments').element)
+    const icon = find('conv-attachments').find('svg').element
+    expect(!!(icon.compareDocumentPosition(badge.element) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+  })
+
+  it('caps the badge at 99+ while the label keeps the real count', async () => {
+    mountComposer({ attachmentsPending: 99 })
+    expect(find('conv-attachments-badge').text()).toBe('99')
+    await wrapper!.setProps({ attachmentsPending: 120 })
+    expect(find('conv-attachments-badge').text()).toBe('99+')
+    expect(find('conv-attachments').attributes('aria-label')).toBe('첨부파일 · 승인 대기 120건')
   })
 
   it('shows the waiting count as a badge, and none at 0', async () => {
@@ -105,14 +140,28 @@ describe('📎 button of the chat input', () => {
 
   it('uses theme tokens only: no fixed colour in its rules', () => {
     const style = readFileSync(resolve(__dirname, '../../../src/features/conversation/ConversationComposer.vue'), 'utf8').split('<style')[1] ?? ''
-    for (const selector of ['.conv-attach', '.conv-attach.is-open', '.conv-attach-badge']) {
+    for (const selector of ['.conv-attach', '.conv-attach:hover', '.conv-attach:focus-visible', '.conv-attach.is-open', '.conv-attach-badge']) {
       const at = style.indexOf(`${selector} {`)
       expect(at, selector).toBeGreaterThanOrEqual(0)
       const rule = style.slice(at, style.indexOf('}', at))
       expect(rule, selector).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/)
     }
-    const badge = style.slice(style.indexOf('.conv-attach-badge {'))
-    expect(badge).toContain('var(--fg2-status-warning-bg)')
+    const rule = (selector: string) => {
+      const at = style.indexOf(`${selector} {`)
+      return style.slice(at, style.indexOf('}', at))
+    }
+    // the source mode group's look: border, corner, surface, height.
+    expect(rule('.conv-attach')).toContain('border: 1px solid var(--fg2-line-strong)')
+    expect(rule('.conv-attach')).toContain('border-radius: var(--fg2-control-radius-sm)')
+    expect(rule('.conv-attach')).toContain('background: var(--fg2-control-surface-flat)')
+    expect(rule('.conv-attach')).toContain('height: 27px')
+    // open = the mode buttons' blue "on".
+    expect(rule('.conv-attach.is-open')).toContain('background: var(--fg2-status-info-bg)')
+    expect(rule('.conv-attach.is-open')).toContain('color: var(--fg2-status-info-fg)')
+    // the badge: a yellow dot laid over the corner, never pushing the button.
+    const badge = rule('.conv-attach-badge')
+    expect(badge).toContain('position: absolute')
+    expect(badge).toContain('background: var(--fg2-yellow)')
   })
 })
 
