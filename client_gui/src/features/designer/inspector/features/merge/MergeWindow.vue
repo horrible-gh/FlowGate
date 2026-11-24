@@ -10,6 +10,17 @@
       <button type="button" class="mz-link" @click="reload">{{ t('gui.inspector.merge.retry_read') }}</button>
     </p>
 
+    <!-- automatic conflict resolution (read only: the server runs and ends it): running outside the progress box, or out of tries -->
+    <div v-if="autoDetail && autoResolve" class="mz" :class="{ 'is-info': autoResolve.state === 'running' }" data-test="merge-auto-box" :data-auto-state="autoResolve.state">
+      <h4 class="mz-title" :class="autoResolve.state === 'running' ? 'is-info' : 'is-danger'">
+        <span v-if="autoResolve.state === 'running'" class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>
+        <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.conflict" /></svg>{{ autoTitle }}
+      </h4>
+      <p class="mz-text" data-test="merge-auto-text">{{ autoText }}</p>
+      <MergeAutoResolve :auto="autoResolve" :show-unresolved="autoResolve.state === 'exhausted'" />
+    </div>
+    <p v-else-if="autoNote" class="mz-note" role="status" data-test="merge-auto-note">{{ autoNote }}</p>
+
     <!-- waiting (blue) -->
     <div v-if="screen === 'waiting' && state" class="mz is-info" data-test="merge-box">
       <h4 class="mz-title is-info"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hourglass" /></svg>{{ t('gui.inspector.merge.waiting.title') }}</h4>
@@ -28,12 +39,13 @@
 
     <!-- ① catching up (blue): progress + step log -->
     <div v-else-if="screen === 'catching_up' && state" class="mz is-info" data-test="merge-box">
-      <h4 class="mz-title is-info"><span class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>{{ t(state.resolving ? 'gui.inspector.merge.catching_up.title_ai' : 'gui.inspector.merge.catching_up.title_merging') }}</h4>
+      <h4 class="mz-title is-info"><span class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>{{ autoInBox ? autoTitle : t(state.resolving ? 'gui.inspector.merge.catching_up.title_ai' : 'gui.inspector.merge.catching_up.title_merging') }}</h4>
       <p class="mz-text" data-test="merge-catching-up-text">
-        {{ state.resolving ? t('gui.inspector.merge.catching_up.resolving', { count: state.files.length }) : t('gui.inspector.merge.catching_up.merging') }}
+        {{ autoInBox ? autoText : state.resolving ? t('gui.inspector.merge.catching_up.resolving', { count: state.files.length }) : t('gui.inspector.merge.catching_up.merging') }}
       </p>
       <div class="mz-prog" :class="{ 'is-indeterminate': !state.files.length }"><i :style="progressStyle" /></div>
-      <div class="mz-log" data-test="merge-log">
+      <MergeAutoResolve v-if="autoInBox && autoResolve" :auto="autoResolve" />
+      <div v-else class="mz-log" data-test="merge-log">
         <div v-for="step in steps" :key="step.key" :data-step="step.state"><span :class="`mz-log-${step.state}`">{{ STEP_MARKS[step.state] }}</span> {{ step.text }}</div>
       </div>
     </div>
@@ -173,7 +185,8 @@ import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import { closeMergeWindow, type MergeWindowEntry } from './mergeWindows'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { mergeReasonKey } from './mergeModel'
+import MergeAutoResolve from './MergeAutoResolve.vue'
+import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeReasonKey } from './mergeModel'
 import { openCardMerge, useMerge } from './useMerge'
 
 const props = defineProps<{ target: InspectorTarget; win?: MergeWindowEntry }>()
@@ -207,7 +220,7 @@ const { state, screen, readFailed, error, busy, picking, providers, reload, aiRe
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const initialWidth = Math.min(560, window.innerWidth - 32)
-const windowTitle = computed(() => t(`gui.inspector.merge.window.${screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
+const windowTitle = computed(() => t(`gui.inspector.merge.window.${autoInBox.value ? 'auto_running' : screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
 const close = () => { if (props.win) closeMergeWindow(props.win.key) }
 watch(() => props.win?.raise, () => { shell.value?.bringToFront(); void reload() })
 
@@ -221,6 +234,33 @@ const reasonText = computed(() => {
   const reason = state.value?.reason ?? null
   if (!reason) return ''
   return t(`gui.inspector.merge.reasons.${mergeReasonKey(reason)}`, { reason })
+})
+
+// The server's automatic conflict resolution: shown as it is read; this screen never starts or stops it.
+const autoResolve = computed(() => state.value?.autoResolve ?? null)
+/** Running while the merge is in progress: the progress box itself tells it (title, text, the tries). */
+const autoInBox = computed(() => mergeAutoRunning(autoResolve.value) && screen.value === 'catching_up')
+/** The framed box: running anywhere but the progress box, or every try used up. */
+const autoDetail = computed(() => {
+  const auto = autoResolve.value
+  if (!auto || screen.value === 'pick' || screen.value === 'loading') return false
+  return auto.state === 'exhausted' || (auto.state === 'running' && !autoInBox.value)
+})
+const autoAiName = computed(() => mergeAutoCurrent(autoResolve.value)?.provider?.name ?? state.value?.defaultProvider?.name ?? t('gui.inspector.merge.needs_choice.ai_default'))
+const autoTitle = computed(() => {
+  const auto = autoResolve.value
+  if (!auto) return ''
+  if (auto.state === 'running') return t('gui.inspector.merge.auto.running_title', mergeAutoProgress(auto))
+  return t('gui.inspector.merge.auto.exhausted_title', { count: auto.attempts.length || auto.maxAttempts })
+})
+const autoText = computed(() => (autoResolve.value?.state === 'running'
+  ? t('gui.inspector.merge.auto.running_text', { ai: autoAiName.value })
+  : t('gui.inspector.merge.auto.exhausted_text')))
+/** The other states are one short line. */
+const autoNote = computed(() => {
+  const auto = autoResolve.value
+  if (!auto || screen.value === 'pick' || screen.value === 'loading') return ''
+  return auto.state === 'succeeded' || auto.state === 'stopped_by_person' || auto.state === 'skipped_paused' ? t(`gui.inspector.merge.auto.states.${auto.state}`) : ''
 })
 
 const errorText = computed(() => {

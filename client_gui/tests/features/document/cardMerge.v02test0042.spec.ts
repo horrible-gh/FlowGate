@@ -21,7 +21,7 @@ describe('card merge wire', () => {
       files: [{ path: 'x.ts', resolved: true, kind: 'deleted_card' }, { path: 'y.ts', resolved: false, kind: 'both' }],
       session: { mergeId: 3, kind: 'graph_attempt_merge', reviewState: 'open' }, resolving: null,
       defaultProvider: { id: 'p1', name: 'P' }, actions: ['ai_resolve', 'merge', 'retry'],
-      waitingCards: [{ nodeKey: 'n2', title: 'Two', why: null }], startedRunId: null,
+      waitingCards: [{ nodeKey: 'n2', title: 'Two', why: null }], startedRunId: null, autoResolve: null,
     })
     expect(http.get).toHaveBeenCalledWith('/api/v1/flows/f/nodes/n/merge')
   })
