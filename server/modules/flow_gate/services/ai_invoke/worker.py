@@ -2743,7 +2743,7 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 # T-B4d (②): new / edit carry the card title candidate ``node_title`` as it came (no value is
 # reshaped here; the title service judges it). review / test_run never carry it.
 _REGISTER_MODEL_FIELDS = {
-    "new": ("doc_type", "title", "content", "node_title"),
+    "new": ("doc_type", "title", "content", "node_title", "flow_title"),
     "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
              "rejection_review_id", "node_title", "commit_message", "title"),
     # force_encoding_reason dropped -- review never lets a

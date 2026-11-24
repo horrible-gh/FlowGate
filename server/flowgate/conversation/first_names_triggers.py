@@ -8,14 +8,20 @@ log = logging.getLogger(__name__)
 
 def title_request(flow_id, locale="ko", action="chat"):
     from . import first_names_ports as p
-    # new.title is document metadata; reviews/preflight cannot submit a title.
-    if action not in ("chat", "edit"):
+    # new uses flow_title; document title remains metadata.
+    if action not in ("chat", "edit", "new"):
         return ""
     if not legacy_adapter.has_graph_definition(flow_id):
         return ""
     if p.guard(flow_id, lambda: p.ledger.load(flow_id).get("candidate")):
         return ""
     locale = str(locale or "ko").lower().split("-")[0]
+    if action == "new":
+        return {
+            "ko": "결과 제출 시 선택 필드 `flow_title`에 실제 작업 내용을 나타내는 짧은 이름도 함께 보내세요. 플로우·시작 카드·채팅의 공통 이름으로 사용합니다. 문서 제목 필드 `title`은 그대로 유지하세요.",
+            "en": "When submitting the result, also send a short name based on actual task facts in the optional `flow_title` field. It names the flow, start card and chat together. Preserve `title` as the document title.",
+            "ja": "結果の送信時に任意フィールド `flow_title` で実際の作業内容を表す短い名前も送信してください。フロー・開始カード・チャットの共通名に使います。文書名フィールド `title` はそのまま維持してください。",
+        }.get(locale, "결과 제출 시 `flow_title`에 짧은 작업 이름도 보내세요. `title`은 문서 제목으로 유지하세요.")
     return {
         "ko": "답변 제출 시 선택 필드 `title`에 실제 작업 사실에 기반한 짧은 작업 제목을 보내세요. 플로우·시작 카드·채팅의 공통 이름으로 사용합니다. 문서 등록(new)의 `title`은 문서 제목이므로 이 용도로 바꾸지 마세요.",
         "ja": "回答の送信時に任意フィールド `title` で実際の作業内容に基づく短い作業名を送信してください。フロー・開始カード・チャットの共通名に使います。文書登録(new)の `title` は文書名なので、この用途で変更しないでください。",

@@ -2719,7 +2719,7 @@ def _in_write_session(handler, request: Request, raw: str, body: dict) -> JSONRe
             try:
                 token = token_service.inspect_for_replay(raw)
                 # new.title belongs exclusively to the registered document.
-                naming_title = body.get("title") if body.get("action") == "edit" else None
+                naming_title = body.get("title") if body.get("action") == "edit" else body.get("flow_title")
                 first_names_hooks.submitted(token, naming_title, body.get("doc_id"))
             except Exception as exc:
                 logging.getLogger(__name__).warning("flow naming submission exception_type=%s", type(exc).__name__)
