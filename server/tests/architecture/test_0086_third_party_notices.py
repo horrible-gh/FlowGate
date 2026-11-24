@@ -3,7 +3,7 @@ import hashlib
 import importlib.util
 from unittest import mock
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import unittest
 
@@ -33,7 +33,7 @@ class ImageNoticeTests(unittest.TestCase):
             if name == absent:
                 raise self.checker.metadata.PackageNotFoundError(name)
             dist = mock.Mock(version='test-version')
-            dist.files = [] if name == missing_notice else [Path(name + '.dist-info/LICENSE')]
+            dist.files = [] if name == missing_notice else [PurePosixPath(name + '.dist-info/LICENSE')]
             dist.locate_file.side_effect = lambda item: item
             return dist
         with mock.patch.object(self.checker.metadata, 'distribution', side_effect=distribution), \
@@ -63,7 +63,7 @@ class ImageNoticeTests(unittest.TestCase):
 
 class NoticeTests(unittest.TestCase):
     def test_vue_attributions_registered(self):
-        registry = json.loads((ROOT / 'third_party/icon_attributions.json').read_text())
+        registry = json.loads((ROOT / 'third_party/icon_attributions.json').read_text(encoding='utf-8'))
         sources = {p.relative_to(ROOT).as_posix(): p.read_text(encoding='utf-8')
                    for p in (ROOT / 'client_gui/src').rglob('*.vue')}
         self.assertEqual([], attribution_errors(sources, registry))
@@ -83,7 +83,7 @@ class NoticeTests(unittest.TestCase):
         self.assertEqual([], attribution_errors({'known.vue': '<!-- Lucide icon -->'}, registry))
 
     def test_license_bytes_match_upstream_evidence(self):
-        manifest = json.loads((ROOT / 'third_party/license_sources.json').read_text())
+        manifest = json.loads((ROOT / 'third_party/license_sources.json').read_text(encoding='utf-8'))
         self.assertGreaterEqual(len(manifest['files']), 12)
         for item in manifest['files']:
             self.assertEqual(item['sha256'], hashlib.sha256((ROOT / item['path']).read_bytes()).hexdigest(), item['path'])
@@ -101,9 +101,12 @@ class NoticeTests(unittest.TestCase):
                 self.assertIn(marker.lower(), text, name)
 
     def test_docker_copies_project_and_third_party_notices(self):
-        dockerfile = (ROOT / 'Dockerfile').read_text()
+        dockerfile = (ROOT / 'Dockerfile').read_text(encoding='utf-8')
         self.assertIn('COPY LICENSE THIRD_PARTY_NOTICES.md ./', dockerfile)
         self.assertIn('COPY third_party/ ./third_party/', dockerfile)
+        client_stage = dockerfile.split('FROM python:', 1)[0]
+        self.assertIn('COPY LICENSE THIRD_PARTY_NOTICES.md /build/', client_stage)
+        self.assertIn('COPY third_party/ /build/third_party/', client_stage)
 
 
 if __name__ == '__main__':

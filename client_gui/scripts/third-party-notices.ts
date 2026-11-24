@@ -71,21 +71,21 @@ export function collectNotices(moduleIds: string[], repoRoot: string): string {
       licenseFiles(root).map(file => `--- ${file.slice(root.length + 1)} ---\n${text(file)}`).join('\n\n')
   }).sort()
   const ledger = join(repoRoot, 'THIRD_PARTY_NOTICES.md')
-  if (existsSync(ledger)) {
+  if (!existsSync(ledger)) throw new Error('Required project notice ledger missing: ' + ledger)
+  {
     sections.push(`Inline icons and project third-party ledger\n\n${text(ledger)}`)
     // Include the referenced texts, not just the license names in the ledger.
     const licenses = join(repoRoot, 'third_party', 'licenses')
     const walk = (dir: string): void => {
-      if (!existsSync(dir)) return
+      if (!existsSync(dir)) throw new Error('Required project license directory missing: ' + dir)
+      if (readdirSync(dir).length === 0) throw new Error('Empty project license directory: ' + dir)
       for (const name of readdirSync(dir).sort()) {
         const path = join(dir, name)
         if (statSync(path).isDirectory()) walk(path)
-        else sections.push(`Project notice: ${path.slice(repoRoot.length + 1)}\n\n${text(path)}`)
+        else sections.push(`Project notice: ${path.slice(repoRoot.length + 1).replace(/\\/g, '/')}\n\n${text(path)}`)
       }
     }
     walk(licenses)
-  } else {
-    sections.push('Inline icon notices: 미확정 — THIRD_PARTY_NOTICES.md is not yet available. Integrate the R4 ledger before distribution.')
   }
   return `FlowGate — third-party notices\nGenerated from emitted Rollup modules; Vue Flow dependency closure is included conservatively.\n\n${sections.join('\n\n========================================\n\n')}\n`
 }

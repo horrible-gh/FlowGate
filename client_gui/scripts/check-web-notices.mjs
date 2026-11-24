@@ -7,6 +7,14 @@ const read = path => readFileSync(path, 'utf8')
 const root = resolve('..')
 const notice = read('dist/THIRD_PARTY_NOTICES.txt')
 assert.equal(read('dist/LICENSE.txt'), read('../LICENSE'))
+// Integration contract: preserve exact ledger and license texts in the artifact.
+assert(notice.includes(read('../THIRD_PARTY_NOTICES.md')), 'root ledger missing or stale')
+const sources = JSON.parse(read('../third_party/license_sources.json'))
+for (const entry of sources.files) {
+  assert(notice.includes(`Project notice: ${entry.path}\n\n${read(`../${entry.path}`)}`), `missing project license: ${entry.path}`)
+}
+assert.throws(() => collectNotices([], resolve('node_modules')), /Required project notice ledger missing/)
+
 // Parse generated section headers, not loose substrings inside license prose.
 const packages = [...notice.matchAll(/^((?:@[^/\s]+\/)?[^@\s]+)@([^\s]+)\nInclusion: ([^\n]+)/gm)]
 const emitted = packages.filter(([, , , reason]) => reason === 'emitted Rollup chunk').map(([, name]) => name).sort()
