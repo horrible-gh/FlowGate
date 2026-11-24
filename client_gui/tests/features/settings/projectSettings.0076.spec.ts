@@ -308,7 +308,7 @@ describe('V05 관리자 프로젝트 조회 — list, selection and the three re
   it('system/projects: p1 · p2 · p3 read only with 활성 / 비활성, the p2 row opens p2/general; no Root / Git GET', async () => {
     const w = await open('/settings/system/projects')
     expect(net.requests).toEqual([LIST])
-    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'terminal', 'users', 'projects'])
+    expect(w.findAll('.subnav [data-subnav]').map((i) => i.attributes('data-subnav'))).toEqual(['general', 'agents', 'voice', 'users', 'projects'])
     expect(w.get('.subnav [data-subnav="projects"]').attributes('aria-current')).toBe('page')
     const rows = w.findAll('[data-project-row]')
     expect(rows.map((r) => r.attributes('data-project-row'))).toEqual(['p1', 'p2', 'p3'])

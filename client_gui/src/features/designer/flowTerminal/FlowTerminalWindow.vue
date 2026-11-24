@@ -52,6 +52,7 @@
           <div v-if="ended" class="ft-ended" role="status" data-test="flow-terminal-ended" :data-reason="ended.reason">
             <strong>{{ w.ended }}</strong>
             <small>{{ endedDetail }}</small>
+            <small v-if="ended.message" class="ft-ended-message" data-test="flow-terminal-ended-message">{{ ended.message }}</small>
             <Button variant="primary" size="sm" data-test="flow-terminal-reopen" @click="emit('reopen')">{{ w.reopen }}</Button>
           </div>
           <div v-if="confirming" class="ft-confirm" role="alertdialog" :aria-label="w.confirmTitle" data-test="flow-terminal-confirm">
@@ -84,8 +85,9 @@
 // window — [⇲ 디자이너로] / [⇱ 모달리스로] ask the Host (`designer` event). The window keeps its place and size meanwhile,
 // so [⇱ 모달리스로] brings it back where it was. After each move the screen is fitted again and its rows / columns are
 // sent to the shell (the same resize frame); the area's size is followed by the same ResizeObserver as the window's.
-// 0015-T C-2: a WebSocket closed with 4403 / terminal_disabled (the system setting turned off) is not "세션이 끝났습니다":
-// the window tells the Host (`disabled`), which just closes it.
+// F85: there is no on/off setting any more, so no "turned off" close. When the shell could not start, the exit frame's
+// `message` (e.g. `pip install -r server/requirements.txt` for a Windows server without pywinpty) is shown under
+// "세션이 끝났습니다".
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Terminal } from '@xterm/xterm'
@@ -105,7 +107,7 @@ const props = defineProps<{
   /** That area; null = nothing to fill ([⇲ 디자이너로] is unavailable). */
   fillTarget?: HTMLElement | null
 }>()
-const emit = defineEmits<{ close: []; focus: []; reopen: []; designer: [on: boolean]; disabled: [] }>()
+const emit = defineEmits<{ close: []; focus: []; reopen: []; designer: [on: boolean] }>()
 const { locale } = useI18n()
 const w = computed(() => wordsFor(locale.value))
 const canFill = computed(() => !!props.fillTarget)
@@ -156,7 +158,7 @@ const connected = ref(false)
 const busy = ref(false)
 const cardRunning = ref(false)
 const confirming = ref(false)
-const ended = ref<{ reason: ExitReason; code: number | null } | null>(null)
+const ended = ref<{ reason: ExitReason; code: number | null; message?: string } | null>(null)
 const endedDetail = computed(() => {
   const end = ended.value
   if (!end) return ''
@@ -167,11 +169,6 @@ let term: Terminal | null = null
 let fit: FitAddon | null = null
 let observer: ResizeObserver | null = null
 let disposed = false
-/** The server has ended the session itself (turned off): closing sends no DELETE. */
-let serverGone = false
-/** The close code / reason of the system setting turned off (0015-T 공통 약속 8). */
-const DISABLED_CLOSE_CODE = 4403
-const DISABLED_CLOSE_REASON = 'terminal_disabled'
 const early: string[] = [] // output that came before the screen was ready
 
 function send(frame: string) {
@@ -191,16 +188,9 @@ function connect() {
     if (term) send(resizeFrame(term.cols, term.rows))
   }
   ws.onmessage = event => handle(parseServerMessage(event.data))
-  ws.onclose = (event?: CloseEvent) => {
+  ws.onclose = () => {
     if (socket === ws) socket = null
     if (disposed) return
-    if (event && (event.code === DISABLED_CLOSE_CODE || event.reason === DISABLED_CLOSE_REASON)) {
-      // Turned off while in use: just close (no "세션이 끝났습니다" / [새로 열기]); the Host reads the status again.
-      serverGone = true
-      shutdown()
-      emit('disabled')
-      return
-    }
     finish('closed', null)
   }
 }
@@ -209,11 +199,11 @@ function handle(message: ServerMessage | null) {
   if (message.type === 'output') { if (term) term.write(message.data); else early.push(message.data) }
   else if (message.type === 'busy') busy.value = message.value
   else if (message.type === 'card_running') cardRunning.value = message.value
-  else finish(message.reason, message.code)
+  else finish(message.reason, message.code, message.message)
 }
-function finish(reason: ExitReason, code: number | null) {
+function finish(reason: ExitReason, code: number | null, message?: string) {
   if (ended.value) return
-  ended.value = { reason, code }
+  ended.value = message ? { reason, code, message } : { reason, code }
   busy.value = false
   confirming.value = false
   const ws = socket
@@ -282,7 +272,7 @@ function shutdown() {
   const ws = socket
   socket = null
   ws?.close()
-  if (live && !serverGone) void closeTerminalSession(props.session.session_id).catch(() => {})
+  if (live) void closeTerminalSession(props.session.session_id).catch(() => {})
   observer?.disconnect()
   observer = null
   term?.dispose()
@@ -311,12 +301,7 @@ onBeforeUnmount(() => {
   removeEventListener('resize', keepInView)
   shutdown()
 })
-/** Drops the terminal without a DELETE (the server has closed every session: the setting was turned off). */
-function dispose() {
-  serverGone = true
-  shutdown()
-}
-defineExpose({ reveal, requestClose, dispose })
+defineExpose({ reveal, requestClose })
 </script>
 
 <style scoped>
@@ -367,6 +352,7 @@ defineExpose({ reveal, requestClose, dispose })
 .ft-ended { align-content: center; gap: 8px; text-align: center; }
 .ft-ended strong { font-size: 15px; color: #f0f7ff; }
 .ft-ended small { color: #9fb8cc; font-size: 12px; }
+.ft-ended .ft-ended-message { max-width: 52ch; color: #ffd28a; white-space: pre-wrap; word-break: break-word; }
 .ft-confirm-card { width: min(360px, calc(100% - 40px)); padding: 18px 20px; border: 1px solid #5a7fa3; border-radius: 10px; background: #10253b;
   box-shadow: 0 14px 40px #0009; }
 .ft-confirm-card h3 { margin: 0 0 6px; font-size: 14px; color: #f0f7ff; }

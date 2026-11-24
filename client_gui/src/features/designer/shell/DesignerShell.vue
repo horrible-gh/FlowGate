@@ -118,7 +118,7 @@
         />
       </template>
     </DesignerBody>
-    <DesignerTaskbar />
+    <DesignerTaskbar :has-flow="hasWorkTarget" @pin="onTaskbarPin" />
 
     <DesignerOpenDialog
       :open="dialog === 'group-open'"
@@ -277,6 +277,7 @@ import { RunResultDetailWindow, RunResultWindow, attachmentPendingLine, createRu
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import DesignerTaskbar from './DesignerTaskbar.vue'
+import type { TaskbarPin } from './taskbarIcons'
 import { documentRead, reviewActivityRead, reviewDocumentRead, reviewErrorOf, reviewRunRead, reviewRunStart, settingsNodeHoldWrite } from '@/features/document'
 import { useProjectStore, type CreatedGroup, type DesignerSessionSnapshot, type DesignerSessionTab, type GroupTreeNode } from '@/features/project'
 import type { FlowArchiveState } from '@/features/project'
@@ -1020,6 +1021,14 @@ function onDensity(level: DesignerDensity) {
 
 /** the step a card drag moves in at the chosen density (null = freeform, none). */
 const moveStep = computed(() => DENSITY_MOVE_STEP[top.density])
+
+// The taskbar's pinned buttons run the same paths as the toolbar; [Open project] opens the project list as a floating
+// window (File › Open project keeps the modal dialog).
+function onTaskbarPin(pin: TaskbarPin) {
+  if (pin === 'project') projectStore.openDialog({ window: true })
+  else if (pin === 'attachments') onTopCommand('view.attachments')
+  else if (pin === 'terminal') onTopCommand('view.terminal')
+}
 
 function onTopCommand(command: DesignerTopCommand) {
   if (command === 'view.attachments') { void attachmentHost.value?.open(); return }

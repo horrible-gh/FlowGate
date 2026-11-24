@@ -922,7 +922,8 @@ const SOURCE_MODES: readonly SourceAccessMode[] = ['read_only', 'execute', 'edit
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   sendAction: 'none',
-  contextMode: 'recent',
+  contextMode: 'checkpoint_recent',
+  checkpointMaxTurns: 5,
   contextTurns: 20,
   sourceAccessMode: 'read_only',
   sourceAccessScope: null,
@@ -936,12 +937,12 @@ export function toChatSettings(raw: RawChatSettings | null | undefined): ChatSet
   const s = raw?.settings ?? {}
   const d = raw?.domain ?? {}
   const sendAction = SEND_ACTIONS.find((v) => v === s.send_action) ?? DEFAULT_CHAT_SETTINGS.sendAction
-  const contextMode: ContextMode = s.context_mode === 'all' || s.context_mode === 'checkpoint' || s.context_mode === 'checkpoint_recent' ? s.context_mode : 'recent'
+  const contextMode: ContextMode = s.context_mode === 'recent' || s.context_mode === 'all' || s.context_mode === 'checkpoint' || s.context_mode === 'checkpoint_recent' ? s.context_mode : DEFAULT_CHAT_SETTINGS.contextMode
   const sourceAccessMode = SOURCE_MODES.find((v) => v === s.source_access_mode) ?? DEFAULT_CHAT_SETTINGS.sourceAccessMode
   return {
     sendAction,
     contextMode,
-    checkpointMaxTurns: s.checkpoint_max_turns ?? 10,
+    checkpointMaxTurns: s.checkpoint_max_turns ?? DEFAULT_CHAT_SETTINGS.checkpointMaxTurns,
     contextTurns: Number.isInteger(s.context_turns) ? Number(s.context_turns) : DEFAULT_CHAT_SETTINGS.contextTurns,
     sourceAccessMode,
     sourceAccessScope: typeof raw?.source_access_scope?.project_id === 'string' && typeof raw?.source_access_scope?.group_id === 'string'

@@ -326,8 +326,8 @@ class TestResolveSettings:
         settings, is_default = css.resolve_chat_settings("u1")
         assert is_default is True
         assert settings == {
-            "send_action": "none", "context_mode": "recent",
-            "context_turns": 20, "updated_at": None,
+            "send_action": "none", "context_mode": "checkpoint_recent",
+            "context_turns": 20, "checkpoint_max_turns": 5, "updated_at": None,
             # merged in from the separate source-access storage,
             # defaulting to read_only regardless of this (never-saved) legacy row.
             "source_access_mode": "read_only",
@@ -360,7 +360,7 @@ class TestResolveSettings:
             "context_turns": 20, "created_at": "x", "updated_at": "t",
         }
         settings, _ = css.resolve_chat_settings("u1")
-        assert settings["context_mode"] == "recent"
+        assert settings["context_mode"] == "checkpoint_recent"
         assert settings["send_action"] == "invoke_ai"
 
     def test_reading_never_writes(self, memory_store):

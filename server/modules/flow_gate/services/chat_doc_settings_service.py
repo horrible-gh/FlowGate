@@ -176,7 +176,7 @@ def context_window(
     ``checkpoint_seq`` / ``checkpoint_kind`` are set only when a checkpoint actually decided the window.
     """
     mode = settings["context_mode"]
-    turns = int(settings.get("checkpoint_max_turns", 10) if mode == "checkpoint_recent" else settings["context_turns"])
+    turns = int(settings.get("checkpoint_max_turns", 5) if mode == "checkpoint_recent" else settings["context_turns"])
     checkpoint = checkpoint_safe(user_id, doc_id) if mode in ("checkpoint", "checkpoint_recent") else None
     seq, include = checkpoint if checkpoint else (None, True)
     head_seq = head_seq_of(doc_id) if chat_settings_service.window_needs_head(mode, seq) else 0
