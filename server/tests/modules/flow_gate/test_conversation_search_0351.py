@@ -559,3 +559,149 @@ def test_scoped_http_cursor_and_validation(many_search_turns, tmp_path):
     assert response.status_code == 200
     assert {i["doc_id"] for i in response.json()["items"]} == {first, second}
     assert response.json()["next_cursor"] is None
+
+
+# F82 / #55: compact single-conversation wire contract.
+@pytest.mark.parametrize("sort", ["asc", "desc"])
+def test_compact_http_total_snapshot_and_no_detail_queries(many_search_turns, tmp_path, sort):
+    from modules.flow_gate.services import content_search_service as svc
+    first, _, marker = many_search_turns
+    client = _build_client()
+    headers = {"Authorization": f"Bearer {_issue_bearer(tmp_path)}"}
+    params = dict(q=marker, doc_id=first, sort=sort, limit=50)
+    with patch.object(svc, "_turn_matches", side_effect=AssertionError("detail queried")), \
+         patch.object(svc, "search_document_bodies", side_effect=AssertionError("body queried")):
+        response = client.get("/api/v1/search/documents/content", params=params, headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 70 and data["turn_total"] == 50
+        assert data["doc_id"] == first
+        assert "after_seq=<seq-1>&through_seq=<seq>&limit=1" in data["turn_read"]
+        assert "hits_per_doc" not in data and "context_lines" not in data
+        assert all(set(item) == {"seq", "speaker", "display_name", "created_at", "snippet"}
+                   for item in data["items"])
+        _seed_turns(first, [marker], start=170)
+        params["cursor"] = data["next_cursor"]
+        rest = client.get("/api/v1/search/documents/content", params=params, headers=headers).json()
+        assert rest["total"] == 70 and rest["turn_total"] == 20
+        assert rest["next_cursor"] is None
+        assert [i["seq"] for i in data["items"] + rest["items"]] == sorted(range(100, 170), reverse=sort == "desc")
+
+
+def test_compact_size_and_explicit_detail(many_search_turns, tmp_path):
+    import json
+    from modules.flow_gate.db.connection import get_store
+    first, _, marker = many_search_turns
+    body = "가" * 80 + marker + "나" * 900
+    get_store()._execute("UPDATE conversation_turns SET body = ? WHERE doc_id = ? AND seq >= 100", [body, first])
+    client = _build_client()
+    headers = {"Authorization": f"Bearer {_issue_bearer(tmp_path)}"}
+    params = dict(q=marker, doc_id=first, limit=50)
+    compact = client.get("/api/v1/search/documents/content", params=params, headers=headers).json()
+    compact_chars = len(json.dumps(compact, ensure_ascii=False, separators=(",", ":")))
+    assert compact["turn_total"] == 50
+    assert all(len(i["snippet"]) == 152 and marker in i["snippet"] for i in compact["items"])
+    assert compact_chars < 15000
+    detailed = client.get("/api/v1/search/documents/content", params=dict(params, include_matches="true", hits_per_doc=999, context_lines=999), headers=headers).json()
+    from modules.flow_gate.services import document_outline_service as outline
+    assert detailed["total"] == 70
+    assert detailed["hits_per_doc"] == outline.HITS_PER_DOC_MAX
+    assert detailed["context_lines"] == outline.CONTEXT_LINES_MAX
+    assert detailed["items"][0]["matches"][0]["locator"]["unit"] == "turn"
+    assert detailed["items"][0]["match_total"] == 1
+    print(f"compact_50_chars={compact_chars}; detailed_50_chars={len(json.dumps(detailed, ensure_ascii=False, separators=(',', ':')))}")
+
+
+@pytest.mark.parametrize("scope", [{}, {"group_id": _GROUP}, {"doc_id": "testprj.__ALL__.0351search.0003-R"}])
+def test_other_search_defaults_still_equal_explicit_true(seed_data, tmp_path, scope):
+    client = _build_client()
+    headers = {"Authorization": f"Bearer {_issue_bearer(tmp_path)}"}
+    params = dict(q="Unrelated" if "doc_id" in scope else _TURN_MARKER, **scope)
+    url = "/api/v1/search/documents/content"
+    default = client.get(url, params=params, headers=headers).json()
+    explicit = client.get(url, params=dict(params, include_matches="true"), headers=headers).json()
+    assert default == explicit
+    assert default["items"] and all("matches" in item for item in default["items"])
+    assert "hits_per_doc" in default and "turn_read" not in default
+
+
+def test_compact_empty_filtered_and_nonchat_cursor(seed_data, tmp_path):
+    client = _build_client()
+    headers = {"Authorization": f"Bearer {_issue_bearer(tmp_path)}"}
+    url = "/api/v1/search/documents/content"
+    for extra in ({"q": "no-such-turn"}, {"q": _TURN_MARKER, "status": "closed"},
+                  {"q": _TURN_MARKER, "type": "R"}):
+        data = client.get(url, params=dict(doc_id="testprj.__ALL__.0351search.0001-CH", **extra), headers=headers).json()
+        assert data["items"] == [] and data["total"] == 0 and data["turn_total"] == 0
+    assert client.get(url, params=dict(q="Unrelated", doc_id="testprj.__ALL__.0351search.0003-R", cursor="bad"), headers=headers).status_code == 400
+
+
+def test_turn_read_template_reads_exactly_one_turn(seed_data, tmp_path, monkeypatch):
+    from modules.flow_gate.services import conversation_query_service as query
+    doc_id = "testprj.__ALL__.0351search.0001-CH"
+    monkeypatch.setattr(query, "_readable_document", lambda _: {"doc_id": doc_id})
+    monkeypatch.setattr(query, "_ensure_readable_rows", lambda _: None)
+    monkeypatch.setattr(query, "resolve_actor", lambda _: {"participant_key": "user:u1", "speaker": "user"})
+    monkeypatch.setattr(query.message_image_service, "for_range", lambda *_: {})
+    result = query.list_turns(doc_id=doc_id, actor={"kind": "session"}, after_seq=1, through_seq=2, limit=1)
+    assert [t["seq"] for t in result["turns"]] == [2]
+    assert _TURN_MARKER in result["turns"][0]["body"]
+
+
+def test_compact_search_guidance_matches_contract(seed_data, monkeypatch):
+    from modules.flow_gate.services import invoke_mention_service as ims
+    from modules.flow_gate.services.help import content
+    monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda _: 0)
+    text = ims.build_conversation_mention(
+        doc_id="testprj.__ALL__.0351search.0001-CH", project="testprj",
+        module="__ALL__", group_name=_GROUP, raw_token="test-placeholder",
+        token_id="test-placeholder", api_base_url="http://example.test/api/v1")
+    assert "Search results carry only seq, speaker, display_name, created_at and a short snippet" in text
+    assert "turns?after_seq=<seq-1>&through_seq=<seq>&limit=1" in text
+    assert text.index("Search within this conversation:") < text.index("Search results carry only")
+    help_search = content._content_document_access({"base_url": "/flowgate/api/v1", "locale": "en", "project": "testprj"})["partial"]["content_search"]
+    assert "defaults to false" in help_search["parameters"]["include_matches"]
+    assert "Non-conversation" in help_search["parameters"]["cursor"]
+    assert "max_seq" in help_search["response"]["total"]
+    assert "through_seq=<seq>&limit=1" in help_search["response"]["turn_read"]
+    assert "include_matches=true" in help_search["url"]
+
+
+@pytest.mark.parametrize("state", ["failed", "pending", "in_progress", None])
+@pytest.mark.parametrize("include_matches", [None, "false", "true"])
+def test_unmigrated_scoped_search_preserves_file_title_and_id(seed_data, tmp_path, state, include_matches):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.db import conversation_turns
+    store = get_store()
+    doc_id = "testprj.__ALL__.0351search.0002-CH"
+    if state is None:
+        store._execute("DELETE FROM conversation_docs WHERE doc_id = ?", [doc_id])
+    else:
+        store._execute("UPDATE conversation_docs SET migration_state = ? WHERE doc_id = ?", [state, doc_id])
+    client = _build_client()
+    headers = {"Authorization": f"Bearer {_issue_bearer(tmp_path)}"}
+    try:
+        title = store._fetch_one("SELECT title FROM documents WHERE doc_id = ?", [doc_id])["title"]
+        for query, matched_in in ((_FAILED_FILE_MARKER, "body"), (title, "title"), (doc_id, "doc_id")):
+            params = dict(q=query, doc_id=doc_id)
+            if include_matches is not None:
+                params["include_matches"] = include_matches
+            response = client.get("/api/v1/search/documents/content", params=params, headers=headers)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total"] == 1 and data["turn_total"] == 0
+            assert data["next_cursor"] is None and "turn_read" not in data
+            assert len(data["items"]) == 1
+            item = data["items"][0]
+            assert item["doc_id"] == doc_id and item["matched_in"] == matched_in
+            assert item["group_title"] == "Search Group"
+            assert ("matches" in item) == (include_matches != "false")
+            if include_matches != "false":
+                if matched_in == "body":
+                    assert item["matches"] and item["match_total"] >= 1
+                else:
+                    # Title/id hits have no body location in the existing contract.
+                    assert item["matches"] == [] and item["match_total"] == 0
+    finally:
+        conversation_turns.ensure_migration_row(doc_id)
+        store._execute("UPDATE conversation_docs SET migration_state = 'failed' WHERE doc_id = ?", [doc_id])

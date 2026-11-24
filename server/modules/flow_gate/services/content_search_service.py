@@ -532,7 +532,7 @@ def search_document_bodies(
     return items, total
 
 
-def _turn_snippet(body: str, needle_lower: str) -> Optional[str]:
+def _turn_snippet(body: str, needle_lower: str, chars: int = SEARCH_SNIPPET_CHARS) -> Optional[str]:
     """Excerpt around the first match in a turn body (mirrors ``_snippet`` above, with
     the turn-search-specific lead/tail sizes)."""
     lowered = body.lower()
@@ -540,7 +540,7 @@ def _turn_snippet(body: str, needle_lower: str) -> Optional[str]:
     if idx < 0:
         return None
     start = max(0, idx - SEARCH_SNIPPET_LEAD)
-    end = min(len(body), start + SEARCH_SNIPPET_CHARS)
+    end = min(len(body), start + chars)
     frag = _WS.sub(" ", body[start:end]).strip()
     if start > 0:
         frag = "…" + frag
@@ -585,6 +585,8 @@ def search_conversation_turns_page(
     group_id: str = None,
     sort: str = "desc",
     cursor: str = None,
+    compact: bool = False,
+    page_info: Optional[dict] = None,
 ) -> tuple[list[dict], Optional[str]]:
     """Search migrated turns, ranking per conversation before the global limit.
 
@@ -592,6 +594,8 @@ def search_conversation_turns_page(
     bind query/scope/order and retain a sequence high-water mark, so appended
     turns do not shift subsequent pages. Group/global searches remain bounded.
     """
+    if page_info is not None:
+        page_info["total"] = 0
     if sort not in {"asc", "desc"}:
         raise ValueError("sort must be asc or desc")
     if doc_id and group_id:
@@ -650,6 +654,9 @@ def search_conversation_turns_page(
             max_seq = int((maximum or {}).get("max_seq") or 0)
         join_sql += "AND t.seq <= ? "
         params.append(max_seq)
+        if page_info is not None:
+            count = store._fetch_one("SELECT COUNT(*) AS cnt " + join_sql, params)
+            page_info["total"] = int((count or {}).get("cnt") or 0)
         if cursor is not None:
             op = ">" if sort == "asc" else "<"
             join_sql += (f"AND (t.created_at {op} ? OR "
@@ -684,7 +691,8 @@ def search_conversation_turns_page(
     for row in rows:
         if len(items) >= effective_limit:
             break
-        snippet = _turn_snippet(row.get("body") or "", needle_lower)
+        snippet = _turn_snippet(row.get("body") or "", needle_lower,
+                                150 if compact else SEARCH_SNIPPET_CHARS)
         if snippet is None:
             continue
         item = {
@@ -702,7 +710,10 @@ def search_conversation_turns_page(
             "display_name": row.get("display_name"),
             "created_at": row.get("created_at"),
         }
-        if include_matches:
+        if compact:
+            item = {key: item[key] for key in
+                    ("seq", "speaker", "display_name", "created_at", "snippet")}
+        if include_matches and not compact:
             from modules.flow_gate.services import document_outline_service as _outline
 
             ctx = _outline.CONTEXT_LINES_DEFAULT if context_lines is None else context_lines
