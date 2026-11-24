@@ -2443,6 +2443,12 @@ def build_mention(
         "rework" if is_edit and edit_reason == "rejected" else
         "edit" if is_edit else "preflight" if review_continuous else "new"
     )
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    title_request = first_names_hooks.title_request(
+        group_id, locale, "preflight" if review_continuous else action_scope)
+    if title_request:
+        heading = {"ko": "작업 이름", "ja": "作業名", "en": "Task names"}.get(locale, "작업 이름")
+        sections.append(_section(heading, title_request))
     return compose(sections, kind=task_kind, locale=locale)
 
 

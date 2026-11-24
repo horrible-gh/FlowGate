@@ -1,7 +1,7 @@
 """Entry-point and refresh integration using the card 2 real database fixture."""
-import json
 import pytest
-from test_flow_first_names_0071 import naming, env, db_path, legacy_cards, FA, USER, TEXT, TITLE, titles
+from test_flow_first_names_0071 import (naming, env, db_path, legacy_cards, FA, USER, TEXT, TITLE, titles,
+                                        FLOW_T, CARD_T, CHAT_T, ALL, DEFAULTS)
 from flowgate.conversation import first_names_triggers as t, auto_title as a, legacy_adapter, activity
 from modules.flow_gate.db import documents
 from modules.flow_gate.graph_workflow.api import run_routes as routes
@@ -10,6 +10,9 @@ from modules.flow_gate.graph_workflow.services import first_names_hooks
 from modules.flow_gate.api.v1.events import publisher
 
 pytestmark = pytest.mark.usefixtures("legacy_cards")
+_real_schedule = t._schedule
+_real_run_context = t.run_context
+
 
 @pytest.fixture()
 def wired(naming, monkeypatch):
@@ -17,23 +20,34 @@ def wired(naming, monkeypatch):
     monkeypatch.setattr(legacy_adapter, "first_turns", lambda *args: [
         {"speaker": "user", "body": TEXT}, {"speaker": "ai", "body": "확인합니다"}])
     monkeypatch.setattr(legacy_adapter, "is_group_disposed", lambda _: False)
-    monkeypatch.setattr(t, "run_context", lambda *args: ("provider", TEXT, naming["chat"]))
+    monkeypatch.setattr(t, "_schedule", lambda fn, *args: fn(*args) or True)
     return naming
 
+
 @pytest.mark.parametrize("first", ["chat", "run"])
-def test_both_orders_name_chat_from_its_own_message(wired, first):
+def test_both_orders_name_each_target_from_its_own_content(wired, first):
     chat = lambda: t.chat(wired["chat"], USER, {"provider_id": "provider"})
     run = lambda: t._run(FA, USER["user_id"], 1)
     (chat if first == "chat" else run)()
     (run if first == "chat" else chat)()
-    assert titles(wired) == (TITLE, TITLE, TITLE)
-    assert wired["calls"] == (1 if first == "chat" else 2)
+    if first == "chat":
+        assert titles(wired) == ALL
+        assert sorted(wired["kinds"]) == ["chat", "flow", "root"]
+    else:
+        # A card run start never calls the model: the card takes its document's first line.
+        assert titles(wired) == (FLOW_T, "로그인 장애 요구사항", CHAT_T)
+        assert sorted(wired["kinds"]) == ["chat", "flow"]
+
+
+def test_chat_route_returns_the_chat_own_title(wired):
+    result = t.chat(wired["chat"], USER, {"provider_id": "provider"})
+    assert result["title"] == CHAT_T
 
 
 def test_unflagged_chat_participates(wired):
     documents.update(wired["chat"], {"meta": "{}"})
     t.chat(wired["chat"], USER, {"provider_id": "provider"})
-    assert titles(wired) == (TITLE, TITLE, TITLE)
+    assert titles(wired) == ALL
 
 
 def test_chat_before_ai_reply_does_not_generate(wired, monkeypatch):
@@ -43,31 +57,34 @@ def test_chat_before_ai_reply_does_not_generate(wired, monkeypatch):
     assert wired["calls"] == 0
 
 
-def test_run_notification_is_after_commit_and_scoped(wired, monkeypatch):
+def test_reply_notification_is_after_commit_and_scoped(wired, monkeypatch):
     from modules.flow_gate.db.connection import in_transaction
     events = []
+    monkeypatch.setattr(t, "_schedule", lambda *args: True)
     def publish(event):
         assert not in_transaction()
-        assert titles(wired) == (TITLE, TITLE, "새 대화")
-        assert event.payload["targets"] == ["flow", "card"]
+        assert titles(wired) == (FLOW_T, None, CHAT_T)
+        assert event.payload["targets"] == ["chat", "flow"]
         events.append(event)
     monkeypatch.setattr(publisher, "broadcast_event_nowait", publish)
-    t._run(FA, USER["user_id"], 1)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"}, CHAT_T,
+                      wired["chat"], flow_title=FLOW_T)
     assert len(events) == 1
     assert events[0].group_id == FA
 
 
-def test_chat_and_run_overlap_keep_independent_claims(wired):
-    wired["hook"] = lambda: t._run(FA, USER["user_id"], 1)
+def test_chat_and_run_overlap_do_not_generate_twice(wired):
+    wired["hook"] = lambda: t._run(FA, USER["user_id"], 1) if wired["calls"] == 1 else None
     t.chat(wired["chat"], USER, {"provider_id": "provider"})
-    assert wired["calls"] == 2 and titles(wired) == (TITLE, TITLE, TITLE)
+    assert wired["kinds"].count("chat") == 1 and wired["kinds"].count("flow") == 1
+    assert titles(wired)[0] == FLOW_T and titles(wired)[2] == CHAT_T
 
 
 def test_run_without_chat_does_not_create_chat(wired, monkeypatch):
-    monkeypatch.setattr(t, "run_context", lambda *args: ("provider", TEXT, None))
     before = documents.list_documents("p", group_id=FA, type_code="CH")
     t._run(FA, USER["user_id"], 1)
-    assert titles(wired) == (TITLE, TITLE, "새 대화")
+    assert titles(wired) == ("새 플로우", "로그인 장애 요구사항", "새 대화")
+    assert wired["calls"] == 0
     assert documents.list_documents("p", group_id=FA, type_code="CH") == before
 
 
@@ -110,10 +127,10 @@ def test_real_run_context_reads_bound_body_and_selected_provider(naming, monkeyp
     monkeypatch.setattr(card_settings_ports, "run_settings", lambda *args: {"provider_id": "selected"})
     monkeypatch.setattr(assignment_store, "root_binding", lambda _: {"doc_id": naming["chat"]})
     monkeypatch.setattr(paths, "locate_storage_path", lambda *args, **kwargs: (root, "readable"))
-    provider, text, chat_id = t.run_context(FA, 1)
+    provider, text, chat_id = _real_run_context(FA, 1)
     assert provider == "selected" and text.strip() == TEXT and chat_id is None
     root.write_text("---\ntitle: metadata only\n---\n", encoding="utf-8")
-    assert not t.run_context(FA, 1)[1].strip()
+    assert not _real_run_context(FA, 1)[1].strip()
 
 
 def test_reply_hook_uses_run_provider_without_waiting_for_worker(wired, monkeypatch):
@@ -128,12 +145,13 @@ def test_reply_hook_uses_run_provider_without_waiting_for_worker(wired, monkeypa
             future.set_result(None)
             return future
     monkeypatch.setattr(a, "_first_names_pool", Pool())
+    monkeypatch.setattr(t, "_schedule", _real_schedule)
     assert t.schedule_reply(wired["chat"], {"speaker": "ai", "body": "done", "source_run_id": "run"})
     assert wired["calls"] == 0
     fn, args = queued[0]
     assert args == (wired["chat"], USER["user_id"], "selected")
     fn(*args)
-    assert wired["calls"] == 1 and titles(wired) == (TITLE, TITLE, TITLE)
+    assert titles(wired) == ALL
     assert not t.schedule_reply("other", {"speaker": "ai", "body": "done", "source_run_id": "run"})
 
 
@@ -164,4 +182,44 @@ def test_run_context_uses_current_execution_role(naming, monkeypatch, role_state
                                     init=SimpleNamespace(state="initialized"), node=node)
     monkeypatch.setattr(resolve, "read_card_role_inputs", lambda *args: inputs)
     monkeypatch.setattr(availability, "check_availability", lambda *args, **kwargs: "disabled" if role_state == "unavailable" else None)
-    assert t.run_context(FA, 1)[0] == expected
+    assert _real_run_context(FA, 1)[0] == expected
+
+
+def test_submitted_titles_apply_seeds_inline_and_queue_the_rest(wired, monkeypatch):
+    from unittest.mock import Mock
+    generate, schedule = Mock(), Mock()
+    monkeypatch.setattr(a, "generate_flow_names", generate)
+    monkeypatch.setattr(t, "_schedule", schedule)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      '  "제목: 제출된 이름."  ', wired["chat"], flow_title="플로우 이름")
+    generate.assert_called_once_with(FA, {"user_id": USER["user_id"]}, "provider", "", wired["chat"],
+                                     title="제출된 이름", flow_title="플로우 이름", kinds=("chat", "flow"))
+    schedule.assert_called_once_with(generate, FA, {"user_id": USER["user_id"]}, "provider", "",
+                                     wired["chat"], None, True, None, ("root",))
+
+
+@pytest.mark.parametrize("title", [None, "   ", "제목:"])
+def test_submitted_without_valid_title_queues_every_target(wired, monkeypatch, title):
+    from unittest.mock import Mock
+    generate, schedule = Mock(), Mock(return_value=True)
+    monkeypatch.setattr(a, "generate_flow_names", generate)
+    monkeypatch.setattr(t, "_schedule", schedule)
+    t.submitted_title({"group_id": FA, "issued_to": USER["user_id"], "provider_id": "provider"},
+                      title, wired["chat"])
+    generate.assert_not_called()
+    schedule.assert_called_once_with(generate, FA, {"user_id": USER["user_id"]}, "provider", "",
+                                     wired["chat"], None, True, None, ("chat", "flow", "root"))
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("private root path"),
+                                  PermissionError("private root path"),
+                                  UnicodeDecodeError("utf-8", b"\xff", 0, 1, "private root path")])
+def test_root_read_failure_is_contained_and_safe(wired, monkeypatch, caplog, error):
+    from unittest.mock import Mock
+    from modules.flow_gate.graph_workflow.store import definition_store
+    monkeypatch.setattr(definition_store, "latest_revision_no", lambda _: 1)
+    monkeypatch.setattr(t, "run_context", Mock(side_effect=error))
+    result = a.generate_flow_names(FA, USER, "provider", "", wired["chat"])
+    assert result["targets"]["chat"] == "done" and result["targets"]["root"] == "unchanged"
+    assert any("reason=root_read_failed" in r.getMessage() for r in caplog.records)
+    assert "private root path" not in caplog.text
