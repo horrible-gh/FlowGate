@@ -59,7 +59,8 @@ input requires PCM from AudioWorklet. No external speech API is used.
 ## Installation and storage
 
 `setup-voice.ps1` and `setup-voice.sh` call `server/setup_voice.py` and the same
-manager used by the API. Options: `--service`, `--model`, `--from-dir`, `--list`.
+manager used by the API. Options include `--service`, `--model`, `--from-dir`, `--list`, `--export-bundle`,
+`--prepare-model`, `--prepared-output` and `--ffmpeg-from-dir`.
 Defaults are `whisper.cpp` / `base`. The Windows main setup asks whether to install
 voice after database initialization. The catalog currently supports Windows x64;
 other platforms receive `available:false` with a reason.
@@ -71,27 +72,23 @@ support resume, cancellation, disk-space checks and durable progress records.
 On server interruption, an old job is reported interrupted; starting another
 install reuses verified downloads and resumes its partial files.
 
-Local `--from-dir` installation does not require redistribution approval or
-LICENSE/NOTICE files. It retains catalog hash and size verification and rejects
-originals with catalog `excluded_paths` (including KSS archives).
-Rehosting exports still fail closed with `voice_redistribution_pending` until
-exact-artifact and native dependency notices are reviewed. This is not a
-determination that a component has no license or commercial use is prohibited.
+Local `--from-dir` installation retains catalog hash and size verification.
+It accepts the catalog-pinned KSS-free Korean tar, not the restricted original.
+Available catalog notices are supplied automatically from the repository and
+preserved in the installation; callers need not copy them manually.
 
-`--export-bundle DEST --from-dir SOURCE` copies only approved, hash-verified
-catalog components and their pinned `licenses/` LICENSE/NOTICE files. It does not
-copy an entire cache. The original Korean Zipformer archive (which contains KSS),
-samples and FFmpeg are excluded. No production catalog component has been approved
-for redistribution. Each engine artifact's `notices[]` lists the upstream texts
-secured at pinned versions (whisper.cpp 1.8.2, SDL2 2.28.5, sherpa-onnx 1.12.20,
-ONNX Runtime 1.17.1, cargs 1.0.3, Vosk API 0.3.45, GCC runtime exception) with size
-and SHA-256; sources are in `third_party/license_sources.json`. Statically linked
-and vendored native code (whisper-server headers, sherpa-onnx-c-api.dll and
-libvosk.dll dependencies, libwinpthread-1.dll) is still unresolved, so every
-artifact keeps `redistribution_allowed: false`.
-FFmpeg 8.0 (Gyan GPL-3.0-or-later) remains an upstream direct download; there is no
-FFmpeg redistribution path or GPL section 6 source offer made by this installer.
-The catalog records source commit `140fd653ae` for follow-up review.
+`--export-bundle DEST --from-dir SOURCE` exports only reviewed components and
+exact notices. whisper.cpp 1.8.2 CPU runtime plus selected pinned Whisper weights
+are enabled; the base combination has actual export/install evidence. sherpa and
+Vosk redistribution remain pending native provenance. This is not a statement
+that a component has no license or that commercial use is prohibited.
+
+Exports exclude samples, the original KSS-containing Korean archive and FFmpeg.
+Offline installation requires separately acquired, locally verified FFmpeg 8.0
+and the Microsoft runtime system prerequisites. See the F86-9 instructions below
+for the exact preparation, export and offline-install commands and limitations.
+FFmpeg's source commit is `140fd653ae`; this installer does not provide an FFmpeg
+redistribution path or claim GPL section 6 fulfillment for rehosting it.
 
 Catalog contents (`services/voice_catalog.json`, the only source of the list):
 whisper.cpp carries the six multilingual base models of the pinned upstream
@@ -147,3 +144,77 @@ from `server/`. They use temporary voice storage and in-memory system settings.
 Upstream contracts: [whisper server](https://github.com/ggml-org/whisper.cpp/tree/v1.8.2/examples/server),
 [sherpa C API](https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.20/sherpa-onnx/c-api/c-api.h),
 [Vosk C API](https://github.com/alphacep/vosk-api/blob/v0.3.45/src/vosk_api.h).
+
+## F86-9: KSS-free offline models and reviewed export
+
+Korean Zipformer local installation accepts only the catalog-pinned `.no-kss.tar`,
+not the original `.tar.bz2`, an original renamed to the clean name, or hashes in
+an imported manifest. Prepare it on a connected staging machine:
+
+```sh
+python server/setup_voice.py --service sherpa-onnx --model zipformer-ko --prepare-model /staging/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2 --prepared-output /staging/clean/sherpa-onnx-streaming-zipformer-korean-2024-06-16.no-kss.tar
+```
+
+The original stays unchanged. The transformer verifies original SHA256
+`e346a5882a409650472be17326237e24df7bf409db6b4a8a52e1a61422bf2500`,
+streams only the eight model/token files into deterministic USTAR, adds the exact
+Apache-2.0 text, and verifies the result: 446904320 bytes, SHA256
+`23bddf71915710fcccc350486cc2350502ff3504e18627857e35b2012005a93f`.
+There is no upstream LICENSE/NOTICE in this model archive; the added LICENSE is
+identified as our addition. No upstream NOTICE is invented. `test_wavs/` is never
+extracted. Archive links, special files, traversal, duplicate/unexpected and missing
+members are rejected. Individual source member hashes are fixed in the catalog.
+The sanitized file has no external-download URL: offline mode cannot fetch a raw
+original instead. This restores local administrator installation, not permission
+to redistribute the sherpa engine/model bundle.
+
+For a local Korean install, put the pinned sherpa engine archive and the clean
+model tar in `/offline/korean`. Obtain Gyan FFmpeg 8.0 independently on a connected
+machine, keep its exact catalog archive in `/independently-acquired/ffmpeg`, and
+carry it to the offline machine. The following does not access upstream:
+
+```sh
+python server/setup_voice.py --service sherpa-onnx --model zipformer-ko --from-dir /offline/korean --ffmpeg-from-dir /independently-acquired/ffmpeg
+```
+
+FFmpeg is verified, copied and executed locally (`-version`) before installation
+succeeds. It is not included in our export. Windows x64 must already have the
+Microsoft VC++ x64 and OpenMP runtime required by these binaries; those Microsoft
+DLLs are system prerequisites and are not copied by this exporter. A missing
+prerequisite causes installation to fail rather than silently downloading it.
+Offline installation checks model loading without downloading or packaging a
+sample. Use your own recording for the subsequent transcription test.
+
+The restored export combination is whisper.cpp 1.8.2 CPU runtime plus one pinned
+Whisper model. The exporter accepts the exact upstream engine ZIP or its pinned
+expanded files and emits only the six catalog-listed runtime files, the selected
+weights, and exact component license/attribution files. It does not copy unrelated
+upstream example programs, FFmpeg, jfk.wav, Korean audio or arbitrary cache files.
+
+```sh
+python server/setup_voice.py --service whisper.cpp --model base --from-dir /staging/verified-whisper-files --export-bundle /delivery/whisper-base
+python server/setup_voice.py --service whisper.cpp --model base --from-dir /delivery/whisper-base --ffmpeg-from-dir /independently-acquired/ffmpeg
+```
+
+License texts are supplied automatically from `third_party/licenses/`, including
+in Docker's existing copy of that directory. An existing but changed input notice
+is an error, not a reason to substitute it silently. Export verifies every emitted
+file after copying. Installation also preserves available catalog notices under
+its `licenses/` directory. No online fallback occurs when `--from-dir` is set.
+
+sherpa-onnx and Vosk redistribution remain pending. Source license snapshots and
+hashes are recorded in `third_party/voice_source_audit.json`; they are not proof
+that an unverified candidate version was linked into an original release binary.
+The nested kaldi-decoder CMake selects kaldifst 1.7.16, while sherpa's separate
+candidate helper names 1.7.17. Resolve the actual build graph (and OpenFst,
+KissFFT/Eigen attribution) before enabling sherpa export. Vosk still needs exact
+GCC/mingw-w64 and static Kaldi/OpenFst/BLAS provenance or a fixed replacement build.
+The available Windows test host has no CMake, C/C++ compiler or Ninja. Unresolved
+npm development-tool notices do not participate in these Python/native bundles.
+SenseVoice and the Korean default sample remain removed.
+
+Opt-in real tests use `FLOWGATE_VOICE_EVIDENCE_DIR` as scratch. Alternatively pass
+an explicit `--basetemp <task-scratch>/native-tests/<run>`; artifacts persist in the
+sibling `voice-artifacts` directory for bounded acquisition/preparation/install
+checks. Acquisition tests need upstream access; actual installation tests deny
+external downloads. Ordinary regression runs skip these opt-in checks.

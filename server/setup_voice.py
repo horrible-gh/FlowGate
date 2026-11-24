@@ -17,9 +17,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--service", default="whisper.cpp")
     parser.add_argument("--model", default="base")
-    parser.add_argument("--from-dir", type=Path, help="Offline directory containing the exact catalog archives, model and jfk.wav; never modified")
+    parser.add_argument("--from-dir", type=Path, help="Offline directory containing the exact catalog engine and model; never modified")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--export-bundle", type=Path, help="Export reviewed redistribution files and notices from --from-dir")
+    parser.add_argument("--prepare-model", type=Path, help="Read-only exact upstream model archive to sanitize")
+    parser.add_argument("--prepared-output", type=Path, help="New path for the deterministic KSS-free model tar")
+    parser.add_argument("--ffmpeg-from-dir", type=Path, help="Separately acquired pinned FFmpeg for offline installation")
     options = parser.parse_args()
     if options.list:
         print(json.dumps(manager.catalog(True), ensure_ascii=False, indent=2))
@@ -31,13 +34,20 @@ def main():
         print(json.dumps({"model": options.model, "license": spec["license"],
                           "source": spec.get("source", spec["url"]), "license_url": spec.get("license_url"),
                           "distribution": "offline-redistribution" if options.from_dir else "direct-upstream"}, ensure_ascii=False), flush=True)
+        if options.prepare_model:
+            if not options.prepared_output:
+                parser.error("--prepare-model requires --prepared-output")
+            import threading
+            from modules.flow_gate.services.voice_sanitized import prepare_model
+            prepare_model(spec, options.prepare_model, options.prepared_output, threading.Event())
+            return 0
         if options.export_bundle:
             if not options.from_dir:
                 parser.error("--export-bundle requires --from-dir")
             from modules.flow_gate.services.voice_distribution import export_bundle
             export_bundle(specification(options.service), spec, options.from_dir, options.export_bundle)
             return 0
-        result = manager.install(options.service, options.model, options.from_dir)
+        result = manager.install(options.service, options.model, options.from_dir, options.ffmpeg_from_dir)
         job_id = result["install_id"]
         previous = None
         while True:

@@ -148,6 +148,141 @@
       "upstream_tag": "releases/gcc-10.2.0",
       "covers": "vosk-win64-0.3.45.zip libgcc_s_seh-1.dll, libstdc++-6.dll (build string 'GCC: (GNU) 10-win32 20210110'; GCC 10 series, exact patch level not proven). Use with GPL-3.0.txt.",
       "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+    },
+    {
+      "path": "third_party/licenses/cpp-httplib-0.20.0-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.20.0/LICENSE",
+      "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+      "covers": "Reviewed whisper.cpp CPU server runtime subset"
+    },
+    {
+      "path": "third_party/licenses/nlohmann-json-3.11.2-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/nlohmann/json/v3.11.2/LICENSE.MIT",
+      "sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14",
+      "covers": "Reviewed whisper.cpp CPU server runtime subset"
+    },
+    {
+      "path": "third_party/licenses/openai-whisper-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE",
+      "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+      "covers": "OpenAI weights converted in pinned ggerganov/whisper.cpp model repository; see voice_source_audit.json"
+    },
+    {
+      "path": "third_party/licenses/whisper.cpp-1.8.2-source-attributions.txt",
+      "source_url": "https://github.com/ggml-org/whisper.cpp/tree/4979e04f5dcaccb36057e059bbaed8a2f5288315",
+      "sha256": "14320383405e043af3d215bf2704ccff9d050473b6ef9526650f1dc1bce163e3",
+      "covers": "Reviewed whisper.cpp CPU server runtime subset"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_openfst-NOTICES.txt",
+      "source_url": "https://github.com/csukuangfj/openfst/archive/refs/tags/sherpa-onnx-2024-06-19.tar.gz",
+      "sha256": "55f643d5422f52926fea5d522053507caac1153bb503d7b21cf51da5e270f163",
+      "artifact_sha256": "5c98e82cc509c5618502dde4860b8ea04d843850ed57e6d6b590b644b268853d",
+      "archive_members": [
+        "openfst-sherpa-onnx-2024-06-19/COPYING"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_kaldi-decoder-NOTICES.txt",
+      "source_url": "https://github.com/k2-fsa/kaldi-decoder/archive/refs/tags/v0.2.10.tar.gz",
+      "sha256": "19560acede26870a586f31a7e920ee1614d3d4cf8a6eab39c5cd6737a9df3a4c",
+      "artifact_sha256": "a3d602edc1f422acfe663153faf3f0a716305ec1f95b8fcf9d28d301d6827309",
+      "archive_members": [
+        "kaldi-decoder-0.2.10/LICENSE"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_simple-sentencepiece-NOTICES.txt",
+      "source_url": "https://github.com/pkufool/simple-sentencepiece/archive/refs/tags/v0.7.tar.gz",
+      "sha256": "0242b494ef915b0deed98d839003c37f7dcecd377b831dd966d0589f750685a4",
+      "artifact_sha256": "1748a822060a35baa9f6609f84efc8eb54dc0e74b9ece3d82367b7119fdc75af",
+      "archive_members": [
+        "simple-sentencepiece-0.7/LICENSE"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_hclust-cpp-NOTICES.txt",
+      "source_url": "https://github.com/csukuangfj/hclust-cpp/archive/refs/tags/2024-09-29.tar.gz",
+      "sha256": "472c45da331df42cffcc078dc6739878125d6c2065a80a05f4fbf789802c5b47",
+      "artifact_sha256": "abab51448a3cb54272aae07522970306e0b2cc6479d59d7b19e7aee4d6cedd33",
+      "archive_members": [
+        "hclust-cpp-2024-09-29/LICENSE"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_websocketpp-NOTICES.txt",
+      "source_url": "https://github.com/zaphoyd/websocketpp/archive/b9aeec6eaf3d5610503439b4fae3581d9aff08e8.zip",
+      "sha256": "bcc4767cd45bf796bb91001b6ae93d27e029e8a76f15431d0f2bea5efb70f0de",
+      "artifact_sha256": "1385135ede8191a7fbef9ec8099e3c5a673d48df0c143958216cd1690567f583",
+      "archive_members": [
+        "websocketpp-b9aeec6eaf3d5610503439b4fae3581d9aff08e8/COPYING"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_kaldi-native-fbank-NOTICES.txt",
+      "source_url": "https://github.com/csukuangfj/kaldi-native-fbank/archive/refs/tags/v1.22.3.tar.gz",
+      "sha256": "cc11389b724e5bf3bf825e3a935bd08f1b039775e6f40bd870f8e3dcef6a4e6c",
+      "artifact_sha256": "9176cc66fc7ce1edf85cf355b06e320c57db6297df74277f575183468893cf61",
+      "archive_members": [
+        "kaldi-native-fbank-1.22.3/LICENSE"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_asio-NOTICES.txt",
+      "source_url": "https://github.com/chriskohlhoff/asio/archive/refs/tags/asio-1-24-0.tar.gz",
+      "sha256": "72ef8148e2abe8ee13175bc5640616cfe822717d782e7b1e95c9966fb0bd8ab0",
+      "artifact_sha256": "cbcaaba0f66722787b1a7c33afe1befb3a012b5af3ad7da7ff0f6b8c9b7a8a5b",
+      "archive_members": [
+        "asio-asio-1-24-0/asio/COPYING",
+        "asio-asio-1-24-0/asio/LICENSE_1_0.txt"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_eigen-NOTICES.txt",
+      "source_url": "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz",
+      "sha256": "fb9c9035ab01624c9780e2a3561284e9b9d5c6f1871a4b2fbc319ac48976f612",
+      "artifact_sha256": "8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72",
+      "archive_members": [
+        "eigen-3.4.0/COPYING.APACHE",
+        "eigen-3.4.0/COPYING.BSD",
+        "eigen-3.4.0/COPYING.GPL",
+        "eigen-3.4.0/COPYING.LGPL",
+        "eigen-3.4.0/COPYING.MINPACK",
+        "eigen-3.4.0/COPYING.MPL2",
+        "eigen-3.4.0/COPYING.README",
+        "eigen-3.4.0/bench/btl/COPYING",
+        "eigen-3.4.0/scripts/relicense.py"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_portaudio-NOTICES.txt",
+      "source_url": "http://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz",
+      "sha256": "169b42764c64a118571f80ff4135f45af452722a75d773f0ac9c4f508f0cca21",
+      "artifact_sha256": "47efbf42c77c19a05d22e627d42873e991ec0c1357219c0d74ce6a2948cb2def",
+      "archive_members": [
+        "portaudio/LICENSE.txt",
+        "portaudio/bindings/cpp/COPYING",
+        "portaudio/doc/src/license.dox"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
+    },
+    {
+      "path": "third_party/licenses/sherpa-source-cmake_kaldifst-NOTICES.txt",
+      "source_url": "https://github.com/k2-fsa/kaldifst/archive/refs/tags/v1.7.17.tar.gz",
+      "sha256": "2cc7cf6f938ed345b9928f45f58c58884c87e7a21554528ffffae1b264bb53a7",
+      "artifact_sha256": "c4b701a23a400bda8032586b02c7e0d5e813a765832df60c23e6df9e62b010f4",
+      "archive_members": [
+        "kaldifst-1.7.17/LICENSE"
+      ],
+      "covers": "Fixed source candidate; actual binary linkage NOT approved"
     }
   ]
 }

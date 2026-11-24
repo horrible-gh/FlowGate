@@ -207,7 +207,7 @@ class Manager:
                     row.update(done=True, step="interrupted", error={"code": "voice_install_interrupted", "message": "Retry to resume verified partial downloads"})
             return {"ok": True, **copy.deepcopy(row)}
 
-    def install(self, service, model, from_dir=None):
+    def install(self, service, model, from_dir=None, ffmpeg_from_dir=None):
         from . import voice_streams
         if voice_streams.active(service):
             raise VoiceError("voice_busy", "Finish live transcription before installing", 409)
@@ -232,7 +232,7 @@ class Manager:
                                      total_bytes=0, done=False, error=None)
             self.cancel_events[job_id] = threading.Event()
             self._update_job(job_id)
-            worker = threading.Thread(target=self._install_worker, args=(job_id, from_dir), name=job_id, daemon=True)
+            worker = threading.Thread(target=self._install_worker, args=((job_id, from_dir, ffmpeg_from_dir) if ffmpeg_from_dir is not None else (job_id, from_dir)), name=job_id, daemon=True)
             self.threads[job_id] = worker
             worker.start()
             return {"ok": True, "install_id": job_id}
@@ -248,10 +248,13 @@ class Manager:
                 self._update_job(job_id, step="cancelling")
         return self.job(job_id)
 
-    def _install_worker(self, job_id, from_dir):
+    def _install_worker(self, job_id, from_dir, ffmpeg_from_dir=None):
         job = self.jobs[job_id]
         service, model = job["service"], job["model"]
         entry, spec = specification(service), specification(service, model)
+        if from_dir:
+            from .voice_sanitized import local_model
+            spec = local_model(spec)
         cancel = self.cancel_events[job_id]
         staging = root() / "staging" / job_id
         promoted = False
@@ -263,10 +266,9 @@ class Manager:
                 from .voice_distribution import cleanup_legacy_samples
                 cleanup_legacy_samples(root())
                 destination = self.service_dir(service)
-                load_only = spec.get("self_test", {}).get("mode") == "load_only"
+                load_only = bool(from_dir) or spec.get("self_test", {}).get("mode") == "load_only"
                 artifacts = [a for a in entry["artifacts"]
-                             if not (load_only and a.get("component_type") == "sample")
-                             and not (from_dir and a.get("component_type") == "ffmpeg")] + [spec]
+                             if not (load_only and a.get("component_type") == "sample")] + [spec]
                 offline_sample = None
                 if from_dir and not load_only and not list(Path(from_dir).rglob("jfk.wav")):
                     samples = list(Path(from_dir).rglob("Recording_1.m4a"))
@@ -290,17 +292,35 @@ class Manager:
                             self._update_job(job_id, received_bytes=base + done)
                             last[0] = now
                     files.append(download.fetch(artifact, root() / "downloads" / service, cancel, progress,
-                                                Path(from_dir).resolve() if from_dir else None))
+                                                (Path(ffmpeg_from_dir if artifact.get("component_type") == "ffmpeg" and ffmpeg_from_dir else from_dir).resolve() if from_dir else None)))
                     completed += artifact["size_bytes"]
                 self._update_job(job_id, step="extracting", received_bytes=total)
                 staging.mkdir(parents=True, exist_ok=True)
                 for item in files[:-1]:
                     if item.is_dir():
                         shutil.copytree(item, staging, dirs_exist_ok=True)
-                    elif item.suffix == ".zip" or item.name.endswith(".tar.bz2"):
+                    elif item.suffix == ".zip" or item.name.endswith((".tar.bz2", ".tar")):
                         download.extract(item, staging, cancel)
                     else:
                         shutil.copyfile(item, staging / item.name)
+                if from_dir:
+                    # Offline users obtain FFmpeg independently. Verification in fetch
+                    # must succeed locally; no hidden network fallback is permitted.
+                    import subprocess
+                    from .voice_runtime import executable
+                    result = subprocess.run([str(executable(staging, "ffmpeg")), "-version"],
+                                            capture_output=True, timeout=15)
+                    if result.returncode:
+                        raise VoiceError("voice_offline_file_invalid", "Offline FFmpeg cannot run", 422)
+                from .voice_distribution import notice_path
+                for component in artifacts:
+                    for notice in component.get("notices", []):
+                        source_notice = notice_path(Path(from_dir) if from_dir else staging, notice)
+                        if not download.verify(source_notice, notice):
+                            raise VoiceError("voice_offline_notice_invalid", "Missing or changed installed notice", 422)
+                        target_notice = staging / "licenses" / notice["filename"]
+                        target_notice.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source_notice, target_notice)
                 (staging / "models").mkdir(exist_ok=True)
                 staged_model = staging / "models" / (model if spec.get("archive") else spec["filename"])
                 if spec.get("archive"):
