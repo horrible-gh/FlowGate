@@ -41,18 +41,22 @@ def submitted_title(token, title, doc_id=None):
         return
     doc = legacy_adapter.get_document(doc_id) if doc_id else None
     chat_id = doc_id if doc and doc.get("type_code") == "CH" else legacy_adapter.naming_chat(flow_id)
+    cleaned = auto_title.clean_title(title, auto_title.TITLE_MAX_CHARS) if isinstance(title, str) else None
+    if cleaned:
+        auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, "",
+                                       chat_id, title=cleaned)
+        return
     # Read actual task facts for the single local fallback, never the report header.
     message = auto_title._first_user_message(chat_id) if chat_id else ""
     if not message:
-        from modules.flow_gate.graph_workflow.store import definition_store
-        _, message, _ = run_context(flow_id, definition_store.latest_revision_no(flow_id), provider)
-    cleaned = auto_title.clean_title(title, auto_title.TITLE_MAX_CHARS) if isinstance(title, str) else None
-    if cleaned:
-        auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, message,
-                                       chat_id, title=cleaned)
-    else:
-        # A local fallback must not delay delivery of an already committed reply.
-        _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, message, chat_id)
+        try:
+            from modules.flow_gate.graph_workflow.store import definition_store
+            _, message, _ = run_context(flow_id, definition_store.latest_revision_no(flow_id), provider)
+        except Exception:
+            message = ""
+            log.warning("flow_auto_title reason=root_read_failed flow=%s", flow_id)
+    # A local fallback must not delay delivery of an already committed reply.
+    _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, message, chat_id)
 
 
 def notify(flow_id, targets=None, doc_id=None):
