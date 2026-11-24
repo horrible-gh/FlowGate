@@ -7,6 +7,8 @@ export interface FlowArchiveState {
   archivedAt: string | null
   archivedBy: string | null
   eligible: boolean
+  /** v02test.0083: false = the Flow is not completed (archiving it asks once). Absent in the response = false. */
+  completed: boolean
   reason: string | null
 }
 
@@ -15,7 +17,7 @@ function state(raw: any): FlowArchiveState {
     throw new Error('Invalid flow archive response')
   }
   return { archived: raw.archived, archivedAt: raw.archived_at ?? null, archivedBy: raw.archived_by ?? null,
-    eligible: raw.eligible, reason: raw.reason ?? null }
+    eligible: raw.eligible, completed: raw.completed === true, reason: raw.reason ?? null }
 }
 
 export async function readFlowArchive(flowId: string): Promise<FlowArchiveState> {

@@ -638,6 +638,9 @@ export default {
       unavailable: 'Archive status is unavailable.',
       failed: 'Could not change archive status.',
       group_restore_failed: 'Could not restore the group.',
+      confirm_title: 'Archive flow',
+      confirm_incomplete: 'This flow is not completed. Archive it? You can undo this with right-click → Restore.',
+      cancel: 'Cancel',
     },
     project_explorer: {
       title: 'Project',

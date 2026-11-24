@@ -13,29 +13,28 @@ from .flow_guard import with_flow_guard, with_read_snapshot
 def archive_eligibility(flow_id: str) -> dict:
     run = run_store.current_run(flow_id)
     if run is None:
-        # current_run may be None even though historical runs exist. Such a Flow is not legacy.
-        if run_store.list_runs(flow_id, 1, 0)[1]:
-            return {"eligible": False, "reason": "run_not_completed"}
-        roots = documents.get_documents_by_group_id(flow_id)
-        if not any(is_live_root(doc) and doc.get("doc_review_status") == "wf_done" for doc in roots):
-            return {"eligible": False, "reason": "run_not_completed"}
+        # A Flow with historical runs is not a legacy Flow.
+        completed = False
+        if not run_store.list_runs(flow_id, 1, 0)[1]:
+            roots = documents.get_documents_by_group_id(flow_id)
+            completed = any(is_live_root(doc) and doc.get("doc_review_status") == "wf_done" for doc in roots)
         reason = cleanup.activity_blocker(flow_id, None)
     else:
-        if not run_store.completed(run):
-            return {"eligible": False, "reason": "run_not_completed"}
         rows = decisions.decisions_of_run(flow_id, run["run_id"])
+        completed = bool(run_store.completed(run) and any(row["status"] == decisions.SUCCEEDED for row in rows))
         if any(row["status"] in decisions.RESERVING for row in rows):
-            return {"eligible": False, "reason": "gate_job_unfinished"}
-        if not any(row["status"] == decisions.SUCCEEDED for row in rows):
-            return {"eligible": False, "reason": "no_gate_decision"}
+            return {"eligible": False, "reason": "gate_job_unfinished", "completed": completed}
         reason = cleanup.activity_blocker(flow_id, run["run_id"])
-    return {"eligible": reason is None, "reason": reason}
+        if reason is None and run["status"] == run_store.RUNNING:
+            reason = "work_unfinished"
+    return {"eligible": reason is None, "reason": reason, "completed": completed}
 
 
 def _view(group: dict) -> dict:
     archived = group.get("archived_at") is not None
-    eligibility = ({"eligible": False, "reason": "already_archived"} if archived
-                   else archive_eligibility(group["group_id"]))
+    eligibility = archive_eligibility(group["group_id"])
+    if archived:
+        eligibility.update(eligible=False, reason="already_archived")
     return {"archived": archived, "archived_at": group.get("archived_at"),
             "archived_by": group.get("archived_by"), **eligibility}
 
