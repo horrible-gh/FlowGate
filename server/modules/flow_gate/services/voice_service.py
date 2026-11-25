@@ -165,9 +165,11 @@ class Manager:
             if can_manage or models:
                 services.append({"id": entry["id"], "name": entry["name"], "version": entry["version"],
                                  "components": [{"filename": a["filename"], "component_type": a["component_type"],
-                                                 "license": a["license"], "distribution": a["distribution"],
+                                                 "license": a["license"], "license_url": a.get("license_url"),
+                                                 "distribution": a["distribution"],
                                                  "url": a["url"]} for a in entry["artifacts"]],
                                  "native_notices": entry.get("native_notices", []),
+                                 "notice_keys": entry.get("notice_keys", []),
                                  "license": entry["license"], "installed": any(m["installed"] for m in models),
                                  "available": supported, "unavailable_reason": None if supported else "This release requires Windows x64",
                                  "models": models})
