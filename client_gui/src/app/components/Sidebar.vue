@@ -20,6 +20,15 @@
     </nav>
 
     <div class="gui-sidebar-bottom">
+      <!-- F86: one item shaped like the other menu entries; it opens the license window on 'FlowGate 전체'. -->
+      <button type="button" class="gui-nav-item gui-notices-item" data-nav-key="notices" @click="openLicenseWindow(LICENSE_PROJECT_TAB)">
+        <span class="gui-nav-icon gui-notices-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></svg>
+        </span>
+        <span class="gui-nav-text">
+          <span class="gui-nav-title gui-notices-title">{{ t('gui.licenses.nav_title') }}</span>
+        </span>
+      </button>
       <!-- No v0.2 help destination exists yet: shown as a disabled control, not a dead link. -->
       <Button variant="ghost" size="lg" class="gui-help" disabled :title="t('gui.sidebar.help_unavailable')">
         <span class="gui-help-mark" aria-hidden="true">?</span>
@@ -37,6 +46,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import Button from '@/components/ui/Button.vue'
+import { LICENSE_PROJECT_TAB, openLicenseWindow } from '@/features/licenses'
 import { useProjectStore } from '@/features/project'
 import { APP_NAV_ITEMS, type AppNavItem, type AppNavKey } from '../navigation'
 import NavGlyph from './NavGlyph.vue'
@@ -165,6 +175,42 @@ function onNavClick(item: AppNavItem, navigate: (e: MouseEvent) => void, event: 
   border-top: 1px solid var(--fg2-line);
 }
 
+/* 오픈소스 고지: the menu entry look as a button (no browser button frame or font), a title without a sub line. */
+.gui-notices-item {
+  width: 100%;
+  gap: 12px;
+  margin-bottom: 4px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gui-notices-item:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 2px;
+}
+
+.gui-notices-icon {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  color: #94a3b8;
+}
+
+.gui-notices-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.gui-notices-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #c7d5e6;
+}
+
 .gui-help {
   width: 100%;
   display: flex;
@@ -242,8 +288,25 @@ function onNavClick(item: AppNavItem, navigate: (e: MouseEvent) => void, event: 
   }
 
   .gui-nav-sub,
-  .gui-sidebar-bottom {
+  .gui-help,
+  .gui-version {
     display: none;
+  }
+
+  /* The bottom group keeps only 오픈소스 고지, as one more entry of the scrolling strip. */
+  .gui-sidebar-bottom {
+    display: flex;
+    flex: 0 0 auto;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .gui-notices-item {
+    width: auto;
+    margin-bottom: 0;
+    padding: 8px 12px;
+    gap: 8px;
   }
 }
 </style>

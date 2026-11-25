@@ -1,9 +1,34 @@
-"""First-run adapters. Both entry points share auto_title's durable claim."""
+"""First-run adapters: the flow, its start card and each chat are named from their own content."""
 from __future__ import annotations
 import logging
 from . import auto_title, activity, legacy_adapter, contracts as c
 
 log = logging.getLogger(__name__)
+
+
+def title_request(flow_id, locale="ko", action="chat", doc_id=None):
+    # Naming has its own configured provider; executor replies no longer supply names.
+    return ""
+
+
+def submitted_title(token, title, doc_id=None, flow_title=None):
+    """After a committed reply: queue naming of every target from its own content."""
+    flow_id = token.get("group_id")
+    if not flow_id or not legacy_adapter.has_graph_definition(flow_id):
+        return
+    run = (legacy_adapter.get_run_record(token.get("ai_run_id"))
+           or legacy_adapter.persisted_naming_run(token.get("ai_run_id")) or {})
+    provider = run.get("provider_id") or token.get("provider_id")
+    user_id = token.get("issued_to")
+    if not provider or not user_id:
+        log.warning("flow_auto_title reason=reply_context_missing flow=%s", flow_id)
+        return
+    doc = legacy_adapter.get_document(doc_id) if doc_id else None
+    chat_id = doc_id if doc and doc.get("type_code") == "CH" else None
+    # Executor-supplied ``title`` / ``flow_title`` are ignored: every target (flow, start card,
+    # the chat of this reply) is named by the configured naming provider from its own content.
+    # Document reads and the model call must not delay delivery of a committed reply.
+    _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, "", chat_id)
 
 
 def notify(flow_id, targets=None, doc_id=None):
@@ -33,8 +58,11 @@ def chat(doc_id, user, body):
     if not any(t.get("speaker") == "ai" and str(t.get("body") or "").strip()
                for t in legacy_adapter.first_turns(doc_id, 20)):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_NO_MESSAGE, "no AI reply yet")
-    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id)
-    if result["status"] in ("failed", "pending", "unchanged"):
+    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id, kinds=("chat",))
+    # The flow and start card are named from their own content in the background.
+    _schedule(auto_title.generate_flow_names, flow_id, dict(user), provider, "", doc_id, None, True, None,
+              ("flow", "root"))
+    if result["targets"].get("chat", "unchanged") in ("failed", "pending", "unchanged"):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_UNAVAILABLE, "naming pending")
     saved = legacy_adapter.get_document(doc_id) or doc
     return {"ok": True, "doc_id": doc_id, "title": saved["title"], "updated_at": saved.get("updated_at")}
@@ -64,6 +92,13 @@ def run_context(flow_id, revision_no, provider_id=None):
             break
     binding = assignment_store.root_binding(flow_id) or {}
     root = documents.get_by_id(binding.get("doc_id")) if binding.get("doc_id") else None
+    if not binding.get("doc_id"):
+        # A draft card can already hold a document before confirmation persists a
+        # run binding. Reuse the naming target's resolution; never guess among roots.
+        from .first_names_ports import root_binding_context
+        _, preview = root_binding_context(flow_id)
+        if preview.status in ("bindable", "inherited") and preview.doc_id:
+            root = documents.get_by_id(preview.doc_id)
     text = ""
     if root:
         path, _ = paths.locate_storage_path(root.get("file_path") or "", root["project_id"],
@@ -83,7 +118,7 @@ def _run(flow_id, user_id, revision_no, provider_id=None):
                                    else run_context(flow_id, revision_no))
         provider = provider_id or provider
         if provider:
-            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text)
+            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text, allow_fallback=True)
         else:
             log.info("flow naming skipped reason=provider_missing flow=%s", flow_id)
     except Exception as exc:
@@ -162,3 +197,4 @@ def schedule_reply(doc_id, turn):
         log.info("flow naming skipped reason=reply_context_missing doc=%s", doc_id)
         return False
     return _schedule(_reply, doc_id, user_id, provider_id)
+

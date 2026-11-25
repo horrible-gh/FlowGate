@@ -1,5 +1,52 @@
+import { PRODUCT_NAME } from '../../shared/productName.ts'
+
 export default {
-  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "style_flowgate": "FlowGate", "style_modern": "モダン", "style_dock": "ドック", "style_classic": "クラシック", "security_window": "自分の設定 · セキュリティ", "pin_project": "プロジェクトを開く", "pin_attachments": "添付ファイル", "pin_terminal": "ターミナル", "pin_git": "Git", "pin_search": "検索"},
+  licenses: {
+    "window_title": "オープンソースライセンス",
+    "close": "閉じる",
+    "tab_project": "FlowGate 全体",
+    "col_component": "構成要素",
+    "col_file": "ファイル",
+    "col_license": "ライセンス",
+    "col_source": "原文",
+    "source_link": "原文",
+    "open_for": "{name} のライセンス情報を見る",
+    "open": "ライセンス情報を見る",
+    "summary": "エンジン {engine} · モデル {model}",
+    "pending": "確認中",
+    "pending_sample_rights": "サンプルの権利を確認中",
+    "direct_download": "すべてのファイルは公式配布元から直接ダウンロードします。オフラインインストール用パッケージはライセンスファイルの確認後に提供します。FFmpeg はパッケージに含めません。",
+    "project_third_party": "サードパーティのライセンス全文",
+    "project_license": "プロジェクト LICENSE",
+    "loading": "読み込み中…",
+    "load_failed": "読み込めませんでした",
+    "nav_title": "オープンソースの告知",
+    "component_type": {
+      "engine": "エンジン",
+      "weights": "モデル",
+      "runtime": "ランタイム",
+      "other": "その他",
+      "ffmpeg": "FFmpeg",
+      "sample": "サンプル"
+    },
+    "notice": {
+      "whisper_runtime_subset": "検証済みの配布物に含まれるランタイムファイル6個のみを同梱し、ソースの出典コメントと MIT・zlib・Apache ライセンスの全文を提供します。",
+      "microsoft_system_prerequisites": "Microsoft VC++ x64 ランタイムと OpenMP（MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140）は同梱しません。システムに別途インストールする必要があります。",
+      "onnxruntime_notices": "onnxruntime.dll 1.17.1: 公式の 1.17.1 配布物から LICENSE と ThirdPartyNotices を取得済みです。",
+      "cargs_license": "cargs.dll 1.0.3: MIT ライセンスの全文を取得済みです。",
+      "sherpa_static_notices_pending": "sherpa-onnx-c-api.dll に静的リンクされた依存ライブラリ（kaldi-native-fbank、OpenFst など）: 告知は確認中のため、再配布は引き続き保留します。",
+      "gcc_runtime_exception": "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 ランタイム例外の条文は取得済みですが、正確な GCC パッチバージョンは未確認です。",
+      "mingw_notices_pending": "libwinpthread-1.dll: mingw-w64 のバージョンと告知が未確認のため、再配布は引き続き保留します。",
+      "vosk_static_notices_pending": "libvosk.dll に静的リンクされた Kaldi/OpenFst/BLAS の告知: 確認中のため、再配布は引き続き保留します。"
+    }
+  },
+  voice: {
+    "system": { "default_unavailable": "既定として使用できません", "download_upstream": "公式配布元からダウンロード" },
+    "test_upload": "録音ファイルをアップロード",
+    "test_no_file": "ファイルが選択されていません",
+    "unavailable_windows": "このバージョンは Windows x64 でのみ利用できます"
+  },
+  taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "モダン", "style_dock": "ドック", "style_classic": "クラシック", "security_window": "自分の設定 · セキュリティ", "pin_project": "プロジェクトを開く", "pin_attachments": "添付ファイル", "pin_terminal": "ターミナル", "pin_git": "Git", "pin_search": "検索"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
   connection_banner: {"reconnecting": "サーバーとの接続が切れました · 自動で再接続しています…", "hint": "接続が戻ると一覧と会話は自動で戻り、送れなかったメッセージも再送します。", "unknown_error": "不明なエラーが発生しました", "reload": "再読み込み"},
@@ -251,7 +298,7 @@ export default {
   card: { bodyUnreadable: "AIが読めない文書があります" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
-    home_aria: 'FlowGate ダッシュボードへ移動',
+    home_aria: `${PRODUCT_NAME} ダッシュボードへ移動`,
   },
   common: {
     cancel: 'キャンセル',
@@ -286,15 +333,15 @@ export default {
   sidebar: {
     help: 'ヘルプ',
     help_unavailable: 'ヘルプはまだ準備中です。',
-    version: 'FlowGate v0.2',
+    version: `${PRODUCT_NAME} v0.2`,
     build: 'Build {build}',
   },
   dashboard: {
     greeting_line1: '良い一日を。',
     greeting_line2: '今、新しい可能性をつなげましょう。',
-    lead: 'FlowGate はアイデアを実際の作業へつなげる場所です。',
+    lead: `${PRODUCT_NAME} はアイデアを実際の作業へつなげる場所です。`,
     quote: '“小さなアイデアも\n正しい流れに出会えば\n大きな変化を生みます。”',
-    quote_by: '— FlowGate',
+    quote_by: `— ${PRODUCT_NAME}`,
     cards_aria: '画面ショートカット',
     unavailable: '準備中',
     cards: {
@@ -1225,7 +1272,7 @@ export default {
       user: '自分',
       ai: 'AI',
       // FlowGate's own turn (e.g. the chat commit result).
-      system: 'FlowGate',
+      system: `${PRODUCT_NAME}`,
       sending: '送信中',
       failed: '送信できませんでした。',
       // A: the failed bubble's short reason.
@@ -1889,7 +1936,7 @@ export default {
       row_select: '{name} を選択',
       tag: {
         managed: '🔒',
-        managed_tip: 'FlowGate 管理ファイル — 直接変更不可',
+        managed_tip: `${PRODUCT_NAME} 管理ファイル — 直接変更不可`,
         excluded: 'ツール残留物',
         excluded_tip: 'ツール残留物のファイル',
         excluded_new: 'ツール残留物',
@@ -2444,7 +2491,7 @@ export default {
   },
   placeholder: {
     badge: '準備中',
-    body: 'この画面は FlowGate v0.2 ではまだ実装されていません。',
+    body: `この画面は ${PRODUCT_NAME} v0.2 ではまだ実装されていません。`,
     back: 'ダッシュボードに戻る',
   },
   not_found: {
@@ -2453,7 +2500,7 @@ export default {
   },
   ai: {
     title: 'AI 管理',
-    subtitle: 'AI を接続・評価し、チームを編成して FlowGate で利用します。',
+    subtitle: `AI を接続・評価し、チームを編成して ${PRODUCT_NAME} で利用します。`,
     load_failed_title: 'AI 情報を読み込めません',
     tabs_aria: 'AI 管理タブ',
     tabs: {
@@ -2529,6 +2576,9 @@ export default {
       field_enabled: '使用可否',
       repeat_max: '最大反復回数',
       repeat_max_hint: 'レビュー / 再開など反復型選択肢の上限 (システム設定)',
+      title_ai: 'タイトル生成AI',
+      title_ai_off: 'オフ',
+      title_ai_executor: '実行したAIのまま',
       ai_enabled: 'このプロジェクトでAIを使用',
       ai_off_caption: 'すべてのAI呼び出しがオフです',
       reorder_aria: '{name} の順序を変更 (↑/↓)',
@@ -2592,7 +2642,7 @@ export default {
       local_api: 'ローカル API',
       remote_cli: 'リモート CLI',
       remote_api: 'リモート API',
-      local_hint: 'FlowGate で実行',
+      local_hint: `${PRODUCT_NAME} で実行`,
       remote_hint: 'リモート Agent で実行',
       unsupported: '未対応',
     },
@@ -2778,6 +2828,8 @@ export default {
       order_save: 'AI の順序を保存できませんでした。',
       connection_test_load: '接続テストを読み込めませんでした。',
       repeat_limit_save: '繰り返し上限を保存できませんでした。',
+      title_provider_load: 'タイトル生成AIの設定を読み込めませんでした。',
+      title_provider_save: 'タイトル生成AIの設定を保存できませんでした。',
       human_review_save: '人によるレビューを保存できませんでした。',
       evaluation_sets_load: '評価セットを読み込めませんでした。',
       evaluation_set_save: '評価セットを保存できませんでした。',
@@ -2855,7 +2907,7 @@ export default {
     scope_sub: {
       me: 'このアカウントだけに適用',
       project: '選んだプロジェクトだけに適用',
-      system: 'FlowGate サーバー全体 · 管理者',
+      system: `${PRODUCT_NAME} サーバー全体 · 管理者`,
     },
     system_groups: {
       ops: '運用',
@@ -3552,7 +3604,7 @@ export default {
         },
         author_name: 'Author 名',
         author_email: 'Author メール',
-        author_default: '未設定 (FlowGate 既定値)',
+        author_default: `未設定 (${PRODUCT_NAME} 既定値)`,
         secret: 'Secret',
         secret_set: '登録済み',
         secret_unset: '未登録',

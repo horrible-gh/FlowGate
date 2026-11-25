@@ -300,7 +300,8 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
     if failure is not None:
         return _final(run, provider, *failure)
     base_problem = api_base_failure(run.get("api_base_url"))
-    if base_problem is not None:
+    # Title-only jobs return stdout and carry no API callback or worker token.
+    if base_problem is not None and not run.get("title_only"):
         return _final(run, provider, API_BASE, base_problem)
     kind = provider.get("kind") or ""
     command = ai_settings_service.normalize_cli_command(kind, (provider.get("cli_command") or "").strip())

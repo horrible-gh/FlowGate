@@ -69,6 +69,9 @@
               <div v-if="actionError" class="fgs-row sub">
                 <span class="fgs-error" role="alert" data-testid="voice-action-error">{{ errorText(actionError) }}</span>
               </div>
+              <div v-for="item in status.retired" :key="`${item.service}/${item.model}`" class="fgs-row sub" data-testid="voice-retired">
+                <span class="fgs-hint"><SettingsIcon name="info" size="sm" />{{ t('gui.voice.system.retired', { name: item.name }) }}</span>
+              </div>
             </div>
           </div>
 
@@ -93,9 +96,14 @@
                 </div>
               </div>
               <div v-if="selModelInfo && !selModelInfo.available" class="fgs-row sub">
-                <span class="fgs-error" data-testid="voice-unavailable">{{ t('gui.voice.system.unavailable') }}<template v-if="selModelInfo.unavailableReason"> · {{ selModelInfo.unavailableReason }}</template></span>
+                <span class="fgs-error" data-testid="voice-unavailable">{{ t('gui.voice.system.unavailable') }}<template v-if="selModelInfo.unavailableReason"> · {{ voiceReasonText(selModelInfo.unavailableReason, t, te) }}</template></span>
               </div>
 
+              <!-- F86: one summary line (engine and model license) and the link to the license window; the rest lives there. -->
+              <div v-if="selServiceInfo && selModelInfo" class="fgs-row sub vx-license" data-testid="voice-license-summary">
+                <span class="fgs-muted">{{ t('gui.licenses.summary', { engine: licenseText(selServiceInfo.license), model: licenseText(selModelInfo.license) }) }}</span>
+                <LicenseInfoLink :tab="selServiceInfo.id">{{ t('gui.licenses.open') }}</LicenseInfoLink>
+              </div>
               <!-- Running installation -->
               <div v-if="job" class="fgs-row vx-apply" data-testid="voice-install-progress">
                 <div class="vx-grow">
@@ -124,7 +132,7 @@
                 <button
                   type="button"
                   class="fgs-btn sm pri"
-                  :disabled="state.busy || !selModelInfo.available"
+                  :disabled="state.busy || !selModelInfo.available || (selModelInfo.installed && selModelInfo.defaultEligible === false)"
                   data-testid="voice-apply-go"
                   @click="apply"
                 >{{ applyText }}</button>
@@ -145,6 +153,20 @@
                   <strong>{{ testTarget ? selectionLabel(testTarget) : '—' }}</strong>
                 </div>
                 <div class="fgs-row-ctrl">
+                  <!-- The browser's own file button is hidden; the app button opens it and the chosen file's name shows beside it. -->
+                  <input
+                    ref="testFileInput"
+                    class="vx-file"
+                    type="file"
+                    accept="audio/*"
+                    tabindex="-1"
+                    aria-hidden="true"
+                    :disabled="!testTarget || testPhase !== 'idle'"
+                    data-testid="voice-test-upload"
+                    @change="uploadTest"
+                  />
+                  <span class="vx-file-name" data-testid="voice-test-file">{{ testFileName || t('gui.voice.test_no_file') }}</span>
+                  <Button size="sm" :disabled="!testTarget || testPhase !== 'idle'" data-testid="voice-test-upload-button" @click="testFileInput?.click()">{{ t('gui.voice.test_upload') }}</Button>
                   <span v-if="testPhase === 'recording'" class="vx-rec">● {{ formatClock(testSeconds) }}</span>
                   <button
                     type="button"
@@ -230,7 +252,7 @@ import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import { testTranscribe, type VoiceModel, type VoiceSelection, type VoiceService, type VoiceTranscription } from '@/features/conversation/voice/api'
-import { formatBytes, installVoiceMessages, voiceErrorKey } from '@/features/conversation/voice/messages'
+import { formatBytes, installVoiceMessages, voiceErrorKey, voiceReasonText } from '@/features/conversation/voice/messages'
 import { startRecording, type RecordingHandle } from '@/features/conversation/voice/recorder'
 import { errorCodeOf, formatClock } from '@/features/conversation/voice/useVoiceInput'
 import {
@@ -247,6 +269,7 @@ import {
   switchVoice,
   useVoice,
 } from '@/features/conversation/voice/voiceStore'
+import { LicenseInfoLink } from '@/features/licenses'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
@@ -282,6 +305,13 @@ const chipText = computed(() => {
   return t(`gui.voice.system.state.${s}`)
 })
 
+/** A license value for the summary line; none yet reads 확인 중. */
+function licenseText(license: string | null | undefined): string {
+  const value = (license ?? '').trim()
+  if (value.toLowerCase() === 'pending:sample-rights') return t('gui.licenses.pending_sample_rights')
+  return value && !/^pending/i.test(value) ? value : t('gui.licenses.pending')
+}
+
 // ── Choice ─────────────────────────────────────────────────────────────────────────────
 const selService = ref('')
 const selModel = ref('')
@@ -293,7 +323,8 @@ const choiceLabel = computed(() => selectionLabel({ service: selService.value, m
 /** The model to suggest for a service: an installed one, else the first usable one. */
 function suggestedModel(service: VoiceService | null): string {
   if (!service) return ''
-  return (service.models.find((m) => m.installed) ?? service.models.find((m) => m.available) ?? service.models[0])?.id ?? ''
+  const eligible = service.models.filter((m) => m.defaultEligible !== false)
+  return (eligible.find((m) => m.installed) ?? eligible.find((m) => m.available) ?? eligible[0])?.id ?? ''
 }
 
 function revert(): void {
@@ -341,6 +372,7 @@ function modelOption(model: VoiceModel): string {
 }
 
 const applyText = computed(() => {
+  if (selModelInfo.value?.defaultEligible === false) return selModelInfo.value.installed ? t('gui.voice.system.default_unavailable') : t('gui.voice.system.download_upstream')
   if (!selModelInfo.value?.installed) return status.value?.defaultSelection ? t('gui.voice.system.install_switch') : t('gui.voice.system.install_enable')
   return t('gui.voice.system.make_default')
 })
@@ -358,8 +390,9 @@ async function apply(): Promise<void> {
   const selection = { service: selService.value, model: selModel.value }
   if (!selModelInfo.value) return
   removedNotice.value = null
+  if (selModelInfo.value.installed && selModelInfo.value.defaultEligible === false) return
   if (selModelInfo.value.installed) await guarded(() => chooseDefault(selection))
-  else await guarded(() => installModel(selection, status.value?.defaultSelection ? 'default' : null))
+  else await guarded(() => installModel(selection, status.value?.defaultSelection && selModelInfo.value?.defaultEligible !== false ? 'default' : null))
 }
 
 const cancel = () => guarded(() => cancelInstall())
@@ -406,6 +439,9 @@ const testPhase = ref<TestPhase>('idle')
 const testSeconds = ref(0)
 const testResult = ref<VoiceTranscription | null>(null)
 const testError = ref<string | null>(null)
+const testFileInput = ref<HTMLInputElement | null>(null)
+/** The name of the file last chosen for the test (empty = none chosen yet). */
+const testFileName = ref('')
 let testRecording: RecordingHandle | null = null
 let testTick: ReturnType<typeof setInterval> | null = null
 let testGen = 0
@@ -419,6 +455,27 @@ const testTarget = computed<VoiceSelection | null>(() => {
 function stopTestTimer(): void {
   if (testTick) clearInterval(testTick)
   testTick = null
+}
+
+async function uploadTest(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const target = testTarget.value
+  if (!file || !target || testPhase.value !== 'idle') return
+  testFileName.value = file.name
+  const gen = ++testGen
+  testPhase.value = 'processing'
+  testError.value = null
+  testResult.value = null
+  try {
+    const result = await testTranscribe(file, file.name, target)
+    if (gen === testGen) testResult.value = result
+  } catch (error) {
+    if (gen === testGen) testError.value = errorCodeOf(error)
+  } finally {
+    input.value = ''
+    if (gen === testGen) testPhase.value = 'idle'
+  }
 }
 
 async function toggleTest(): Promise<void> {
@@ -566,5 +623,31 @@ onBeforeUnmount(() => {
 
 .vx-tag {
   margin-left: 6px;
+}
+
+.vx-license {
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+/* The native file input stays in the page for the app button to open, but is never seen. */
+.vx-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vx-file-name {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

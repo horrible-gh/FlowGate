@@ -781,6 +781,41 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     happily keep both sides — which reads as a clean resolution and silently re-applies the
     commit the person just asked to cancel.
     """
+    if kind == "group_update":
+        # flowgate.v02test.0068: an update conflict used to get the merge paragraph below. That
+        # told the worker a person approves the result (nobody does: the accepted submission IS
+        # the commit) and never said which side is which - here the sides are the reverse of a
+        # finalize merge.
+        return (
+            "## Git conflict auto-resolve task (base update)\n"
+            "---\n"
+            "The base branch is being merged INTO this Flow's own work branch, and both changed "
+            "the same lines. In every chunk `ours` (the `<<<<<<< HEAD` block) is THIS FLOW's "
+            "branch and `theirs` (the `>>>>>>>` block) is the BASE branch - work other Flows "
+            "already merged. `base` is the common ancestor: read it to see what each side "
+            "actually changed.\n"
+            "Resolve every conflict so that BOTH sides' intent survives: this Flow's work stays, "
+            "and nothing the base branch gained is lost. Keeping both blocks verbatim is a "
+            "resolution only when the two are genuinely independent; when they are two versions "
+            "of the same thing, merge them into the one version that does what both authors "
+            "wanted.\n"
+            "Git already merged the base branch's other changes into the rest of each conflicted "
+            "file. Start from the conflicted file as it is now and replace only the marker "
+            "blocks - do NOT submit this Flow's old copy of the file, which would undo those "
+            "changes (the server refuses it).\n"
+            "Before you decide a chunk, read the whole file and the surrounding code with the "
+            "read/grep/glob/diff/log/show tools - a chunk resolved correctly in isolation can "
+            "still leave a name undefined, an import dropped or a branch unreachable.\n"
+            "Do not ask the user to choose chunks. Produce each resolved file -- its complete "
+            "contents, or every one of its chunks resolved -- with all conflict markers "
+            "removed, then call the bound resolve endpoint.\n"
+            "There is NO human review step here: once the last conflict is accepted the server "
+            "commits the merge at once and answers `updated`, and the Git run that was waiting "
+            "continues by itself. A 422 answer means nothing was written: read its `details`, "
+            "fix exactly what it names and submit again - do not end your run while "
+            "`remaining_conflicts` is not empty. If `details.files[].supersede_ready` is present, "
+            "resend the same content with that `supersede` declaration added.\n\n"
+        )
     if kind not in ("tr_revert", "tr_reapply"):
         # #5 (the resolution came back wrong). This branch used to say two
         # sentences — resolve autonomously, strip the markers — which is a description of a
@@ -1226,6 +1261,12 @@ _SUPERSEDE_MENTION_SECTION = (
 )
 
 
+_SUPERSEDE_REVIEW_SENTENCE = (
+    "A declared merge is never auto-approved: a person reads the replaced lines before approving. "
+)
+assert _SUPERSEDE_REVIEW_SENTENCE in _SUPERSEDE_MENTION_SECTION
+
+
 def _build_conflict_mention(
     *,
     group_id: Optional[str],
@@ -1290,6 +1331,8 @@ def _build_conflict_mention(
         "base_branch": conflicts.get("base_branch"),
         "tr_conflict": conflicts.get("tr_conflict") or None,
         "refs": conflicts.get("refs") or None,
+        **({"sides": {"ours": "this Flow's branch", "theirs": "the base branch"}}
+           if kind == "group_update" else {}),
         "chunk_text": "inline" if inline else "omitted",
         "files": chunks_payload,
     }
@@ -1340,11 +1383,15 @@ def _build_conflict_mention(
         "that replace its whole marker block). The server rebuilds the file from them and checks "
         "it exactly like `content`.\n\n"
         + binding
-        + _SUPERSEDE_MENTION_SECTION
+        + (
+            # an update conflict has no reviewer: the accepted submission is the commit.
+            _SUPERSEDE_MENTION_SECTION.replace(_SUPERSEDE_REVIEW_SENTENCE, "")
+            if kind == "group_update" else _SUPERSEDE_MENTION_SECTION
+        )
         + write_plan_section
         + _conflict_reading_section(
             api_base_url, inline=inline, has_open=bool(open_files),
-            refs=payload["refs"],
+            refs=payload["refs"], kind=kind,
         )
         + _conflict_remote_source_section(api_base_url, raw_token)
         + "## Conflict session\n"
@@ -1406,6 +1453,7 @@ def _conflict_remote_source_section(api_base_url: str, raw_token: str) -> str:
 
 def _conflict_reading_section(
     api_base_url: str, *, inline: bool, has_open: bool, refs: Optional[dict],
+    kind: str = "merge",
 ) -> str:
     """How to read the conflicts and hand the result back (0608 T0005, NR0003 §3.4/§8)."""
     if not has_open:
@@ -1434,9 +1482,14 @@ def _conflict_reading_section(
         "your working directory's copy.",
     ]
     if refs:
+        # an update conflict merges the base INTO the group branch: the sides are reversed.
+        ours_name, theirs_name = (
+            ("this Flow's branch", "the base branch") if kind == "group_update"
+            else ("the base branch", "the group branch")
+        )
         lines.append(
             f"- Whole versions of each side: add \"ref\": \"{refs.get('ours')}\" (ours, "
-            f"the base branch) or \"ref\": \"{refs.get('theirs')}\" (theirs, the group branch)."
+            f"{ours_name}) or \"ref\": \"{refs.get('theirs')}\" (theirs, {theirs_name})."
         )
     lines += [
         "- Remote write, patch and remove are not available to this run. The bound resolve "

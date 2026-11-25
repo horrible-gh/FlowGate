@@ -61,6 +61,7 @@ const ko = {
       error: '오류',
     },
     installing_note: '창을 닫아도 서버에서 계속 받습니다.',
+    retired: '{name} — 지원 종료. 이 버전부터 제공하지 않아 켜지지 않습니다. 디스크에 남은 파일은 자동으로 지우지 않습니다.',
     in_use: '사용 중',
     switch_on: '켜짐',
     switch_off: '꺼짐',
@@ -144,6 +145,7 @@ const ko = {
     voice_stopping: '서버가 멈추는 중입니다.',
     voice_invalid_selection: '서비스와 모델을 함께 골라야 합니다.',
     voice_unknown_model: '알 수 없는 모델입니다.',
+    voice_model_retired: '지원이 종료된 모델입니다.',
     voice_unknown_service: '알 수 없는 서비스입니다.',
     message_audio_forbidden: '이 Flow에 음성을 올릴 수 없습니다.',
     message_audio_invalid: '음성 첨부가 올바르지 않습니다.',
@@ -213,6 +215,7 @@ const en: Messages = {
     status: 'Status',
     state: { not_installed: 'Not installed', installing: 'Installing', off: 'Off', on: 'On', error: 'Error' },
     installing_note: 'The server keeps downloading even if you close this window.',
+    retired: '{name} — no longer supported. It is not provided from this version and will not be turned on. Files left on disk are not deleted automatically.',
     in_use: 'In use',
     switch_on: 'On',
     switch_off: 'Off',
@@ -289,6 +292,7 @@ const en: Messages = {
     voice_stopping: 'The server is stopping.',
     voice_invalid_selection: 'Choose a service and a model together.',
     voice_unknown_model: 'Unknown model.',
+    voice_model_retired: 'This model is no longer supported.',
     voice_unknown_service: 'Unknown service.',
     message_audio_forbidden: 'Voice cannot be uploaded to this Flow.',
     message_audio_invalid: 'The voice attachment is invalid.',
@@ -356,6 +360,7 @@ const ja: Messages = {
     status: '状態',
     state: { not_installed: '未インストール', installing: 'インストール中', off: 'オフ', on: 'オン', error: 'エラー' },
     installing_note: 'ウィンドウを閉じてもサーバーでダウンロードを続けます。',
+    retired: '{name} — サポート終了。このバージョンから提供されないため、オンになりません。ディスクに残ったファイルは自動では削除しません。',
     in_use: '使用中',
     switch_on: 'オン',
     switch_off: 'オフ',
@@ -432,6 +437,7 @@ const ja: Messages = {
     voice_stopping: 'サーバーが停止中です。',
     voice_invalid_selection: 'サービスとモデルを一緒に選んでください。',
     voice_unknown_model: '不明なモデルです。',
+    voice_model_retired: 'サポートが終了したモデルです。',
     voice_unknown_service: '不明なサービスです。',
     message_audio_forbidden: 'この Flow には音声をアップロードできません。',
     message_audio_invalid: '音声の添付が不正です。',
@@ -462,4 +468,18 @@ export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return '0MB'
   const mb = bytes / 1_000_000
   return mb >= 1000 ? `${(mb / 1000).toFixed(1)}GB` : `${Math.max(1, Math.round(mb))}MB`
+}
+
+/**
+ * F86 — the shown text of a server `unavailable_reason`. The server reason is English (e.g. "This release requires
+ * Windows x64"); a known one is shown with its translation key, anything else as sent.
+ */
+export function voiceReasonText(
+  reason: string | null | undefined,
+  t: (key: string) => string,
+  has: (key: string) => boolean,
+): string {
+  if (!reason) return ''
+  if (/windows/i.test(reason) && has('gui.voice.unavailable_windows')) return t('gui.voice.unavailable_windows')
+  return reason
 }

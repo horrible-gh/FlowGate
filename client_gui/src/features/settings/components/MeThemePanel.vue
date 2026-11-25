@@ -8,7 +8,7 @@
         <!-- A small drawing of the style: a window title bar above a taskbar, in CSS only. -->
         <span class="pv" :data-preview="style" aria-hidden="true">
           <span class="pv-win"><span class="pv-title"><span class="pv-name" /><span class="pv-btns"><i /><i /></span></span></span>
-          <span class="pv-bar"><span class="pv-group"><i class="pv-menu" /><i /><i /></span></span>
+          <span class="pv-bar"><span class="pv-group"><svg v-if="style === 'modern'" class="pv-menu-node" viewBox="0 0 24 24"><rect x="3" y="9" width="6" height="6" /><rect x="15" y="3" width="6" height="6" /><rect x="15" y="15" width="6" height="6" /></svg><i v-else class="pv-menu" /><i /><i /></span></span>
         </span>
         <span class="theme-name">{{ t(`gui.taskbar.style_${style}`) }}</span>
         <span v-if="selected === style" class="theme-check" aria-hidden="true">✓</span>
@@ -115,7 +115,8 @@ onMounted(load)
 [data-preview="modern"] .pv-title { border-bottom-color: transparent; background: color-mix(in srgb, var(--fg2-text) 5%, var(--fg2-panel)); }
 [data-preview="modern"] .pv-bar { justify-content: center; }
 [data-preview="modern"] .pv-group i { width: 7px; height: 7px; }
-[data-preview="modern"] .pv-group .pv-menu { background: var(--fg2-blue, #4ba3ff); }
+/* The menu mark is the node icon (three linked boxes) the taskbar menu button draws in this style. */
+.pv-menu-node { width: 9px; height: 9px; fill: none; stroke: var(--fg2-text); stroke-width: 3; }
 
 /* Dock: centred title, round buttons, and a floating rounded group of icons above the bottom edge. */
 [data-preview="dock"] .pv-win { border-radius: 6px; }

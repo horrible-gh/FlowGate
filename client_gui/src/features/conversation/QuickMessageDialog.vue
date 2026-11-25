@@ -1,7 +1,7 @@
 <template>
   <ModalShell
     :open="open"
-    size="sm"
+    size="lg"
     :close-on-escape="!busy"
     :close-on-backdrop="false"
     @close="!busy && emit('cancel')"
@@ -18,6 +18,7 @@
           :invalid="problem === 'title'"
           :disabled="busy"
           maxlength="12"
+          class="qm-input"
           data-modal-autofocus
           data-test="qm-title"
           @update:model-value="onTitle"
@@ -28,7 +29,8 @@
         <span class="qm-label">{{ t('gui.quickMessages.field_message') }}</span>
         <Textarea
           v-model="message"
-          :rows="4"
+          :rows="12"
+          class="qm-textarea"
           :placeholder="t('gui.quickMessages.field_message_hint')"
           :invalid="problem === 'message'"
           :disabled="busy"
@@ -157,7 +159,7 @@ async function submit(): Promise<void> {
 .qm-dialog-title {
   margin: 0;
   padding: 20px 24px 8px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--fg2-text);
 }
@@ -177,15 +179,26 @@ async function submit(): Promise<void> {
 }
 
 .qm-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   color: var(--fg2-text-2);
 }
 
 .qm-problem {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--fg2-status-danger-fg);
+}
+
+.qm-field .qm-input,
+.qm-field .qm-textarea {
+  font-size: 14px;
+}
+
+.qm-field .qm-textarea {
+  min-height: 240px;
+  max-height: 55vh;
+  line-height: 1.6;
 }
 
 .qm-kinds {
@@ -205,7 +218,7 @@ async function submit(): Promise<void> {
   background: transparent;
   color: var(--fg2-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 

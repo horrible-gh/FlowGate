@@ -202,7 +202,7 @@ export async function installModel(selection: VoiceSelection, then: AfterInstall
   state.lastInstalled = null
   const id = await run(() => startVoiceInstall(selection))
   rememberInstall(id)
-  afterInstall = { installId: id, then }
+  afterInstall = { installId: id, then: then === 'default' && findModel(state.catalog, selection)?.defaultEligible === false ? null : then }
   state.install = { installId: id, service: selection.service, model: selection.model, step: 'queued', receivedBytes: 0, totalBytes: 0, done: false, error: null }
   if (state.status) state.status = { ...state.status, state: 'installing' }
   schedulePoll(id)

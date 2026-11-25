@@ -23,6 +23,30 @@ from .voice_runtime import Runtime, convert
 
 log = logging.getLogger(__name__)
 CATALOG = json.loads(Path(__file__).with_name("voice_catalog.json").read_text(encoding="utf-8"))
+# Models removed from the product (F86-7 U1). They are never installed, selected or
+# activated again; files already on a user's disk are reported, never deleted here.
+RETIRED_MODELS = {
+    ("sherpa-onnx", "sensevoice-small-int8"): {
+        "name": "SenseVoiceSmall int8",
+        "filename": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+    },
+}
+
+
+def _prune(path, keep):
+    """Delete ``path`` except the ``keep`` paths and the directories leading to them."""
+    if not (path.exists() or path.is_symlink()):
+        return
+    if path in keep:
+        return
+    if path.is_dir() and not path.is_symlink() and any(path in k.parents for k in keep):
+        for child in list(path.iterdir()):
+            _prune(child, keep)
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def root() -> Path:
@@ -36,6 +60,8 @@ def specification(service, model=None):
         raise VoiceError("voice_unknown_service", "Unknown service", 404)
     if model is None:
         return entry
+    if (service, model) in RETIRED_MODELS:
+        raise VoiceError("voice_model_retired", "Model is no longer supported", 410)
     item = next((m for m in entry["models"] if m["id"] == model), None)
     if item is None:
         raise VoiceError("voice_unknown_model", "Unknown model", 404)
@@ -58,10 +84,18 @@ def atomic_json(path, data):
 
 def configuration():
     raw = system_settings.get_value("voice.configuration")
-    return json.loads(raw) if raw else {"enabled": False, "default": None}
+    value = json.loads(raw) if raw else {"enabled": False, "default": None}
+    selected = value.get("default")
+    if selected and (selected.get("service"), selected.get("model")) in RETIRED_MODELS:
+        # A stored retired default stays off; status() reports it as retired.
+        value.update(enabled=False, default=None, retired_default=selected)
+    elif selected and not specification(**selected).get("default_eligible", True):
+        value.update(enabled=False, default=None)
+    return value
 
 
 def save_configuration(value):
+    value = {k: v for k, v in value.items() if k != "retired_default"}
     system_settings.set_value("voice.configuration", json.dumps(value), value_type="json")
 
 
@@ -88,6 +122,28 @@ class Manager:
     def installed(self, service, model):
         return (self.service_dir(service) / (model + ".installed.json")).is_file() and self.model_path(service, model).exists()
 
+    def retired_models(self, config):
+        """Retired models still on disk or stored as the default: shown as retired, not activated."""
+        rows = []
+        for (service, model), info in RETIRED_MODELS.items():
+            on_disk = (root() / "services" / service / (model + ".installed.json")).is_file()
+            was_default = config.get("retired_default") == {"service": service, "model": model}
+            if on_disk or was_default:
+                rows.append({"service": service, "model": model, "name": info["name"], "status": "retired",
+                             "installed": on_disk, "was_default": was_default})
+        return rows
+
+    def retired_files(self, service):
+        """Files of retired models of ``service`` still on disk; service cleanup must keep them."""
+        base, cache = root() / "services" / service, root() / "downloads" / service
+        paths = []
+        for (owner, model), info in RETIRED_MODELS.items():
+            if owner != service:
+                continue
+            paths += [base / (model + ".installed.json"), base / "models" / model,
+                      cache / info["filename"], cache / (info["filename"] + ".part")]
+        return {p for p in paths if p.exists() or p.is_symlink()}
+
     def busy(self, service=None, model=None):
         return any(not j["done"] and (service is None or j["service"] == service)
                    and (model is None or j["model"] == model) for j in self.jobs.values())
@@ -108,6 +164,12 @@ class Manager:
                     "is_default": config["default"] == {"service": entry["id"], "model": spec["id"]}})
             if can_manage or models:
                 services.append({"id": entry["id"], "name": entry["name"], "version": entry["version"],
+                                 "components": [{"filename": a["filename"], "component_type": a["component_type"],
+                                                 "license": a["license"], "license_url": a.get("license_url"),
+                                                 "distribution": a["distribution"],
+                                                 "url": a["url"]} for a in entry["artifacts"]],
+                                 "native_notices": entry.get("native_notices", []),
+                                 "notice_keys": entry.get("notice_keys", []),
                                  "license": entry["license"], "installed": any(m["installed"] for m in models),
                                  "available": supported, "unavailable_reason": None if supported else "This release requires Windows x64",
                                  "models": models})
@@ -125,7 +187,8 @@ class Manager:
             elif self.error or (config["enabled"] and not healthy):
                 state = "error"
         error = self.error or ({"code": "voice_module_unavailable", "message": "Voice module is not responding"} if config["enabled"] and not healthy else None)
-        return {"ok": True, "enabled": enabled, "state": state, "default": config["default"], "error": error, "can_manage": can_manage}
+        return {"ok": True, "enabled": enabled, "state": state, "default": config["default"], "error": error, "can_manage": can_manage,
+                "retired": self.retired_models(config) if can_manage else []}
 
     def _update_job(self, job_id, **values):
         with self.lock:
@@ -146,12 +209,15 @@ class Manager:
                     row.update(done=True, step="interrupted", error={"code": "voice_install_interrupted", "message": "Retry to resume verified partial downloads"})
             return {"ok": True, **copy.deepcopy(row)}
 
-    def install(self, service, model, from_dir=None):
+    def install(self, service, model, from_dir=None, ffmpeg_from_dir=None):
         from . import voice_streams
         if voice_streams.active(service):
             raise VoiceError("voice_busy", "Finish live transcription before installing", 409)
         entry = specification(service)
-        specification(service, model)
+        spec = specification(service, model)
+        if from_dir is not None:
+            from .voice_distribution import validate_local_install
+            validate_local_install(entry, spec)
         if not available(entry):
             raise VoiceError("voice_platform_unsupported", "This release requires Windows x64", 422)
         with voice_streams._condition, self.lock:
@@ -168,7 +234,7 @@ class Manager:
                                      total_bytes=0, done=False, error=None)
             self.cancel_events[job_id] = threading.Event()
             self._update_job(job_id)
-            worker = threading.Thread(target=self._install_worker, args=(job_id, from_dir), name=job_id, daemon=True)
+            worker = threading.Thread(target=self._install_worker, args=((job_id, from_dir, ffmpeg_from_dir) if ffmpeg_from_dir is not None else (job_id, from_dir)), name=job_id, daemon=True)
             self.threads[job_id] = worker
             worker.start()
             return {"ok": True, "install_id": job_id}
@@ -184,10 +250,13 @@ class Manager:
                 self._update_job(job_id, step="cancelling")
         return self.job(job_id)
 
-    def _install_worker(self, job_id, from_dir):
+    def _install_worker(self, job_id, from_dir, ffmpeg_from_dir=None):
         job = self.jobs[job_id]
         service, model = job["service"], job["model"]
         entry, spec = specification(service), specification(service, model)
+        if from_dir:
+            from .voice_sanitized import local_model
+            spec = local_model(spec)
         cancel = self.cancel_events[job_id]
         staging = root() / "staging" / job_id
         promoted = False
@@ -196,10 +265,14 @@ class Manager:
             # lock owned by somebody else; OS locks are released after a crash.
             from .voice_lock import installation_lock
             with installation_lock(root()):
+                from .voice_distribution import cleanup_legacy_samples
+                cleanup_legacy_samples(root())
                 destination = self.service_dir(service)
-                artifacts = [*entry["artifacts"], spec]
+                load_only = bool(from_dir) or spec.get("self_test", {}).get("mode") == "load_only"
+                artifacts = [a for a in entry["artifacts"]
+                             if not (load_only and a.get("component_type") == "sample")] + [spec]
                 offline_sample = None
-                if from_dir and not list(Path(from_dir).rglob("jfk.wav")):
+                if from_dir and not load_only and not list(Path(from_dir).rglob("jfk.wav")):
                     samples = list(Path(from_dir).rglob("Recording_1.m4a"))
                     if not samples:
                         raise VoiceError("voice_offline_file_invalid", "Offline bundle needs jfk.wav or Recording_1.m4a", 422)
@@ -221,21 +294,43 @@ class Manager:
                             self._update_job(job_id, received_bytes=base + done)
                             last[0] = now
                     files.append(download.fetch(artifact, root() / "downloads" / service, cancel, progress,
-                                                Path(from_dir).resolve() if from_dir else None))
+                                                (Path(ffmpeg_from_dir if artifact.get("component_type") == "ffmpeg" and ffmpeg_from_dir else from_dir).resolve() if from_dir else None)))
                     completed += artifact["size_bytes"]
                 self._update_job(job_id, step="extracting", received_bytes=total)
                 staging.mkdir(parents=True, exist_ok=True)
                 for item in files[:-1]:
                     if item.is_dir():
                         shutil.copytree(item, staging, dirs_exist_ok=True)
-                    elif item.suffix == ".zip" or item.name.endswith(".tar.bz2"):
+                    elif item.suffix == ".zip" or item.name.endswith((".tar.bz2", ".tar")):
                         download.extract(item, staging, cancel)
                     else:
                         shutil.copyfile(item, staging / item.name)
+                if from_dir:
+                    # Offline users obtain FFmpeg independently. Verification in fetch
+                    # must succeed locally; no hidden network fallback is permitted.
+                    import subprocess
+                    from .voice_runtime import executable
+                    result = subprocess.run([str(executable(staging, "ffmpeg")), "-version"],
+                                            capture_output=True, timeout=15)
+                    if result.returncode:
+                        raise VoiceError("voice_offline_file_invalid", "Offline FFmpeg cannot run", 422)
+                from .voice_distribution import notice_path
+                for component in artifacts:
+                    for notice in component.get("notices", []):
+                        source_notice = notice_path(Path(from_dir) if from_dir else staging, notice)
+                        if not download.verify(source_notice, notice):
+                            raise VoiceError("voice_offline_notice_invalid", "Missing or changed installed notice", 422)
+                        target_notice = staging / "licenses" / notice["filename"]
+                        target_notice.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source_notice, target_notice)
                 (staging / "models").mkdir(exist_ok=True)
                 staged_model = staging / "models" / (model if spec.get("archive") else spec["filename"])
                 if spec.get("archive"):
-                    download.extract(files[-1], staged_model, cancel)
+                    download.extract(files[-1], staged_model, cancel,
+                                     excluded_parts=tuple(path.strip("/") for path in spec.get("excluded_paths", ())))
+                    if spec.get("excluded_paths"):
+                        # The original upstream archive itself contains KSS audio.
+                        files[-1].unlink(missing_ok=True)
                 else:
                     shutil.copyfile(files[-1], staged_model)
                 download.check_cancel(cancel)
@@ -247,7 +342,9 @@ class Manager:
                     self.trials[job_id] = trial
                 try:
                     trial.start(staging, staged_model)
-                    if offline_sample:
+                    if load_only:
+                        passed = trial.healthy()
+                    elif offline_sample:
                         from .voice_runtime import MAX_AUDIO_BYTES
                         with offline_sample.open("rb") as stream:
                             sample_data = stream.read(MAX_AUDIO_BYTES + 1)
@@ -296,11 +393,14 @@ class Manager:
                     atomic_json(destination / (model + ".installed.json"), {"sha256": spec["sha256"], "version": entry["version"]})
                     promoted = True
                     config = configuration()
-                    if config["default"] is None:
+                    if config["default"] is None and spec.get("default_eligible", True):
                         config["default"] = {"service": service, "model": model}
                     selected = config["default"]
-                    self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))
-                    config["enabled"] = True
+                    if selected:
+                        self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))
+                        config["enabled"] = True
+                    else:
+                        config["enabled"] = False
                     save_configuration(config)
                     self.error = None
                 self._update_job(job_id, step="complete", done=True)
@@ -317,6 +417,11 @@ class Manager:
                 log.exception("Voice installation failed")
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+            if spec.get("excluded_paths"):
+                # Also discard partial/error downloads containing restricted samples.
+                archive = root() / "downloads" / service / spec["filename"]
+                archive.unlink(missing_ok=True)
+                archive.with_name(archive.name + ".part").unlink(missing_ok=True)
 
     def select(self, service=None, model=None, user_id=None):
         if bool(service) != bool(model):
@@ -356,6 +461,8 @@ class Manager:
             return {"ok": True, "text": text, "elapsed_ms": round((time.monotonic() - started) * 1000), **selected}
 
     def set_default(self, service, model):
+        if not specification(service, model).get("default_eligible", True):
+            raise VoiceError("voice_default_restricted", "Model license scope is pending; choose another default", 422)
         with self.inference:
             selected = self.select(service, model)
             config = configuration()
@@ -417,8 +524,16 @@ class Manager:
             cached.unlink(missing_ok=True)
             remaining = any(self.installed(service, m["id"]) for m in specification(service)["models"])
             if not remaining:
-                shutil.rmtree(directory)
-                shutil.rmtree(root() / "downloads" / service, ignore_errors=True)
+                # Removing the last catalog model removes the engine and cache, but files of a
+                # retired model (weights, installed marker, cached archive) are user files the
+                # user did not ask to delete: they stay on disk and keep showing as retired.
+                keep = self.retired_files(service)
+                if keep:
+                    _prune(directory, keep)
+                    _prune(root() / "downloads" / service, keep)
+                else:
+                    shutil.rmtree(directory)
+                    shutil.rmtree(root() / "downloads" / service, ignore_errors=True)
             if config["enabled"]:
                 selected = self.select()
                 self.runtime.start(self.service_dir(selected["service"]), self.model_path(**selected))
@@ -426,6 +541,10 @@ class Manager:
 
     def startup(self):
         try:
+            from .voice_distribution import cleanup_legacy_samples
+            from .voice_lock import installation_lock
+            with installation_lock(root()):
+                cleanup_legacy_samples(root())
             if configuration()["enabled"]:
                 self.enable(True)
         except Exception:

@@ -1,4 +1,4 @@
-"""Storage boundary for the shared first-run naming operation (0071)."""
+"""Storage boundary for first-run naming (0071); each target is named from its own content (0080)."""
 from __future__ import annotations
 import json
 import logging
@@ -21,7 +21,19 @@ def guard(flow_id, body):
     return with_flow_guard(flow_id, body)
 
 
-def targets(flow_id, chat_doc_id, *, chat_only=False):
+def root_binding_context(flow_id):
+    """Resolve the same live root for naming eligibility and pre-execution body reads."""
+    draft = definition_store.draft(flow_id)
+    latest = definition_store.latest_revision_no(flow_id)
+    definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
+    snap = read_snapshot(flow_id)
+    binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
+                                 alive_documents(snap), assignment_store.root_binding(flow_id),
+                                 lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
+    return definition, binding
+
+
+def targets(flow_id, chat_doc_id, *, chat_only=False, root=True):
     require_writable(flow_id)
     group = groups.get_by_id(flow_id)
     if not group:
@@ -29,15 +41,9 @@ def targets(flow_id, chat_doc_id, *, chat_only=False):
     record = ledger.load(flow_id)
     out = {"flow": {"id": flow_id, "title": group["title"],
                     "manual": bool(record.get("flow_manual"))}}
-    if not chat_only:
+    if not chat_only and root:
         try:
-            draft = definition_store.draft(flow_id)
-            latest = definition_store.latest_revision_no(flow_id)
-            definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
-            snap = read_snapshot(flow_id)
-            binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
-                                         alive_documents(snap), assignment_store.root_binding(flow_id),
-                                         lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
+            definition, binding = root_binding_context(flow_id)
             if binding.node_key and binding.doc_type in ("R", "B"):
                 row = next(n for n in definition["nodes"] if n["node_key"] == binding.node_key)
                 st = title_store.state(flow_id, binding.node_key) if title_store.available() else None
@@ -63,7 +69,7 @@ def targets(flow_id, chat_doc_id, *, chat_only=False):
         out["chat"] = {"id": chat_doc_id, "title": doc.get("title"), "meta": doc.get("meta"),
                        "manual": bool(meta.get("first_name_manual") or marker.get("state") in
                                       ("manual", "done"))}
-    return group, ({"chat": out["chat"]} if chat_only else {k: v for k, v in out.items() if k != "chat"})
+    return group, ({"chat": out["chat"]} if chat_only else out)
 
 
 def eligible(kind, target):
@@ -95,3 +101,4 @@ def apply(flow_id, kind, expected, title, actor):
              expected.get("meta") or ""])
         if changed != 1:
             raise RuntimeError("chat_title_changed")
+

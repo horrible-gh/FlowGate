@@ -12,7 +12,7 @@
 //
 // Reads happen on the Git ledger events of an open tab's group, when a tab is opened, when the Graph's answer changes
 // and on a stream resync. Only while a tab is AI 해결 중 is it polled (TAB_CONFLICT_POLL_MS), one request per such tab.
-import { computed, getCurrentInstance, onScopeDispose, reactive, watch, type ComputedRef } from 'vue'
+import { computed, getCurrentInstance, onScopeDispose, reactive, ref, watch, type ComputedRef } from 'vue'
 import { useProjectStore, type FlowAiActivity, type ProjectGitStatus } from '@/features/project'
 import type { ProjectEventSubscription } from '@/features/project/projectEvents'
 
@@ -35,6 +35,14 @@ export const TAB_CONFLICT_EVENTS: readonly string[] = [
   'git_pending_changed', 'git_merge_conflict', 'git_finalize_done', 'git_approval_job_changed',
   'gate_publish_job_changed', 'git_status_changed', 'ai_invoke_started', 'ai_invoke_finished',
 ]
+
+/** flowgate.v02test.0068: raised by the Git panel when the shown Flow's conflict appeared, changed or went. */
+const panelChanges = ref(0)
+/** The Git panel saw a Flow's conflict change (a resolve, an abort, 세션 중단): the tabs read git/status again now, so a
+ *  mark never outlives its conflict for want of a server event. */
+export function refreshFlowTabConflicts(_flowId?: string): void {
+  panelChanges.value += 1
+}
 
 export interface FlowTabConflictSource {
   loadStatus(projectId: string): Promise<ProjectGitStatus | null>
@@ -197,6 +205,9 @@ export function useFlowTabConflicts(options: FlowTabConflictOptions): ComputedRe
     const graph = options.graphConflicts()
     return options.flows().filter((id) => graph[id] === true).join('\n')
   }, () => void readStatus())
+
+  // The Git panel read a change of the shown Flow's conflict (see refreshFlowTabConflicts).
+  watch(panelChanges, () => void readStatus())
 
   onScopeDispose(() => {
     disposed = true

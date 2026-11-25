@@ -1,7 +1,7 @@
 <template>
   <div ref="root" class="designer-taskbar" :class="{ 'is-compact': compact }" :data-taskbar-style="modelessStyle" data-test="designer-taskbar" :aria-label="t('gui.taskbar.label')">
     <div class="taskbar-group">
-    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :aria-label="t('gui.taskbar.menu')" :title="iconOnly || compact ? undefined : t('gui.taskbar.menu')" v-on="iconOnly || compact ? tipFor(t('gui.taskbar.menu')) : {}" @click="toggle('menu')"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="MENU_ICON" /></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
+    <button ref="menuTrigger" class="taskbar-item menu-trigger" type="button" :aria-expanded="popup === 'menu'" aria-haspopup="menu" :aria-label="t('gui.taskbar.menu')" :title="iconOnly || compact ? undefined : t('gui.taskbar.menu')" v-on="iconOnly || compact ? tipFor(t('gui.taskbar.menu')) : {}" @click="toggle('menu')"><svg v-if="modelessStyle === 'modern'" class="node-menu-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.5"/><rect x="15" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M9 12h3m0 0V6h3m-3 6v6h3"/></svg><svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="MENU_ICON" /></svg><span class="item-label">{{ t('gui.taskbar.menu') }}</span></button>
     <!-- Pinned buttons: icon-only in every style, the name shows at once above the button on hover or focus. -->
     <button v-for="pin in pins" :key="pin.key" type="button" class="taskbar-item pin-item" :class="{ 'is-on': pin.on }" data-test="taskbar-pin" :data-pin="pin.key" :aria-label="pin.label" :aria-disabled="pin.disabled ? 'true' : undefined" v-on="tipFor(pin.label)" @click="pressPin(pin)"><svg class="item-glyph" viewBox="0 0 24 24" aria-hidden="true"><path :d="PIN_ICONS[pin.key]" /></svg><i v-if="pin.on" class="pin-dot" aria-hidden="true" /></button>
     <span v-if="!compact" class="taskbar-separator pins-separator" aria-hidden="true" />
@@ -10,9 +10,12 @@
     <button v-for="entry in visible" :key="entry.id" type="button" class="taskbar-item minimized-item" :data-kind="kindOf(entry)" :style="{ '--kind-color': entry.color }" :aria-label="entry.title" :title="iconOnly ? undefined : entry.title" v-on="iconOnly ? tipFor(entry.title) : {}" @click="restore(entry)"><span class="item-icon"><svg class="item-glyph" viewBox="0 0 24 24" aria-hidden="true"><path :d="KIND_ICONS[kindOf(entry)]" /></svg><em v-if="badges.get(entry.id)" class="item-badge" data-test="taskbar-badge" aria-hidden="true">{{ badges.get(entry.id) }}</em></span><span class="item-text"><b>{{ entry.title }}</b></span></button>
     <button v-if="overflow.length" ref="overflowTrigger" type="button" class="taskbar-item overflow-trigger" :aria-expanded="popup === 'overflow'" aria-haspopup="menu" :aria-label="t('gui.taskbar.more', { count: overflow.length })" @click="toggle('overflow')">▾ +{{ overflow.length }}</button>
     </div>
-    <!-- Dock: the [Menu] blurs (or, without transparency, dims) the whole page above the dock; pressing it closes the menu. -->
-    <div v-if="dockGrid" class="dock-backdrop" :class="{ 'is-lite': liteBackdrop }" data-test="dock-backdrop" aria-hidden="true" @pointerdown="close()" />
+    <!-- Dock: the [Menu] blurs (or, without transparency, dims) the whole page above the dock; pressing it closes the menu.
+         The blur fades in and out. -->
+    <Transition name="dock-fade"><div v-if="dockGrid" class="dock-backdrop" :class="{ 'is-lite': liteBackdrop }" data-test="dock-backdrop" aria-hidden="true" @pointerdown="close()" /></Transition>
     <span v-if="tip && !popup" ref="tipEl" class="taskbar-tip" role="tooltip" data-test="taskbar-tip" :style="{ left: `${tip.left}px` }">{{ tip.text }}</span>
+    <!-- Dock: the panel grows in from small and its icons rise one after another; it shrinks away on close. -->
+    <Transition :name="modelessStyle === 'dock' ? 'dock-pop' : 'taskbar-pop-none'">
     <div v-if="popup" ref="popupRoot" role="menu" class="taskbar-popup" :class="{ 'menu-board': popup === 'menu' && modelessStyle === 'flowgate', 'start-box': popup === 'menu' && modelessStyle === 'modern', 'start-classic': popup === 'menu' && modelessStyle === 'classic', 'dock-grid': dockGrid, 'overflow-list': popup === 'overflow' }" :aria-label="dockGrid ? t('gui.taskbar.menu') : undefined" @keydown="menuKey">
       <template v-if="dockGrid">
         <!-- Dock: one round panel in the middle of the blurred page, all six tiles in one row; a thin line parts the groups
@@ -20,7 +23,7 @@
         <div class="dock-grid-tiles" role="group" :aria-label="t('gui.taskbar.menu')">
           <template v-for="(group, groupIndex) in menuGroups" :key="group.key">
             <span v-if="groupIndex > 0" class="dock-grid-divider" data-test="dock-grid-divider" aria-hidden="true" />
-            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="dock-tile" :style="{ '--card-color': group.color }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="dock-tile-icon" aria-hidden="true"><svg class="menu-glyph" viewBox="0 0 24 24"><path :d="card.icon" /></svg></span><span class="dock-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
+            <button v-for="card in group.cards" :key="card.key" type="button" role="menuitem" class="dock-tile" :style="{ '--card-color': group.color, '--i': tileOrder.get(card.key) ?? 0 }" :title="t(card.body)" :data-card="card.key" :data-card-state="cardState(card.key)" @click="openCard(card.key)"><span class="dock-tile-icon" aria-hidden="true"><svg class="menu-glyph" viewBox="0 0 24 24"><path :d="card.icon" /></svg></span><span class="dock-tile-name">{{ t(card.title) }}</span><i v-if="cardState(card.key) !== 'closed'" class="menu-card-dot" data-test="menu-card-dot" aria-hidden="true" /></button>
           </template>
         </div>
       </template>
@@ -53,6 +56,7 @@
       </template>
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
+    </Transition>
     <MyAiWindow :ref="(el) => setWindowRef('my-ai', el)" :open="windows['my-ai'].open" v-model:minimized="windows['my-ai'].minimized" @close="windows['my-ai'].open = false" />
     <QuestionPolicyWindow :ref="(el) => setWindowRef('question-policy', el)" :open="windows['question-policy'].open" v-model:minimized="windows['question-policy'].minimized" @close="windows['question-policy'].open = false" />
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
@@ -213,6 +217,8 @@ function menuKey(event: KeyboardEvent) {
 }
 // Classic sub-menus: which group's cards are open beside the first-level line, and where.
 const classicGroup = ref<string | null>(null)
+// Left-to-right place of each dock tile, so the icons can rise one after another when the menu opens.
+const tileOrder = new Map(menuGroups.flatMap(group => group.cards).map((card, index) => [card.key, index]))
 const classicSub = computed(() => menuGroups.find(group => group.key === classicGroup.value) ?? null)
 const classicSubRoot = ref<HTMLElement | null>(null)
 const classicSubPos = ref<Record<string, string>>({})
@@ -355,7 +361,7 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="modern"] .taskbar-item { position: relative; width: 44px; height: 40px; padding: 0; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; box-shadow: none; text-align: center; }
 [data-taskbar-style="modern"] .taskbar-item:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
 [data-taskbar-style="modern"] .item-text, [data-taskbar-style="modern"] .item-label, [data-taskbar-style="modern"] .designer-item i { display: none; }
-[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-accent, #3b82f6); }
+[data-taskbar-style="modern"] .menu-trigger svg { width: 20px; height: 20px; stroke: var(--fg2-text); }
 [data-taskbar-style="modern"] .menu-trigger[aria-expanded="true"] { background: color-mix(in srgb, var(--fg2-text) 10%, transparent); }
 [data-taskbar-style="modern"] .item-icon { width: 24px; height: 24px; border-radius: 6px; font-size: 14px; }
 [data-taskbar-style="modern"] .designer-item { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
@@ -365,7 +371,8 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="modern"] .taskbar-separator { height: 20px; margin: 0 2px; }
 [data-taskbar-style="modern"] .taskbar-popup { border-radius: 12px; }
 [data-taskbar-style="modern"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
-/* Dock: a floating rounded group in the middle with large icon tiles; open windows get a dot below. Hovering only tints the tile. */
+/* Dock: a floating rounded group in the middle with large icon tiles; open windows get a dot below.
+   Pointing at an item makes its icon grow and rise, its next neighbours grow a little; pressing dips it once. */
 .taskbar-group { display: contents; }
 .designer-taskbar[data-taskbar-style="dock"] { justify-content: center; height: 54px; flex-basis: 54px; padding: 3px 10px; background: transparent; border-top-color: var(--fg2-line); }
 [data-taskbar-style="dock"] .taskbar-group { display: flex; align-items: center; gap: 4px; min-width: 0; height: 48px; padding: 0 8px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--fg2-text) 14%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--fg2-panel) 72%, transparent); backdrop-filter: blur(20px); box-shadow: 0 6px 18px #0003; }
@@ -384,18 +391,48 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="dock"] .overflow-list { right: auto; left: 50%; transform: translateX(-50%); }
 @media (prefers-reduced-transparency: reduce) { [data-taskbar-style="dock"] .taskbar-group { backdrop-filter: none; background: var(--fg2-panel); } }
 /* The dock menu: the page above the dock is blurred, and one round panel sits in its middle with all six tiles in a row. */
-.dock-backdrop { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 99999; height: 100vh; background: rgba(8, 14, 26, .28); backdrop-filter: blur(14px) saturate(1.1); -webkit-backdrop-filter: blur(14px) saturate(1.1); }
-.dock-backdrop.is-lite { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 14, 26, .55); }
-@media (prefers-reduced-transparency: reduce) { .dock-backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 14, 26, .55); } }
+/* The blur is strong enough that the page text under it cannot be read; without blur the page is covered almost fully. */
+.dock-backdrop { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 99999; height: 100vh; background: rgba(8, 14, 26, .5); backdrop-filter: blur(32px) saturate(1.3); -webkit-backdrop-filter: blur(32px) saturate(1.3); }
+.dock-backdrop.is-lite { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 14, 26, .86); }
+@media (prefers-reduced-transparency: reduce) { .dock-backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(8, 14, 26, .86); } }
+.dock-fade-enter-active { transition: opacity .26s ease-out; }
+.dock-fade-leave-active { transition: opacity .2s ease-in; }
+.dock-fade-enter-from, .dock-fade-leave-to { opacity: 0; }
+/* The menu panel grows from small (the `scale` property keeps the panel's own centring transform). */
+.dock-pop-enter-active { transition: opacity .2s ease-out, scale .32s cubic-bezier(.2, .9, .3, 1.25); }
+.dock-pop-leave-active { transition: opacity .16s ease-in, scale .18s ease-in; }
+.dock-pop-enter-from { opacity: 0; scale: .82; }
+.dock-pop-leave-to { opacity: 0; scale: .9; }
+.dock-pop-enter-active .dock-tile { animation: dock-tile-rise .38s cubic-bezier(.2, .9, .3, 1.3) both; animation-delay: calc(60ms + var(--i, 0) * 40ms); }
+@keyframes dock-tile-rise { from { opacity: 0; transform: translateY(14px) scale(.7); } to { opacity: 1; transform: none; } }
 .taskbar-popup.dock-grid { left: 50%; bottom: calc((100vh - 54px) / 2); transform: translate(-50%, 50%); width: max-content; max-width: calc(100vw - 24px); max-height: calc(100vh - 140px); overflow-y: auto; box-sizing: border-box; padding: 16px 18px; border-radius: 22px; background-color: color-mix(in srgb, var(--fg2-panel) 86%, transparent); box-shadow: 0 18px 48px #0006; }
 .dock-grid-tiles { display: flex; align-items: center; gap: 6px; }
 .dock-grid-divider { flex: none; align-self: stretch; width: 1px; margin: 8px 6px; background: color-mix(in srgb, var(--fg2-text) 22%, transparent); }
 .taskbar-popup .dock-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; width: 96px; padding: 10px 4px 9px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: center; }
 .taskbar-popup .dock-tile:hover { background: color-mix(in srgb, var(--fg2-text) 8%, transparent); }
-.dock-tile-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-size: 20px; color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--card-color, #94a3b8) 85%, #fff), color-mix(in srgb, var(--card-color, #94a3b8) 70%, #0a1a33)); box-shadow: 0 3px 8px #0005; }
+.dock-tile-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-size: 20px; color: #fff; background: linear-gradient(160deg, color-mix(in srgb, var(--card-color, #94a3b8) 85%, #fff), color-mix(in srgb, var(--card-color, #94a3b8) 70%, #0a1a33)); box-shadow: 0 3px 8px #0005; transition: transform .22s cubic-bezier(.2, .9, .3, 1.4), box-shadow .22s ease; }
+.dock-tile:hover .dock-tile-icon, .dock-tile:focus-visible .dock-tile-icon { transform: translateY(-4px) scale(1.14); box-shadow: 0 8px 18px #0006; }
+.dock-tile:active .dock-tile-icon { transform: translateY(-1px) scale(.94); transition-duration: .08s; }
 .dock-tile-name { max-width: 100%; font-size: 11.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock-tile .menu-card-dot { position: absolute; top: 8px; right: 16px; margin: 0; }
 @media (max-width: 680px) { .dock-grid-tiles { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 60px); } .dock-grid-divider { display: none; } }
+/* Dock bar icons: grow and rise on hover, neighbours grow a little, a press dips the icon and lets it spring back. */
+[data-taskbar-style="dock"] .taskbar-item > :is(svg, .item-icon) { transform-origin: 50% 100%; transition: transform .2s cubic-bezier(.2, .9, .3, 1.4); }
+[data-taskbar-style="dock"] .taskbar-item:is(:hover, :focus-visible) > :is(svg, .item-icon) { transform: translateY(-5px) scale(1.32); }
+[data-taskbar-style="dock"] .taskbar-item:hover + .taskbar-item > :is(svg, .item-icon),
+[data-taskbar-style="dock"] .taskbar-item:has(+ .taskbar-item:hover) > :is(svg, .item-icon) { transform: translateY(-2px) scale(1.12); }
+[data-taskbar-style="dock"] .taskbar-item:active > :is(svg, .item-icon) { transform: translateY(-1px) scale(.9); transition-duration: .08s; }
+[data-taskbar-style="dock"] .taskbar-item:hover, [data-taskbar-style="dock"] .menu-trigger[aria-expanded="true"] { z-index: 1; }
+/* The name tip sits higher so the grown icon does not cover it. */
+[data-taskbar-style="dock"] .taskbar-tip { bottom: calc(100% + 16px); }
+/* With reduced motion the dock keeps the blur and the strong cover but drops every movement. */
+@media (prefers-reduced-motion: reduce) {
+  .dock-fade-enter-active, .dock-fade-leave-active, .dock-pop-enter-active, .dock-pop-leave-active { transition: none; }
+  .dock-pop-enter-active .dock-tile { animation: none; }
+  .dock-tile-icon, [data-taskbar-style="dock"] .taskbar-item > :is(svg, .item-icon) { transition: none; }
+  .dock-tile:hover .dock-tile-icon, .dock-tile:focus-visible .dock-tile-icon, .dock-tile:active .dock-tile-icon,
+  [data-taskbar-style="dock"] .taskbar-item > :is(svg, .item-icon) { transform: none !important; }
+}
 .start-box { left: 50%; transform: translateX(-50%); width: 440px; max-width: calc(100vw - 48px); max-height: calc(100vh - 140px); overflow-y: auto; box-sizing: border-box; padding: 18px 22px; }
 .start-group-label { margin: 14px 4px 8px; font-size: 12px; font-weight: 700; color: var(--fg2-text); }
 .start-group-label:first-child { margin-top: 0; }

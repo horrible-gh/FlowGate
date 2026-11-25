@@ -12,6 +12,7 @@ from modules.flow_gate.settings import scratch_retention as _scratch_retention
 from modules.flow_gate.settings import ai_execution_policy_service as _ai_execution_policy_service
 from modules.flow_gate.settings import attach_read_limit as _attach_read_limit
 from modules.flow_gate.storage.paths import get_storage_root
+from modules.flow_gate.settings import ai_title_provider as _title_provider
 
 _JST = timezone(timedelta(hours=9))
 
@@ -33,6 +34,7 @@ ALLOWLIST: set[str] = {
     "token_blacklist",
     "source_mode",
     "ai_repeat_count_max",
+    _title_provider.KEY,
     _attach_read_limit.SETTING_KEY,
     _scratch_retention.VALUE_KEY,
     _scratch_retention.UNIT_KEY,
@@ -56,6 +58,7 @@ _VALUE_TYPES: dict[str, str] = {
     "token_blacklist": "boolean",
     "source_mode": "string",
     "ai_repeat_count_max": "integer",
+    _title_provider.KEY: "string",
     _attach_read_limit.SETTING_KEY: "integer",
     _scratch_retention.VALUE_KEY: "integer",
     _scratch_retention.UNIT_KEY: "string",
@@ -129,12 +132,16 @@ def get_all() -> list[dict]:
                 "setting_key": key, "setting_value": value, "value_type": value_type,
                 "description": description, "updated_at": "", "updated_by": None,
             })
+    if not any(row.get("setting_key") == _title_provider.KEY for row in rows):
+        rows.append(_title_provider.row())
     return rows
 
 
 
 def get_one(key: str) -> dict | None:
     row = _apply_effective_defaults(_db.get(key))
+    if row is None and key == _title_provider.KEY:
+        return _title_provider.row()
     if row is None and key == "storage_root":
         return {
             "setting_key": "storage_root",
@@ -173,6 +180,8 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
     invalid = set(updates.keys()) - ALLOWLIST
     if invalid:
         raise ValueError(f"Disallowed setting key(s): {', '.join(sorted(invalid))}")
+    if _title_provider.KEY in updates:
+        _title_provider.validate(updates[_title_provider.KEY])
     mode = updates.get("source_mode")
     if mode is not None and mode not in {"local", "remote"}:
         raise ValueError("mode must be one of: local, remote")
