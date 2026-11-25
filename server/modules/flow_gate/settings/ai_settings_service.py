@@ -56,7 +56,7 @@ ID_PREFIX = "aip_"
 ID_SUFFIX_LEN = 6
 ID_RETRY_MAX = 5
 EXEC_TYPES = ("cli", "api")
-KINDS_CLI = ("claude", "copilot", "codex", "custom")
+KINDS_CLI = ("claude", "copilot", "codex", "gemini", "custom")
 KINDS_API = ("claude", "openai", "custom")
 MODES = ("inherit", "disabled", "custom")
 MODE_DEFAULT = "inherit"
@@ -232,6 +232,11 @@ _CLI_COMMAND_EXAMPLES["custom"] = {"posix": "", "nt": ""}
 # would break the one host that needs the skip). Existing installs keep running exactly as
 # before; what changes is where NEW providers start.
 _PERMISSION_SKIP_RULES: dict[str, dict] = {
+    "gemini": {
+        "skip": "--dangerously-skip-permissions",
+        "safe": "",
+        "markers": ("--dangerously-skip-permissions",),
+    },
     "claude": {
         "skip": "--dangerously-skip-permissions",
         "safe": "",
@@ -394,7 +399,7 @@ CODEX_SKIP_GIT_FLAG = "--skip-git-repo-check"
 def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
     """Return *cli_command* with the per-kind flags a run cannot work without.
 
-    Today that is codex only. `codex exec` refuses to start unless cwd is inside a git
+    `codex exec` refuses to start unless cwd is inside a git
     repository, and reports it as::
 
         Not inside a trusted directory and --skip-git-repo-check was not specified.
@@ -412,7 +417,14 @@ def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
     Callers that already carry the flag are left untouched.
     """
     cmd = (cli_command or "").strip()
-    if not cmd or (kind or "") != "codex":
+    if not cmd:
+        return cmd
+    if kind == "gemini":
+        for flag in ("--input-format", "--output-format"):
+            if not re.search(rf"(?:^|\s){flag}(?:[=\s]|$)", cmd):
+                cmd += f" {flag} stream-json"
+        return cmd
+    if kind != "codex":
         return cmd
     if CODEX_SKIP_GIT_FLAG in cmd:
         return cmd
