@@ -288,6 +288,23 @@ export interface AiExecutionPolicy {
   repeat_count_hard_max: number
 }
 
+// v02test.0089 my AI preferences (GET/PATCH /me/ai-preferences).
+// title_provider: 'auto' (no pick of my own: the system rule), 'off', 'executor' (the AI that answered) or a provider id.
+// repeat_count_max: my own value (null = not set); the effective value is min(mine or system, system).
+export interface MyAiPreferences {
+  title_provider: string
+  title_provider_effective: string
+  repeat_count_max: number | null
+  repeat_count_max_effective: number
+  repeat_count_system_max: number
+  repeat_count_min: number
+}
+
+export interface MyAiPreferencesUpdate {
+  title_provider?: string
+  repeat_count_max?: number | null
+}
+
 // Group profiles are separate from account/card AiRoleValue semantics.
 export type RoleProfileRole = 'instruction' | 'execution' | 'review'
 export type RoleProfileValue =

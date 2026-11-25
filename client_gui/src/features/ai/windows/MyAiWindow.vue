@@ -27,8 +27,9 @@ defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 <style scoped>
 /* Slot content keeps this component's scope when the shell teleports it; the panel's own parts are reached with :deep(). */
 .ai-my-window { height: 100%; min-height: 0; }
-/* The window title already names the list, and system-wide settings stay on the AI management screen. */
-.ai-my-window :deep(.ai-providers-panel .page-title), .ai-my-window :deep(.ai-providers-panel .repeat-card) { display: none; }
+/* The window title already names the list. My own repeat limit and title AI cards show under it (v02test.0089). */
+.ai-my-window :deep(.ai-providers-panel .page-title) { display: none; }
+.ai-my-window :deep(.ai-providers-panel .repeat-card) { margin-top: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-head) { margin-bottom: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-panel) { margin-bottom: 0; }
 .ai-my-window :deep(.ai-providers-panel .detail-toolbar) { height: auto; min-height: 52px; padding: 8px 12px; flex-wrap: wrap; gap: 8px 12px; }
