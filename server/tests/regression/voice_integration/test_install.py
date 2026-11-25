@@ -12,7 +12,7 @@ STREAMING = {"zipformer-en-20m": "country", "zipformer-ko": "주민등록증", "
 
 @pytest.mark.parametrize("service,model", [
     ("whisper.cpp", "tiny"), ("whisper.cpp", "large-v3-turbo"),
-    ("sherpa-onnx", "sensevoice-small-int8"), ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
+    ("sherpa-onnx", "zipformer-en-20m"), ("sherpa-onnx", "zipformer-ko"),
     ("vosk", "small-en-us"), ("vosk", "small-ko")])
 def test_real_install_and_inference(request, tmp_path, monkeypatch, service, model):
     if not request.config.getoption("--voice-downloads"):
@@ -29,7 +29,11 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
     job = manager.job(job_id)
     try:
         assert job["done"] and not job["error"], job
-        assert manager.status()["enabled"]
+        assert manager.status()["enabled"] is True
+        if vs.specification(service, model).get("self_test", {}).get("mode") == "load_only":
+            assert manager.runtime.healthy()
+            assert not list(manager.model_path(service, model).rglob("test_wavs"))
+            return
         sample = manager.service_dir(service) / "jfk.wav"
         expected = "country"
         test = vs.specification(service, model).get("self_test")
@@ -38,7 +42,7 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
             sample = next(p for base in (manager.model_path(service, model), manager.service_dir(service))
                           if base.is_dir() for p in sorted(base.rglob(test["sample"])))
             expected = test["expect"]
-        result = manager.transcribe(sample.read_bytes(), service, model)
+        result = manager.transcribe(sample.read_bytes(), service, model, testing=True)
         print("VOICE_RESULT", service, model, result["elapsed_ms"], ascii(result["text"]))
         assert expected in "".join(result["text"].lower().split()), result
         if model in STREAMING:
@@ -70,13 +74,11 @@ def test_real_install_and_inference(request, tmp_path, monkeypatch, service, mod
             monkeypatch.setattr(voice_download.urllib.request, "urlopen", no_network)
             offline = vs.Manager()
             try:
-                offline_id = offline.install(service, model, source)["install_id"]
-                deadline = time.monotonic() + 300
-                while not offline.job(offline_id)["done"] and time.monotonic() < deadline:
-                    time.sleep(0.25)
-                job = offline.job(offline_id)
-                assert job["done"] and not job["error"], job
-                assert offline.status()["enabled"]
+                from modules.flow_gate.services.voice_errors import VoiceError
+                with pytest.raises(VoiceError) as error:
+                    offline.install(service, model, source)
+                assert error.value.code == "voice_redistribution_pending"
+                assert not offline.installed(service, model)
             finally:
                 offline.shutdown()
     finally:

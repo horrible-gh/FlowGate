@@ -445,6 +445,10 @@ def build_conversation_mention(
             + " Read cards/state help to discover node keys when needed.\n"
             + display_names.NAMING_RULE + "\n\n"
             + body)
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    title_request = first_names_hooks.title_request(group_name, _locale(locale), "chat", doc_id)
+    if title_request:
+        body += "\n\n## " + {"ko": "작업 이름", "ja": "作業名", "en": "Task names"}[_locale(locale)] + "\n---\n" + title_request
     text = compose([body], kind="chat", locale=_locale(locale),
                                    unanswered=situation.unanswered, can_write=can_write)
     if command_execution:

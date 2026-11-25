@@ -27,29 +27,57 @@ describe('dock taskbar style', () => {
     expect(taskbarCapacity(2000, 5, 'dock')).toBe(5)
     expect(taskbarCapacity(400, 20, 'dock')).toBeLessThan(20)
   })
-  it('groups icon-only items with hover names and opens a small icon grid above the dock with all six icons', async () => {
+  it('groups icon-only items with hover names and opens one row of all six icons over the blurred page', async () => {
     const wrapper = bar()
     await flushPromises()
     expect(wrapper.get('[data-test="designer-taskbar"]').attributes('data-taskbar-style')).toBe('dock')
     const group = wrapper.get('.taskbar-group')
     expect(group.find('.menu-trigger').exists()).toBe(true)
     expect(group.element.firstElementChild?.classList.contains('menu-trigger')).toBe(true)
-    expect(wrapper.get('.designer-item').attributes('title')).toBe(String(i18n.global.t('gui.nav.designer.title')))
+    // Icon-only items carry their name as the accessible name and show it at once in the name tip on hover.
+    expect(wrapper.get('.designer-item').attributes('aria-label')).toBe(String(i18n.global.t('gui.nav.designer.title')))
+    expect(wrapper.get('.designer-item').attributes('title')).toBeUndefined()
+    await wrapper.get('.designer-item').trigger('pointerenter')
+    await nextTick()
+    expect(wrapper.get('[data-test="taskbar-tip"]').text()).toBe(String(i18n.global.t('gui.nav.designer.title')))
+    await wrapper.get('.designer-item').trigger('pointerleave')
+    expect(wrapper.find('[data-test="taskbar-tip"]').exists()).toBe(false)
     await wrapper.get('.menu-trigger').trigger('click')
     await nextTick()
     const panel = grid()
     expect(panel).not.toBeNull()
-    // It is an ordinary popup inside the taskbar, not a full-screen layer over the page.
+    // The page above the dock is blurred by one layer of the taskbar; the panel sits on it.
     expect(wrapper.element.contains(panel)).toBe(true)
-    expect(document.querySelector('.launchpad')).toBeNull()
+    expect(wrapper.find('[data-test="dock-backdrop"]').exists()).toBe(true)
     expect(wrapper.find('.menu-board').exists()).toBe(false)
     expect([...panel!.querySelectorAll('.dock-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
-    // One grid holds all six tiles, with no group headings above them.
+    // One row holds all six tiles, with no group headings; a single line parts the two groups.
     expect(panel!.querySelectorAll('.dock-grid-tiles')).toHaveLength(1)
+    expect(panel!.querySelectorAll('[data-test="dock-grid-divider"]')).toHaveLength(1)
+    expect(panel!.querySelector('.dock-tile-icon path')).not.toBeNull()
+    expect(panel!.querySelector('.dock-tile-icon')!.textContent).toBe('')
     const panelText = panel!.textContent ?? ''
     expect(panelText).not.toContain(String(i18n.global.t('gui.taskbar.group_ai')))
     expect(panelText).not.toContain(String(i18n.global.t('gui.taskbar.group_settings')))
     expect(document.activeElement?.getAttribute('data-card')).toBe('my-ai')
+  })
+  it('numbers the tiles left to right so their icons rise one after another', async () => {
+    const wrapper = bar()
+    await flushPromises()
+    await wrapper.get('.menu-trigger').trigger('click')
+    await nextTick()
+    const order = [...grid()!.querySelectorAll<HTMLElement>('.dock-tile')].map(tile => tile.style.getPropertyValue('--i'))
+    expect(order).toEqual(['0', '1', '2', '3', '4', '5'])
+  })
+  it('closes the menu when the blurred page is pressed', async () => {
+    const wrapper = bar()
+    await flushPromises()
+    await wrapper.get('.menu-trigger').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="dock-backdrop"]').trigger('pointerdown')
+    await nextTick()
+    expect(grid()).toBeNull()
+    expect(wrapper.find('[data-test="dock-backdrop"]').exists()).toBe(false)
   })
   it('moves through the tiles with the arrow keys', async () => {
     const wrapper = bar()

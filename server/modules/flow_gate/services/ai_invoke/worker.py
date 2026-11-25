@@ -2618,6 +2618,10 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # the model resends with commit_message (the plain-text fallback below is refused too).
     if isinstance(tool_input.get("commit_message"), str) and tool_input["commit_message"].strip():
         body["commit_message"] = tool_input["commit_message"]
+    if isinstance(tool_input.get("title"), str):
+        body["title"] = tool_input["title"]
+    if isinstance(tool_input.get("flow_title"), str):
+        body["flow_title"] = tool_input["flow_title"]
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),
@@ -2741,9 +2745,9 @@ _REGISTER_SCOPES = ("new", "edit", "review", "test_run")
 # T-B4d (②): new / edit carry the card title candidate ``node_title`` as it came (no value is
 # reshaped here; the title service judges it). review / test_run never carry it.
 _REGISTER_MODEL_FIELDS = {
-    "new": ("doc_type", "title", "content", "node_title"),
+    "new": ("doc_type", "title", "content", "node_title", "flow_title"),
     "edit": ("content", "expected_revision", "edit_reason", "rejection_response", "rejection_id",
-             "rejection_review_id", "node_title", "commit_message"),
+             "rejection_review_id", "node_title", "commit_message", "title"),
     # force_encoding_reason dropped -- review never lets a
     # model-authored value bypass the corruption guard.
     "review": ("verdict", "findings", "comment", "body_sha256", "body_chars"),

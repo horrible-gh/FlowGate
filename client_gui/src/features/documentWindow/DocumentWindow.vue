@@ -1,5 +1,6 @@
 <template>
   <ModelessShell kind-color="#4ba3ff"
+    :badge="documentNumberBadge(win.shown)"
     ref="shell"
     :open="true"
     :initial-x="win.x"
@@ -252,6 +253,7 @@ import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
+import { documentNumberBadge } from '@/core/overlay/modelessRegistry'
 import DocumentIoGroup from './DocumentIoGroup.vue'
 import DocumentWindowBody from './DocumentWindowBody.vue'
 import { documentIoGuarded, documentIoHasUnresolved, registerDocumentEditEntry, type DocumentEditorState, type DocumentReflectResult } from './documentEditRegistry'

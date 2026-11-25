@@ -567,10 +567,20 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       const execution = await api.loadExecution(held.groupId)
       if (!isCurrent(held) || seq !== executionRead) return
       const wasRunning = state.execution?.status === 'running'
+      const before = state.execution
       state.execution = execution
       if (execution?.status === 'running' && !execution.mergeId) state.busy = 'execution'
       else if (state.busy === 'execution') state.busy = null
       if (wasRunning && execution?.status !== 'running') afterRemote({ e1: true, e8: true, e10: true })
+      // flowgate.v02test.0068: the run parked on a conflict session. The conflict card comes from git/status, which
+      // this poll does not read — it used to appear only after a tab switch. Read it when the wait starts, when
+      // the session's AI starts / fails, and on every poll for as long as the card of that session is not shown.
+      const waitsOn = execution?.status === 'running' ? execution.mergeId ?? null : null
+      if (waitsOn != null && !git.state.busy) {
+        const shown = SESSION_CARDS.includes(git.groupCard.value ?? '') && git.pendingRow.value?.mergeId === waitsOn
+        const aiChanged = (before?.conflictAi?.state ?? null) !== (execution?.conflictAi?.state ?? null)
+        if (!shown || before?.mergeId !== waitsOn || aiChanged) void git.refresh()
+      }
     } catch (error) {
       if (!isCurrent(held) || seq !== executionRead) return
       // A disconnected browser cannot declare a server job stopped.

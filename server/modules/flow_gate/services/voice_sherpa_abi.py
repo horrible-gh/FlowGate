@@ -2,6 +2,9 @@
 # Copyright (c) 2022-2025 Xiaomi Corporation; Apache-2.0.
 # https://github.com/k2-fsa/sherpa-onnx/blob/v1.12.20/sherpa-onnx/c-api/c-api.h
 # Keep the ABI and the pinned runtime release in voice_catalog.json in sync.
+# FlowGate modifications: generated Python ctypes layouts from the pinned C header.
+# 2026-11-24 F86-4: record provenance; preserve upstream copyright and ABI layout.
+# License text: third_party/licenses/sherpa-onnx-LICENSE.txt (repository root).
 from ctypes import Structure, c_int32, c_float, c_char_p
 
 class SherpaOnnxFeatureConfig(Structure):

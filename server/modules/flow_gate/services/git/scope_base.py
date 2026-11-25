@@ -119,6 +119,34 @@ def _ledger_commits(group_id: str) -> list[dict]:
     return rows or []
 
 
+def _group_deliveries(cwd: Path, base_sha: str, floor: str, head_sha: str) -> list[str]:
+    """Group tips the work base absorbed by merging this group's own branch.
+
+    A ``Merge branch '<group>' into '<work base>'`` (Git run up to merge/push) leaves
+    the group's ledger commits inside every later work-base tip.  Such commits are
+    work-base history, not pending group work, so they must not make the next
+    update's floor fail rule 6.  "Own branch" is the group's first-parent chain
+    since its fork: after an update every work-base merge is reachable from HEAD,
+    but only the group's own tips sit on that chain, so another group's delivery
+    never counts.  Returns the second parents of first-parent merges on
+    ``base_sha..floor`` that are on that chain.
+    """
+    own = _git(cwd, ["rev-list", "--first-parent", head_sha, f"^{base_sha}"])
+    if own.returncode != 0:
+        raise FloorCheckFailed("git_error", diagnostic=(own.stderr or "").strip()[:200])
+    own_chain = set((own.stdout or "").split())
+    if not own_chain:
+        return []
+    merges = _git(cwd, ["rev-list", "--first-parent", "--merges", "--parents", f"{base_sha}..{floor}"])
+    if merges.returncode != 0:
+        raise FloorCheckFailed("git_error", diagnostic=(merges.stderr or "").strip()[:200])
+    tips: list[str] = []
+    for line in (merges.stdout or "").splitlines():
+        parents = line.split()[2:]
+        tips.extend(p for p in parents if p in own_chain and p not in tips)
+    return tips
+
+
 def _ledger_shas(rows: list[dict]) -> list[str]:
     shas: list[str] = []
     for row in rows:
@@ -145,7 +173,9 @@ def check_floor(
     """Run rules 3/6/7 and return the verified floor; raise FloorCheckFailed otherwise.
 
     ``exempt_upto`` is a terminal reopen's C1: ledger commits already merged with it
-    are work-base history now, not pending group work.
+    are work-base history now, not pending group work.  Ledger commits the work base
+    took in by merging this group's own branch (:func:`_group_deliveries`) are
+    work-base history for the same reason.
     """
     if not work_base_ref:
         raise FloorCheckFailed(REASON_WORK_BASE_MISSING)
@@ -175,6 +205,7 @@ def check_floor(
     # Rule 6
     rows = ledger_rows if ledger_rows is not None else _ledger_commits(group_id)
     exempt = rev_commit(cwd, exempt_upto) if exempt_upto else None
+    deliveries: Optional[list[str]] = None
     for sha in _ledger_shas(rows):
         full = rev_commit(cwd, sha)
         if full is None:
@@ -186,6 +217,10 @@ def check_floor(
         if exempt is not None and is_ancestor(cwd, full, exempt):
             continue
         if is_ancestor(cwd, full, floor):
+            if deliveries is None:
+                deliveries = _group_deliveries(cwd, base_sha, floor, head_sha)
+            if any(is_ancestor(cwd, full, tip) for tip in deliveries):
+                continue
             raise FloorCheckFailed("floor_contains_group_work", ledger_commit=full, floor_sha=floor)
     return {"floor_sha": floor, "work_base_sha": base_sha, "work_base_sync_sha": sync_sha,
             "head": head_sha}

@@ -260,6 +260,40 @@ def _emit(event_type: str, project: str, group_id: Optional[str], payload: dict)
         _log.warning("git SSE emit failed (%s)", event_type, exc_info=True)
 
 
+def _announce_update_session_closed(merge_id, status) -> None:
+    """flowgate.v02test.0068: a closed 받아오기 (group_update) session is announced, whatever closed it.
+
+    An update conflict never writes the group status, so no ``git_pending_changed`` follows its end:
+    an abort, a resolve, a failed record or the sweep closed the session silently and a screen that
+    read the conflict on ``git_merge_conflict`` (the Flow tab's conflict mark, another browser's Git
+    tab) kept showing it. Every close goes through ``db_git.close_session``, so this one listener
+    covers them all. Sent after the surrounding transaction commits, so a reader never sees the
+    session still open.
+    """
+    session = db_git.get_session(int(merge_id))
+    if session is None or db_git.session_kind(session) != db_git.SESSION_KIND_GROUP_UPDATE:
+        return
+    group_id = session.get("group_id")
+    project_id = _project_of_group(group_id) if group_id else None
+    if not project_id:
+        return
+
+    def announce() -> None:
+        _emit("git_status_changed", project_id, group_id, {
+            "project": project_id, "group_id": group_id, "merge_id": int(merge_id),
+            "reason": "update_session_closed", "session_status": status,
+        })
+
+    from modules.flow_gate.db.connection import after_commit
+    if not after_commit(announce):
+        announce()
+
+
+if not any(getattr(_cb, "__name__", "") == "_announce_update_session_closed"
+           for _cb in db_git._close_listeners):
+    db_git.on_session_closed(_announce_update_session_closed)
+
+
 # ── Pending-set broadcast ─────────────────────
 
 def _count_pending(project_id: str) -> int:

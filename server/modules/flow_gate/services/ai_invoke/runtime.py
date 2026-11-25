@@ -405,6 +405,8 @@ _CHAT_TOOL_DESC = "Send the assistant reply for this chat conversation."
 _CHAT_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
+        "title": {"type": "string", "description": "Optional short title for what this chat is about (names only this chat)."},
+        "flow_title": {"type": "string", "description": "Optional short name for the whole task of the flow (names only the flow)."},
         "body": {"type": "string", "description": "Complete assistant reply text"},
         # the chat commit point.
         "commit_message": {
@@ -468,6 +470,7 @@ _REGISTER_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "Document title"},
+        "flow_title": {"type": "string", "description": "Optional short name for the whole task of the flow (names only the flow); separate from document title"},
         "content": {"type": "string", "description": "Full markdown content of the document"},
         "doc_type": {"type": "string", "description": "Document type code, e.g. NR, D, P, L, T, TR"},
     },
@@ -550,7 +553,9 @@ _RESOLVE_TOOL_SCHEMA = {
                         "description": (
                             "Only when the server rejected this file with conflict_side_dropped "
                             "AND the side you kept already contains every change of the other "
-                            "side (kept verbatim or changed in place), or the incoming chunk is "
+                            "side (kept verbatim or changed in place; or, when the kept side "
+                            "restructured the code, every line the other side added is still "
+                            "somewhere in the submitted file, moved or reworded), or the incoming chunk is "
                             "preserved verbatim in verified companion_files for a target-side move. Never use it to skip a "
                             "merge; a person reviews every declaration."
                         ),

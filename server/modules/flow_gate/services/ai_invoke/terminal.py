@@ -148,6 +148,15 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
 
     attempt(run, "snapshot_cleanup", _cleanup_run_snapshots)
 
+    if run.get("action_scope") == "resolve_conflict" and run.get("merge_id") is not None:
+        # flowgate.v02test.0068: a resolver that ended with conflicts left FAILED - say so on its
+        # session, where the conflict card and the Git execution waiting on it read it.
+        def _note_resolver_end() -> None:
+            from modules.flow_gate.services.git import conflict as git_conflict
+            git_conflict.note_resolver_finished(int(run["merge_id"]), run)
+
+        attempt(run, "resolver_end", _note_resolver_end)
+
     run.setdefault("outcome", "none")
     if not run.get("outcome"):
         run["outcome"] = "none"

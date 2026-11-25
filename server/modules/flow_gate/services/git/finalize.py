@@ -893,8 +893,11 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     if before_update is not None:
         before_update({"head": (before.stdout or "").strip(), "source_sha": source_sha,
                        "source_ref": source_ref, "floor_before": floor_before})
+    # flowgate.v02test.0068: zdiff3, like the finalize merge. Without the base block the update
+    # conflict had no "both sides changed" evidence at all: the one-side-dropped check never ran on
+    # it and the resolver could not see what each side had changed.
     proc = _gs._run_git(
-        [*_gs._GIT_IDENT,
+        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3",
          "merge", "--no-ff", source_sha, "-m",
          f"Merge base '{work_base_ref}' into '{state['branch']}'"],
         cwd=wt_path, author_env=_author_env_from_cfg(cfg),
@@ -927,6 +930,12 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
             )
             # line-ending-only conflicts need no resolver.
             _gs.apply_eol_separation(merge_id, wt_path)
+            # flowgate.v02test.0068: an update conflict is announced like a merge conflict, so the
+            # open Git tab reads the conflict card at once instead of on the next tab switch.
+            _gs._emit("git_merge_conflict", project_id, group_id, {
+                "project": project_id, "group_id": group_id,
+                "merge_id": merge_id, "conflict_count": len(conflicts), "kind": "group_update",
+            })
             return {"ok": True, "result": {
                 "status": "conflict", "merge_id": merge_id,
                 "conflict_files": conflicts,

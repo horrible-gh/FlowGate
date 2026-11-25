@@ -1,5 +1,7 @@
+import { PRODUCT_NAME } from '../../shared/productName.ts'
+
 export default {
-  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "style_flowgate": "FlowGate", "style_modern": "Modern", "style_dock": "Dock", "style_classic": "Classic", "security_window": "My settings · Security"},
+  taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "Modern", "style_dock": "Dock", "style_classic": "Classic", "security_window": "My settings · Security", "pin_project": "Open project", "pin_attachments": "Attachments", "pin_terminal": "Terminal", "pin_git": "Git", "pin_search": "Search"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
   connection_banner: {"reconnecting": "Connection to the server lost · reconnecting automatically…", "hint": "Lists and chats come back on their own once connected, and unsent messages are sent again.", "unknown_error": "An unknown error occurred", "reload": "Reload"},
@@ -251,7 +253,7 @@ export default {
   card: { bodyUnreadable: "Some documents cannot be read by AI" },
   brand: {
     tagline: 'Turn Ideas into Working Flow',
-    home_aria: 'Go to the FlowGate dashboard',
+    home_aria: `Go to the ${PRODUCT_NAME} dashboard`,
   },
   common: {
     cancel: 'Cancel',
@@ -275,6 +277,7 @@ export default {
     user_role_member: 'Member',
   },
   nav: {
+    notices: {"title": "Open-source notices", "third_party": "Third-party license texts", "project_license": "Project LICENSE"},
     aria: 'Main screens',
     dashboard: { title: 'Dashboard', sub: 'Back to home' },
     projects: { title: 'Projects', sub: 'Manage projects' },
@@ -286,15 +289,15 @@ export default {
   sidebar: {
     help: 'Help',
     help_unavailable: 'Help is not available yet.',
-    version: 'FlowGate v0.2',
+    version: `${PRODUCT_NAME} v0.2`,
     build: 'Build {build}',
   },
   dashboard: {
     greeting_line1: 'Have a good day.',
     greeting_line2: 'Carry your next possibility forward.',
-    lead: 'FlowGate is where ideas turn into real work.',
+    lead: `${PRODUCT_NAME} is where ideas turn into real work.`,
     quote: '“Even a small idea,\nonce it meets the right flow,\nmakes a big change.”',
-    quote_by: '— FlowGate',
+    quote_by: `— ${PRODUCT_NAME}`,
     cards_aria: 'Screen shortcuts',
     unavailable: 'Coming soon',
     cards: {
@@ -979,7 +982,7 @@ export default {
         window_reset_layout: 'Reset Window Layout',
         shortcuts: 'Keyboard Shortcuts',
         guide: 'User Guide',
-        about: 'About FlowGate',
+        about: `About ${PRODUCT_NAME}`,
       },
       panels: { left: 'Left Panel', right: 'Right Tool Panel', inspector: 'Inspector', minimap: 'Minimap' },
       tabs: { project: 'Project Explorer', file: 'File Explorer', palette: 'Palette', conversation: 'Conversation', git: 'Git' },
@@ -1225,7 +1228,7 @@ export default {
       user: 'Me',
       ai: 'AI',
       // FlowGate's own turn (e.g. the chat commit result).
-      system: 'FlowGate',
+      system: `${PRODUCT_NAME}`,
       sending: 'Sending',
       failed: 'Could not send.',
       // A: the failed bubble's short reason.
@@ -1538,6 +1541,10 @@ export default {
       ai_close: 'Close',
       ai_server_default: 'server default AI',
       ai_ended: 'AI resolve ended ({status}) · {name} · {n} conflicts left',
+      ai_failed: 'AI failed · {why}',
+      ai_failed_next: 'Try another AI or resolve it yourself.',
+      ai_why: { dropped: 'one side was dropped', lines: '{n} lines missing', markers: 'conflict markers left', ended: 'ended unresolved', cancelled: 'stopped' },
+      abort_short: 'Abort',
       blocked: {
         missing_merge: 'Merge ID missing · refresh Git status',
         load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',
@@ -1885,7 +1892,7 @@ export default {
       row_select: 'Select {name}',
       tag: {
         managed: '🔒',
-        managed_tip: 'FlowGate managed file — cannot be changed directly',
+        managed_tip: `${PRODUCT_NAME} managed file — cannot be changed directly`,
         excluded: 'Tool artifact',
         excluded_tip: 'Tool artifact file',
         excluded_new: 'Tool artifact',
@@ -2439,7 +2446,7 @@ export default {
   },
   placeholder: {
     badge: 'Coming soon',
-    body: 'This screen is not implemented in FlowGate v0.2 yet.',
+    body: `This screen is not implemented in ${PRODUCT_NAME} v0.2 yet.`,
     back: 'Back to dashboard',
   },
   not_found: {
@@ -2448,7 +2455,7 @@ export default {
   },
   ai: {
     title: 'AI Management',
-    subtitle: 'Connect and evaluate AI, then build teams to use in FlowGate.',
+    subtitle: `Connect and evaluate AI, then build teams to use in ${PRODUCT_NAME}.`,
     load_failed_title: 'Could not load AI information',
     tabs_aria: 'AI management tabs',
     tabs: {
@@ -2587,7 +2594,7 @@ export default {
       local_api: 'Local API',
       remote_cli: 'Remote CLI',
       remote_api: 'Remote API',
-      local_hint: 'Runs in FlowGate',
+      local_hint: `Runs in ${PRODUCT_NAME}`,
       remote_hint: 'Runs on a remote Agent',
       unsupported: 'Not supported',
     },
@@ -2850,7 +2857,7 @@ export default {
     scope_sub: {
       me: 'This account only',
       project: 'The selected project only',
-      system: 'The whole FlowGate server · administrators',
+      system: `The whole ${PRODUCT_NAME} server · administrators`,
     },
     system_groups: {
       ops: 'OPERATION',
@@ -3547,7 +3554,7 @@ export default {
         },
         author_name: 'Author name',
         author_email: 'Author email',
-        author_default: 'Not set (FlowGate default)',
+        author_default: `Not set (${PRODUCT_NAME} default)`,
         secret: 'Secret',
         secret_set: 'Registered',
         secret_unset: 'Not registered',

@@ -52,7 +52,50 @@
               "size_bytes": 483840,
               "sha256": "4155edb6868810b56423cb0089fee85f4e8739fb86053b269f4e7c6350ec61ff"
             }
-          ]
+          ],
+          "component_type": "engine",
+          "license": "MIT",
+          "distribution": "reviewed-runtime-subset",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "whisper.cpp-1.8.2-LICENSE.txt",
+              "size_bytes": 1078,
+              "sha256": "e562a2ddfaf8280537795ac5ecd34e3012b6582a147ef69ba6a6a5c08c84757d",
+              "source_url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/LICENSE"
+            },
+            {
+              "filename": "SDL2-2.28.5-LICENSE.txt",
+              "size_bytes": 884,
+              "sha256": "9928507f684c1965d07f2b6ef4b4723d5efc2f6b4ab731f743a413c51c319927",
+              "source_url": "https://raw.githubusercontent.com/libsdl-org/SDL/release-2.28.5/LICENSE.txt"
+            },
+            {
+              "filename": "cpp-httplib-0.20.0-LICENSE.txt",
+              "size_bytes": 1075,
+              "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b",
+              "source_url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.20.0/LICENSE"
+            },
+            {
+              "filename": "nlohmann-json-3.11.2-LICENSE.txt",
+              "size_bytes": 1076,
+              "sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14",
+              "source_url": "https://raw.githubusercontent.com/nlohmann/json/v3.11.2/LICENSE.MIT"
+            },
+            {
+              "filename": "whisper.cpp-1.8.2-source-attributions.txt",
+              "size_bytes": 22020,
+              "sha256": "14320383405e043af3d215bf2704ccff9d050473b6ef9526650f1dc1bce163e3",
+              "source_url": "https://github.com/ggml-org/whisper.cpp/tree/4979e04f5dcaccb36057e059bbaed8a2f5288315"
+            },
+            {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
+            }
+          ],
+          "redistribution_layout": "expanded"
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -73,13 +116,22 @@
               "size_bytes": 35147,
               "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
             }
-          ]
+          ],
+          "component_type": "ffmpeg",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false,
+          "source_commit": "140fd653ae",
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
         },
         {
           "filename": "jfk.wav",
           "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
           "size_bytes": 352078,
-          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+          "component_type": "sample",
+          "license": "미확정 — 샘플 권리 확인 필요",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false
         }
       ],
       "models": [
@@ -98,7 +150,18 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "base",
@@ -115,7 +178,18 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "small",
@@ -132,7 +206,18 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "medium",
@@ -149,7 +234,18 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "large-v3-turbo",
@@ -166,7 +262,18 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         },
         {
           "id": "large-v3",
@@ -183,8 +290,24 @@
             "ja"
           ],
           "realtime": false,
-          "gpu_required": false
+          "gpu_required": false,
+          "component_type": "weights",
+          "distribution": "reviewed-weights",
+          "redistribution_allowed": true,
+          "notices": [
+            {
+              "filename": "openai-whisper-LICENSE.txt",
+              "size_bytes": 1063,
+              "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+              "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
+            }
+          ]
         }
+      ],
+      "redistribution_status": "reviewed-cpu-runtime-subset",
+      "native_notices": [
+        "Six exact-artifact runtime files only; source attribution comments and MIT/zlib/Apache texts supplied.",
+        "Microsoft VC++ x64 runtime and OpenMP (MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140) are separately provisioned system prerequisites, not bundled."
       ]
     },
     {
@@ -201,7 +324,37 @@
           "filename": "sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2",
           "size_bytes": 23161059,
           "sha256": "c10a095df39d10d48d97e22d9297ebd3bc12cca80ec3be70eb71f7a5b4a2f6c3",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2"
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-v1.12.20-win-x64-shared-no-tts.tar.bz2",
+          "component_type": "engine",
+          "license": "Apache-2.0",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false,
+          "notices": [
+            {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
+            },
+            {
+              "filename": "onnxruntime-1.17.1-LICENSE.txt",
+              "size_bytes": 1094,
+              "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+              "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl"
+            },
+            {
+              "filename": "onnxruntime-1.17.1-ThirdPartyNotices.txt",
+              "size_bytes": 345046,
+              "sha256": "986101973ef6af459c36845f626791da4c9ae52bdad4a980989af2c6a5cb5a61",
+              "source_url": "https://files.pythonhosted.org/packages/81/e5/55699490257383a0a579b43eeea545680edc8f956f83fde1e16c5fd2359e/onnxruntime-1.17.1-cp312-cp312-win_amd64.whl"
+            },
+            {
+              "filename": "cargs-1.0.3-LICENSE.txt",
+              "size_bytes": 1091,
+              "sha256": "e144db54f3cbd2110ccdd99cda1eaef528eb89a2f97bbee46989a7ba6b5292a3",
+              "source_url": "https://raw.githubusercontent.com/likle/cargs/v1.0.3/LICENSE.md"
+            }
+          ]
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -222,36 +375,25 @@
               "size_bytes": 35147,
               "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
             }
-          ]
+          ],
+          "component_type": "ffmpeg",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false,
+          "source_commit": "140fd653ae",
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
         },
         {
           "filename": "jfk.wav",
           "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
           "size_bytes": 352078,
-          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+          "component_type": "sample",
+          "license": "미확정 — 샘플 권리 확인 필요",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false
         }
       ],
       "models": [
-        {
-          "filename": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
-          "size_bytes": 163002883,
-          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
-          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
-          "id": "sensevoice-small-int8",
-          "name": "SenseVoiceSmall int8",
-          "license": "Apache-2.0",
-          "languages": [
-            "zh",
-            "en",
-            "ja",
-            "ko",
-            "yue"
-          ],
-          "realtime": false,
-          "gpu_required": false,
-          "archive": true,
-          "kind": "sense_voice"
-        },
         {
           "filename": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
           "size_bytes": 127887156,
@@ -266,7 +408,10 @@
           "realtime": true,
           "gpu_required": false,
           "archive": true,
-          "kind": "zipformer"
+          "kind": "zipformer",
+          "component_type": "weights",
+          "distribution": "direct-upstream",
+          "redistribution_allowed": false
         },
         {
           "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
@@ -284,10 +429,75 @@
           "archive": true,
           "kind": "zipformer",
           "self_test": {
-            "sample": "test_wavs/3.wav",
-            "expect": "\uc8fc\ubbfc\ub4f1\ub85d\uc99d"
+            "mode": "load_only"
+          },
+          "component_type": "weights",
+          "distribution": "direct-upstream",
+          "redistribution_allowed": false,
+          "excluded_paths": [
+            "test_wavs/"
+          ],
+          "sanitized": {
+            "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.no-kss.tar",
+            "size_bytes": 446904320,
+            "sha256": "23bddf71915710fcccc350486cc2350502ff3504e18627857e35b2012005a93f",
+            "format": "ustar-v1",
+            "members": [
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/joiner-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 2581421,
+                "sha256": "128b80a66a1f718488af8560f9d15895109b99ff3e573f0a0130e03774ef1ced"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/decoder-epoch-99-avg-1.onnx",
+                "size_bytes": 11309084,
+                "sha256": "b29cfb4575141e50a30a22b2c4579934f3d4f45b83c9c8c08c3aef5a3fa7abfc"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/encoder-epoch-99-avg-1.onnx",
+                "size_bytes": 292543537,
+                "sha256": "9d407aec62d2b935168dcb0bdbfe65a26948fbeae95d77bc94e5e6b1c8221717"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/encoder-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 126968852,
+                "sha256": "8d0b1aa24fbedd4e3948564ab7facd151b8ce9b0c48fc987c541de2de3af5697"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/joiner-epoch-99-avg-1.onnx",
+                "size_bytes": 10260467,
+                "sha256": "dffb3a863fddc402920a15e2a1ca9f6f3f7445583718a2bef2006fd6d932d60b"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/tokens.txt",
+                "size_bytes": 60246,
+                "sha256": "016bdf0965029263b7ad01b742366ee542ef0bef38261510e8176ff6f2e9e668"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/decoder-epoch-99-avg-1.int8.onnx",
+                "size_bytes": 2844692,
+                "sha256": "68ea197936aabd249f38b53a87c775422bca64428ad4427d0e6e8092593e71fb"
+              },
+              {
+                "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/bpe.model",
+                "size_bytes": 314212,
+                "sha256": "1491bc92c47dfda4225f5b8930fba3cfa34c3b1ccd25e7d96c630a262f3e918d"
+              }
+            ],
+            "license_member": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/LICENSE",
+            "license": {
+              "filename": "sherpa-onnx-LICENSE.txt",
+              "size_bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            }
           }
         }
+      ],
+      "redistribution_status": "pending-native-notices",
+      "native_notices": [
+        "onnxruntime.dll 1.17.1: LICENSE and ThirdPartyNotices secured from the official 1.17.1 release",
+        "cargs.dll 1.0.3: MIT license secured",
+        "sherpa-onnx-c-api.dll statically linked dependencies (kaldi-native-fbank, OpenFst, etc.): notices pending; redistribution stays off"
       ]
     },
     {
@@ -304,7 +514,31 @@
           "filename": "vosk-win64-0.3.45.zip",
           "url": "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip",
           "size_bytes": 14882445,
-          "sha256": "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b"
+          "sha256": "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b",
+          "component_type": "engine",
+          "license": "Apache-2.0",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false,
+          "notices": [
+            {
+              "filename": "vosk-api-0.3.45-COPYING.txt",
+              "size_bytes": 10173,
+              "sha256": "bb618af833c817ab01c1564bd3ec75ba4b4f9cf30910a4a2168e30a674ee8cc6",
+              "source_url": "https://raw.githubusercontent.com/alphacep/vosk-api/v0.3.45/COPYING"
+            },
+            {
+              "filename": "gcc-10.2.0-COPYING.RUNTIME.txt",
+              "size_bytes": 3324,
+              "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+              "source_url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-10.2.0/COPYING.RUNTIME"
+            },
+            {
+              "filename": "GPL-3.0.txt",
+              "size_bytes": 34674,
+              "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+              "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/GPL-3.0-or-later.txt"
+            }
+          ]
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -325,20 +559,22 @@
               "size_bytes": 35147,
               "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
             }
-          ]
+          ],
+          "component_type": "ffmpeg",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false,
+          "source_commit": "140fd653ae",
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
         },
         {
           "filename": "jfk.wav",
           "url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/samples/jfk.wav",
           "size_bytes": 352078,
-          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"
-        },
-        {
-          "filename": "korean-sample.wav",
-          "url": "https://huggingface.co/k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16/resolve/84fd200583460a3adb7f68b8dd6a740359a775ff/test_wavs/3.wav",
-          "size_bytes": 85834,
-          "sha256": "b1d2de5f90c73dfacddc1d6ab93a41427c89573f261ed2d425a6a37b3ee32931",
-          "license": "Apache-2.0"
+          "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+          "component_type": "sample",
+          "license": "미확정 — 샘플 권리 확인 필요",
+          "distribution": "direct-upstream-only",
+          "redistribution_allowed": false
         }
       ],
       "models": [
@@ -358,9 +594,11 @@
           "archive": true,
           "kind": "vosk",
           "self_test": {
-            "sample": "korean-sample.wav",
-            "expect": "\uc8fc\ubbfc\ub4f1\ub85d\uc99d"
-          }
+            "mode": "load_only"
+          },
+          "component_type": "weights",
+          "distribution": "direct-upstream",
+          "redistribution_allowed": false
         },
         {
           "id": "small-en-us",
@@ -376,8 +614,17 @@
           "realtime": true,
           "gpu_required": false,
           "archive": true,
-          "kind": "vosk"
+          "kind": "vosk",
+          "component_type": "weights",
+          "distribution": "direct-upstream",
+          "redistribution_allowed": false
         }
+      ],
+      "redistribution_status": "pending-native-notices",
+      "native_notices": [
+        "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 runtime exception text secured; exact GCC patch level not proven",
+        "libwinpthread-1.dll: mingw-w64 version and notice not proven; redistribution stays off",
+        "libvosk.dll statically linked Kaldi/OpenFst/BLAS notices: pending; redistribution stays off"
       ]
     }
   ]

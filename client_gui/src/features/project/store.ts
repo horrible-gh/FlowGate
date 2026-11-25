@@ -154,6 +154,8 @@ import {
 export interface OpenDialogOptions {
   /** Open the create child right away (the Designer's File › New Project). Admin-only downstream. */
   create?: boolean
+  /** Open the list as a floating window over the Designer (its taskbar's [Open project]) instead of the modal. */
+  window?: boolean
 }
 
 export const useProjectStore = defineStore('project', () => {
@@ -807,9 +809,15 @@ export const useProjectStore = defineStore('project', () => {
   // set by openDialog({ create: true }) and read once by ProjectDialog when it
   // opens. Not persisted; a Dialog open without the option clears it.
   const createRequested = ref(false)
+  // Which form the Dialog takes (set on every open), and a count of open requests so an already open window can
+  // come back to the front when it is asked for again.
+  const dialogAsWindow = ref(false)
+  const dialogRequest = ref(0)
 
   function openDialog(options: OpenDialogOptions = {}): void {
     createRequested.value = options.create === true
+    dialogAsWindow.value = options.window === true
+    dialogRequest.value += 1
     dialogOpen.value = true
     void fetchProjects()
   }
@@ -835,6 +843,8 @@ export const useProjectStore = defineStore('project', () => {
     loading,
     error,
     dialogOpen,
+    dialogAsWindow: computed(() => dialogAsWindow.value),
+    dialogRequest: computed(() => dialogRequest.value),
     currentProject,
     // Read-only id view: `currentProject` needs the active list loaded, but a screen that
     // only needs "which project" (e.g. the Designer) must not wait for or trigger it.

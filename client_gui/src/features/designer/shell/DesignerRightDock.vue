@@ -93,7 +93,9 @@
           :project-id="partProjectId"
           :flow="partFlow"
           :active="!collapsed && !unselected && tool === 'git'"
+          :station-request="gitStationRequest"
           @git-activity="setGitTabActivity"
+          @git-conflict-change="refreshFlowTabConflicts"
         />
       </div>
     </div>
@@ -119,6 +121,7 @@ import PalettePanel from '../palette/PalettePanel.vue'
 import type { PaletteItemDefinition } from '../palette/paletteCatalog'
 import { DESIGNER_RIGHT_TOOLS, type DesignerRightTool } from './designerLayout'
 import { setGitTabActivity } from '../center/gitTabActivity'
+import { refreshFlowTabConflicts } from '../center/flowTabConflicts'
 
 const props = withDefaults(
   defineProps<{
@@ -133,8 +136,10 @@ const props = withDefaults(
     sourceLocked?: boolean
     /** Confirmed Flow run activity, separate from archive / unknown edit locks. */
     flowRunning?: boolean
+    /** Raised by one each time the Git station window is asked for (the taskbar's [Git]); handed to the Git part. */
+    gitStationRequest?: number
   }>(),
-  { unselected: false, selectedPaletteId: null, sourceLocked: false, flowRunning: false },
+  { unselected: false, selectedPaletteId: null, sourceLocked: false, flowRunning: false, gitStationRequest: 0 },
 )
 
 const emit = defineEmits<{

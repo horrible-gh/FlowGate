@@ -59,7 +59,7 @@ const CATALOG: VoiceService[] = [
   { id: 'sherpa-onnx', name: 'sherpa-onnx', version: '1.12.20', license: 'Apache-2.0', installed: false, available: true, unavailableReason: null,
     models: [model('zipformer-en-20m', { installed: false, realtime: true })] },
 ]
-const status = (extra: Partial<VoiceStatus> = {}): VoiceStatus => ({ enabled: true, state: 'on', defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: false, ...extra })
+const status = (extra: Partial<VoiceStatus> = {}): VoiceStatus => ({ enabled: true, state: 'on', defaultSelection: { service: 'whisper.cpp', model: 'small' }, error: null, canManage: false, retired: [], ...extra })
 const PREFS = { action: 'text' as const, service: '', model: '', realtime: false }
 
 function recording(blob = new Blob(['voice'], { type: 'audio/webm' })) {

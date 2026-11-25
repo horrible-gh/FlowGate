@@ -46,7 +46,16 @@
           {{ t('gui.git.files_more', { n: files.length - preview.length }) }}
         </button>
       </div>
-      <p v-if="outcome" class="gx-reason" data-test="git-conflict-ai-outcome">{{ outcomeText }}</p>
+      <p v-if="outcome && !failedAttempt" class="gx-reason" data-test="git-conflict-ai-outcome">{{ outcomeText }}</p>
+      <!-- flowgate.v02test.0068: the server's record of the last AI attempt that failed (it ended with conflicts left),
+           with the reason of the refusal and the lines it had lost. Unlike the line above it is still here after a
+           tab switch or a reload, so "did it fail or is it still working" is never a guess. -->
+      <div v-if="failedAttempt" class="gx-reason gx-ai-failed" role="alert" data-test="git-conflict-ai-failed">
+        <b>{{ t('gui.git.conflict.ai_failed', { why: failedWhy }) }}</b>
+        <span v-if="failedAttempt.path" data-test="git-conflict-ai-failed-path">{{ failedAttempt.path }}</span>
+        <code v-for="line in failedAttempt.lines" :key="line">{{ line }}</code>
+        <span>{{ t('gui.git.conflict.ai_failed_next') }}</span>
+      </div>
       <div class="gx-actions">
         <div class="gx-ai-pick">
           <button
@@ -61,7 +70,7 @@
             data-test="git-conflict-ai"
             @click="togglePicker"
           >
-            ✦ ▾
+            ✦ {{ outcome || failedAttempt ? t('gui.git.conflict.ai_other') : t('gui.git.conflict.ai') }} ▾
           </button>
           <div v-if="pickerOpen" ref="picker" class="gx-popover" :style="pickerShift" role="dialog" :aria-label="t('gui.git.conflict.ai_pick')" data-test="git-conflict-ai-picker">
             <div class="gx-kicker">{{ t('gui.git.conflict.ai_pick') }}</div>
@@ -83,10 +92,10 @@
           </div>
         </div>
         <button type="button" class="gx-btn" :disabled="!actionable" :title="t('gui.git.conflict.manual')" :aria-label="t('gui.git.conflict.manual')" data-test="git-conflict-manual" @click="openResolver(null)">
-          ◉
+          {{ t('gui.git.conflict.manual') }}
         </button>
         <button type="button" class="gx-btn ghost" :disabled="!actionable" :title="t('gui.git.conflict.abort_hint')" :aria-label="t('gui.git.conflict.abort')" data-test="git-conflict-abort" @click="askAbort">
-          ↶
+          {{ t('gui.git.conflict.abort_short') }}
         </button>
         <button v-if="canRebuild" type="button" class="gx-btn" :disabled="!actionable || !!worktree?.state.busy" :title="rebuildLabel" :aria-label="rebuildLabel" data-test="git-conflict-reconstruct" @click="rebuild">⟳</button>
         <!-- (task 3): the way out when git refuses the abort — administrators only, and only then. -->
@@ -197,6 +206,23 @@ const outcomeText = computed(() => {
   return t('gui.git.conflict.ai_ended', { status: value.status ?? '—', name: providerName(value.providerId), n: value.remaining })
 })
 
+// The failed attempt the server recorded for THIS session; not while a resolver is working again.
+const failedAttempt = computed(() => {
+  const conflict = session.state.conflict
+  const attempt = conflict?.resolverAttempt
+  if (!attempt || attempt.state !== 'failed' || conflict?.mergeId !== session.pendingRow.value?.mergeId) return null
+  return attempt
+})
+const failedWhy = computed(() => {
+  const attempt = failedAttempt.value
+  if (!attempt) return ''
+  if (attempt.code === 'conflict_supersede_invalid' && attempt.lineCount) return t('gui.git.conflict.ai_why.lines', { n: attempt.lineCount })
+  if (attempt.code === 'conflict_side_dropped' || attempt.code === 'conflict_supersede_invalid') return t('gui.git.conflict.ai_why.dropped')
+  if (attempt.code === 'conflict_markers_remain') return t('gui.git.conflict.ai_why.markers')
+  if (attempt.code === 'cancelled') return t('gui.git.conflict.ai_why.cancelled')
+  return t('gui.git.conflict.ai_why.ended')
+})
+
 const noticeText = computed(() => {
   const notice = session.state.notices.conflict
   return notice ? t(`gui.git.notice.${notice.code}`, { ...(notice.params ?? {}) }) : null
@@ -287,6 +313,8 @@ const { askAbort, askForceCleanup } = useAbortMergeConfirm()
 <style scoped>
 .gx-abort-failure { display: flex; flex-direction: column; gap: 3px; }
 .gx-abort-failure code { display: block; overflow-wrap: anywhere; font-size: 11.5px; }
+.gx-ai-failed { display: flex; flex-direction: column; gap: 3px; }
+.gx-ai-failed code { display: block; overflow-wrap: anywhere; font-size: 11.5px; }
 .gx-companions { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 /* flowgate.v02test.0042 (mockup v7 item 3): a card result's conflict is a blue note with [→ 카드로 이동], never a dead end. */
 .gx-card-handled { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 10px 12px; border: 1px solid rgba(75, 163, 255, 0.4); border-radius: 8px; background: rgba(75, 163, 255, 0.1); }

@@ -43,6 +43,16 @@ export interface VoiceStatus {
   defaultSelection: VoiceSelection | null
   error: { code: string; message: string } | null
   canManage: boolean
+  /** Removed models still on disk or stored as the default; shown as retired, never activated. */
+  retired: readonly VoiceRetiredModel[]
+}
+
+export interface VoiceRetiredModel {
+  service: string
+  model: string
+  name: string
+  installed: boolean
+  wasDefault: boolean
 }
 
 export interface VoiceModel {
@@ -56,6 +66,11 @@ export interface VoiceModel {
   unavailableReason: string | null
   languages: readonly string[]
   gpuRequired: boolean
+  license?: string
+  licenseUrl?: string
+  source?: string
+  sourceUrl?: string
+  defaultEligible?: boolean
 }
 
 export interface VoiceService {
@@ -66,6 +81,8 @@ export interface VoiceService {
   installed: boolean
   available: boolean
   unavailableReason: string | null
+  components?: readonly { filename: string; componentType: string; license: string; distribution: string; url: string }[]
+  nativeNotices?: readonly string[]
   models: readonly VoiceModel[]
 }
 
@@ -189,6 +206,12 @@ export function toVoiceStatus(raw: unknown): VoiceStatus {
     defaultSelection: toSelection(value.default),
     error: toErrorInfo(value.error),
     canManage: value.can_manage === true,
+    retired: Array.isArray(value.retired) ? value.retired.flatMap((raw) => {
+      const r = raw as Record<string, unknown> | null
+      return r && typeof r.service === 'string' && typeof r.model === 'string'
+        ? [{ service: r.service, model: r.model, name: text(r.name) || r.model, installed: r.installed === true, wasDefault: r.was_default === true }]
+        : []
+    }) : [],
   }
 }
 
@@ -204,6 +227,11 @@ function toModel(raw: Record<string, unknown>): VoiceModel {
     unavailableReason: textOrNull(raw.unavailable_reason),
     languages: Array.isArray(raw.languages) ? raw.languages.filter((l): l is string => typeof l === 'string') : [],
     gpuRequired: raw.gpu_required === true,
+    license: text(raw.license),
+    licenseUrl: text(raw.license_url),
+    source: text(raw.source),
+    sourceUrl: text(raw.source_url),
+    defaultEligible: raw.default_eligible !== false,
   }
 }
 
@@ -221,6 +249,11 @@ export function toVoiceCatalog(raw: unknown): VoiceService[] {
       name: text(s.name) || s.id,
       version: text(s.version),
       license: text(s.license),
+      components: Array.isArray(s.components) ? s.components.map((raw) => {
+        const c = raw as Record<string, unknown>
+        return { filename: text(c.filename), componentType: text(c.component_type), license: text(c.license), distribution: text(c.distribution), url: text(c.url) }
+      }) : [],
+      nativeNotices: Array.isArray(s.native_notices) ? s.native_notices.filter((n): n is string => typeof n === 'string') : [],
       installed: s.installed === true || models.some((m) => m.installed),
       available: s.available !== false,
       unavailableReason: textOrNull(s.unavailable_reason),
