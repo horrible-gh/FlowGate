@@ -207,10 +207,11 @@
         </div>
       </section>
 
-      <!-- Repeat limit: system setting ai_repeat_count_max, saved as soon as it changes. -->
-      <div v-if="isAdmin && execPolicy" class="repeat-card">
+      <!-- Repeat limit ceiling: system setting ai_repeat_count_max, saved as soon as it changes. Administrators on the
+           AI management screen only; the 내 AI window shows my own values below instead (v02test.0089). -->
+      <div v-if="isAdmin && !mineOnly && execPolicy" class="repeat-card" data-test="system-repeat-card">
         <div class="repeat-info">
-          <b>{{ t('gui.ai.providers.repeat_max') }}</b>
+          <b>{{ t('gui.ai.providers.repeat_max_system') }}</b>
           <small>{{ t('gui.ai.providers.repeat_max_hint') }}</small>
         </div>
         <div class="repeat-stepper">
@@ -240,18 +241,77 @@
            (user decision). Shown once the value is read; the AI list below the separator follows the list above. -->
       <div v-if="isAdmin && !mineOnly && titleProvider !== null" class="repeat-card title-ai-card" data-test="title-ai-card">
         <div class="repeat-info">
-          <b>{{ t('gui.ai.providers.title_ai') }}</b>
+          <b>{{ t('gui.ai.providers.title_ai_system') }}</b>
         </div>
         <Select
           class="title-ai-select ai-base-select"
           :model-value="titleProvider"
           :options="titleProviderOptions"
           :disabled="titleSaving"
-          :aria-label="t('gui.ai.providers.title_ai')"
+          :aria-label="t('gui.ai.providers.title_ai_system')"
           data-test="title-ai-select"
           @update:model-value="chooseTitleProvider"
         />
       </div>
+
+      <!-- v02test.0089 my own repeat limit and title AI (/me/ai-preferences), saved as soon as they change. Shown to
+           everyone in the 내 AI window, and on the AI management screen to a user who is not an administrator. -->
+      <template v-if="showMinePreferences && prefs">
+        <div class="repeat-card my-repeat-card" data-test="my-repeat-card">
+          <div class="repeat-info">
+            <b>{{ t('gui.ai.providers.repeat_max') }}</b>
+            <small>{{ t('gui.ai.providers.my_repeat_max_hint', { max: prefs.repeat_count_system_max }) }}</small>
+          </div>
+          <div class="repeat-stepper">
+            <Button
+              v-if="prefs.repeat_count_max !== null"
+              variant="secondary"
+              size="sm"
+              :disabled="prefsSaving"
+              data-test="my-repeat-reset"
+              @click="resetMyRepeat"
+            >
+              {{ t('gui.ai.providers.my_repeat_reset', { max: prefs.repeat_count_system_max }) }}
+            </Button>
+            <IconButton
+              :label="t('gui.ai.providers.repeat_decrease')"
+              variant="secondary"
+              size="sm"
+              :disabled="prefsSaving || prefs.repeat_count_max_effective <= prefs.repeat_count_min"
+              data-test="my-repeat-decrease"
+              @click="stepMyRepeat(-1)"
+            >
+              <span aria-hidden="true">−</span>
+            </IconButton>
+            <b aria-live="polite" data-test="my-repeat-value">{{ prefs.repeat_count_max_effective }}</b>
+            <IconButton
+              :label="t('gui.ai.providers.repeat_increase')"
+              variant="secondary"
+              size="sm"
+              :disabled="prefsSaving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
+              data-test="my-repeat-increase"
+              @click="stepMyRepeat(1)"
+            >
+              <span aria-hidden="true">＋</span>
+            </IconButton>
+          </div>
+        </div>
+
+        <div class="repeat-card title-ai-card my-title-ai-card" data-test="my-title-ai-card">
+          <div class="repeat-info">
+            <b>{{ t('gui.ai.providers.title_ai') }}</b>
+          </div>
+          <Select
+            class="title-ai-select ai-base-select"
+            :model-value="prefs.title_provider"
+            :options="myTitleProviderOptions"
+            :disabled="prefsSaving"
+            :aria-label="t('gui.ai.providers.title_ai')"
+            data-test="my-title-ai-select"
+            @update:model-value="chooseMyTitleProvider"
+          />
+        </div>
+      </template>
     </template>
 
     <AiProviderEditDialog
@@ -313,19 +373,28 @@ import {
   AiRequestError,
   fetchMyAi,
   fetchMyAiOrder,
+  fetchMyAiPreferences,
   fetchSystemAi,
   fetchVisibleSystemAi,
   probeSystemAi,
   saveMyAi,
   saveMyAiDefault,
   saveMyAiOrder,
+  saveMyAiPreferences,
   fetchTitleProvider,
   saveRepeatCountMax,
   saveSystemAi,
   saveTitleProvider,
 } from '../api'
 import '../aiBaseSelect.css'
-import type { AiExecutionPolicy, AiOwnerScope, AiProbeResult, ProviderItem } from '../types'
+import type {
+  AiExecutionPolicy,
+  AiOwnerScope,
+  AiProbeResult,
+  MyAiPreferences,
+  MyAiPreferencesUpdate,
+  ProviderItem,
+} from '../types'
 import AiIcon from '../AiIcon.vue'
 import { PROVIDERS_MAX } from '../limits'
 import AiCommandInfoModal from './AiCommandInfoModal.vue'
@@ -385,6 +454,12 @@ let repeatTimer: ReturnType<typeof setTimeout> | null = null
 // Title AI (ai_title_provider): null until read; the card stays hidden while the value is unknown.
 const titleProvider = ref<string | null>(null)
 const titleSaving = ref(false)
+// My own title AI and repeat limit (v02test.0089): null until read; the two cards stay hidden while unknown.
+const prefs = ref<MyAiPreferences | null>(null)
+const prefsSaving = ref(false)
+// The 내 AI window shows my own values to everyone. On the AI management screen an administrator sees the system
+// values (ceiling and default) instead, and a user who is not an administrator, having none to set, sees their own.
+const showMinePreferences = computed(() => !!props.mineOnly || !isAdmin.value)
 
 function listOf(owner: AiOwnerScope): ProviderItem[] {
   return owner === 'system' ? systemList.value : myList.value
@@ -402,6 +477,7 @@ async function load(): Promise<void> {
     // system AI first, then mine.
     void loadOrder()
     void loadTitleProvider()
+    void loadPreferences()
     const [system, mine] = await Promise.all([
       isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
@@ -441,6 +517,71 @@ async function loadTitleProvider(): Promise<void> {
   } catch {
     // The card stays hidden; the rest of the screen does not depend on it.
   }
+}
+
+// A body without the contract's fields (an older server) is treated as unavailable, so the cards stay hidden.
+function isPreferences(value: unknown): value is MyAiPreferences {
+  if (!value || typeof value !== 'object') return false
+  const p = value as Record<string, unknown>
+  return typeof p.title_provider === 'string'
+    && typeof p.repeat_count_max_effective === 'number'
+    && typeof p.repeat_count_system_max === 'number'
+    && typeof p.repeat_count_min === 'number'
+    && (p.repeat_count_max === null || p.repeat_count_max === undefined || typeof p.repeat_count_max === 'number')
+}
+
+async function loadPreferences(): Promise<void> {
+  if (!showMinePreferences.value) return
+  try {
+    const data = await fetchMyAiPreferences()
+    // A change saved meanwhile is newer than this read.
+    if (!disposed && !prefsSaving.value && isPreferences(data)) prefs.value = { ...data, repeat_count_max: data.repeat_count_max ?? null }
+  } catch {
+    // The two cards stay hidden; the rest of the screen does not depend on them.
+  }
+}
+
+// Shown at once and saved at once; the server's answer (same shape as GET) replaces it, a failure puts the previous back.
+async function savePreferences(update: MyAiPreferencesUpdate, shown: MyAiPreferences): Promise<void> {
+  const previous = prefs.value
+  if (!previous || prefsSaving.value) return
+  prefs.value = shown
+  prefsSaving.value = true
+  try {
+    const data = await saveMyAiPreferences(update)
+    if (!disposed && isPreferences(data)) prefs.value = { ...data, repeat_count_max: data.repeat_count_max ?? null }
+  } catch (err: unknown) {
+    if (disposed) return
+    prefs.value = previous
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+  } finally {
+    prefsSaving.value = false
+  }
+}
+
+// −/＋ moves my own value within repeat_count_min ~ the system ceiling, starting from the effective value.
+function stepMyRepeat(delta: number): void {
+  const p = prefs.value
+  if (!p || prefsSaving.value) return
+  const next = p.repeat_count_max_effective + delta
+  if (next < p.repeat_count_min || next > p.repeat_count_system_max) return
+  void savePreferences({ repeat_count_max: next }, { ...p, repeat_count_max: next, repeat_count_max_effective: next })
+}
+
+// Back to "not set": the system value applies again.
+function resetMyRepeat(): void {
+  const p = prefs.value
+  if (!p || prefsSaving.value || p.repeat_count_max === null) return
+  void savePreferences(
+    { repeat_count_max: null },
+    { ...p, repeat_count_max: null, repeat_count_max_effective: p.repeat_count_system_max },
+  )
+}
+
+function chooseMyTitleProvider(value: string): void {
+  const p = prefs.value
+  if (!p || prefsSaving.value || value === p.title_provider || value === TITLE_SEPARATOR) return
+  void savePreferences({ title_provider: value }, { ...p, title_provider: value })
 }
 
 void load()
@@ -513,19 +654,27 @@ const orderedRows = computed<Row[]>(() => {
 // 끄기 / 실행한 AI 그대로 / separator / the AI in the list's order. Off AI are left out (the server refuses them),
 // except the stored one, which is always shown so the dropdown never claims another value.
 const TITLE_SEPARATOR = '__separator__'
-const titleProviderOptions = computed<SelectOption[]>(() => {
-  const current = titleProvider.value
-  const fixed: SelectOption[] = [
-    { value: 'off', label: t('gui.ai.providers.title_ai_off') },
-    { value: 'executor', label: t('gui.ai.providers.title_ai_executor') },
-  ]
+function titleOptions(current: string | null, fixed: SelectOption[]): SelectOption[] {
   const items = orderedRows.value.map((row) => row.item).filter((p) => p.enabled || p.id === current)
   const ai: SelectOption[] = items.map((p) => ({ value: p.id, label: p.name }))
-  if (current && current !== 'off' && current !== 'executor' && !items.some((p) => p.id === current)) {
+  if (current && !fixed.some((option) => option.value === current) && !items.some((p) => p.id === current)) {
     ai.push({ value: current, label: current })
   }
   return ai.length ? [...fixed, { value: TITLE_SEPARATOR, label: '──────────', disabled: true }, ...ai] : fixed
-})
+}
+
+const titleProviderOptions = computed<SelectOption[]>(() => titleOptions(titleProvider.value, [
+  { value: 'off', label: t('gui.ai.providers.title_ai_off') },
+  { value: 'executor', label: t('gui.ai.providers.title_ai_executor') },
+]))
+
+// My title AI (v02test.0089): 자동 / 끄기 / 답한 AI 그대로 / separator / the AI I can use, in my list order
+// (system AI shown to me and my own AI, even in the 내 AI window whose list shows only mine).
+const myTitleProviderOptions = computed<SelectOption[]>(() => titleOptions(prefs.value?.title_provider ?? null, [
+  { value: 'auto', label: t('gui.ai.providers.title_ai_auto') },
+  { value: 'off', label: t('gui.ai.providers.title_ai_off') },
+  { value: 'executor', label: t('gui.ai.providers.title_ai_answered') },
+]))
 
 const rows = computed<Row[]>(() => {
   const query = searchQuery.value.trim().toLowerCase()

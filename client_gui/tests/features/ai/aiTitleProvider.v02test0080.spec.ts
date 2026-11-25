@@ -18,6 +18,11 @@ const systemAi: ProviderItem[] = [
 ]
 const myAi: ProviderItem[] = [{ id: 'my-a', name: 'My A', exec_type: 'cli', kind: 'claude', enabled: true, exec_location: 'local' }]
 const policy = { repeat_count_min: 1, repeat_count_max: 5, repeat_count_hard_max: 30 }
+// v02test.0089: a user's own values (/me/ai-preferences) show in the 내 AI window and, for a non-administrator, here too.
+const prefs = {
+  title_provider: 'auto', title_provider_effective: 'executor',
+  repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_system_max: 5, repeat_count_min: 1,
+}
 
 async function mountPanel({ admin = true, value = 'executor' as string | null, order = [] as string[], mineOnly = false } = {}) {
   setCurrentUser({ username: admin ? 'admin' : 'member', email: null, isAdmin: admin })
@@ -26,6 +31,7 @@ async function mountPanel({ admin = true, value = 'executor' as string | null, o
   vi.spyOn(api, 'fetchMyAi').mockResolvedValue({ providers: myAi, default_provider_id: null, updated_at: null })
   vi.spyOn(api, 'fetchMyAiOrder').mockResolvedValue({ order })
   const fetchTitle = vi.spyOn(api, 'fetchTitleProvider').mockResolvedValue(value)
+  vi.spyOn(api, 'fetchMyAiPreferences').mockResolvedValue({ ...prefs })
   const wrapper = mount(AiProvidersPanel, { props: { mineOnly }, global: { plugins: [i18n] }, attachTo: document.body })
   await flushPromises()
   return { wrapper, fetchTitle }
@@ -51,7 +57,9 @@ describe('v02test.0080 제목 짓기 AI dropdown', () => {
     expect(cards[0].text()).toContain('최대 반복 횟수')
     expect(cards[1].attributes('data-test')).toBe('title-ai-card')
     expect(cards[0].element.nextElementSibling).toBe(cards[1].element)
-    expect(cards[1].get('.repeat-info b').text()).toBe('제목 짓기 AI')
+    // v02test.0089: on the AI management screen the administrator's two cards name their system scope.
+    expect(cards[0].get('.repeat-info b').text()).toBe('최대 반복 횟수 상한(시스템)')
+    expect(cards[1].get('.repeat-info b').text()).toBe('제목 짓기 AI 기본값(시스템)')
     expect(cards[1].find('small').exists()).toBe(false)
     expect(cards[1].find('[title]').exists()).toBe(false)
     expect((cards[1].get('select').element as HTMLSelectElement).value).toBe('executor')
@@ -99,12 +107,16 @@ describe('v02test.0080 제목 짓기 AI dropdown', () => {
   })
 
   it('is not shown to a non-administrator, in the mine-only window, or while the value is unknown', async () => {
+    // Those two places show the user's own title AI instead (v02test.0089), never the system value.
     let r = await mountPanel({ admin: false })
     expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
+    expect(r.wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
     expect(r.fetchTitle).not.toHaveBeenCalled()
     r.wrapper.unmount()
     r = await mountPanel({ mineOnly: true })
     expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
+    expect(r.wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(false)
+    expect(r.wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
     expect(r.fetchTitle).not.toHaveBeenCalled()
     r.wrapper.unmount()
     r = await mountPanel({ value: null })
@@ -116,12 +128,12 @@ describe('v02test.0080 제목 짓기 AI dropdown', () => {
   it('shows the names in English and Japanese', async () => {
     i18n.global.locale.value = 'en'
     let { wrapper } = await mountPanel()
-    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('Title AI')
+    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('Title AI default (system)')
     expect(optionTexts(wrapper).slice(0, 2)).toEqual(['Off', 'Same AI that ran it'])
     wrapper.unmount()
     i18n.global.locale.value = 'ja'
     ;({ wrapper } = await mountPanel())
-    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('タイトル生成AI')
+    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('タイトル生成AIの既定値(システム)')
     expect(optionTexts(wrapper).slice(0, 2)).toEqual(['オフ', '実行したAIのまま'])
     wrapper.unmount()
   })
