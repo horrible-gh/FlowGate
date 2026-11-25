@@ -25,6 +25,10 @@ import type {
   AiGroupStateInput,
   AiGroupUpdateInput,
   AiProbeResult,
+  CliModelCatalog,
+  CliPresetComposeInput,
+  CliPresetComposeResult,
+  CliPresetParseResult,
   MyAiPreferences,
   MyAiPreferencesUpdate,
   ProviderItem,
@@ -177,6 +181,33 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
       api_base_url: provider.api_base_url ?? null,
     }),
     String(i18n.global.t('gui.ai.providers.test_start_failed')),
+  )
+}
+
+// CLI model catalog and composition (flowgate.v02test.0097): the connection editor draws its
+// kind/version/model/effort lists from the server and lets the server build the command and name.
+export async function fetchCliModelCatalog(): Promise<CliModelCatalog> {
+  const data = await call(
+    () => getRequest<{ catalog?: CliModelCatalog }>(`${API}/ai-settings/cli-model-catalog`),
+    'gui.ai.providers.catalog_load_failed',
+  )
+  return data.catalog ?? {}
+}
+
+export async function composeCliPreset(input: CliPresetComposeInput): Promise<CliPresetComposeResult> {
+  return call(
+    () => postRequest<CliPresetComposeResult>(`${API}/ai-settings/cli-preset-compose`, input),
+    'gui.ai.providers.compose_failed',
+  )
+}
+
+export async function parseCliPreset(cliCommand: string, kind?: string): Promise<CliPresetParseResult> {
+  return call(
+    () => postRequest<CliPresetParseResult>(`${API}/ai-settings/cli-preset-parse`, {
+      cli_command: cliCommand,
+      ...(kind ? { kind } : {}),
+    }),
+    'gui.ai.providers.compose_failed',
   )
 }
 
