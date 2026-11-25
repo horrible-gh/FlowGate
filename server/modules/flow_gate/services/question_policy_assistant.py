@@ -178,7 +178,7 @@ def _remote(provider, text, user_id, request_id):
     svc = agent_jobs.AgentJobService()
     job, attempt = "job_" + secrets.token_urlsafe(20), "att_" + secrets.token_urlsafe(20)
     owner = agent_jobs.retrieval_owner_for(request_id)
-    svc.enqueue_remote_cli(command_line=command, stdin_text=text,
+    svc.enqueue_remote_cli(command_line=command, stdin_text=provider_cli._cli_stdin(provider["kind"], text),
         cwd=provider_remote.job_workdir(template, job), timeout_seconds=TIMEOUT,
         job_id=job, attempt_id=attempt, target_agent_id=target,
         requested_by_user_id=requester, ai_run_id=request_id, retrieval_owner=owner)
@@ -200,7 +200,10 @@ def _remote(provider, text, user_id, request_id):
                         or result.get("status") != "DONE"):
                     raise ValueError("remote_execution_failed")
                 kind = "claude" if provider["kind"] == "codex" else provider["kind"]
-                return provider_cli._cli_last_message(kind, result.get("stdout") or "",
+                stdout = result.get("stdout") or ""
+                if kind == "gemini" and provider_cli._agy_result(stdout)[1]:
+                    raise ValueError("remote_execution_failed")
+                return provider_cli._cli_last_message(kind, stdout,
                     Path("__remote_no_last_message_file__")) or ""
             now = time.monotonic()
             if deadline is None and row["status"] == "STARTED":

@@ -11,6 +11,7 @@ import { setCurrentUser } from '@/core/auth/currentUser'
 import * as settingsApi from '@/features/settings/api'
 import type { SystemAgent } from '@/features/settings/types'
 import type { ProviderItem } from '@/features/ai/types'
+import { mockCliCatalog } from './cliCatalogMock'
 
 registerAppMessages(i18n)
 
@@ -40,24 +41,37 @@ async function open(provider: ProviderItem | null, agents: SystemAgent[]) {
   await flushPromises()
   return w
 }
-const cells = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.agent-cell'))
+// The target Agent is a combo box since F97 (mockup v7): one option per Agent, name only.
+const agentSelect = () => document.querySelector('#provider-agent') as HTMLSelectElement
+const cells = () => Array.from(document.querySelectorAll<HTMLOptionElement>('#provider-agent option')).filter((o) => o.value)
+const pickAgent = (id: string) => {
+  agentSelect().value = id
+  agentSelect().dispatchEvent(new Event('change'))
+}
+const setMode = (value: string) => {
+  const select = document.querySelector('#provider-exec') as HTMLSelectElement
+  select.value = value
+  select.dispatchEvent(new Event('change'))
+}
 const save = () => document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
 
-beforeEach(() => { vi.restoreAllMocks(); i18n.global.locale.value = 'ko' })
+beforeEach(() => { vi.restoreAllMocks(); i18n.global.locale.value = 'ko'; mockCliCatalog() })
 afterEach(() => { wrappers.splice(0).forEach((w) => w.unmount()); document.body.innerHTML = '' })
 
 describe('remote CLI target Agent field (0129 T#3)', () => {
-  it('shows the field only for remote CLI', async () => {
+  it('keeps the cell empty for local CLI and shows the field for remote CLI', async () => {
     const w = await open(local, [agent('a')])
-    expect(document.querySelector('.agent-list')).toBeNull()
+    expect(agentSelect().closest('.form-group')!.classList.contains('ghost')).toBe(true)
+    expect(cells()).toHaveLength(0)
     await w.setProps({ provider: remote('a') })
     await flushPromises()
+    expect(agentSelect().closest('.form-group')!.classList.contains('ghost')).toBe(false)
     expect(cells()).toHaveLength(1)
   })
 
   it('keeps the saved Agent selected and sends target_agent_id on save', async () => {
     const w = await open(remote('b'), [agent('a'), agent('b')])
-    expect(cells().map((c) => c.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+    expect(agentSelect().value).toBe('b')
     save().click()
     await flushPromises()
     expect(w.emitted('save')![0][0]).toMatchObject({ exec_location: 'remote', target_agent_id: 'b' })
@@ -70,27 +84,24 @@ describe('remote CLI target Agent field (0129 T#3)', () => {
     expect(w.emitted('save')![0][0]).not.toHaveProperty('target_agent_id')
   })
 
-  it('shows name, online state and why an Agent cannot be chosen', async () => {
+  it('shows the name only, online as a dot, and cannot pick an Agent that is offline or cannot run CLI', async () => {
     await open(remote(null), [
       agent('a'),
+      agent('down', { online_status: 'offline' }),
       agent('off', { enabled: false }),
       agent('rev', { registration_status: 'revoked', credential_status: 'revoked' }),
       agent('nocli', { effective_capabilities: { ai_cli: false, ai_api: false, storage: false } }),
     ])
-    const [ok, disabled, revoked, nocli] = cells()
-    expect(ok.textContent).toContain('Agent a')
-    expect(ok.textContent).toContain('온라인')
-    expect([ok, disabled, revoked, nocli].map((c) => c.disabled)).toEqual([false, true, true, true])
-    expect(disabled.textContent).toContain('사용 중지')
-    expect(revoked.textContent).toContain('등록 해지')
-    expect(nocli.textContent).toContain('CLI 불가')
+    const options = cells()
+    expect(options.map((c) => c.textContent?.trim())).toEqual(['● Agent a', '○ Agent down', '○ Agent off', '○ Agent rev', '● Agent nocli'])
+    expect(options.map((c) => c.disabled)).toEqual([false, true, true, true, true])
   })
 
   it('selects nothing automatically with one Agent and blocks save until one is picked', async () => {
     await open(remote(null), [agent('a')])
-    expect(cells()[0].getAttribute('aria-checked')).toBe('false')
+    expect(agentSelect().value).toBe('')
     expect(save().disabled).toBe(true)
-    cells()[0].click()
+    pickAgent('a')
     await flushPromises()
     expect(save().disabled).toBe(false)
   })
@@ -101,7 +112,7 @@ describe('remote CLI target Agent field (0129 T#3)', () => {
     document.body.innerHTML = ''
     await open(remote('gone'), [agent('a')])
     expect(document.body.textContent).toContain('저장된 에이전트를 찾을 수 없습니다.')
-    expect(cells()[0].getAttribute('aria-checked')).toBe('false')
+    expect(agentSelect().value).toBe('')
     expect(save().disabled).toBe(true)
   })
 
@@ -125,9 +136,8 @@ describe('remote CLI target Agent field (0129 T#3)', () => {
   it.each(['ko', 'en', 'ja'])('has the %s texts', (locale) => {
     i18n.global.locale.value = locale as 'ko'
     for (const key of [
-      'gui.ai.providers.field_target_agent', 'gui.ai.providers.agent_loading', 'gui.ai.providers.agent_load_failed',
-      'gui.ai.providers.agent_none', 'gui.ai.providers.agent_missing', 'gui.ai.providers.agent_reason_disabled',
-      'gui.ai.providers.agent_reason_revoked', 'gui.ai.providers.agent_reason_no_cli', 'settings.ai.field.target_agent_id',
+      'gui.ai.providers.field_target_agent', 'gui.ai.providers.agent_load_failed',
+      'gui.ai.providers.agent_none', 'gui.ai.providers.agent_missing', 'settings.ai.field.target_agent_id',
       'settings.ai.reason.required_for_remote_cli', 'settings.ai.reason.invalid_target_agent', 'settings.ai.reason.target_agent_unavailable',
     ]) expect(i18n.global.te(key, locale), `${locale} ${key}`).toBe(true)
   })
@@ -139,7 +149,6 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
   return { promise, resolve, reject }
 }
-const modeCell = (label: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('.mode-cell')).find((b) => b.textContent!.includes(label))!
 const ownerBtn = (label: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('.segmented button')).find((b) => b.textContent!.includes(label))!
 
 async function openNewRemote() {
@@ -149,11 +158,9 @@ async function openNewRemote() {
   })
   wrappers.push(w)
   await flushPromises()
-  modeCell(i18n.global.t('gui.ai.modes.remote_cli')).click()
+  setMode('remote_cli')
   const name = document.querySelector('#provider-name') as HTMLInputElement
   name.value = 'N'; name.dispatchEvent(new Event('input'))
-  const cmd = document.querySelector('#provider-command') as HTMLInputElement
-  cmd.value = 'fake-cli'; cmd.dispatchEvent(new Event('input'))
   await flushPromises()
   return w
 }
@@ -164,7 +171,7 @@ describe('owner switch on a new remote CLI (0129 rework)', () => {
     vi.spyOn(settingsApi, 'listSystemAgents').mockResolvedValue([agent('sys')])
     vi.spyOn(settingsApi, 'listPersonalAgents').mockReturnValue(mine.promise)
     const w = await openNewRemote()
-    cells()[0].click()
+    pickAgent('sys')
     await flushPromises()
     expect(save().disabled).toBe(false)
     ownerBtn(i18n.global.t('gui.ai.owned.owner_user')).click()
@@ -176,9 +183,9 @@ describe('owner switch on a new remote CLI (0129 rework)', () => {
     mine.resolve([agent('me')])
     await flushPromises()
     expect(cells().map((c) => c.textContent)).toEqual([expect.stringContaining('Agent me')])
-    expect(cells()[0].getAttribute('aria-checked')).toBe('false')
+    expect(agentSelect().value).toBe('')
     expect(save().disabled).toBe(true)
-    cells()[0].click()
+    pickAgent('me')
     await flushPromises()
     save().click()
     expect(w.emitted('save')![0][0]).toMatchObject({ target_agent_id: 'me' })
@@ -189,7 +196,7 @@ describe('owner switch on a new remote CLI (0129 rework)', () => {
     vi.spyOn(settingsApi, 'listSystemAgents').mockResolvedValue([agent('sys')])
     vi.spyOn(settingsApi, 'listPersonalAgents').mockRejectedValue(new Error('down'))
     const w = await openNewRemote()
-    cells()[0].click()
+    pickAgent('sys')
     await flushPromises()
     ownerBtn(i18n.global.t('gui.ai.owned.owner_user')).click()
     await flushPromises()
@@ -242,7 +249,7 @@ describe('final save request goes through panel and API (0129 rework)', () => {
     const { put } = await panelWith(remoteItem)
     editBtn().click()
     await flushPromises()
-    modeCell(i18n.global.t('gui.ai.modes.local_cli')).click()
+    setMode('local_cli')
     await flushPromises()
     save().click()
     await flushPromises()
@@ -256,14 +263,14 @@ describe('final save request goes through panel and API (0129 rework)', () => {
     const { put } = await panelWith(remoteItem)
     editBtn().click()
     await flushPromises()
-    cells()[1].click()
+    pickAgent('b')
     await flushPromises()
     save().click()
     await flushPromises()
     expect((put.mock.calls[0][1] as { providers: ProviderItem[] }).providers[0].target_agent_id).toBe('b')
     editBtn().click()
     await flushPromises()
-    expect(cells().map((c) => c.getAttribute('aria-checked'))).toEqual(['false', 'true'])
+    expect(agentSelect().value).toBe('b')
   })
 
   it('strips the field for every non-remote-CLI item in the wire list', () => {
