@@ -19,6 +19,7 @@ from modules.flow_gate.services.git.credentials import GitServiceError
 
 
 REAL_LAUNCH = auto.launch
+REAL_UNRESOLVED = auto.unresolved
 
 
 class Store:
@@ -111,7 +112,7 @@ def test_success_has_no_idle_gap_and_exposes_contract(env, monkeypatch):
     assert out["state"] == "succeeded" and out["attempt"] == 1
     assert out["attempts"][0]["result"] == "resolved"
     assert env.commit.call_count == 1 and not auto.working("graph")
-    assert set(out) == {"state", "attempt", "max_attempts", "attempts", "unresolved"}
+    assert set(out) == {"state", "attempt", "max_attempts", "attempts", "unresolved", "count"}
 
 
 def test_three_failures_rebase_switch_and_persistent_reasons(env):
@@ -331,3 +332,97 @@ def test_notification_failure_preserves_recorded_conflicts_result(env):
     env.notifications.side_effect = RuntimeError("transport down")
     auto.tick(7); auto.tick(7)
     assert auto.get(7)["data"]["attempts"][0]["result"] == "conflicts_left"
+
+
+@pytest.mark.parametrize("record", [
+    {"outcome": "done", "exit_code": 7, "end_reason": "normal_finish"},
+    {"outcome": "done", "stop_code": "provider_failed"},
+    {"outcome": "error", "error_message": "provider unavailable"},
+])
+def test_ai_error_is_not_conflicts_left(env, record):
+    auto.tick(7)
+    env.records["ai-1"] = {"status": "finished", **record}
+    auto.tick(7)
+    item = auto.wire(auto.get(7))["attempts"][0]
+    assert item["result"] == "ai_error"
+    assert "AI 실행 실패" in item["reason_summary"]
+    assert auto.get(7)["data"]["phase"] == "next"
+    if record.get("exit_code"):
+        assert "7" in item["reason_summary"]
+
+
+def test_check_summary_keeps_raw_diagnostic(env):
+    auto.tick(7)
+    env.remaining.clear()
+    raw = json.dumps({"status": "failed", "failures": [
+        {"checker": "python_compile", "path": "a.py", "line": 12, "message": "invalid syntax"}]})
+    env.commit.side_effect = GitServiceError(422, "verification_failed", raw)
+    auto.tick(7)
+    item = auto.wire(auto.get(7))["attempts"][0]
+    assert item["result"] == "check_failed" and item["reason"] == raw
+    assert item["reason_summary"] == "python_compile · a.py:12: invalid syntax"
+
+
+def test_paused_count_and_resume_notification(env):
+    env.run["status"] = "paused"
+    auto.tick(7)
+    out = auto.wire(auto.get(7))
+    assert out["state"] == "skipped_paused" and out["count"] == 1
+    env.run["status"] = "idle"
+    auto.tick(7)
+    assert auto.get(7)["state"] == "running"
+    assert len(env.launches) == 1
+    env.notifications.assert_called_once()
+
+
+def test_idle_merge_conflict_with_auto_work_is_running(env, monkeypatch):
+    from flowgate.graph_run import settle, execution_store
+    ctx = SimpleNamespace(run_id="graph", run={"status": "idle", "idle_reason": "merge_conflict"})
+    monkeypatch.setattr(execution_store, "working", lambda rid: False)
+    assert settle.working(ctx, [])
+    ctx.run["idle_reason"] = "stopped"
+    assert not settle.working(ctx, [])
+    ctx.run.update(status="paused", idle_reason="merge_conflict")
+    monkeypatch.setattr(execution_store, "handing_off", lambda rid: False)
+    monkeypatch.setattr(rm, "in_progress", lambda rid: False)
+    from flowgate.gate_decisions import run_hold
+    monkeypatch.setattr(run_hold, "gate_live", lambda rid: False)
+    assert not settle.working(ctx, [])
+
+
+def test_exhausted_hunks_use_session_root(env, monkeypatch, tmp_path):
+    from modules.flow_gate.services.git import conflict
+    actual_root = tmp_path / "session"
+    actual_root.mkdir()
+    (actual_root / "a.py").write_text("common\n<<<<<<< ours\na\n||||||| base\nb\n=======\nc\n>>>>>>> theirs\n", encoding="utf-8")
+    monkeypatch.setattr(conflict, "_session_context", lambda *a: ({}, {}, "p", actual_root))
+    # The old group-root lookup must never be used for conflict file coordinates.
+    monkeypatch.setattr(rm, "_group_root", lambda *a: (_ for _ in ()).throw(AssertionError("wrong root")))
+    monkeypatch.setattr(auto, "unresolved", REAL_UNRESOLVED)
+    for _ in range(6):
+        auto.tick(7)
+    out = auto.wire(auto.get(7))
+    assert out["state"] == "exhausted"
+    assert out["unresolved"] == [{"path": "a.py", "hunks": [{"start_line": 2, "end_line": 8}]}]
+
+
+def test_settle_plan_wakes_resumed_auto_merge(env, monkeypatch):
+    from flowgate.graph_run import settle
+    ctx = SimpleNamespace(run_id="graph", flow_id="flow", run={"status": "idle", "idle_reason": "merge_conflict"})
+    monkeypatch.setattr(settle.engine, "node_runs", lambda rid: [])
+    monkeypatch.setattr(settle.engine, "read_run_state", lambda ctx: object())
+    assert settle.settle_plan(ctx) == ("running", None)
+
+
+def test_conflict_session_ai_error_response(env, monkeypatch):
+    from modules.flow_gate.services.git import conflict
+    from modules.flow_gate.services import git_service as git
+    session = {"status": "open", "context": "{}", "group_id": "flow"}
+    monkeypatch.setattr(git.db_git, "get_session", lambda mid: session)
+    saved = {}
+    monkeypatch.setattr(git.db_git, "set_session_context", lambda mid, data: saved.update(data))
+    monkeypatch.setattr(conflict, "_session_project_id", lambda session: None)
+    assert conflict.note_resolver_finished(7, {"run_id": "failed", "exit_code": 9, "stop_code": "provider_failed"})
+    item = saved["resolver_attempt"]
+    assert item["code"] == "ai_error" and item["remaining"] == 1
+    assert "exit code 9" in item["reason_summary"]
