@@ -225,6 +225,7 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
 #   root  -- the start card: the body of the document bound to it.
 #   chat  -- one chat: its own first user message or the ``title`` a reply in it submitted.
 FIRST_NAMES_LEASE_SEC = 180
+NAME_ATTEMPTS_MAX = 3
 NAME_KINDS = ("chat", "flow", "root")
 PARALLEL_NAMES = True  # name the targets of one request at the same time
 
@@ -250,7 +251,7 @@ _RULES = (
 )
 
 
-def build_name_prompt(kind: str, text: str, start_document: str = "") -> str:
+def build_name_prompt(kind: str, text: str, start_document: str = "", conversation: str = "") -> str:
     """The naming prompt of one target; each target reads only its own content.
 
     A flow named from a chat's first message also gets ``start_document`` (the body of its
@@ -267,7 +268,17 @@ def build_name_prompt(kind: str, text: str, start_document: str = "") -> str:
             f"\nFirst request:\n<<<\n{_bounded(text)}\n>>>\n"
             f"\nStart document:\n<<<\n{_bounded(start_document)}\n>>>")
     if kind == "chat":
-        return build_prompt(text) + "\nIf no concrete subject can be identified, reply NO_TITLE."
+        if not _bounded(conversation) and not _bounded(start_document):
+            return build_prompt(text) + "\nIf no concrete subject can be identified, reply NO_TITLE."
+        prompt = ("Write a short title for a conversation described below.\n"
+                  f"{_RULES}"
+                  "- Name the conversation from its first message. If the first message alone names no concrete subject, name it from the later conversation, then from the start document.\n"
+                  f"\nFirst message:\n<<<\n{_bounded(text)}\n>>>")
+        if _bounded(conversation):
+            prompt += f"\n\nLater conversation:\n<<<\n{_bounded(conversation)}\n>>>"
+        if _bounded(start_document) and _bounded(start_document) != _bounded(text):
+            prompt += f"\n\nStart document:\n<<<\n{_bounded(start_document)}\n>>>"
+        return prompt
     intro, label = {
         "flow": ("Write a short name for a workflow whose overall task is described below. "
                  "It names the whole task, not a single step, card or document.", "Task"),
@@ -292,6 +303,22 @@ def heading_title(kind: str, text: str, doc_type: Optional[str] = None) -> Optio
         if title and not (checkable and is_default_title(title, kind, doc_type=doc_type)):
             return title
     return None
+
+
+def _chat_context(chat_doc_id: str) -> str:
+    turns = legacy_adapter.first_turns(chat_doc_id, 20)
+    found_first = False
+    later = []
+    for turn in turns:
+        body = str(turn.get("body") or "")
+        if not found_first:
+            if turn.get("speaker") == "user" and body.strip():
+                found_first = True
+            continue
+        body = re.sub(r"<!--fg-quick\b.*?<!--/fg-quick\s*-->|<!--.*?-->", "", body, flags=re.DOTALL).strip()
+        if body:
+            later.append(f"{turn.get('speaker')}: {body}")
+    return _bounded("\n".join(later))
 
 
 def _root_text(flow_id: str, provider_id: str) -> str:
@@ -414,6 +441,12 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
                 return group, target, "apply"
             if entry.get("lease_until", 0) > time.time():
                 return group, target, "busy"
+            if entry.get("attempts", 0) >= NAME_ATTEMPTS_MAX:
+                entry["state"] = "exhausted"
+                p.ledger.save(flow_id, record)
+                logger.info("flow naming skipped reason=attempts_exhausted flow=%s target=%s", flow_id, kind)
+                return group, target, "skipped"
+            entry["attempts"] = entry.get("attempts", 0) + 1
             entry.update(state="pending", ticket=ticket, lease_until=time.time() + FIRST_NAMES_LEASE_SEC)
             p.ledger.save(flow_id, record)
             return group, target, "generate"
@@ -425,7 +458,7 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
             logger.info("flow naming skipped reason=%s flow=%s target=%s", step, flow_id, kind)
             return "unchanged"
         if step == "generate":
-            title = _generate_candidate(flow_id, group, provider_id, kind, target, message,
+            title, unavailable = _generate_candidate(flow_id, group, provider_id, kind, target, message,
                                         chat_doc_id, str((user or {}).get("user_id") or ""), allow_fallback)
 
             def remember():
@@ -434,7 +467,9 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
                 if entry.get("ticket") != ticket:
                     return None
                 entry["lease_until"] = 0
-                if title and not entry.get("candidate"):
+                if unavailable:
+                    entry["attempts"] = max(0, entry.get("attempts", 0) - 1)
+                if title and not entry.get("candidate"): 
                     entry["candidate"] = title
                 p.ledger.save(flow_id, record)
                 return entry.get("candidate")
@@ -482,12 +517,15 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
 
 
 def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat_doc_id,
-                        user_id, allow_fallback) -> Optional[str]:
+                        user_id, allow_fallback) -> tuple[Optional[str], bool]:
     """A candidate from the target's own content, named by the configured naming provider
     (``complete_naming``: off, the executor or an explicit provider, remote agents included)."""
     start_document = ""
+    conversation = ""
     if kind == "chat":
         text = _first_user_message(chat_doc_id) or ""
+        conversation = _chat_context(chat_doc_id)
+        start_document = _root_text(flow_id, provider_id)
     elif kind == "flow":
         chat_message = (_first_user_message(chat_doc_id) if chat_doc_id else None) or ""
         text = chat_message or str(message or "").strip() or _root_text(flow_id, provider_id)
@@ -498,18 +536,19 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
         text = _root_text(flow_id, provider_id)
     if not any(ch.isalnum() for ch in text):
         logger.info("flow naming skipped reason=empty_message flow=%s target=%s", flow_id, kind)
-        return None
+        return None, True
     # The card shows its document: without a model answer, the document's own first line.
     heading = heading_title("root", text, target.get("doc_type")) if kind == "root" else None
     if not allow_fallback:
-        return heading
+        return heading, True
     answer, reason = legacy_adapter.complete_naming(group["project_id"], provider_id,
-                                                    build_name_prompt(kind, text, start_document), user_id,
+                                                    build_name_prompt(kind, text, start_document, conversation), user_id,
                                                     timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
     title = clean_flow_title(answer)
     if not title:
         logger.warning("flow_auto_title no_title flow=%s target=%s reason=%s", flow_id, kind, _safe_reason(reason))
-    return title or heading
+    unavailable = answer is None and reason in (legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {"title_disabled"})
+    return title or heading, unavailable
 
 
 # Bounded background entry point: no DB lock/model call on the sending thread.
