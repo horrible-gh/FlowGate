@@ -39,13 +39,14 @@ const current = computed(() => sections.find((s) => s.key === active.value) ?? s
 </script>
 
 <style scoped>
-.ai-policy { container-type: inline-size; display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 14px; height: 100%; min-height: 0; }
-.policy-nav { display: flex; flex-direction: column; gap: 2px; padding-right: 12px; border-right: 1px solid var(--fg2-line); }
-.policy-nav-title { padding: 2px 10px 6px; font-size: 11px; font-weight: 700; color: var(--fg2-muted); }
-.policy-nav-item { padding: 7px 10px; border: 0; border-radius: var(--fg2-control-radius-sm, 6px); background: transparent; color: var(--fg2-text);
-  font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+/* v02test.0096 F96-7 (mockup ⑤): a small 방침 heading over the sub-items (질의 today, selected), a line, then the body. */
+.ai-policy { container-type: inline-size; display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; height: 100%; min-height: 0; }
+.policy-nav { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px 0 0; border-right: 1px solid var(--fg2-line); }
+.policy-nav-title { padding: 4px 10px 2px; font-size: 11px; font-weight: 400; color: var(--fg2-muted-2, var(--fg2-muted)); }
+.policy-nav-item { padding: 6px 10px; border: 0; border-radius: var(--fg2-control-radius-sm, 6px); background: transparent; color: var(--fg2-muted);
+  font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
 .policy-nav-item:hover { background: color-mix(in srgb, var(--fg2-text, #fff) 6%, transparent); }
-.policy-nav-item.is-active { background: var(--fg2-status-info-bg); color: var(--fg2-status-info-fg); font-weight: 700; }
+.policy-nav-item.is-active { background: var(--fg2-status-info-bg); color: var(--fg2-text); font-weight: 600; }
 .policy-body { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .policy-body > :deep(*) { flex: 1 1 auto; min-height: 0; }
 /* A narrow window: the sub-items go in one row above the editor. */
