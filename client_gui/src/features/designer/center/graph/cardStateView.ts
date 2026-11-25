@@ -89,7 +89,9 @@ export const CARD_INTERVENTION_CAUSES = ['model_not_found', 'provider_capacity',
 export function cardInterventionCauseText(cause: string | null | undefined, t: (key: string) => string): string | null {
   const raw = cause?.trim()
   if (!raw) return null
-  const code = raw.split(':')[0].trim()
+  // The review checkpoint prefixes terminal remote failures; retain the full raw detail for display.
+  const detail = raw.startsWith('remote final failure:') ? raw.slice('remote final failure:'.length).trim() : raw
+  const code = detail.split(':')[0].trim()
   return (CARD_INTERVENTION_CAUSES as readonly string[]).includes(code)
     ? `${t(`gui.designer.center.card_intervention_causes.${code}`)}(${raw})`
     : raw
