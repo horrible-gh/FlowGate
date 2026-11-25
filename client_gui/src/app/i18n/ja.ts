@@ -40,6 +40,7 @@ export default {
     }
   },
   voice: {
+    "system": { "default_unavailable": "既定として使用できません", "download_upstream": "公式配布元からダウンロード" },
     "test_upload": "録音ファイルをアップロード",
     "test_no_file": "ファイルが選択されていません",
     "unavailable_windows": "このバージョンは Windows x64 でのみ利用できます"
@@ -320,7 +321,6 @@ export default {
     user_role_member: 'ユーザー',
   },
   nav: {
-    notices: {"title": "オープンソース表記", "third_party": "第三者ライセンス全文", "project_license": "プロジェクト LICENSE"},
     aria: '主要画面',
     dashboard: { title: 'ダッシュボード', sub: 'ホームに戻る' },
     projects: { title: 'プロジェクト', sub: 'プロジェクト管理' },

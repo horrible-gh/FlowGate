@@ -46,13 +46,20 @@ const licenseWindow = read('src/features/licenses/LicenseInfoWindow.vue')
 assert(licenseWindow.includes('THIRD_PARTY_NOTICES.txt') && licenseWindow.includes('LICENSE.txt'), 'license window must load both notice files')
 const catalog = JSON.parse(read('../server/modules/flow_gate/services/voice_catalog.json'))
 const requiredLicenseKeys = ['window_title', 'close', 'tab_project', 'col_component', 'col_file', 'col_license', 'col_source', 'source_link', 'open_for', 'open', 'summary', 'pending', 'direct_download', 'project_third_party', 'project_license', 'loading', 'load_failed', 'nav_title']
+const licenseConsumers = [
+  'src/features/licenses/LicenseInfoWindow.vue', 'src/features/licenses/LicenseInfoLink.vue',
+  'src/app/components/Sidebar.vue', 'src/features/settings/views/SystemVoiceSettingsView.vue',
+  'src/features/conversation/ComposerVoiceSettings.vue',
+].map(read).join('\n')
+const usedLicenseKeys = [...licenseConsumers.matchAll(/\bt\(['"]gui\.licenses\.([^'"]+)['"]/g)].map((match) => match[1])
 for (const locale of ['ko', 'en', 'ja']) {
   const messages = (await import(`../src/app/i18n/${locale}.ts`)).default
-  for (const key of ['title', 'third_party', 'project_license']) {
-    assert(messages.nav.notices[key]?.trim(), `${locale}: missing legacy notice translation ${key}`)
+  assert(!messages.nav.notices, `${locale}: unused legacy notice translations remain`)
+  for (const key of ['default_unavailable', 'download_upstream']) {
+    assert(messages.voice.system[key]?.trim(), `${locale}: missing voice system translation ${key}`)
   }
-  for (const key of requiredLicenseKeys) {
-    assert(messages.licenses[key]?.trim(), `${locale}: missing license translation ${key}`)
+  for (const key of new Set([...requiredLicenseKeys, ...usedLicenseKeys])) {
+    assert(key.split('.').reduce((value, part) => value?.[part], messages.licenses)?.trim(), `${locale}: missing license translation ${key}`)
   }
   for (const service of catalog.services) {
     assert.equal(service.notice_keys.length, service.native_notices.length)
@@ -68,10 +75,13 @@ for (const locale of ['ko', 'en', 'ja']) {
   }
 }
 const sidebar = read('src/app/components/Sidebar.vue')
-const navigation = sidebar.match(/<nav\b[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? ''
-assert(navigation.includes('gui.licenses.nav_title'), 'license entry must remain in mobile navigation')
+assert(sidebar.includes("@click=\"openLicenseWindow(LICENSE_PROJECT_TAB)\"") && sidebar.includes('gui.licenses.nav_title'), 'sidebar must open project license tab')
+const mobile = sidebar.slice(sidebar.indexOf('@media (max-width: 760px)'))
+assert(mobile.includes('.gui-sidebar-bottom') && mobile.includes('.gui-notices-item'), 'license entry must remain in mobile navigation')
+assert(!/\.gui-sidebar-bottom\s*\{[^}]*display:\s*none/.test(mobile), 'mobile license entry is hidden')
+assert(!existsSync('src/features/conversation/voice/VoiceLicenseNotice.vue'), 'unused notice component remains')
 const taskbar = read('src/features/designer/shell/DesignerTaskbar.vue')
-assert(taskbar.includes(`v-if="modelessStyle === 'modern'" class="flowgate-menu-mark"`))
+assert(taskbar.includes(`v-if="modelessStyle === 'modern'" class="node-menu-mark"`))
 for (const name of ['wide1026', 'normal910', 'mid570', 'narrow392', 'min236']) {
   assert(!existsSync(`tests/visual/gitSettingsMockup/capture_${name}.png`))
 }
