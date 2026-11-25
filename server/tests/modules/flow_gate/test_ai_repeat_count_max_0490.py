@@ -37,6 +37,10 @@ from modules.flow_gate.settings.routers import system as system_router
 @pytest.fixture
 def fake_settings(monkeypatch):
     """An in-memory stand-in for the system_settings table, keyed like the real rows."""
+    from modules.flow_gate.db import user_ai_preferences
+    from modules.flow_gate.settings import ai_settings_service
+    monkeypatch.setattr(user_ai_preferences, "get", lambda user: {"title_provider": "auto", "repeat_count_max": None})
+    monkeypatch.setattr(ai_settings_service, "resolve_global", lambda: {"providers": []})
     store: dict[str, dict] = {}
 
     def _get(key):

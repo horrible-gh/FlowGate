@@ -411,11 +411,11 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             # ai_execution_policy_service.repeat_count_choices, not a literal set here.
             # "failure_restart_max_attempts" widens on purpose — the review said failure
             # restart shares the SAME [-1, 0, 1..max] shape as every other repeat count.
-            "review_count": set(ai_execution_policy_service.repeat_count_choices(allow_zero=False)),
+            "review_count": set(ai_execution_policy_service.repeat_count_choices(allow_zero=False, user_id=auth.get("issued_to"))),
             "review_criteria": {"document_type_default", "last_rejection_only"},
             "rework_timeout_sec": {1800, 3600, 7200},
             "failure_restart_max_attempts": set(
-                ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+                ai_execution_policy_service.repeat_count_choices(allow_zero=True, user_id=auth.get("issued_to"))
             ),
             "total_timeout_sec": {3600, 7200, 14400},
         }
@@ -449,7 +449,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             "msg": f"must be between {ai_invoke_service.STEP_TIMEOUT_MIN_SEC} and "
                    f"{ai_invoke_service.STEP_TIMEOUT_MAX_SEC} seconds",
         })
-    restart_max_attempts_choices = ai_invoke_service.restart_max_attempts_choices()
+    restart_max_attempts_choices = ai_invoke_service.restart_max_attempts_choices(auth.get("issued_to"))
     if (
         body.continuation_restart_max_attempts is not None
         and body.continuation_restart_max_attempts not in restart_max_attempts_choices
@@ -508,7 +508,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         try:
             continuation_review_count_overrides = (
                 workflow_decision_service.normalize_continuation_review_count_overrides(
-                    body.continuation_review_count_overrides
+                    body.continuation_review_count_overrides, user_id=auth.get("issued_to")
                 )
             )
         except ValueError as exc:
