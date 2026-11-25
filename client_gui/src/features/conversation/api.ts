@@ -49,6 +49,8 @@ import type {
   ConversationParticipant,
   ConversationScope,
   ConversationTurn,
+  MyAiPrefs,
+  MyAiPrefsUpdate,
   ProviderList,
   TurnAttachmentLink,
   TurnImage,
@@ -1018,6 +1020,18 @@ export async function issueChatMention(chatId: string): Promise<string> {
   )
   if (!data?.mention) throw clientCheckFailure()
   return data.mention
+}
+
+// ── My AI preferences (flowgate.v02test.0096 ④) ──────────────────────────────────────
+// The ⚙ AI tab's 최대 반복 횟수 / 제목 짓기 AI: the existing GET/PATCH /me/ai-preferences (v02test.0089), the same API
+// the AI 관리 screen uses — nothing new on the server.
+export async function fetchMyAiPrefs(): Promise<MyAiPrefs> {
+  return call(() => getRequest<MyAiPrefs>(`${API}/me/ai-preferences`))
+}
+
+/** Saves only the sent fields; answers the stored preferences (same shape as GET). */
+export async function saveMyAiPrefs(update: MyAiPrefsUpdate): Promise<MyAiPrefs> {
+  return call(() => patchRequest<MyAiPrefs>(`${API}/me/ai-preferences`, update))
 }
 
 

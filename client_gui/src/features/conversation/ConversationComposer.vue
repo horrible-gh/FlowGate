@@ -166,7 +166,10 @@
         :saving="savingSettings"
         :has-providers="hasProviders"
         :disabled="readOnly"
+        :providers="providers"
+        :selected-provider-id="selectedProviderId"
         @save="(patch, done) => emit('save-settings', patch, done)"
+        @select-provider="(id) => emit('select-provider', id)"
       />
       <ComposerToolsMenu
         :has-providers="hasProviders"
