@@ -371,7 +371,7 @@ function modelOption(model: VoiceModel): string {
 }
 
 const applyText = computed(() => {
-  if (selModelInfo.value?.defaultEligible === false) return selModelInfo.value.installed ? 'Default selection unavailable' : 'Download from upstream'
+  if (selModelInfo.value?.defaultEligible === false) return selModelInfo.value.installed ? t('gui.voice.system.default_unavailable') : t('gui.voice.system.download_upstream')
   if (!selModelInfo.value?.installed) return status.value?.defaultSelection ? t('gui.voice.system.install_switch') : t('gui.voice.system.install_enable')
   return t('gui.voice.system.make_default')
 })

@@ -40,6 +40,7 @@ export default {
     }
   },
   voice: {
+    "system": { "default_unavailable": "Default selection unavailable", "download_upstream": "Download from upstream" },
     "test_upload": "Upload a recording",
     "test_no_file": "No file selected",
     "unavailable_windows": "This version is available only on Windows x64"
@@ -320,7 +321,6 @@ export default {
     user_role_member: 'Member',
   },
   nav: {
-    notices: {"title": "Open-source notices", "third_party": "Third-party license texts", "project_license": "Project LICENSE"},
     aria: 'Main screens',
     dashboard: { title: 'Dashboard', sub: 'Back to home' },
     projects: { title: 'Projects', sub: 'Manage projects' },

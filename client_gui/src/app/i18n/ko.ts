@@ -43,6 +43,7 @@ export default {
     }
   },
   voice: {
+    "system": { "default_unavailable": "기본으로 쓸 수 없음", "download_upstream": "공식 배포처에서 받기" },
     "test_upload": "녹음 파일 올리기",
     "test_no_file": "선택한 파일 없음",
     "unavailable_windows": "이 버전은 Windows x64에서만 쓸 수 있습니다"
@@ -323,7 +324,6 @@ export default {
     user_role_member: '사용자',
   },
   nav: {
-    notices: {"title": "오픈소스 고지", "third_party": "제3자 라이선스 전문", "project_license": "프로젝트 LICENSE"},
     aria: '주요 화면',
     dashboard: { title: '대시보드', sub: '홈으로 돌아가기' },
     projects: { title: '프로젝트', sub: '프로젝트 관리' },
