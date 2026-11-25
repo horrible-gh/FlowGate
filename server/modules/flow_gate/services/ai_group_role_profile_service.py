@@ -28,11 +28,11 @@ def _types(locale: str = "ko") -> list[dict]:
     ]
 
 
-def review_count_choices() -> tuple[int, ...]:
+def review_count_choices(user_id=None) -> tuple[int, ...]:
     """The values a new group review count may take: the server policy's choices with 0 ("안 함"), without -1
     ("until it passes") — the same new-selection rule as the card Inspector's 검수 횟수 (SettingsTab ``optionsOf``).
     The finite tail follows the effective repeat-count maximum; no fixed list."""
-    return policy.repeat_count_choices(allow_zero=True, allow_unlimited=False)
+    return policy.repeat_count_choices(allow_zero=True, allow_unlimited=False, user_id=user_id)
 
 
 def card_review_count_choices() -> tuple[int, ...]:
@@ -42,12 +42,12 @@ def card_review_count_choices() -> tuple[int, ...]:
     return policy.repeat_count_choices(allow_zero=True)
 
 
-def options(ai_group_id: str, locale: str = "ko") -> dict:
+def options(ai_group_id: str, locale: str = "ko", user_id=None) -> dict:
     _group(ai_group_id)
     return {"types": _types(locale), "providers": [
         {"provider_id": pid, "provider_name": p["name"]}
         for pid, p in groups._available().items()],
-        "review_count_choices": list(review_count_choices()),
+        "review_count_choices": list(review_count_choices(user_id)),
         "review_count_default": 0}
 
 
@@ -126,7 +126,7 @@ def set_cell(ai_group_id: str, type_key: str, role: str, data: dict) -> dict:
     return profiles(ai_group_id)
 
 
-def set_review_count(ai_group_id: str, type_key: str, data: dict) -> dict:
+def set_review_count(ai_group_id: str, type_key: str, data: dict, user_id=None) -> dict:
     """One profile row's default review count. ``{"review_count": null}`` clears it (type row: inherit the common row,
     common row: the card default 0). A new value must be one of ``review_count_choices``; the value already stored is
     accepted again unchanged even when today's choices no longer offer it (it is never cleared by a read)."""
@@ -143,7 +143,7 @@ def set_review_count(ai_group_id: str, type_key: str, data: dict) -> dict:
             raise groups.AIGroupError("ai_role_profile_not_found", 404)
         stored = row.get("review_count")
         kept = stored is not None and value is not None and int(stored) == value
-        if value is not None and not kept and value not in review_count_choices():
+        if value is not None and not kept and value not in review_count_choices(user_id):
             raise groups.AIGroupError("ai_role_profile_review_count_invalid")
         repo.set_review_count(ai_group_id, type_key, value)
     return profiles(ai_group_id)

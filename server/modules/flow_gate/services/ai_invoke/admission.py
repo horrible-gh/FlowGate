@@ -979,7 +979,7 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
         # dialog already calls, so this is the SSOT for the client-side max/min instead of
         # a screen fetching /system/settings (system.settings.manage-gated, out of reach
         # for an ordinary document reader).
-        "execution_policy": ai_execution_policy_service.execution_policy_payload(),
+        "execution_policy": ai_execution_policy_service.execution_policy_payload(user_id),
     }
 
 

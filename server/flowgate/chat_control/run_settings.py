@@ -72,11 +72,11 @@ def values(flow_id: str, node_key: str, kind: Optional[str]) -> dict:
     return {name: shown[name]["value"] for name in applicable(kind)}
 
 
-def check(kind: Optional[str], requested: dict, field: str, choices: Optional[Iterable[int]] = None) -> dict:
+def check(kind: Optional[str], requested: dict, field: str, choices: Optional[Iterable[int]] = None, user_id=None) -> dict:
     """``{name: value to store or None}`` of ``requested`` for a card of ``kind``, else 422 naming every fault
     (``setting_not_applicable``, or the value check's reason with the field's ``choices``). Nothing is written."""
     own = applicable(kind)
-    repeat = tuple(legacy.repeat_choices() if choices is None else choices)
+    repeat = tuple(legacy.repeat_choices(user_id) if choices is None else choices)
     errors, checked = [], {}
     for name, value in requested.items():
         if name not in own:
@@ -107,7 +107,7 @@ def write(flow_id: str, node_key: str, kind: Optional[str], requested: dict, use
           field: str = "settings") -> tuple[list[str], dict, dict]:
     """Inside the caller's Flow guard: the checked values written (null removes the stored one). Returns ``(changed
     fields, before, after)`` with each requested field's ``{value, stored}``; the caller moves the version."""
-    choices = tuple(legacy.repeat_choices())
+    choices = tuple(legacy.repeat_choices(user_id))
     checked = check(kind, requested, field, choices)
     stored = repository.values(flow_id, node_key)
     before = {name: _state(kind, stored, name, choices) for name in checked}

@@ -158,9 +158,9 @@ def require_writable(flow_id: str) -> None:
     graph_service.require_writable(flow_id)
 
 
-def repeat_choices() -> tuple[int, ...]:
+def repeat_choices(user_id=None) -> tuple[int, ...]:
     """-1 (until it passes / restarts until done), 0 (none), 1..the configured max."""
-    return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    return ai_execution_policy_service.repeat_count_choices(allow_zero=True, user_id=user_id)
 
 
 def ai_exists(provider_id: str) -> bool:

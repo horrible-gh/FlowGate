@@ -415,7 +415,7 @@ def _review_item_seq_key(key) -> int:
     return value
 
 
-def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
+def normalize_continuation_review_count_overrides(raw, user_id=None) -> Optional[dict]:
     """normalization rules 1·2·4 for the per-step review COUNT map.
 
     Keys unify to strings and explicit 0 is preserved. Absence means "use the durable
@@ -432,7 +432,7 @@ def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
         raise ValueError(
             f"invalid_review_count_map:{raw!r} — must be an object keyed by item_seq")
     normalized: dict[str, int] = {}
-    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True, user_id=user_id)
     for key, value in raw.items():
         item_seq = _review_item_seq_key(key)
         if isinstance(value, bool) or not isinstance(value, int) or value not in choices:
