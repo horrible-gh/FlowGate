@@ -279,7 +279,7 @@ def change(caller: authz.Caller, node_key: Any, body: Any) -> dict:
         if group_id and not roles:
             raise _invalid([{"field": "from_group", "reason": "no_applicable_role", "ai_group_id": group_id}])
         if settings_req:
-            run_settings.check(kind, settings_req, "settings")     # every value judged before any role is written
+            run_settings.check(kind, settings_req, "settings", user_id=user_id)     # every value judged before any role is written
         before = _role_states(flow_id, node, kind, project_id) if roles else {}
         changed = [role for role, value in roles.items() if _write_role(flow_id, node_key, kind, role, value, user_id)]
         changed_settings, settings_before, settings_after = (

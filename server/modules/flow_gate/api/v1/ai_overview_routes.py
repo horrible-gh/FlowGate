@@ -58,7 +58,7 @@ def _groups(project_id: str) -> dict:
 @router.get("/projects/{project_id}/ai-execution-policy")
 def ai_execution_policy(project_id: str,
                         user=Depends(require_permission("project.settings.read", "project_id"))):
-    return ai_execution_policy_service.execution_policy_payload()
+    return ai_execution_policy_service.execution_policy_payload(user["user_id"])
 
 
 @router.get("/projects/{project_id}/ai-overview")

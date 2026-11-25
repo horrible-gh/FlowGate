@@ -417,3 +417,25 @@ def put_project_ai_doctype_providers(
         raise HTTPException(status_code=404, detail=str(exc))
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
+
+
+class UserAiPreferencesPatch(BaseModel):
+    # Keep raw JSON types: invalid values use the agreed domain error codes.
+    title_provider: object = None
+    repeat_count_max: object = None
+
+
+@router.get("/me/ai-preferences")
+def get_my_ai_preferences(user=Depends(get_current_user)):
+    from modules.flow_gate.settings import ai_preferences_service
+    return ai_preferences_service.payload(user["user_id"])
+
+
+@router.patch("/me/ai-preferences")
+def patch_my_ai_preferences(body: UserAiPreferencesPatch, user=Depends(get_current_user)):
+    from fastapi.responses import JSONResponse
+    from modules.flow_gate.settings import ai_preferences_service
+    try:
+        return ai_preferences_service.patch(user["user_id"], body.model_dump(exclude_unset=True))
+    except ai_preferences_service.InvalidPreference as exc:
+        return JSONResponse(status_code=422, content=exc.detail)

@@ -137,7 +137,7 @@ def _payload(flow_id: str, node: dict, stored: dict, viewer=None, project_id=Non
                "flow_id": flow_id, "node_key": node["node_key"], "card_kind": kind,
                "locked": locked,
                "settings_version": repository.settings_version(flow_id, node["node_key"]),
-               "fields": fields.view(kind, stored, legacy.repeat_choices())}
+               "fields": fields.view(kind, stored, legacy.repeat_choices(viewer))}
     if kind == fields.CHECK:
         payload["lock_reason"] = reason
         payload["legacy"] = fields.legacy_view(kind, stored)      # history only: usage, the old merge target branch
@@ -235,7 +235,7 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             changed = repository.remove(flow_id, node_key, name)
         else:
             try:
-                checked = fields.check_value(field, value, repeat_choices=legacy.repeat_choices(),
+                checked = fields.check_value(field, value, repeat_choices=legacy.repeat_choices(user_id),
                                              team_exists=legacy.team_exists, ai_exists=legacy.ai_exists)
             except fields.InvalidValue as exc:
                 raise legacy.GraphApiError(422, "invalid_request", {"errors": [

@@ -180,7 +180,7 @@ def _kind(doc_type: str) -> Optional[str]:
     return fields.card_kind("document", doc_type)
 
 
-def _precheck_settings(cards: list[dict]) -> None:
+def _precheck_settings(cards: list[dict], user_id=None) -> None:
     """every chosen run setting fits its card's kind and choices, before anything is saved."""
     if not any(card.get("settings") for card in cards):
         return
@@ -189,7 +189,7 @@ def _precheck_settings(cards: list[dict]) -> None:
     for i, card in enumerate(cards):
         if card.get("settings"):
             try:
-                run_settings.check(_kind(card["doc_type"]), card["settings"], f"cards[{i}].settings")
+                run_settings.check(_kind(card["doc_type"]), card["settings"], f"cards[{i}].settings", user_id=user_id)
             except GraphApiError as exc:
                 errors += (exc.params or {}).get("errors") or []
     if errors:
@@ -228,7 +228,7 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     cards, after, want_gate = parse_place(body, locale)
     links = topology.parse(body, len(cards))
     placement_roles.precheck(cards, user_id)
-    _precheck_settings(cards)
+    _precheck_settings(cards, user_id)
     # the Flow's start card first, whatever the draft already holds (the one rule of
     # ``root_start``, also run when the root is registered); no edge is made to or from it here.
     # Explicit topology must not create a root before a rejected request.

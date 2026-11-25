@@ -277,7 +277,7 @@ def test_a_settings_refusal_inside_the_guard_rolls_the_whole_placement_back(env,
     _place([{"label": "first"}])
     before = definition_store.draft(FA)
     kept = card_role_store.placed_keys(FA, CH1)
-    monkeypatch.setattr(service, "_precheck_settings", lambda cards: None)          # the choices changed meanwhile
+    monkeypatch.setattr(service, "_precheck_settings", lambda cards, user_id=None: None)          # the choices changed meanwhile
     real = run_settings.check
     monkeypatch.setattr(run_settings, "check", lambda kind, req, field, choices=None: real(kind, req, field, (0,)))
     err = _refused(lambda: _place([{"label": "a", "roles": {"execution": EXEC_CARD}, "settings": {"review_count": 2}}]),
@@ -328,3 +328,23 @@ def test_tools_and_cli_mention_offer_the_run_settings(monkeypatch):
                  "Decide each card's review count yourself", "review count with a short reason"):
         assert word in text, word
     assert "review count" in tools.PROMPT_HINT and "settings" in tools.PLACE_DESCRIPTION
+
+
+def test_personal_repeat_ceiling_controls_chat_choices_and_writes_without_demoting_stored(env, decided, guard):
+    from modules.flow_gate.db import user_ai_preferences
+    from flowgate.chat_control import card_roles
+
+    mine = _place([{"label": "personal", "settings": {"review_count": 3, "restart": 3}}])["cards"][0]["node_key"]
+    user_ai_preferences.patch("u_kim", {"repeat_count_max": 1})
+    shown = card_roles.view(_caller(), mine)
+    for name in ("review_count", "restart"):
+        assert shown["settings"][name]["choices"] == [-1, 0, 1]
+        assert shown["settings"][name]["value"] == 3
+    before = _snapshot(mine)
+    _refused(lambda: card_roles.change(_caller(), mine, {"settings": {"review_count": 2},
+                                                       "expected_settings_version": before[2]}), 422, "invalid_request")
+    assert _snapshot(mine) == before
+    result = card_roles.change(_caller(), mine, {"settings": {"review_count": 1, "restart": 1},
+                                                "expected_settings_version": before[2]})
+    assert result["settings"]["review_count"]["value"] == 1
+    _refused(lambda: _place([{"label": "invalid", "settings": {"review_count": 2}}]), 422, "invalid_request")

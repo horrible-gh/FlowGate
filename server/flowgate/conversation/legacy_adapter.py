@@ -330,7 +330,7 @@ def complete_prompt(project_id: str, provider_id: str, prompt: str, *, timeout: 
 
 def complete_naming(project_id, executor_id, prompt, user_id, *, timeout, max_tokens):
     from modules.flow_gate.settings import ai_title_provider, ai_settings_service
-    provider_id = ai_title_provider.selected(executor_id)
+    provider_id = ai_title_provider.selected(executor_id, user_id=user_id)
     if provider_id is None:
         return None, "title_disabled"
     provider = ai_settings_service.selectable_provider(project_id, provider_id, user_id)
