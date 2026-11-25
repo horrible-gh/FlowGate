@@ -19,15 +19,20 @@
        bubble with a blue dot (orange: failed). The parent clears those marks when the tab is activated; a tab hidden by
        the overflow that holds one puts a dot on the list button. flowgate.v02test.0066 #36-1: a tab with a merge conflict
        shows the conflict glyph (병합 충돌), turning inside a ring while an AI resolves it (AI 해결 중 · n/m); a hidden tab
-       in either state puts the dot on the list button too, and the list shows the same mark. -->
+       in either state puts the dot on the list button too, and the list shows the same mark.
+       flowgate.v02test.0088: a double click on a tab (its button, not ×) switches the whole strip to 번호만 보기 and back
+       (one state for every tab, kept in this browser — flowTabCompact). Then an inactive tab shows its marks and its
+       number only (a Flow without a number: the first few letters of its name), the active tab keeps its name, and × shows
+       only on the active and the hovered tab. The full name stays in the tooltip and in the tab's accessible name. -->
   <div ref="barRef" class="flow-tab-bar" data-test="designer-flow-tab-bar">
   <div
     ref="stripRef"
     class="flow-tab-strip"
-    :class="{ 'is-reordering': drag.active }"
+    :class="{ 'is-reordering': drag.active, 'is-compact': compact }"
     role="tablist"
     :aria-label="t('gui.designer.center.tabs_label')"
     data-test="designer-flow-tabs"
+    :data-compact="compact ? 'true' : undefined"
     @contextmenu="contextMenu?.tab($event, null)"
     @scroll.passive="updateOverflow"
     @wheel="onWheel"
@@ -39,6 +44,7 @@
       class="flow-tab"
       :class="{
         'is-active': tab.flowId === activeFlowId,
+        'is-compact': isCompactTab(tab.flowId),
         'is-archived': isArchived(tab.flowId),
         'is-dragging': drag.active && drag.flowId === tab.flowId,
         'is-drop-before': dropMark?.flowId === tab.flowId && dropMark.side === 'before',
@@ -60,6 +66,7 @@
         :title="tabTitle(tab)"
         data-test="designer-flow-tab-button"
         @click="onClick(tab.flowId)"
+        @dblclick="onDblClick"
         @keydown="onKeydown($event, tab.flowId)"
       >
         <span
@@ -109,7 +116,11 @@
           :aria-label="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)" :title="t(`gui.designer.center.tab_chat_end.${chatEndOf(tab.flowId)}`)"
           data-test="designer-flow-tab-chat-end" :data-chat-end="chatEndOf(tab.flowId)"><ChatBubbleIcon :size="14" /></span><!--
           flowgate.v02test.0077: the Flow number before the name, dim (`F77 ID`); none for an id without a group number. -->
-        <span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-no">{{ flowLabel(tab.flowId) }}</span>{{ tab.name }}
+        <span v-if="flowLabel(tab.flowId)" class="flow-tab-no" data-test="designer-flow-tab-no">{{ flowLabel(tab.flowId) }}</span><template
+          v-if="!isCompactTab(tab.flowId)">{{ tab.name }}</template><template v-else><!--
+          flowgate.v02test.0088 번호만 보기: no number → the name's first letters on screen; the full name stays for screen readers. -->
+          <span v-if="!flowLabel(tab.flowId)" class="flow-tab-short" aria-hidden="true" data-test="designer-flow-tab-short">{{ shortTabName(tab.name) }}</span><span
+            class="flow-tab-name-hidden" data-test="designer-flow-tab-name-hidden">{{ tab.name }}</span></template>
       </button>
       <IconButton
         class="flow-tab-close"
@@ -215,6 +226,7 @@ import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 import type { FlowTabConflict } from './flowTabConflicts'
 import { flowLabel } from './graph/cardIds'
+import { readFlowTabCompact, shortTabName, writeFlowTabCompact } from './flowTabCompact'
 import { gitTabActivityLabel, type GitTabActivity } from './gitTabActivity'
 import { wordsFor as terminalWordsFor } from '../flowTerminal/words'
 
@@ -532,6 +544,24 @@ function onClick(flowId: string) {
   emit('activate', flowId)
 }
 
+/* ─────────── flowgate.v02test.0088: 번호만 보기 (double click on a tab, the whole strip, kept in this browser) ─────────── */
+
+const compact = ref(readFlowTabCompact())
+
+/** A tab drawn short: every tab but the active one while the strip is in 번호만 보기. */
+function isCompactTab(flowId: string): boolean {
+  return compact.value && flowId !== props.activeFlowId
+}
+
+/** The double click's first click has already activated the tab (onClick); this only flips the strip's mode. The close
+ *  button sits beside the tab button, so a double click on × never gets here. A drag's release is not a click. */
+function onDblClick() {
+  if (suppressClick || drag.active) return
+  compact.value = !compact.value
+  writeFlowTabCompact(compact.value)
+  revealTab(props.activeFlowId)
+}
+
 // A tab closed while it is being dragged ends the drag.
 watch(
   () => props.tabs.map((tab) => tab.flowId).join('\n'),
@@ -602,7 +632,7 @@ onMounted(() => {
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
     JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
-    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), JSON.stringify(props.gitActivity ?? {}), props.activeFlowId],
+    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), JSON.stringify(props.gitActivity ?? {}), props.activeFlowId, compact.value],
   () => nextTick(updateOverflow),
 )
 
@@ -879,13 +909,36 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-muted);
 }
 
+/* flowgate.v02test.0088 F88-3: a short line between tabs (half the tab's height). It is the tab's own left-edge
+   background, not a pseudo element, so the drop line (::before / ::after) never shares an element with it. */
+.flow-tab + .flow-tab {
+  background-image: linear-gradient(var(--fg2-line-strong), var(--fg2-line-strong));
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: 1px 16px;
+}
+
 .flow-tab:hover {
+  background-color: rgba(154, 181, 210, 0.06);
   color: var(--fg2-text);
+}
+
+/* no line on either side of the active or the hovered tab, none between number chips (the chip is the edge), and none
+   where a drop line shows (it would sit right beside it). */
+.flow-tab:hover,
+.flow-tab:hover + .flow-tab,
+.flow-tab.is-active + .flow-tab,
+.flow-tab.is-compact,
+.flow-tab.is-compact + .flow-tab,
+.flow-tab.is-drop-before,
+.flow-tab.is-drop-after + .flow-tab {
+  background-image: none;
 }
 
 .flow-tab.is-active {
   border-bottom-color: var(--fg2-blue);
-  background: rgba(75, 163, 255, 0.08);
+  border-radius: 6px 6px 0 0;
+  background: rgba(75, 163, 255, 0.12);
   color: var(--fg2-text);
 }
 
@@ -1120,5 +1173,76 @@ function pickFromList(flowId: string, close: () => void) {
 .flow-tab-close {
   width: 22px;
   height: 22px;
+}
+
+/* flowgate.v02test.0088 — 번호만 보기: an inactive tab is its marks and its number (about 40–50px); × only while hovered
+   (or holding focus), so it takes no room otherwise. The active tab keeps its name and ×. */
+.flow-tab-button {
+  user-select: none;
+}
+
+.flow-tab.is-compact {
+  padding: 0 3px;
+}
+
+.flow-tab.is-compact .flow-tab-button {
+  padding: 0 2px;
+}
+
+/* F88-3: an inactive tab's number is a bordered chip — same width per digit count, centred, bright (not dimmed). */
+.flow-tab.is-compact .flow-tab-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 20px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid rgba(154, 181, 210, 0.16);
+  border-radius: 5px;
+  background: rgba(154, 181, 210, 0.07);
+  color: #c6d5e6;
+  font: 600 11px/1 system-ui, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  vertical-align: middle;
+}
+
+/* hovered: the chip turns blue instead of the tab taking a background. */
+.flow-tab.is-compact:hover {
+  background-color: transparent;
+}
+
+.flow-tab.is-compact:hover .flow-tab-no {
+  border-color: rgba(75, 163, 255, 0.45);
+  background: rgba(75, 163, 255, 0.18);
+  color: var(--fg2-text);
+}
+
+.flow-tab.is-compact .flow-tab-archive,
+.flow-tab.is-compact .flow-tab-run,
+.flow-tab.is-compact .flow-tab-end,
+.flow-tab.is-compact .flow-tab-conflict,
+.flow-tab.is-compact .flow-tab-git,
+.flow-tab.is-compact .flow-tab-terminal,
+.flow-tab.is-compact .flow-tab-chat {
+  margin-right: 4px;
+}
+
+.flow-tab.is-compact:not(:hover):not(:focus-within) .flow-tab-close {
+  display: none;
+}
+
+/* the name a compact tab does not show stays in its accessible name (visually hidden, not display:none). */
+.flow-tab-name-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>
