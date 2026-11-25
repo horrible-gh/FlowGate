@@ -19,9 +19,17 @@
 //                    result: running | resolved | conflicts_left | check_failed | ai_error | timeout | no_other_ai,
 //                    reason, reason_summary?, started_at, ended_at }],
 //       unresolved: [{ path, hunks: [{ start_line, end_line }] }], count? }
-//     reason_summary (optional, newer servers): a one-line, person-readable reason; `reason` may then stay the raw text
-//       (a check failure's JSON verdict). count (optional): the conflicted file count (e.g. while skipped_paused).
-//   While it runs the state stays `catching_up`; after the last failure (exhausted) it is `needs_choice` as before.
+//     attempts[].result = ai_error for a failed AI execution (including a nonzero exit code); reason_summary is
+//       a one-line display string (at most 1000 characters), also used for check_failed. reason keeps the diagnostic
+//       text (at most 2000 characters); a check failure may carry a JSON verdict. Running / older attempts may omit
+//       reason_summary. The decoder maps it to reasonSummary; the window prefers it and can unfold reason.
+//     count = remaining conflicted files, a nonnegative integer in every state, including skipped_paused; the
+//       decoder maps a positive count to fileCount, else null. Older servers may omit count.
+//     exhausted unresolved[].hunks uses 1-based inclusive marker line ranges from the conflict session files;
+//       an unreadable file or one without markers has []. The decoder maps start_line/end_line to startLine/endLine.
+//   While automatic resolution runs the card state is `catching_up`; exhausted open conflicts are `needs_choice`
+//     when no resolver is active. The Flow run status is separate: after resume, running automatic work wakes
+//     idle(merge_conflict) to running; paused / stopped runs are not woken by settlement alone.
 //
 // Refusals are the Graph envelope `{ ok: false, error: { code, message, params } }` (cardMergeErrorOf): 409
 // merge_state_changed (read the state again) / group_busy / conflict_markers_remain / git_busy, 422 invalid_request /
