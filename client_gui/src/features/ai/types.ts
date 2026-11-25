@@ -28,6 +28,46 @@ export interface ProviderItem {
   target_agent_id?: string | null
 }
 
+// ── CLI model catalog and composition (GET /ai-settings/cli-model-catalog,
+// POST /ai-settings/cli-preset-compose, POST /ai-settings/cli-preset-parse) ──────
+export interface CliModelCatalogEntry {
+  versions: string[]
+  models: string[]
+  efforts: string[]
+  defaults: { version: string; model: string; effort: string; executable: string }
+}
+
+export type CliModelCatalog = Record<string, CliModelCatalogEntry>
+
+export interface CliModelSelection {
+  kind: string
+  version: string
+  model: string
+  effort: string
+  executable: string
+}
+
+export interface CliPresetComposeInput {
+  kind: string
+  version?: string
+  model?: string
+  effort?: string
+  executable?: string
+  timeout_seconds?: number
+}
+
+export interface CliPresetComposeResult {
+  cli_command: string
+  name: string
+  selection: CliModelSelection
+}
+
+// kind is "custom" with selection null when the command is not exactly a composed one.
+export interface CliPresetParseResult {
+  kind: string
+  selection: CliModelSelection | null
+}
+
 // ── Owned AI lists (system settings > "시스템 AI", personal settings > "내 AI") ──────
 
 export interface SystemAiSettings {
