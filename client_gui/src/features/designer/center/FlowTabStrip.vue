@@ -20,19 +20,19 @@
        the overflow that holds one puts a dot on the list button. flowgate.v02test.0066 #36-1: a tab with a merge conflict
        shows the conflict glyph (병합 충돌), turning inside a ring while an AI resolves it (AI 해결 중 · n/m); a hidden tab
        in either state puts the dot on the list button too, and the list shows the same mark.
-       flowgate.v02test.0088: a double click on a tab (its button, not ×) switches the whole strip to 번호만 보기 and back
-       (one state for every tab, kept in this browser — flowTabCompact). Then an inactive tab shows its marks and its
-       number only (a Flow without a number: the first few letters of its name), the active tab keeps its name, and × shows
-       only on the active and the hovered tab. The full name stays in the tooltip and in the tab's accessible name. -->
+       flowgate.v02test.0088: a double click on a tab (its button, not ×) folds that tab alone to 번호만 보기 and back;
+       the other tabs do not change (folded tabs are kept per flowId in this browser — flowTabCompact). A folded tab shows
+       its marks and its number only (a Flow without a number: the first few letters of its name), also while it is the
+       active tab (the active underline tells it apart), and × shows on it only while it is active or hovered. The full
+       name stays in the tooltip and in the tab's accessible name. -->
   <div ref="barRef" class="flow-tab-bar" data-test="designer-flow-tab-bar">
   <div
     ref="stripRef"
     class="flow-tab-strip"
-    :class="{ 'is-reordering': drag.active, 'is-compact': compact }"
+    :class="{ 'is-reordering': drag.active }"
     role="tablist"
     :aria-label="t('gui.designer.center.tabs_label')"
     data-test="designer-flow-tabs"
-    :data-compact="compact ? 'true' : undefined"
     @contextmenu="contextMenu?.tab($event, null)"
     @scroll.passive="updateOverflow"
     @wheel="onWheel"
@@ -66,7 +66,7 @@
         :title="tabTitle(tab)"
         data-test="designer-flow-tab-button"
         @click="onClick(tab.flowId)"
-        @dblclick="onDblClick"
+        @dblclick="onDblClick(tab.flowId)"
         @keydown="onKeydown($event, tab.flowId)"
       >
         <span
@@ -226,7 +226,7 @@ import { HEADER_GLYPHS } from './canvas/flowNodeKinds'
 import type { FlowTabChatEnd, FlowTabRunEnd, FlowTabRunEndTone } from './flowTabMarks'
 import type { FlowTabConflict } from './flowTabConflicts'
 import { flowLabel } from './graph/cardIds'
-import { readFlowTabCompact, shortTabName, writeFlowTabCompact } from './flowTabCompact'
+import { readCompactFlowIds, shortTabName, writeCompactFlowIds } from './flowTabCompact'
 import { gitTabActivityLabel, type GitTabActivity } from './gitTabActivity'
 import { wordsFor as terminalWordsFor } from '../flowTerminal/words'
 
@@ -544,22 +544,25 @@ function onClick(flowId: string) {
   emit('activate', flowId)
 }
 
-/* ─────────── flowgate.v02test.0088: 번호만 보기 (double click on a tab, the whole strip, kept in this browser) ─────────── */
+/* ─────────── flowgate.v02test.0088: 번호만 보기 per tab (double click folds that tab only, kept per flowId in this browser) ─────────── */
 
-const compact = ref(readFlowTabCompact())
+/** The flowIds of the tabs folded to their number. A flowId of a closed tab may stay: it folds again when reopened. */
+const compactIds = ref<string[]>(readCompactFlowIds())
 
-/** A tab drawn short: every tab but the active one while the strip is in 번호만 보기. */
+/** A tab drawn short: one the person folded with a double click — active or not. */
 function isCompactTab(flowId: string): boolean {
-  return compact.value && flowId !== props.activeFlowId
+  return compactIds.value.includes(flowId)
 }
 
-/** The double click's first click has already activated the tab (onClick); this only flips the strip's mode. The close
+/** The double click's first click has already activated the tab (onClick); this folds / unfolds that tab only. The close
  *  button sits beside the tab button, so a double click on × never gets here. A drag's release is not a click. */
-function onDblClick() {
+function onDblClick(flowId: string) {
   if (suppressClick || drag.active) return
-  compact.value = !compact.value
-  writeFlowTabCompact(compact.value)
-  revealTab(props.activeFlowId)
+  compactIds.value = compactIds.value.includes(flowId)
+    ? compactIds.value.filter((id) => id !== flowId)
+    : [...compactIds.value, flowId]
+  writeCompactFlowIds(compactIds.value)
+  revealTab(flowId)
 }
 
 // A tab closed while it is being dragged ends the drag.
@@ -632,7 +635,7 @@ onMounted(() => {
 watch(
   () => [props.tabs.map((tab) => `${tab.flowId}\t${tab.name}`).join('\n'), JSON.stringify(props.runStates ?? {}),
     JSON.stringify(props.chatStates ?? {}), JSON.stringify(props.archived ?? {}), JSON.stringify(props.runEnds ?? {}),
-    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), JSON.stringify(props.gitActivity ?? {}), props.activeFlowId, compact.value],
+    JSON.stringify(props.chatEnds ?? {}), JSON.stringify(props.conflicts ?? {}), JSON.stringify(props.terminalStates ?? {}), JSON.stringify(props.gitActivity ?? {}), props.activeFlowId, compactIds.value.join('\n')],
   () => nextTick(updateOverflow),
 )
 
@@ -1229,7 +1232,8 @@ function pickFromList(flowId: string, close: () => void) {
   margin-right: 4px;
 }
 
-.flow-tab.is-compact:not(:hover):not(:focus-within) .flow-tab-close {
+/* a folded tab keeps × while it is the active tab, like any active tab. */
+.flow-tab.is-compact:not(.is-active):not(:hover):not(:focus-within) .flow-tab-close {
   display: none;
 }
 
@@ -1246,3 +1250,4 @@ function pickFromList(flowId: string, close: () => void) {
   border: 0;
 }
 </style>
+
