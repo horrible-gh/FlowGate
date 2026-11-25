@@ -360,6 +360,10 @@ def _settle_in_process(svc) -> None:
             _keep_leases(run)
             continue
         run["remote_job_active"] = False
+        if run.get("title_only"):
+            with _svc()._runs_lock:
+                _svc()._runs.pop(run_id, None)
+            continue
         if run.get("lease_cleanup_pending") and run.get("status") != "finished":
             # The worker already reached its terminal boundary and parked the leases.
             terminal.cleanup(run, reason="remote_job_settled")

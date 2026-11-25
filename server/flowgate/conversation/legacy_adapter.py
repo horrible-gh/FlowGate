@@ -321,6 +321,20 @@ def complete_prompt(project_id: str, provider_id: str, prompt: str, *, timeout: 
     return outcome.text, None
 
 
+def complete_naming(project_id, executor_id, prompt, user_id, *, timeout, max_tokens):
+    from modules.flow_gate.settings import ai_title_provider, ai_settings_service
+    provider_id = ai_title_provider.selected(executor_id)
+    if provider_id is None:
+        return None, "title_disabled"
+    provider = ai_settings_service.selectable_provider(project_id, provider_id, user_id)
+    if provider is None:
+        return None, "provider_unavailable"
+    if provider.get("exec_type") == "cli" and provider.get("exec_location") == "remote":
+        from . import title_remote
+        return title_remote.complete(project_id, provider, prompt, user_id, timeout)
+    return complete_prompt(project_id, provider_id, prompt, timeout=timeout, max_tokens=max_tokens)
+
+
 def naming_remote_provider(project_id: str, provider_id: str) -> bool:
     """Check effective provider metadata without invoking the connection-test path."""
     from modules.flow_gate.services import ai_connection_test_service as connection
