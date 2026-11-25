@@ -1,6 +1,6 @@
 <template>
   <ModelessShell kind-color="#f0a23a" v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
-    :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 660)"
+    :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 700)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <!-- the kind, then — muted, as the write window names its card — which case: its id and title once. -->
     <template #header><span class="heading" data-test="case-heading"><span class="heading-kind">{{ t(k('name')) }}</span><span class="heading-case" :title="caseLabel" data-test="case-window-id">{{ caseLabel }}</span></span></template>
@@ -8,15 +8,34 @@
       <InspectorPaneState v-if="card.test.status.value === 'error'" state="error" retryable @retry="card.reload()" />
       <template v-if="card.writing.value === 'rewrite-case' && card.writingCaseId.value === state.caseId"><p class="placeholder" data-test="case-writing">{{ t(k('writing')) }}</p></template>
       <template v-else>
+        <!-- F81 case fields, in this order: title · content · procedure · expected · check · command · result · evidence · remarks. -->
         <label><span>{{ t(k('title')) }}</span><Input v-model="draft.title" :disabled="locked" data-test="case-title" /></label>
-        <label><span>{{ t(k('requirement')) }}</span><Select v-model="requirementChoice" :options="requirementOptions" :disabled="locked" data-test="case-requirement-select" /></label>
-        <label v-if="requirementChoice === '__custom'"><span>{{ t(k('custom')) }}</span><Input v-model="draft.requirement" :disabled="locked" data-test="case-requirement" /></label>
-        <label v-for="field in textFields" :key="field"><span>{{ t(k(field)) }}</span><Textarea v-model="draft[field]" :rows="field === 'precondition' ? 2 : 4" :disabled="locked" :data-test="`case-${field}`" /></label>
-        <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.execution_mode" :options="modeOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.execution_mode = $event" /></div></div>
-        <!-- no language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
-        <label v-if="draft.execution_mode === 'automated'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
+        <label><span>{{ t(k('content')) }}</span><Textarea v-model="draft.content" :rows="3" :placeholder="t(k('content_placeholder'))" :disabled="locked" data-test="case-content" /></label>
+        <label v-for="field in textFields" :key="field"><span>{{ t(k(field)) }}</span><Textarea v-model="draft[field]" :rows="4" :disabled="locked" :data-test="`case-${field}`" /></label>
+        <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.check" :options="checkOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.check = $event === 'code' ? 'code' : 'manual'" /></div></div>
+        <!-- shown for a code case only. No language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
+        <label v-if="draft.check === 'code'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
           <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" /></span></label>
-        <div class="field" role="group" :aria-label="t(k('required'))"><span>{{ t(k('required')) }}</span><div class="control"><InspectorSegment :model-value="draft.required ? 'stop' : 'ignore'" :options="requiredOptions" :disabled="locked" :aria-label="t(k('required'))" data-test="case-required" @update:model-value="draft.required = $event === 'stop'" /></div></div>
+        <!-- The result is on the window from the start: four buttons, anyone may press one, and who did is shown. -->
+        <div class="field" role="group" :aria-label="t(k('result'))"><span>{{ t(k('result')) }}</span><div class="control">
+          <InspectorSegment :model-value="skipping ? 'skip' : shownResult" :options="resultOptions" :disabled="!resultEnabled" :aria-label="t(k('result'))" data-test="case-result" @update:model-value="pickResult" />
+          <span v-if="resultBy" class="hint" data-test="case-result-by">{{ resultBy }}</span>
+          <span v-if="!skipping && row?.result === 'skip' && row.skipReason" class="hint" data-test="case-skip-shown">{{ t(k('skip_reason')) }}: {{ row.skipReason }}</span>
+          <span v-if="skipping" class="skip"><Input v-model="skipReason" :placeholder="t(k('skip_reason_placeholder'))" data-test="case-skip-reason" @keydown.enter.prevent="recordSkip" />
+            <Button size="sm" variant="primary" :disabled="!skipReason.trim() || !resultEnabled" data-test="case-skip-submit" @click="recordSkip">{{ t(k('record')) }}</Button>
+            <Button size="sm" variant="secondary" data-test="case-skip-cancel" @click="skipping = false">{{ t(k('cancel')) }}</Button></span>
+          <span v-if="resultReason" class="hint" data-test="case-result-reason">{{ resultReason }}</span>
+          <InspectorReason v-if="resultFailure" tone="danger" :text="resultFailure" data-test="case-result-failure" />
+        </div></div>
+        <!-- Evidence: three boxes of files. The boxes, the add / drop place and the list are here; uploading is connected by the evidence work. -->
+        <div v-for="kind in evidenceKinds" :key="kind" class="field" role="group" :aria-label="t(k(`evidence_${kind}`))"><span>{{ t(k(`evidence_${kind}`)) }}</span><div class="control evidence" :data-test="`case-evidence-${kind}`">
+          <span class="hint" data-test="case-evidence-count">{{ evidenceOf(kind) ? t(k('evidence_files'), { n: evidenceOf(kind) }) : t(k('evidence_none')) }}</span>
+          <button type="button" class="drop" disabled :title="t('gui.inspector.testSpec.guard.unconnected')" data-test="case-evidence-add">{{ t(k('evidence_add')) }}</button>
+        </div></div>
+        <!-- Remarks: one line only. It opens the modeless remark window beside this one. -->
+        <div class="field" role="group" :aria-label="t(k('remarks'))"><span>{{ t(k('remarks')) }}</span><div class="control">
+          <button type="button" class="remark-line" :class="{ 'remark-line--none': !remarkTally.open && !remarkTally.resolved }" :disabled="adding" data-test="case-remarks" @click="openRemarks">{{ remarkLabel }}</button>
+        </div></div>
       </template>
       <template v-if="conflict"><InspectorReason tone="danger" :text="t(k('conflict'))" data-test="case-conflict" /><Button size="sm" variant="secondary" data-test="case-reload" @click="resetDraft">{{ t(k('reload')) }}</Button></template>
       <InspectorReason v-if="!conflict && saveReason" :text="saveReason" />
@@ -41,8 +60,8 @@ import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import Textarea from '@/components/ui/Textarea.vue'
-import Select from '@/components/ui/Select.vue'
-import { testSpecCasePayload } from '@/features/document'
+import { testSpecCasePayload, type TestCaseResult, type TestEvidenceKind } from '@/features/document'
+import { documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
@@ -71,7 +90,7 @@ watch(() => [card.value?.test.status.value, card.value?.view.value, card.value?.
   close()
   notifySaved(t(k('missing'), { id }), 'info')
 }, { immediate: true, flush: 'sync' })
-const textFields = ['precondition', 'procedure', 'expected'] as const
+const textFields = ['procedure', 'expected'] as const
 /** The draft's pin must be the very snapshot the draft was shown from (§2.15.3); a pin of another snapshot is a conflict, never a rebase. */
 const pinStale = computed(() => !!draft.value?.pin && draft.value.snapshot !== scenarioSnapshot(draft.value.pin.cases, draft.value.pin.title))
 const pinReady = computed(() => !!draft.value?.pin && !pinStale.value)
@@ -87,9 +106,8 @@ watch(draft, (d) => { void ensurePin(d) }, { immediate: true })
 // A failed pin read is tried again when the window is opened again (a pin that exists is never replaced).
 watch(() => state.value?.open, (open) => { if (open && draft.value?.pinState === 'failed') { draft.value.pinState = 'idle'; void ensurePin(draft.value) } })
 const conflict = computed(() => pinStale.value || !!draft.value && !!card.value && card.value.test.status.value === 'ready' && card.value.view.value?.details?.complete === true && (draft.value.docId !== card.value.view.value?.tsDocId || draft.value.snapshot !== scenarioSnapshot(card.value.cases.value, card.value.view.value?.details?.title ?? null)))
-// The server's required case fields this window shows; category and check points are hidden and defaulted.
-const valid = computed(() => pinReady.value && !!draft.value && (['title', 'requirement', 'procedure', 'expected'] as const).every(field => !!draft.value![field].trim()))
-/** Preserve each case’s selected failure policy when saving or deleting. */
+// What a case must carry (server REQUIRED_CASE_FIELDS): its title, procedure and expected result; the check is always set.
+const valid = computed(() => pinReady.value && !!draft.value && (['title', 'procedure', 'expected'] as const).every(field => !!draft.value![field].trim()))
 function builderFor(deleting: boolean, d: CaseDraft) {
   // Derived from the pin's own cases (the same v2 response as the base revision), never from the separately read v1 view.
   return (cases: Parameters<typeof mergeCase>[0]) => deleting ? cases.filter(item => item.caseId !== d.original.case_id).map(testSpecCasePayload) : adding.value ? addedCase(cases, d) : mergeCase(cases, d)
@@ -104,26 +122,60 @@ const refusalText = computed(() => refusal.value ? [t(`gui.inspector.testSpec.${
 const commandCode = ref<string | null>(null)
 const commandText = computed(() => t(`gui.inspector.testSpec.reason.${['command_missing', 'command_invalid'].includes(commandCode.value ?? '') ? commandCode.value : 'automation_unbound'}`))
 const otherErrors = computed(() => refusal.value?.fieldErrors.filter(error => error.field !== 'run_command') ?? [])
-watch(() => [draft.value?.run_command, draft.value?.execution_mode, state.value?.caseId], () => { commandCode.value = null })
+watch(() => [draft.value?.run_command, draft.value?.check, state.value?.caseId], () => { commandCode.value = null })
 /** An unchanged command keeps the server's judgment of it; a changed one must be written, the server judges it on save. */
 function commandProblem(d: CaseDraft): string | null {
-  if (d.execution_mode !== 'automated') return null
+  if (d.check !== 'code') return null
   if (!adding.value && !runChanged(d)) {
     const capability = card.value?.view.value?.caseCapabilities[d.original.case_id]
     return !capability || ['case_selectable', 'suite_only'].includes(capability) ? null : capability
   }
   return d.run_command.trim() ? null : 'command_missing'
 }
-const custom = ref(false)
-watch(() => state.value?.caseId, () => { confirming.value = false; custom.value = false })
-const requirements = computed(() => [...new Set(card.value?.cases.value.map(c => c.fields.requirement).filter((s): s is string => !!s))])
-const requirementOptions = computed(() => [...requirements.value.map(value => ({ value, label: value })), { value: '__custom', label: t(k('custom')) }])
-const requirementChoice = computed({ get: () => custom.value || !requirements.value.includes(draft.value?.requirement ?? '') ? '__custom' : draft.value!.requirement,
-  set: (value: string) => { custom.value = value === '__custom'; if (!custom.value && draft.value) draft.value.requirement = value } })
-// The v9 choices; a mode outside them (an existing external case) stays shown and kept until another is picked.
-const modeOptions = computed(() => [{ value: 'automated', label: t(k('automated')) }, { value: 'ai', label: t(k('ai')) }, { value: 'manual', label: t(k('manual')) },
-  ...(!['automated', 'ai', 'manual', ''].includes(draft.value?.execution_mode ?? '') ? [{ value: draft.value!.execution_mode, label: t(k('external')), disabled: true }] : [])])
-const requiredOptions = computed(() => [{ value: 'ignore', label: t(k('ignore')) }, { value: 'stop', label: t(k('stop')) }])
+// The two checks. An earlier case's mode is already read as one of them (automated -> code, the rest -> manual).
+const checkOptions = computed(() => [{ value: 'code', label: t(k('code')) }, { value: 'manual', label: t(k('manual')) }])
+
+// ── Result: not run / pass / fail / skip ───────────────────────────────────────────────────────────
+const row = computed(() => card.value?.scenarioRows.value.find(item => item.caseId === state.value?.caseId) ?? null)
+const shownResult = computed<TestCaseResult>(() => row.value?.result ?? 'not_run')
+const resultOptions = computed(() => (['not_run', 'pass', 'fail', 'skip'] as const).map(value => ({ value, label: t(k(`result_${value}`)) })))
+const resultAvailability = computed(() => adding.value || !state.value?.caseId ? { enabled: false, reason: 'guard.save_first' } : card.value?.can('resultEntry', state.value.caseId) ?? { enabled: false, reason: 'reason.busy' })
+const resultEnabled = computed(() => resultAvailability.value.enabled && !recording.value)
+const resultReason = computed(() => { const key = resultAvailability.value.reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' })
+/** Who pressed the result, as recorded: the name, whether an AI or a person, and when. */
+const resultBy = computed(() => {
+  const by = row.value?.resultBy
+  if (!by || row.value?.result === 'not_run') return ''
+  return [t(k(`by_${by.kind}`)), by.name, row.value?.resultAt ? documentHistoryWhen(row.value.resultAt) : null].filter(Boolean).join(' · ')
+})
+const skipping = ref(false), skipReason = ref(''), recording = ref(false), resultFailure = ref('')
+watch(() => state.value?.caseId, () => { confirming.value = false; skipping.value = false; skipReason.value = ''; resultFailure.value = '' })
+async function record(result: TestCaseResult, reasonText?: string) {
+  const c = card.value, id = state.value?.caseId
+  if (!current() || !c || !id || adding.value || recording.value || !c.can('resultEntry', id).enabled) return
+  recording.value = true; resultFailure.value = ''
+  try {
+    const ok = await c.enterResult({ case_id: id, result, ...(result === 'skip' ? { skip_reason: reasonText ?? '' } : {}) })
+    if (!current()) return
+    if (ok) { skipping.value = false; skipReason.value = '' }
+    else { const key = c.test.failure.value?.key; resultFailure.value = key ? t(`gui.inspector.testSpec.${key}`) : t(k('result_failed')) }
+  } finally { if (current()) recording.value = false }
+}
+/** A skip is recorded with its one-line reason; the other three at once. */
+function pickResult(value: string) {
+  if (value === 'skip') { skipping.value = true; return }
+  skipping.value = false
+  if (value === 'not_run' || value === 'pass' || value === 'fail') void record(value)
+}
+function recordSkip() { if (skipReason.value.trim()) void record('skip', skipReason.value.trim()) }
+
+// ── Evidence boxes and the remark line ─────────────────────────────────────────────────────────────
+const evidenceKinds: readonly TestEvidenceKind[] = ['input', 'log', 'output']
+const evidenceOf = (kind: TestEvidenceKind) => row.value?.evidence[kind] ?? 0
+const remarkTally = computed(() => adding.value || !state.value?.caseId ? { open: 0, resolved: 0 } : card.value?.remarkCounts(state.value.caseId) ?? { open: 0, resolved: 0 })
+const remarkLabel = computed(() => remarkTally.value.open || remarkTally.value.resolved ? t(k('remarks_line'), { open: remarkTally.value.open, resolved: remarkTally.value.resolved }) : t(k('remarks_add')))
+function openRemarks() { const id = state.value?.caseId; if (id && !adding.value) card.value?.openWindow('remark', id) }
+
 async function commit(deleting: boolean) {
   const c = card.value, d = draft.value, op = deleting ? 'caseDelete' : adding.value ? 'caseAdd' : 'caseSave'
   if (!current() || !c || !d || checking.value || conflict.value || (!deleting && !valid.value) || !c.can(op).enabled) return
@@ -154,6 +206,13 @@ label, .field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 
 .control { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; } .hint { color: var(--fg2-muted); font-size: 11.5px; }
 .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; } /* The command and, under it, why it cannot run; not a label caption (label > span). */
 .command { display: flex; flex-direction: column; min-width: 0; padding-top: 0; color: inherit; }
+.skip { display: flex; align-items: center; gap: 6px; width: 100%; }
+/* An evidence box: what it holds, then the add / drop place. */
+.evidence { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 1px dashed var(--fg2-line-strong); border-radius: 8px; box-sizing: border-box; }
+.drop { margin-left: auto; padding: 2px 8px; border: 0; background: none; color: var(--fg2-muted); font: inherit; font-size: 11.5px; }
+/* The remark line: one button the width of the field. */
+.remark-line { width: 100%; padding: 6px 10px; border: 1px solid var(--fg2-line-strong); border-radius: 8px; background: none; color: var(--fg2-yellow, #d9a441); font: inherit; text-align: left; cursor: pointer; }
+.remark-line--none { color: var(--fg2-muted); } .remark-line:disabled { cursor: default; opacity: 0.6; }
 /* The write window's heading (SlotWriteWindow): the kind, then the case muted and cut with an ellipsis. */
 .heading { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; } .heading-kind { flex: 0 0 auto; }
 .heading-case { overflow: hidden; color: var(--fg2-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

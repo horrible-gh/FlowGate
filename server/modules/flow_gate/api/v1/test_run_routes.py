@@ -86,6 +86,8 @@ class TestResultsBody(BaseModel):
     source_identity: Optional[dict] = None
     replace: bool = False
     overall: Optional[str] = None
+    # F81: the AI's few lines over the whole run (shown under the scenario list).
+    overall_comment: Optional[str] = None
 
 
 @router.post("/documents/test-results")
@@ -129,6 +131,7 @@ def post_test_results(body: TestResultsBody, request: Request):
             replace=body.replace,
             locale=locale,
             submitted_overall=body.overall,
+            overall_comment=body.overall_comment,
         )
     except Exception as exc:
         if hasattr(exc, "status_code"):
@@ -262,6 +265,93 @@ def _post_spec_execution(ts_id: str, case_id: Optional[str], request: Request):
             return _err(exc)
         raise
     return JSONResponse(status_code=202, content=result)
+
+
+class TestRemarkBody(BaseModel):
+    """A new remark on a case. ``phase`` is ``case_write`` (default) or ``test_run``."""
+
+    text: str
+    phase: Optional[str] = None
+
+
+class TestRemarkUpdateBody(BaseModel):
+    """Resolve / open again (``state``: ``open`` | ``resolved``) and / or the AI's one-line answer."""
+
+    state: Optional[str] = None
+    ai_reply: Optional[str] = None
+
+
+def _remark_auth(ts_id: str, request: Request, permission: str):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    doc = db_docs.get_by_id(ts_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not (bool(auth.get("is_admin"))
+            or has_permission(auth["issued_to"], doc.get("project_id") or "", permission)):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    return auth
+
+
+def _remark_author_name(auth: dict) -> str:
+    from modules.flow_gate.db import users as db_users
+
+    user = db_users.get_by_id(auth.get("issued_to") or "") or {}
+    return str(user.get("display_name") or user.get("name") or user.get("username")
+               or auth.get("issued_to") or "")
+
+
+@router.get("/documents/{ts_id}/test-spec/remarks")
+def get_spec_remarks(ts_id: str, request: Request, case_id: Optional[str] = None):
+    """Remarks of a scenario: ``{ok, doc_id, remarks: [...], counts: {case: {open, resolved}}}``."""
+    auth = _remark_auth(ts_id, request, "perm_document_read")
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_remark_service
+    try:
+        return {"ok": True, **test_remark_service.list_remarks(ts_id, case_id)}
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+
+
+@router.post("/documents/{ts_id}/test-spec/cases/{case_id}/remarks")
+def post_spec_remark(ts_id: str, case_id: str, body: TestRemarkBody, request: Request):
+    """A person's remark on a case -> 201 ``{ok, remark}``. Nothing is locked or approved by it."""
+    auth = _remark_auth(ts_id, request, "perm_document_update")
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_remark_service
+    try:
+        remark = test_remark_service.add_remark(
+            ts_id, case_id, {"text": body.text, **({"phase": body.phase} if body.phase else {})},
+            author_kind="human", author_name=_remark_author_name(auth))
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    return JSONResponse(status_code=201, content={"ok": True, "remark": remark})
+
+
+@router.patch("/documents/{ts_id}/test-spec/remarks/{remark_id}")
+def patch_spec_remark(ts_id: str, remark_id: str, body: TestRemarkUpdateBody, request: Request):
+    """Resolve a remark or open it again -> ``{ok, remark}``."""
+    auth = _remark_auth(ts_id, request, "perm_document_update")
+    if isinstance(auth, JSONResponse):
+        return auth
+    from modules.flow_gate.services import test_remark_service
+    try:
+        remark = test_remark_service.update_remark(
+            ts_id, remark_id, body.model_dump(exclude_none=True))
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    return {"ok": True, "remark": remark}
 
 
 class TestAssetWriteBody(BaseModel):
