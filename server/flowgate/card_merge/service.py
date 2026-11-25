@@ -109,7 +109,7 @@ def _default_provider(flow_id: str, node_key: str) -> Optional[dict]:
 def _empty(flow_id: str, node_key: str, attempt_id: Optional[str]) -> dict:
     return {"flow_id": flow_id, "node_key": node_key, "attempt_id": attempt_id, "state": HIDDEN,
             "integration_status": None, "reason": None, "blocked_by": None, "files": [], "session": None,
-            "resolving": None, "default_provider": None, "actions": [], "waiting_cards": []}
+            "resolving": None, "default_provider": None, "actions": [], "waiting_cards": [], "auto_resolve": None}
 
 
 def _waiting_cards(flow_id: str, row: dict) -> list[dict]:
@@ -151,6 +151,8 @@ def _session_kinds(row: dict) -> dict[str, str]:
 def view(flow_id: str, node_key: str) -> dict:
     run, row = _attempt(flow_id, node_key)
     out = _empty(flow_id, node_key, row["attempt_id"] if row else None)
+    from . import auto_resolve
+    out["auto_resolve"] = auto_resolve.view(flow_id, node_key, row["attempt_id"] if row else None)
     status = rm._status(row) if row else rm.NONE
     if row is None or status not in rm.WAITING:
         return out
@@ -188,6 +190,8 @@ def view(flow_id: str, node_key: str) -> dict:
                        files=[{"path": p, "resolved": False, "kind": kinds.get(p, rm.KIND_BOTH)} for p in paths])
         else:
             out["state"] = WAITING          # its session closed, the close not settled yet: the next drain settles it
+    if out["auto_resolve"] and out["auto_resolve"]["state"] == "running":
+        out.update(state=CATCHING_UP, actions=[AI_RESOLVE, PICK, DISCARD_RERUN])
     if out["state"] in (NEEDS_CHOICE, FAILED, CATCHING_UP):
         out["waiting_cards"] = _waiting_cards(flow_id, row)
     return out
@@ -370,6 +374,9 @@ def act(flow_id: str, node_key: str, user_id: str, body: Any, *, request=None,
         raise _changed(state=state, action=choice["action"])
     started: Optional[str] = None
     action = choice["action"]
+    if action in (AI_RESOLVE, PICK, DISCARD_RERUN) and state.get("session"):
+        from . import auto_resolve
+        auto_resolve.stop_by_person(int(state["session"]["merge_id"]))
     if action == DISCARD_RERUN:
         _discard_rerun(flow_id, node_key, user_id, row, state, recheck)
     elif action == RETRY:

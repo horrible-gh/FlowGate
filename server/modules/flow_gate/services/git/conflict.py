@@ -454,6 +454,8 @@ def commit_tr_conflict(
             # under G the session must still be open and its merge the one in flight — an abort (a
             # person's, the sweep's, a Stop's) that won the lock leaves nothing to commit on.
             _graph_merge_owned(group_id, merge_id, root)
+            from flowgate.card_merge import auto_resolve
+            auto_resolve.before_commit(merge_id, root)
         if review_fingerprint is not None:
             fresh = _gs.db_git.session_context(_gs.db_git.get_session(merge_id))
             if not fresh.get("review_fingerprint"):
@@ -1584,6 +1586,9 @@ def _apply_conflict_resolution_locked(
                 409, "invalid_state", "conflict session project changed"
             )
         is_branch_merge = _is_branch_merge_session(session)
+        if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GRAPH_ATTEMPT_MERGE:
+            from flowgate.card_merge import auto_resolve
+            auto_resolve.before_resolve(merge_id, resolver_run_id)
         _gs.db_git.touch_session(merge_id)
 
         # Re-check the review-conversation exclusion under the same mutex that guards
@@ -1952,6 +1957,10 @@ def note_resolver_finished(merge_id: int, run: dict) -> bool:
         "code": str(run.get("stop_code") or run.get("end_reason") or "no_resolution"),
         "provider": run.get("provider_name") or run.get("provider_id"),
     }
+    from flowgate.card_merge.auto_resolve import ai_failure
+    failure = ai_failure(run)
+    if failure:
+        attempt.update(code="ai_error", reason_summary=" ".join(failure.split())[:1000])
     attempt.update(state="failed", at=now_iso(), remaining=len(_gs.db_git.remaining_conflicts(int(merge_id))))
     context[RESOLVER_ATTEMPT_KEY] = attempt
     _gs.db_git.set_session_context(int(merge_id), context)

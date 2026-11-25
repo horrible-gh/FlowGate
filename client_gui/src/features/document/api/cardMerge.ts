@@ -11,7 +11,25 @@
 //             files: [{ path, resolved, kind: both | deleted_latest | deleted_card }],
 //             session: { merge_id, kind, review_state } | null, resolving: { run_id } | null,
 //             default_provider: { id, name } | null, actions: [ai_resolve | pick | merge | discard_rerun | retry…],
-//             waiting_cards: [{ node_key, title }] }
+//             waiting_cards: [{ node_key, title }], auto_resolve: autoResolve | null }
+//
+//   autoResolve = the server's automatic conflict resolution (up to 3 tries) of this card's merge; null / absent = none ran:
+//     { state: running | succeeded | exhausted | stopped_by_person | skipped_paused, attempt: 1..3, max_attempts: 3,
+//       attempts: [{ no, mode: ai | rebase | rebase_ai | switch_ai, provider: { id, name } | null,
+//                    result: running | resolved | conflicts_left | check_failed | ai_error | timeout | no_other_ai,
+//                    reason, reason_summary?, started_at, ended_at }],
+//       unresolved: [{ path, hunks: [{ start_line, end_line }] }], count? }
+//     attempts[].result = ai_error for a failed AI execution (including a nonzero exit code); reason_summary is
+//       a one-line display string (at most 1000 characters), also used for check_failed. reason keeps the diagnostic
+//       text (at most 2000 characters); a check failure may carry a JSON verdict. Running / older attempts may omit
+//       reason_summary. The decoder maps it to reasonSummary; the window prefers it and can unfold reason.
+//     count = remaining conflicted files, a nonnegative integer in every state, including skipped_paused; the
+//       decoder maps a positive count to fileCount, else null. Older servers may omit count.
+//     exhausted unresolved[].hunks uses 1-based inclusive marker line ranges from the conflict session files;
+//       an unreadable file or one without markers has []. The decoder maps start_line/end_line to startLine/endLine.
+//   While automatic resolution runs the card state is `catching_up`; exhausted open conflicts are `needs_choice`
+//     when no resolver is active. The Flow run status is separate: after resume, running automatic work wakes
+//     idle(merge_conflict) to running; paused / stopped runs are not woken by settlement alone.
 //
 // Refusals are the Graph envelope `{ ok: false, error: { code, message, params } }` (cardMergeErrorOf): 409
 // merge_state_changed (read the state again) / group_busy / conflict_markers_remain / git_busy, 422 invalid_request /
@@ -43,6 +61,50 @@ export interface CardMergeFile {
   readonly kind: CardMergeFileKind
 }
 
+/** How the automatic conflict resolution stands: running, or how it ended. */
+export const cardMergeAutoStates = ['running', 'succeeded', 'exhausted', 'stopped_by_person', 'skipped_paused'] as const
+export type CardMergeAutoStateKey = (typeof cardMergeAutoStates)[number]
+/** What one try did: the AI as it is, the card's change re-applied on the Flow's tip (with the AI after it), or another AI. */
+export const cardMergeAutoModes = ['ai', 'rebase', 'rebase_ai', 'switch_ai'] as const
+export type CardMergeAutoMode = (typeof cardMergeAutoModes)[number]
+/** How one try ended. */
+export const cardMergeAutoResults = ['running', 'resolved', 'conflicts_left', 'check_failed', 'ai_error', 'timeout', 'no_other_ai'] as const
+export type CardMergeAutoResult = (typeof cardMergeAutoResults)[number]
+
+export interface CardMergeAutoAttempt {
+  readonly no: number
+  /** null = a mode this screen does not know (read as the plain AI try). */
+  readonly mode: CardMergeAutoMode | null
+  readonly provider: { readonly id: string; readonly name: string } | null
+  /** null = a result this screen does not know. */
+  readonly result: CardMergeAutoResult | null
+  readonly reason: string | null
+  /** The server's one-line reason (`reason_summary`); null from an older server (the screen then reads `reason` itself). */
+  readonly reasonSummary: string | null
+  readonly startedAt: string | null
+  readonly endedAt: string | null
+}
+
+export interface CardMergeAutoHunk {
+  readonly startLine: number
+  readonly endLine: number
+}
+
+export interface CardMergeAutoUnresolved {
+  readonly path: string
+  readonly hunks: readonly CardMergeAutoHunk[]
+}
+
+export interface CardMergeAutoResolve {
+  readonly state: CardMergeAutoStateKey
+  readonly attempt: number
+  readonly maxAttempts: number
+  readonly attempts: readonly CardMergeAutoAttempt[]
+  readonly unresolved: readonly CardMergeAutoUnresolved[]
+  /** The conflicted file count the server sent (`count`); null when absent or not a positive number. */
+  readonly fileCount: number | null
+}
+
 export interface CardMergeCard {
   readonly nodeKey: string
   readonly title: string
@@ -67,6 +129,8 @@ export interface CardMergeState {
   readonly waitingCards: readonly CardMergeCard[]
   /** An action's answer: the AI run it started, or null. */
   readonly startedRunId: string | null
+  /** The server's automatic conflict resolution; null when the answer has none (the screen then stays as it was). */
+  readonly autoResolve: CardMergeAutoResolve | null
 }
 
 function card(raw: unknown): CardMergeCard | null {
@@ -76,14 +140,65 @@ function card(raw: unknown): CardMergeCard | null {
   return nodeKey ? { nodeKey, title: text(row.title) ?? nodeKey, why } : null
 }
 
+const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+const provider = (raw: unknown): { id: string; name: string } | null => {
+  const row = record(raw)
+  const id = text(row.id)
+  return id ? { id, name: text(row.name) ?? id } : null
+}
+
+/** `auto_resolve` -> CardMergeAutoResolve; null for a missing / null / unknown-state value (the screen then draws nothing extra). */
+export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = record(raw)
+  const state = cardMergeAutoStates.find((key) => key === row.state)
+  if (!state) return null
+  const maxAttempts = count(row.max_attempts)
+  const attempts = Array.isArray(row.attempts)
+    ? row.attempts.map((item, index): CardMergeAutoAttempt => {
+        const attempt = record(item)
+        return {
+          no: count(attempt.no) ?? index + 1,
+          mode: cardMergeAutoModes.find((key) => key === attempt.mode) ?? null,
+          provider: provider(attempt.provider),
+          result: cardMergeAutoResults.find((key) => key === attempt.result) ?? null,
+          reason: text(attempt.reason),
+          reasonSummary: text(attempt.reason_summary),
+          startedAt: text(attempt.started_at),
+          endedAt: text(attempt.ended_at),
+        }
+      })
+    : []
+  const unresolved = Array.isArray(row.unresolved)
+    ? row.unresolved.flatMap((item) => {
+        const file = record(item)
+        const path = text(file.path)
+        if (!path) return []
+        const hunks = Array.isArray(file.hunks)
+          ? file.hunks.flatMap((hunk) => {
+              const range = record(hunk)
+              const startLine = count(range.start_line)
+              const endLine = count(range.end_line)
+              return startLine === null ? [] : [{ startLine, endLine: endLine ?? startLine }]
+            })
+          : []
+        return [{ path, hunks }]
+      })
+    : []
+  const fileCount = count(row.count)
+  return {
+    state, attempt: count(row.attempt) ?? attempts.length, maxAttempts: maxAttempts && maxAttempts > 0 ? maxAttempts : 3, attempts, unresolved,
+    fileCount: fileCount !== null && fileCount > 0 ? Math.floor(fileCount) : null,
+  }
+}
+
 /** A state answer -> CardMergeState (an unknown state reads as hidden, unknown actions are dropped). */
 export function toCardMergeState(raw: unknown, flowId = '', nodeKey = ''): CardMergeState {
   const row = record(raw)
   const state = cardMergeStates.find((key) => key === row.state) ?? 'hidden'
   const session = record(row.session)
   const resolving = row.resolving && typeof row.resolving === 'object' ? record(row.resolving) : null
-  const provider = record(row.default_provider)
-  const providerId = text(provider.id)
+  const defaultProvider = provider(row.default_provider)
   return {
     flowId: text(row.flow_id) ?? flowId,
     nodeKey: text(row.node_key) ?? nodeKey,
@@ -104,10 +219,11 @@ export function toCardMergeState(raw: unknown, flowId = '', nodeKey = ''): CardM
       ? { mergeId: session.merge_id, kind: text(session.kind), reviewState: text(session.review_state) }
       : null,
     resolving: resolving ? { runId: text(resolving.run_id) } : null,
-    defaultProvider: providerId ? { id: providerId, name: text(provider.name) ?? providerId } : null,
+    defaultProvider,
     actions: Array.isArray(row.actions) ? cardMergeActions.filter((action) => (row.actions as unknown[]).includes(action)) : [],
     waitingCards: Array.isArray(row.waiting_cards) ? row.waiting_cards.flatMap((item) => card(item) ?? []) : [],
     startedRunId: text(row.started_run_id),
+    autoResolve: toCardMergeAutoResolve(row.auto_resolve),
   }
 }
 

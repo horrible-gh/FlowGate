@@ -151,6 +151,9 @@ def start_run(*args, **kwargs):
         # a positional compatibility surface here.
         return _admission_start_run(*args, **kwargs)
 
+    if kwargs.get("action_scope") == "resolve_conflict":
+        from flowgate.card_merge import auto_resolve
+        auto_resolve.admission_requested(kwargs.get("merge_id"))
     group_id = str(kwargs.get("group_id") or "")
     active_before = None
     if group_id and kwargs.get("action_scope") != "resolve_base_dirty":
