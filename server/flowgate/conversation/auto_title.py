@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading as _threading
 from typing import Any, Optional
 
 from flowgate.conversation import activity
@@ -225,6 +226,7 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
 #   chat  -- one chat: its own first user message or the ``title`` a reply in it submitted.
 FIRST_NAMES_LEASE_SEC = 180
 NAME_KINDS = ("chat", "flow", "root")
+PARALLEL_NAMES = True  # name the targets of one request at the same time
 
 def _safe_reason(reason: Optional[str]) -> str:
     safe = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
@@ -248,8 +250,22 @@ _RULES = (
 )
 
 
-def build_name_prompt(kind: str, text: str) -> str:
-    """The naming prompt of one target; each target reads only its own content."""
+def build_name_prompt(kind: str, text: str, start_document: str = "") -> str:
+    """The naming prompt of one target; each target reads only its own content.
+
+    A flow named from a chat's first message also gets ``start_document`` (the body of its
+    start card): a first message such as "let's talk after you read it" names nothing, and
+    without the document the flow kept its default name while its card was renamed.
+    """
+    if kind == "flow" and _bounded(start_document) and _bounded(start_document) != _bounded(text):
+        return (
+            "Write a short name for a workflow whose overall task is described below. "
+            "It names the whole task, not a single step, card or document.\n"
+            f"{_RULES}"
+            "- Name the task from the first request. If the first request alone names no concrete "
+            "subject, name it from the start document instead.\n"
+            f"\nFirst request:\n<<<\n{_bounded(text)}\n>>>\n"
+            f"\nStart document:\n<<<\n{_bounded(start_document)}\n>>>")
     if kind == "chat":
         return build_prompt(text) + "\nIf no concrete subject can be identified, reply NO_TITLE."
     intro, label = {
@@ -298,12 +314,10 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
     ``flow_title`` are accepted for caller compatibility but no longer seed anything,
     because executor replies do not supply names."""
     targets, changed = {}, []
-    for kind in (kinds or NAME_KINDS):
-        if kind == "chat" and not chat_doc_id:
-            continue
-        state = _name_target(flow_id, user, provider_id, kind, message, chat_doc_id,
-                             seed=None,
-                             allow_fallback=allow_fallback)
+    wanted = [kind for kind in (kinds or NAME_KINDS) if kind != "chat" or chat_doc_id]
+    states = _name_targets(wanted, flow_id, user, provider_id, message, chat_doc_id, allow_fallback)
+    for kind in wanted:
+        state = states[kind]
         if state == "changed":
             changed.append("card" if kind == "root" else kind)
             state = "done"
@@ -319,6 +333,35 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
     status = ("pending" if "pending" in states else "done" if "done" in states
               else "failed" if "failed" in states else "unchanged")
     return {"status": status, "targets": targets}
+
+
+def _name_targets(kinds: list, flow_id: str, user: dict, provider_id: str, message: str,
+                  chat_doc_id: Optional[str], allow_fallback: bool) -> dict:
+    """{kind: state}. Targets are independent (own ledger slot, own model call), so they are
+    named at the same time: one name costs a whole remote Agent job when the naming provider
+    is a remote CLI, and three in a row made the last name arrive three jobs late."""
+    def one(kind):
+        try:
+            return _name_target(flow_id, user, provider_id, kind, message, chat_doc_id,
+                                seed=None, allow_fallback=allow_fallback)
+        except Exception as exc:
+            logger.warning("flow_auto_title flow=%s target=%s exception_type=%s",
+                           flow_id, kind, type(exc).__name__)
+            return "failed"
+
+    states: dict = {}
+    if not PARALLEL_NAMES or len(kinds) < 2:
+        for kind in kinds:
+            states[kind] = one(kind)
+        return states
+    workers = [_threading.Thread(target=lambda k=kind: states.__setitem__(k, one(k)),
+                                 name=f"flow-names-{kind}", daemon=True) for kind in kinds[1:]]
+    for worker in workers:
+        worker.start()
+    states[kinds[0]] = one(kinds[0])
+    for worker in workers:
+        worker.join()
+    return states
 
 
 def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message: str,
@@ -442,11 +485,15 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
                         user_id, allow_fallback) -> Optional[str]:
     """A candidate from the target's own content, named by the configured naming provider
     (``complete_naming``: off, the executor or an explicit provider, remote agents included)."""
+    start_document = ""
     if kind == "chat":
         text = _first_user_message(chat_doc_id) or ""
     elif kind == "flow":
-        text = ((_first_user_message(chat_doc_id) if chat_doc_id else None)
-                or str(message or "").strip() or _root_text(flow_id, provider_id))
+        chat_message = (_first_user_message(chat_doc_id) if chat_doc_id else None) or ""
+        text = chat_message or str(message or "").strip() or _root_text(flow_id, provider_id)
+        if chat_message.strip():
+            # The chat's first message alone may name nothing; the start document can.
+            start_document = _root_text(flow_id, provider_id)
     else:
         text = _root_text(flow_id, provider_id)
     if not any(ch.isalnum() for ch in text):
@@ -457,7 +504,7 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
     if not allow_fallback:
         return heading
     answer, reason = legacy_adapter.complete_naming(group["project_id"], provider_id,
-                                                    build_name_prompt(kind, text), user_id,
+                                                    build_name_prompt(kind, text, start_document), user_id,
                                                     timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
     title = clean_flow_title(answer)
     if not title:
@@ -467,7 +514,6 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
 
 # Bounded background entry point: no DB lock/model call on the sending thread.
 # A full pool refuses best-effort naming immediately; a later trigger can retry.
-import threading as _threading
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 _first_names_pool = _ThreadPoolExecutor(max_workers=2, thread_name_prefix="flow-names")
 _first_names_slots = _threading.BoundedSemaphore(8)
