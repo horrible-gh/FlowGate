@@ -9,7 +9,8 @@ export * from './documentWindowModel'
 export { documentHistoryVerdictKey, documentHistoryWhen } from './documentHistoryModel'
 // the scenario table shares the document window's result glyph.
 export { default as TestMarkBadge } from './TestMarkBadge.vue'
-export { testVerdictMark, TEST_PENDING_MARK } from './specialDocumentModel'
+export { default as TestScenarioList } from './TestScenarioList.vue'
+export { testVerdictMark, TEST_PENDING_MARK, testScenarioRows } from './specialDocumentModel'
 export * from './slotWriteWindows'
 export * from './documentAiWindows'
 // the document upload / download: the coordinator (documentIo), the edit state registry it

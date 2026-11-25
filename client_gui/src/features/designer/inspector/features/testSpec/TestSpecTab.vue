@@ -6,14 +6,10 @@
       <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :decision-layout="decisions.row(line.key, line.id).visible" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
         <template #summary>
           <InspectorStatusChip :label="decisionLabel(line)" :tone="decisionTone(line)" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
-          <span v-if="line.summary" class="test-card-summary" :data-test="`test-card-${line.key}-summary`" :title="line.summary">{{ line.summary }}</span>
-          <span v-if="line.key === 'report' && stage.resultState.key === 'unchecked'" class="test-card-summary">{{ t(k('stage.unchecked')) }}</span>
-          <span v-if="line.key === 'report' && view?.gate?.applies && !view.gate.passed" class="test-card-danger" data-test="test-spec-gate">{{ t(k('card.gate_blocked')) }}</span>
+          <!-- F81: a line is its name and its state chip, as on every other card: no text button, no pass tally.
+               The pass / fail numbers are in the scenario window only. -->
         </template>
         <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, line.id)" /></template>
-        <template v-if="line.key === 'instruction'">
-          <IconButton :label="t('gui.designer.inspector.slot.edit')" :title="canOpen('brief') ? t('gui.designer.inspector.slot.edit') : openReason('brief')" variant="secondary" size="sm" :disabled="!canOpen('brief')" data-test="test-card-brief" @click="openWindow('brief')">✎</IconButton>
-        </template>
         <template v-if="line.key === 'scenario'">
           <!-- flowgate.v02.0094: the scenario's AI writing is the line's [AI 호출], as on the other cards' lines: it opens
                the document's AI call window (nothing is written until it runs); the 지시서 window only saves. -->
@@ -36,8 +32,7 @@
           <IconButton v-if="stage.canFollow" :label="t(k('card.follow'))" :title="canOpen('follow') ? t(k('card.follow')) : openReason('follow')" variant="secondary" size="sm" :disabled="!canOpen('follow')" data-test="test-card-follow" @click="openWindow('follow')">→</IconButton>
         </template>
         <InspectorHistoryButton v-if="line.key !== 'scenario' && line.id" @click="openDocumentHistory(line.id)" />
-        <InspectorOpenButton v-if="line.key === 'instruction' && line.id" @click="openDocument(line.id, 'view', { card: cardDocumentContext(target, line.id, line.key) })" />
-        <InspectorOpenButton v-if="line.key !== 'instruction'" :disabled="!canOpen(line.kind)" :title="openReason(line.kind)" :data-test="line.key === 'report' ? 'test-spec-open' : 'test-card-scenario-open'" @click="openWindow(line.kind)" />
+        <InspectorOpenButton :disabled="!canOpen(line.kind)" :title="openReason(line.kind)" :data-test="line.key === 'report' ? 'test-spec-open' : 'test-card-scenario-open'" @click="openWindow(line.kind)" />
         <InspectorDocumentDecision v-if="decisions.row(line.key, line.id).visible" :name="t(k(`slot.${line.key}`))"
           :action="decisions.row(line.key, line.id).action" :disabled="decisions.row(line.key, line.id).disabled"
           :reason="decisions.row(line.key, line.id).reason" @click="decisions.decide(line.key, line.id)" />
@@ -63,9 +58,9 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { cardDocumentContext, DocumentIoGroup, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup, openDocumentHistory } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
-import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
+import { testCardPresentation, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
@@ -92,7 +87,8 @@ function openWindow(kind: TestCardWindowKind) {
   if (!canOpen(kind)) return
   card.value?.openWindow(kind)
 }
-interface Line { key: 'instruction' | 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone; summary: string }
+// F81: two lines only — the scenario and the report. There is no instruction line.
+interface Line { key: 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone }
 function decisionLabel(line: Line) {
   const row = decisions.row(line.key, line.id)
   return row.authoritative && row.state ? t(`gui.designer.inspector.review_status.${row.state === 'wf_done' ? 'approved' : row.state}`) : line.label
@@ -106,22 +102,13 @@ function decisionTone(line: Line): TestSpecSlotTone {
 const lines = computed<Line[]>(() => {
   const v = view.value, state = stage.value, writing = card.value?.writing.value
   const own = (slot: string) => props.target.cardDocuments.find((line) => line.slot === slot)
+  // The TS document also holds what was the instruction; its text stays in the document and is not shown.
   const tsId = v?.tsDocId ?? own('scenario')?.docId ?? own('instruction')?.docId ?? (props.target.docType === 'TS' ? props.target.docId : null)
   const reportId = v?.tsrDocId ?? own('report')?.docId ?? null
-  // flowgate.v02.0094: the instruction · 시나리오 lines show their state badge only (no instruction text or case tally).
-  const intro = v?.details?.intro?.trim() ?? ''
-  const counts = card.value?.test.counts.value
-  const reportSummary = state.stage === 6 ? t(k('card.confirmed_counts'), { pass: counts?.pass ?? 0, total: v?.cases.length ?? 0 })
-    : state.stage >= 5 || state.resultState.key === 'stale' ? counts ? t(k('card.counts'), { ...counts }) : ''
-    : state.stage === 4 ? t(k('card.run_counts'), { pass: testSpecLiveRun(v)?.passedCases ?? 0, pending: Math.max(0, runState.value.total - runState.value.done) })
-    : state.resultState.error ?? ''
-  const result: Line[] = [
-    { key: 'instruction', kind: 'brief', id: tsId, blank: !intro, label: t(k(intro ? 'card.written' : 'card.absent')), tone: intro ? 'success' : 'neutral', summary: '' },
-    { key: 'scenario', kind: 'scenario', id: tsId, blank: !state.hasScenario, label: t(k(writing ? 'card.writing' : state.hasScenario ? 'card.written' : 'stage.waiting')), tone: writing ? 'running' : state.hasScenario ? 'success' : 'neutral', summary: '' },
-    { key: 'report', kind: 'report', id: reportId, blank: !state.hasScenario, label: t(k(state.stage <= 2 ? 'empty.after_run' : state.stage === 6 ? 'card.confirmed' : state.stateKey), { count: state.pending, done: runState.value.done, total: runState.value.total }), tone: state.stage === 4 ? 'running' : state.tone, summary: reportSummary },
+  return [
+    { key: 'scenario', kind: 'scenario', id: tsId, blank: !state.hasScenario, label: t(k(writing ? 'card.writing' : state.hasScenario ? 'card.written' : 'stage.waiting')), tone: writing ? 'running' : state.hasScenario ? 'success' : 'neutral' },
+    { key: 'report', kind: 'report', id: reportId, blank: !state.hasScenario, label: t(k(state.stage <= 2 ? 'empty.after_run' : state.stage === 6 ? 'card.confirmed' : state.stateKey), { count: state.pending, done: runState.value.done, total: runState.value.total }), tone: state.stage === 4 ? 'running' : state.tone },
   ]
-  if (card.value?.instructionOmitted.value) { result[0].label = t(k('guard.instruction_omitted')); result[0].tone = 'neutral' }
-  return result
 })
 </script>
 <style scoped>

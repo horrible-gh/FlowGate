@@ -5,7 +5,16 @@ import {
   cardDocumentStructuredRead,
   documentHistoryRead,
   testSpecMutationErrorOf,
+  testSpecCaseKey,
+  testSpecCheckOf,
+  testSpecRemarkAdd,
+  testSpecRemarkCounts,
+  testSpecRemarkUpdate,
+  testSpecRemarksRead,
+  testSpecResultOf,
   toTestSpecCaseDetail,
+  type TestRemarkState,
+  type TestScenarioRow,
   type CardStructuredCommand,
   type TestSpecCaseDetail,
   type TestSpecView,
@@ -22,8 +31,10 @@ import { useCardSettings } from '../settings/useCardSettings'
 import { testCardPresentation, testSpecTargetDocId, type TestCardWriting, type TestSpecAvailabilityItem } from './testSpecModel'
 import { useTestSpec } from './useTestSpec'
 
-export type TestCardWindowKind = 'brief' | 'scenario' | 'case' | 'report' | 'follow'
-export type TestCardCommand = 'run' | 'cancel' | 'rerunCase' | 'resultEntry' | 'caseSave' | 'caseAdd' | 'caseDelete' | 'rawSave' | 'briefSave' | 'rewriteAll' | 'rewriteCase' | 'settingChange' | 'decide' | 'follow'
+// F81: a test card has the scenario window, the case window and the modeless remark window; the report
+// is the scenario list again. There is no instruction window.
+export type TestCardWindowKind = 'scenario' | 'case' | 'remark' | 'report' | 'follow'
+export type TestCardCommand = 'run' | 'cancel' | 'rerunCase' | 'resultEntry' | 'caseSave' | 'caseAdd' | 'caseDelete' | 'rawSave' | 'rewriteAll' | 'rewriteCase' | 'settingChange' | 'decide' | 'follow' | 'remark'
 export interface TestCardWindowState {
   open: boolean
   minimized: boolean
@@ -91,8 +102,8 @@ interface TsAck { base: TsBase; submitted: TsSubmitted; resent: boolean }
 
 export const TEST_CARD_WINDOW_LOADERS = import.meta.glob('./windows/*Window.vue')
 export const testCardWindowAvailable = (kind: TestCardWindowKind) => `./windows/${kind[0].toUpperCase() + kind.slice(1)}Window.vue` in TEST_CARD_WINDOW_LOADERS
-const windowKinds: TestCardWindowKind[] = ['brief', 'scenario', 'case', 'report', 'follow']
-const documentCommands: TestCardCommand[] = ['caseSave', 'caseAdd', 'caseDelete', 'rawSave', 'briefSave']
+const windowKinds: TestCardWindowKind[] = ['scenario', 'case', 'remark', 'report', 'follow']
+const documentCommands: TestCardCommand[] = ['caseSave', 'caseAdd', 'caseDelete', 'rawSave']
 const missingCommands: TestCardCommand[] = ['rewriteCase', 'decide']
 
 export function createTestCardSession(target: () => InspectorTarget | null) {
@@ -105,6 +116,14 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       return current && docId ? { projectId: current.projectId, flowId: current.flowId, docId } : null },
     read: documentHistoryRead, events: ['doc_review_status_changed', 'document_explorer_refresh'],
   })
+  // F81 remarks of the scenario's cases: people's and AIs' in one list, read with the card.
+  const remarks = useInspectorResource({
+    target: () => { const current = target(); const docId = test.view.value?.tsDocId ?? testSpecTargetDocId(current)
+      return current && docId ? { projectId: current.projectId, flowId: current.flowId, docId } : null },
+    read: testSpecRemarksRead, events: ['doc_review_status_changed', 'document_explorer_refresh'],
+  })
+  const remarkBusy = ref(false)
+  const remarkFailed = ref(false)
   const lastNormal = shallowRef<TestSpecView | null>(null)
   const lastTarget = shallowRef<InspectorTarget | null>(target())
   const busy = ref<TestCardCommand | null>(null)
@@ -137,6 +156,25 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (value?.details?.cases.length || !value?.details?.errors.length) rawSavedInScenario.value = false
   }, { flush: 'sync' })
   const reportDocId = computed(() => target()?.cardDocuments.find(line => line.slot === 'report')?.docId ?? view.value?.tsrDocId ?? null)
+  /** Open / resolved remarks of a case: the remark list once read, else the tally the test view carried. */
+  function remarkCounts(caseId: string): { open: number; resolved: number } {
+    const list = remarks.data.value?.remarks
+    if (list) return testSpecRemarkCounts(list, caseId)
+    const row = view.value?.scenario?.rows.find(item => testSpecCaseKey(item.caseId) === testSpecCaseKey(caseId))
+    return { open: row?.openRemarks ?? 0, resolved: row?.resolvedRemarks ?? 0 }
+  }
+  /** The scenario list: the scenario's cases with their recorded results, remark tallies and evidence counts. */
+  const scenarioRows = computed<TestScenarioRow[]>(() => {
+    const recorded = new Map((view.value?.scenario?.rows ?? []).map(row => [testSpecCaseKey(row.caseId), row]))
+    const stored = new Map(rows.value.map(row => [testSpecCaseKey(row.caseId), row]))
+    return cases.value.map((item) => {
+      const key = testSpecCaseKey(item.caseId), row = recorded.get(key), tally = remarkCounts(item.caseId)
+      return { caseId: item.caseId, title: item.title, ...testSpecCheckOf(item.check, item.checker, item.executionMode),
+        result: row?.result ?? testSpecResultOf(stored.get(key)?.status), resultBy: row?.resultBy ?? null, resultAt: row?.resultAt ?? null,
+        skipReason: row?.skipReason ?? null, openRemarks: tally.open, resolvedRemarks: tally.resolved,
+        evidence: row?.evidence ?? { input: 0, log: 0, output: 0, total: 0 } }
+    })
+  })
   const presentation = computed(() => testCardPresentation(view.value, writing.value, rows.value))
   const instructionOmitted = computed(() => settings.node.value?.fields.instruction?.value === 'omit')
   watch(() => presentation.value.stage, (stage, previous) => {
@@ -146,7 +184,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   })
   onScopeDispose(() => clearTimeout(confirmationTimer))
 
-  async function reload() { await Promise.all([test.reload(), settings.reload(), reviewHistory.reload()]) }
+  async function reload() { await Promise.all([test.reload(), settings.reload(), reviewHistory.reload(), remarks.reload()]) }
 
   // An AI run on another document only supplies the Flow guard. It never becomes scenario writing.
   watch([() => test.guard.value, () => view.value?.tsDocId ?? null, () => target() !== null], async ([guard, tsId, active]) => {
@@ -161,12 +199,12 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   }, { flush: 'sync' })
 
   // The document may have been regenerated, but not temporarily absent during writing/reloads.
-  watch([() => test.status.value, () => writing.value, instructionOmitted], () => {
-    if (instructionOmitted.value) windows.brief.open = false
+  watch([() => test.status.value, () => writing.value], () => {
     if (test.status.value !== 'ready' || writing.value) return
     if (!presentation.value.hasScenario) {
       // The empty scenario is an authoring surface too.
       if (windows.case.caseId !== '__new__') windows.case.open = false
+      windows.remark.open = false
     }
     if (!presentation.value.hasReport) windows.report.open = false
     if (!presentation.value.canFollow) windows.follow.open = false
@@ -184,6 +222,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (current?.readOnly && operation !== 'settingChange') return item(`reason.read_only_${current.readOnly}`)
     if (!current) return item('reason.busy')
     if (test.guard.value?.groupDisposed || settings.blocked.value === 'disposed') return item('reason.disposed')
+    // A remark is never locked by an approval, a run or the AI's writing: people only ever add remarks.
+    if (operation === 'remark') return item(!view.value?.tsDocId || remarkBusy.value ? 'reason.busy' : null)
     if (writing.value) return item('guard.writing')
     if (operation === 'settingChange') {
       const reason = cardSettingsDisabledReason({ readOnly: current.readOnly, settingsReadOnly: current.settingsReadOnly, placing: settings.placing.value,
@@ -224,7 +264,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
   function openReason(kind: TestCardWindowKind, available = testCardWindowAvailable(kind)): string | null {
     if (kind === 'report' && reportDocId.value) return null
     if (!available) return 'guard.unconnected'
-    if (kind === 'brief') return instructionOmitted.value ? 'guard.instruction_omitted' : null
+    if (kind === 'remark') return view.value?.tsDocId ? null : 'reason.busy'
     if (writing.value === 'initial' || (kind === 'case' && writing.value)) return 'guard.writing'
     if (kind === 'follow') return presentation.value.canFollow ? null : 'guard.no_result'
     if (kind === 'report') return presentation.value.hasReport ? null : 'guard.no_result'
@@ -253,12 +293,12 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     const { kind, status, code, message, fieldErrors } = parsed
     if (documentCommands.includes(operation) && kind === 'forbidden') documentDenied.value = true
     const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated', 'unauthorized', 'config', 'detached', 'uncertain', 'binding']
-    const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation === 'briefSave' ? 'rawSave' : operation
+    const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation
     const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
     refusal.value = { operation, key, kind, status, code, message, fieldErrors, error }
   }
   /** T2 also uses this for its direct documentContentSave call, so raw saves share the guard/busy/refusal. */
-  async function changeDocument(operation: 'caseSave' | 'caseDelete' | 'caseAdd' | 'rawSave' | 'briefSave', call: () => Promise<unknown>): Promise<boolean> {
+  async function changeDocument(operation: 'caseSave' | 'caseDelete' | 'caseAdd' | 'rawSave', call: () => Promise<unknown>): Promise<boolean> {
     if (!can(operation).enabled) return false
     busy.value = operation; refusal.value = null
     let ok = false
@@ -291,15 +331,6 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       }
     } catch { return null }
   }
-  /** The brief's text and base from one structured read (null when it is not readable or not this TS). */
-  async function pinBrief(): Promise<{ text: string; base: TsBase } | null> {
-    const ctx = testDocumentContext()
-    if (!ctx) return null
-    const snapshot = await cardDocumentStructuredRead(ctx, 'ts_brief')
-    const projection = snapshot.projection as { text?: unknown } | null | undefined
-    if (snapshot.bodyState !== 'readable' || snapshot.docId !== view.value?.tsDocId || typeof projection?.text !== 'string') return null
-    return { text: projection.text, base: { docId: snapshot.docId, revisionNo: snapshot.revisionNo, ctx } }
-  }
   /** The whole stored text, its frontmatter and base of one plain v2 read, for the raw editor. */
   async function pinRaw(): Promise<{ content: string; base: TsBase } | null> {
     const ctx = testDocumentContext()
@@ -308,7 +339,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (snapshot.bodyState !== 'readable' || snapshot.content === null || snapshot.docId !== view.value?.tsDocId) return null
     return { content: snapshot.content, base: { docId: snapshot.docId, revisionNo: snapshot.revisionNo, ctx } }
   }
-  async function send(kind: 'raw' | 'brief' | 'cases', base: TsBase, payload: Parameters<typeof reviseTs>[2]): Promise<TsAck> {
+  async function send(kind: 'raw' | 'cases', base: TsBase, payload: Parameters<typeof reviseTs>[2]): Promise<TsAck> {
     const result = await reviseTs(tsOwnerOf(kind, base.ctx, base.docId), base, payload)
     if (!result.ok) throw new TsReviseFailure(result)
     return { base: { docId: result.confirmed.docId, revisionNo: result.confirmed.revisionNo, ctx: base.ctx }, submitted: result.submitted, resent: result.resent }
@@ -339,12 +370,6 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     })
     return ok && saved
   }
-  /** Brief save: the draft's own pinned base; returns the confirmed N+1 base and the text the server stored for that request. */
-  async function reviseBrief(base: TsBase, text: string): Promise<{ base: TsBase; text: string; same: boolean }> {
-    const ack = await send('brief', base, { command: { kind: 'ts_brief', text } })
-    const stored = ack.submitted.command?.kind === 'ts_brief' ? ack.submitted.command.text : text
-    return { base: ack.base, text: stored, same: stored === text }
-  }
   /** Raw save: the whole stored text on the raw draft's pinned base; returns N+1 and the submitted text. */
   async function reviseRaw(base: TsBase, text: string): Promise<{ base: TsBase; text: string; same: boolean }> {
     const ack = await send('raw', base, { raw: text })
@@ -352,7 +377,27 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     return { base: ack.base, text: stored, same: stored === text }
   }
   /** An explicit new intent for a draft whose kept request was blocked (key reuse / corrected setting). */
-  function startNewIntent(kind: 'raw' | 'brief' | 'cases', base: TsBase) { tsStartNewIntent(base.docId, tsOwnerOf(kind, base.ctx, base.docId)) }
+  function startNewIntent(kind: 'raw' | 'cases', base: TsBase) { tsStartNewIntent(base.docId, tsOwnerOf(kind, base.ctx, base.docId)) }
+
+  /** One remark call at a time; the list is read again whatever it answered. */
+  async function changeRemark(call: (tsDocId: string) => Promise<unknown>): Promise<boolean> {
+    const tsDocId = view.value?.tsDocId
+    if (!tsDocId || !can('remark').enabled) return false
+    remarkBusy.value = true; remarkFailed.value = false
+    let ok = false
+    try { await call(tsDocId); ok = true } catch { remarkFailed.value = true }
+    finally { if (target()) await remarks.reload(); remarkBusy.value = false }
+    return ok
+  }
+  /** A person's remark on a case, in the stage the card is in (results recorded -> test run, else case writing). */
+  function addRemark(caseId: string, text: string): Promise<boolean> {
+    const body = text.trim()
+    if (!body) return Promise.resolve(false)
+    return changeRemark(tsDocId => testSpecRemarkAdd(tsDocId, caseId, { text: body, phase: presentation.value.hasReport ? 'test_run' : 'case_write' }))
+  }
+  function setRemarkState(remarkId: string, state: TestRemarkState): Promise<boolean> {
+    return changeRemark(tsDocId => testSpecRemarkUpdate(tsDocId, remarkId, { state }))
+  }
 
   async function changeSetting(field: CardSettingsField, value: unknown): Promise<boolean> {
     if (!can('settingChange', undefined, field).enabled) return false
@@ -381,8 +426,9 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     return true
   }
   return { target: computed(() => target() ?? lastTarget.value), test, settings, reviewHistory, view, cases, rows, formatErrors,
+    remarks, remarkBusy, remarkFailed, remarkCounts, scenarioRows, addRemark, setRemarkState,
     lastNormal, presentation, writing, writingCaseId, instructionOmitted, busy, refusal, drafts, windows, reportRecentlyConfirmed,
-    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, pinCases, pinBrief, pinRaw, reviseBrief, reviseRaw, startNewIntent, changeSetting, rewriteAll,
+    can, canOpen, openReason, openWindow, closeWindow, reload, reject, changeDocument, saveCases, pinCases, pinRaw, reviseRaw, startNewIntent, changeSetting, rewriteAll,
     run: () => can('run').enabled ? test.run() : Promise.resolve(false),
     cancel: () => can('cancel').enabled ? test.cancel() : Promise.resolve(false),
     rerunCase: (caseId: string) => can('rerunCase', caseId).enabled ? test.rerunCase(caseId) : Promise.resolve(false),

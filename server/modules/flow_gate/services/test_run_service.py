@@ -1096,6 +1096,7 @@ def _shape_case_item(case: dict) -> dict:
             "execution_mode",
             "checked_by", "checked_at", "note", "source_name", "source_identity",
             "result_origin", "mapping_conflict", "result_count", "carried_from_run_id",
+            "content", "check", "checker", "result", "skip_reason", "result_by",
         ):
             shaped[key] = row.get(key)
     return shaped
@@ -1202,6 +1203,7 @@ def record_spec_results(
     execution_basis: Optional[dict] = None,
     execution_cases: Optional[list[dict]] = None,
     execution_live: Optional[dict] = None,
+    overall_comment: Optional[str] = None,
 ) -> dict:
     """Validate and store one result submission for a valid specification TS (card approval follows results).
 
@@ -1265,6 +1267,8 @@ def record_spec_results(
                 results, submitted_by=runner_id, now=now,
                 default_source_identity=source_identity,
                 default_origin="manual" if triggered_via == "ui" else "payload",
+                # who recorded it: a person on the screen, otherwise the AI worker.
+                actor_kind="human" if triggered_via == "ui" else "ai",
             ))
             sources.append("results")
         if junit_xml:
@@ -1358,6 +1362,9 @@ def record_spec_results(
             meta["ignored_submitted_overall"] = str(submitted_overall)[:32]
         if chain_context:
             meta["chain"] = chain_context
+        if overall_comment and str(overall_comment).strip():
+            # F81: the AI's few lines over the whole run, shown under the scenario list.
+            meta["overall_comment"] = str(overall_comment).strip()[:4000]
         run = db_test_runs.insert_spec_run(
             doc_id=doc_id,
             revision_no=revision_no,
@@ -1926,6 +1933,45 @@ def resume_test_gate_chain_for_hop(doc_id: Optional[str], *, api_base_url: Optio
     )
 
 
+def scenario_report(ts_doc_id: Optional[str], rows: list[dict], run: Optional[dict]) -> dict:
+    """F81: what the report shows -- the recorded case results tallied, and the AI's comment.
+
+    ``rows`` are result rows (``stored_case_to_row`` / ``map_results``). Nothing is read from
+    the report document's text. ``evidence`` counts stay zero until attachments carry the
+    ``test_evidence`` tag.
+    """
+    from modules.flow_gate.services import test_remark_service
+
+    try:
+        remarks = test_remark_service.counts_by_case(ts_doc_id) if ts_doc_id else {}
+    except Exception:  # noqa: BLE001 -- display-only
+        remarks = {}
+    cases = []
+    for row in rows:
+        key = test_spec_service.case_id_key(row.get("case_id") or "")
+        tally = remarks.get(key) or {}
+        cases.append({
+            "case_id": row.get("case_id"),
+            "title": row.get("title") or "",
+            "check": row.get("check"),
+            "checker": row.get("checker"),
+            "result": test_spec_service.case_result_of(row.get("status")),
+            "result_by": row.get("result_by"),
+            "result_at": row.get("checked_at") or None,
+            "skip_reason": row.get("skip_reason") or "",
+            "open_remarks": int(tally.get("open") or 0),
+            "resolved_remarks": int(tally.get("resolved") or 0),
+            "evidence": {"input": 0, "log": 0, "output": 0, "total": 0},
+        })
+    meta = test_spec_service.load_result_meta((run or {}).get("result_meta"))
+    return {
+        "run_id": (run or {}).get("run_id"),
+        "counts": test_spec_service.case_result_counts(rows),
+        "overall_comment": meta.get("overall_comment") or None,
+        "cases": cases,
+    }
+
+
 def describe_test_document(doc: dict) -> dict:
     """Structured view model for the TS/TSR document body (UI).
 
@@ -2038,6 +2084,15 @@ def describe_test_document(doc: dict) -> dict:
                                 and row.get("result_origin") != "missing")
                 out["progress"] = {"automated_total": len(automated),
                                    "automated_completed": completed}
+            # F81: the scenario list's own numbers (the valid result, else nothing run yet).
+            shown_run = (db_test_runs.get_run(out["effective_run_id"])
+                         if out.get("effective_run_id") else None)
+            out["scenario_report"] = scenario_report(
+                doc["doc_id"],
+                (out.get("effective_result") or {}).get("cases")
+                or test_spec_service.map_results(parsed["cases"], [])["cases"],
+                shown_run,
+            )
         return out
     if type_code == "TSR":
         run = db_test_runs.latest_by_tsr_doc(doc["doc_id"])
@@ -2062,6 +2117,15 @@ def describe_test_document(doc: dict) -> dict:
                 out["source_identity"] = (test_basis_service.source_identity(ts_view["test_basis"])
                                           if ts_view.get("test_basis") else None)
                 out["test_asset_identity"] = (ts_view.get("test_basis") or {}).get("test_assets")
+                # F81: the report is the scenario list of its TS (same data as the TS view).
+                out["scenario_report"] = ts_view.get("scenario_report")
+            if out.get("scenario_report") is None:
+                out["scenario_report"] = scenario_report(
+                    doc.get("target_id"),
+                    [test_spec_service.stored_case_to_row(row)
+                     for row in db_test_runs.list_cases(run["run_id"])],
+                    run,
+                )
         return out
     return {"kind": type_code, "doc_id": doc.get("doc_id"), "contract_version": None}
 

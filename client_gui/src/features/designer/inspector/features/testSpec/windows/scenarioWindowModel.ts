@@ -1,21 +1,25 @@
 import { computed, h, nextTick, onBeforeUnmount, ref, render, watch } from 'vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
-import { testSpecCasePayload, type TestSpecCaseDetail, type TestSpecCasePayload } from '@/features/document'
+import { testSpecCasePayload, type TestCaseCheck, type TestCaseChecker, type TestSpecCaseDetail, type TestSpecCasePayload } from '@/features/document'
 import type ModelessShell from '@/components/ui/ModelessShell.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import { useTestCard, type TestCardWindowKind } from '../useTestCard'
 import type { CasesPin } from '../testCardSession'
 import type { TsBase } from '@/features/documentWindow'
 
-export const caseTextFields = ['title', 'requirement', 'precondition', 'procedure', 'expected', 'run_command'] as const
+// F81 case fields: title · content · procedure · expected · check (code | manual) · run command (code only).
+export const caseTextFields = ['title', 'content', 'procedure', 'expected', 'run_command'] as const
 export interface CaseDraft {
   docId: string | null
   original: TestSpecCasePayload
   snapshot: string
-  title: string; requirement: string; precondition: string; procedure: string; expected: string
-  /** The automated Case's one execution input (0094 B0005); its target and cwd are not edited here. */
+  title: string; content: string; procedure: string; expected: string
+  /** The code case's one execution input (0094 B0005); its target and cwd are not edited here. */
   run_command: string
-  execution_mode: string; required: boolean
+  /** `code`: the server runs the command; `manual`: checked by hand (who did is recorded with the result). */
+  check: TestCaseCheck
+  /** Kept as stored for a manual case; the window does not choose it. */
+  checker: TestCaseChecker | null
   /** Review fix (§2.15.3): the v2 snapshot (docId, revision, coordinates, cases) this draft saves against; set once, never replaced by a reopen / another draft's ACK / a late GET. */
   pin: CasesPin | null
   pinState: 'idle' | 'loading' | 'failed'
@@ -46,37 +50,37 @@ export function shownCommand(item: TestSpecCasePayload): string {
 }
 /** The draft changed what runs: the server judges the command again (B0005 §2). */
 export function runChanged(draft: CaseDraft): boolean {
-  return draft.execution_mode !== (draft.original.execution_mode ?? '') || draft.run_command !== shownCommand(draft.original)
+  return draft.check !== draft.original.check || draft.run_command !== shownCommand(draft.original)
 }
 
 export function caseDraft(item: TestSpecCaseDetail, cases: readonly TestSpecCaseDetail[], title: string | null, docId: string | null = null): CaseDraft {
   const original = testSpecCasePayload(item)
   return { original, docId, snapshot: scenarioSnapshot(cases, title),
-    title: original.title, requirement: original.requirement ?? '', precondition: original.precondition ?? '',
+    title: original.title, content: original.content ?? '',
     procedure: original.procedure ?? '', expected: original.expected ?? '', run_command: shownCommand(original),
-    execution_mode: original.execution_mode ?? '', required: original.required, pin: null, pinState: 'idle' }
+    check: original.check ?? 'manual', checker: original.checker, pin: null, pinState: 'idle' }
 }
 export function newCaseDraft(cases: readonly TestSpecCaseDetail[], title: string | null, docId: string | null): CaseDraft {
   const ids = new Set(cases.map(c => c.caseId.replace(/-0+(\d)/, '-$1')))
   let n = 1
   while (ids.has(`TC-${n}`)) n++
-  const original: TestSpecCasePayload = { case_id: `TC-${n}`, title: '', category: 'normal', requirement: '',
-    execution_mode: 'automated', required: false, precondition: '', input: '', procedure: '', expected: '',
-    check_points: '', automation_ref: null, test_assets: null }
-  return { original, docId, snapshot: scenarioSnapshot(cases, title), title: '', requirement: '', precondition: '',
-    procedure: '', expected: '', run_command: '', execution_mode: 'automated', required: false, pin: null, pinState: 'idle' }
+  const original: TestSpecCasePayload = { case_id: `TC-${n}`, title: '', content: '', procedure: '', expected: '',
+    check: 'code', checker: null, category: null, required: true, input: null, check_points: null,
+    automation_ref: null, test_assets: null }
+  return { original, docId, snapshot: scenarioSnapshot(cases, title), title: '', content: '',
+    procedure: '', expected: '', run_command: '', check: 'code', checker: null, pin: null, pinState: 'idle' }
 }
 export function addedCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
-  return [...cases.map(testSpecCasePayload), { ...draft.original, title: draft.title, requirement: draft.requirement,
-    precondition: draft.precondition, procedure: draft.procedure, expected: draft.expected, check_points: draft.expected,
-    execution_mode: draft.execution_mode, required: draft.required, automation_ref: null,
-    ...(draft.execution_mode === 'automated' && draft.run_command ? { run_command: draft.run_command } : {}) }]
+  return [...cases.map(testSpecCasePayload), { ...draft.original, title: draft.title, content: draft.content,
+    procedure: draft.procedure, expected: draft.expected, check: draft.check,
+    checker: draft.check === 'manual' ? draft.checker : null, automation_ref: null,
+    ...(draft.check === 'code' && draft.run_command ? { run_command: draft.run_command } : {}) }]
 }
 
 /**
- * Only displayed, changed fields are replaced; hidden fields and untouched nulls survive. The two hidden
- * fields the server requires get the same defaults as a new case only when the edited case has none.
+ * Only displayed, changed fields are replaced; hidden fields and untouched nulls survive.
  * A changed command replaces the stored target: the command alone says what runs. A stored cwd is kept.
+ * A case made manual sends no command (the server drops one left from before).
  */
 export function mergeCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft): TestSpecCasePayload[] {
   return cases.map((item) => {
@@ -87,13 +91,14 @@ export function mergeCase(cases: readonly TestSpecCaseDetail[], draft: CaseDraft
       if (field === 'run_command') continue
       if (draft[field] !== (draft.original[field] ?? '')) edits[field] = draft[field]
     }
-    if (draft.execution_mode === 'automated' && draft.run_command !== shownCommand(draft.original)) {
+    if (draft.check === 'code' && draft.run_command !== shownCommand(draft.original)) {
       edits.run_command = draft.run_command
       edits.automation_ref = null
     }
-    return { ...payload, ...edits, category: payload.category ?? 'normal', check_points: payload.check_points ?? draft.expected,
-      execution_mode: draft.execution_mode !== (draft.original.execution_mode ?? '') ? draft.execution_mode : payload.execution_mode,
-      required: draft.required !== draft.original.required ? draft.required : payload.required }
+    const check = draft.check !== draft.original.check ? draft.check : payload.check
+    const { run_command: storedCommand, ...rest } = { ...payload, ...edits }
+    return { ...rest, ...(check === 'code' && storedCommand ? { run_command: storedCommand } : {}),
+      check, checker: check === 'manual' ? draft.checker ?? payload.checker : null }
   })
 }
 
