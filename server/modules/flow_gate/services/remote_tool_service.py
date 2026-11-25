@@ -924,6 +924,27 @@ def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> t
     raise _OpError(422)  # unreachable (op validated earlier)
 
 
+_RUN_LEDGER_OPS = frozenset({"write", "patch", "move", "remove"})
+
+
+def _execute_recorded(op: str, body: dict, root: Path, grant: Optional[dict],
+                      token: Optional[dict]) -> tuple[dict, Optional[int]]:
+    """:func:`_execute`, with a source mutation noted for the run that made it.
+
+    A chat run's "run change" lists only the writes made with that run's own token
+    (``run_source_ledger``), never what other runs changed in the shared worktree.
+    """
+    if op not in _RUN_LEDGER_OPS:
+        return _execute(op, body, root, grant)
+    from modules.flow_gate.services import run_source_ledger
+
+    if not run_source_ledger.active():
+        return _execute(op, body, root, grant)
+    paths = [body.get("source_path"), body.get("target_path")] if op == "move" else [body.get("path")]
+    with run_source_ledger.recording(token, root, paths):
+        return _execute(op, body, root, grant)
+
+
 def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[int]]:
     """Validate the complete decision batch before applying any base-checkout change.
 
@@ -2280,7 +2301,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         )
         if op in {"write", "patch", "remove", "move"} and attempt_bound:
             with graph_source_hooks.mutation(attempt_token) as attempt_root:
-                extra, nbytes = _execute(op, body, attempt_root, grant)
+                extra, nbytes = _execute_recorded(op, body, attempt_root, grant, attempt_token)
         elif guarded_group_mutation:
             # TR2 ownership exists only for Git-managed group worktrees. A non-integrated
             # project with a group_id intentionally keeps the pre-0641 base fallback path.
@@ -2313,7 +2334,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
                                     "group_id": grant["group_id"],
                                 },
                             )
-                        extra, nbytes = _execute(op, body, mutation.root, grant)
+                        extra, nbytes = _execute_recorded(op, body, mutation.root, grant, attempt_token)
                 except tr2_policy.Tr2FilePolicyError as exc:
                     status = 409 if exc.code in {
                         tr2_policy.TR2_MANAGED_FILE,
@@ -2332,9 +2353,9 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
             else:
                 # Important compatibility branch: group_id alone never opts a non-Git
                 # project into TR2 ownership semantics.
-                extra, nbytes = _execute(op, body, root, grant)
+                extra, nbytes = _execute_recorded(op, body, root, grant, attempt_token)
         else:
-            extra, nbytes = _execute(op, body, root, grant)
+            extra, nbytes = _execute_recorded(op, body, root, grant, attempt_token)
     except graph_source_hooks.GraphSourceError as exc:
         _log(grant, op, log_path, log_pattern, status=409)
         return 409, _envelope(False, op, error={"code": exc.code, "message": exc.message, "details": exc.details})

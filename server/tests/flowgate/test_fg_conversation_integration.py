@@ -173,7 +173,10 @@ def test_start_hook_grants_the_capability_and_prepare_snapshots(env):
     # admission's hook stays cheap -- the snapshot is the worker's prepare step.
     assert "source_start_tree" not in run and "source_change_capture" not in run
     chat_run_hooks.chat_run_prepare(run)
-    assert run["source_start_tree"] and run["source_change_capture"] == c.CAPTURE_READY
+    # No worktree-wide snapshot: prepare only starts recording the run's own writes.
+    assert run["source_change_capture"] == c.CAPTURE_READY and run["source_start_tree"] is None
+    assert legacy_adapter.source_ledger().is_open(RUN_ID)
+    legacy_adapter.source_ledger().discard_run(RUN_ID)
 
 
 def test_start_hook_without_worktree_keeps_the_run(env, monkeypatch):
@@ -209,7 +212,11 @@ def test_finalize_hook_closes_commands_then_records_the_change(env):
     chat_run_hooks.chat_run_start(run)
     chat_run_hooks.chat_run_prepare(run)
     pending = commands.create_request(run, {"program": "git", "args": ["status"]})
-    (env["root"] / "made_by_run.txt").write_text("x\n", encoding="utf-8")
+    # One file written with the run's own token, one written by somebody else (a card run)
+    # in the same worktree meanwhile: only the first is the run's change.
+    with legacy_adapter.source_ledger().recording({"ai_run_id": RUN_ID}, env["root"], ["made_by_run.txt"]):
+        (env["root"] / "made_by_run.txt").write_text("x\n", encoding="utf-8")
+    (env["root"] / "made_by_card.txt").write_text("y\n", encoding="utf-8")
     run["status"] = "finished"
     chat_run_hooks.chat_run_finalize(run)
     assert repo.list_open_commands_for_run(RUN_ID) == []
@@ -573,7 +580,8 @@ def test_activity_and_diff_routes(env, monkeypatch):
     chat_run_hooks.chat_run_start(run)
     chat_run_hooks.chat_run_prepare(run)
     commands.create_request(run, {"program": "git"})
-    (env["root"] / "keep.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    with legacy_adapter.source_ledger().recording({"ai_run_id": RUN_ID}, env["root"], ["keep.txt"]):
+        (env["root"] / "keep.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
     chat_run_hooks.chat_run_finalize(run)
     client = _client({"user_id": USER})
     body = client.get(f"/flowgate/api/v1/chat-activity/{CHAT_DOC}").json()

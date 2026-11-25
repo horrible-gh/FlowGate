@@ -47,10 +47,9 @@ def on_chat_run_start(run: dict) -> None:
 
 
 def on_chat_run_prepare(run: dict) -> None:
-    """the start-tree snapshot, on the worker thread before any provider
-    starts. It hashes every file of the worktree, which on a cold file cache took longer
-    than the browser's 30s wait for /ai-invoke/start when it ran inside admission. Nothing
-    can change files for the run before its provider starts, so the tree means the same."""
+    """On the worker thread before any provider starts: begin recording the run's own
+    source writes (``run_changes`` / ``run_source_ledger``). Nothing can change files for
+    the run before its provider starts. No worktree-wide snapshot is taken any more."""
     run_changes.start_snapshot(run)
 
 
@@ -115,8 +114,7 @@ def on_chat_run_finalize(run: dict) -> None:
     except Exception:
         logger.warning("chat command cleanup failed for %s", run.get("run_id"), exc_info=True)
     run_changes.finalize_run(run)
-    # the chat commit point -- after the end snapshot, so the run
-    # change still compares the run's own trees. Never raises.
+    # the chat commit point -- after the run change was stored. Never raises.
     from modules.flow_gate.services import chat_commit_service
     chat_commit_service.commit_on_finalize(run)
 

@@ -308,6 +308,19 @@ def execute_mode_refusal(command: ChatCommand) -> str | None:
     return None
 
 
+def may_change_files(command: ChatCommand) -> bool:
+    """Whether the worktree is compared around ``command`` to find what it changed.
+
+    Only a ``read`` / ``git_read`` command without a writing option is known not to
+    change files; comparing the whole worktree twice for a ``git status`` would only
+    slow it down. Everything else (tests and builds included) is compared.
+    """
+    try:
+        return command.category not in ("read", "git_read") or execute_mode_refusal(command) is not None
+    except Exception:
+        return True
+
+
 def resolve(command: ChatCommand, worktree: Path):
     """Filesystem half: (resolved executable, absolute cwd, controlled PATH)."""
     base = _base()

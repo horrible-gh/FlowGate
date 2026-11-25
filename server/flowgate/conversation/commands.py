@@ -950,6 +950,9 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
     cancelled = threading.Event()
     final: Optional[dict] = None
     executor = legacy_adapter.executor()
+    # What this command changes in the worktree is its run's own change (run_changes).
+    ledger = legacy_adapter.source_ledger()
+    window = None
 
     def elapsed_ms() -> int:
         return int((time.monotonic() - started) * 1000)
@@ -977,6 +980,8 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
                 if refusal_code is None and request_id in _cancel_requested:
                     refusal_code = _cancel_requested[request_id]
             if refusal_code is None:
+                if policy.may_change_files(command):
+                    window = ledger.begin_command(row["ai_run_id"])
                 control, _ownership = executor.spawn(
                     [resolved.executable, *resolved.argv_prefix, *command.args], cwd, env,
                     command.timeout_seconds, request_id,
@@ -993,6 +998,9 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
             cancelled.set()
             control.cancel()
         result = executor.wait(control, command.timeout_seconds, cancelled)
+        # Before the request turns terminal: whoever waits for that (the AI, finalize)
+        # then finds the command's file changes already recorded.
+        ledger.end_command(window)
         reason = _cancel_reason(request_id, row["ai_run_id"]) or early_reason
         if result.cancelled or reason:
             status = c.CANCELLED
@@ -1029,6 +1037,7 @@ def _execute_owned(request_id: str, expected_root: Optional[str]) -> None:
                                             error_code=c.REASON_INTERNAL_ERROR,
                                             stderr_tail=str(exc)[:500], duration_ms=elapsed_ms())
     finally:
+        ledger.end_command(window)
         if control is not None:
             with contextlib.suppress(Exception):
                 control.close()
