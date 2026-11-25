@@ -215,15 +215,18 @@ describe('personal settings and the model in use', () => {
 
 it('preserves model terms independently of engine terms and installs without an acknowledgement field', async () => {
   net.getRequest.mockResolvedValue({ data: { services: [{ id: 'sherpa-onnx', license: 'Apache-2.0', components: [
-    { filename: 'ffmpeg.zip', component_type: 'ffmpeg', license: 'GPL-3.0-or-later', distribution: 'direct-upstream-only', url: 'https://example.test/ffmpeg' },
-  ], native_notices: ['onnxruntime.dll 1.17.1: notices secured'], models: [
+    { filename: 'ffmpeg.zip', component_type: 'ffmpeg', license: 'GPL-3.0-or-later', distribution: 'direct-upstream-only', url: 'https://example.test/ffmpeg', license_url: null },
+    { filename: 'sherpa.zip', component_type: 'engine', license: 'Apache-2.0', distribution: 'direct-upstream-only', url: 'https://example.test/sherpa', license_url: 'https://example.test/LICENSE' },
+  ], notice_keys: ['onnxruntime_notices'], native_notices: ['onnxruntime.dll 1.17.1: notices secured'], models: [
     { id: 'zipformer-ko', license: 'Apache-2.0' },
   ] }] } })
   const [service] = await fetchVoiceCatalog()
   expect(service.license).toBe('Apache-2.0')
   expect(service.models[0]).toMatchObject({ license: 'Apache-2.0', defaultEligible: true })
   expect(service.models[0]).not.toHaveProperty('requiresLicenseAck')
-  expect(service.components?.[0]).toMatchObject({ componentType: 'ffmpeg', license: 'GPL-3.0-or-later' })
+  expect(service.components?.[0]).toMatchObject({ componentType: 'ffmpeg', license: 'GPL-3.0-or-later', licenseUrl: null })
+  expect(service.components?.[1]).toMatchObject({ licenseUrl: 'https://example.test/LICENSE' })
+  expect(service).toMatchObject({ noticeKeys: ['onnxruntime_notices'], nativeNotices: ['onnxruntime.dll 1.17.1: notices secured'] })
   net.postRequest.mockResolvedValue({ data: { install_id: 'vi_x' } })
   await startVoiceInstall({ service: service.id, model: service.models[0].id })
   expect(net.postRequest).toHaveBeenCalledWith('/api/v1/voice/installs', { service: 'sherpa-onnx', model: 'zipformer-ko' })

@@ -1,6 +1,49 @@
 import { PRODUCT_NAME } from '../../shared/productName.ts'
 
 export default {
+  licenses: {
+    "window_title": "オープンソースライセンス",
+    "close": "閉じる",
+    "tab_project": "FlowGate 全体",
+    "col_component": "構成要素",
+    "col_file": "ファイル",
+    "col_license": "ライセンス",
+    "col_source": "原文",
+    "source_link": "原文",
+    "open_for": "{name} のライセンス情報を見る",
+    "open": "ライセンス情報を見る",
+    "summary": "エンジン {engine} · モデル {model}",
+    "pending": "確認中",
+    "direct_download": "すべてのファイルは公式配布元から直接ダウンロードします。オフラインインストール用パッケージはライセンスファイルの確認後に提供します。FFmpeg はパッケージに含めません。",
+    "project_third_party": "サードパーティのライセンス全文",
+    "project_license": "プロジェクト LICENSE",
+    "loading": "読み込み中…",
+    "load_failed": "読み込めませんでした",
+    "nav_title": "オープンソースの告知",
+    "component_type": {
+      "engine": "エンジン",
+      "weights": "モデル",
+      "runtime": "ランタイム",
+      "other": "その他",
+      "ffmpeg": "FFmpeg",
+      "sample": "サンプル"
+    },
+    "notice": {
+      "whisper_runtime_subset": "検証済みの配布物に含まれるランタイムファイル6個のみを同梱し、ソースの出典コメントと MIT・zlib・Apache ライセンスの全文を提供します。",
+      "microsoft_system_prerequisites": "Microsoft VC++ x64 ランタイムと OpenMP（MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140）は同梱しません。システムに別途インストールする必要があります。",
+      "onnxruntime_notices": "onnxruntime.dll 1.17.1: 公式の 1.17.1 配布物から LICENSE と ThirdPartyNotices を取得済みです。",
+      "cargs_license": "cargs.dll 1.0.3: MIT ライセンスの全文を取得済みです。",
+      "sherpa_static_notices_pending": "sherpa-onnx-c-api.dll に静的リンクされた依存ライブラリ（kaldi-native-fbank、OpenFst など）: 告知は確認中のため、再配布は引き続き保留します。",
+      "gcc_runtime_exception": "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 ランタイム例外の条文は取得済みですが、正確な GCC パッチバージョンは未確認です。",
+      "mingw_notices_pending": "libwinpthread-1.dll: mingw-w64 のバージョンと告知が未確認のため、再配布は引き続き保留します。",
+      "vosk_static_notices_pending": "libvosk.dll に静的リンクされた Kaldi/OpenFst/BLAS の告知: 確認中のため、再配布は引き続き保留します。"
+    }
+  },
+  voice: {
+    "test_upload": "録音ファイルをアップロード",
+    "test_no_file": "ファイルが選択されていません",
+    "unavailable_windows": "このバージョンは Windows x64 でのみ利用できます"
+  },
   taskbar: {"label": "タスクバー", "menu": "メニュー", "more": "最小化したウィンドウをあと{count}件表示", "theme": "テーマ", "theme_hint": "タスクバー、メニュー、ウィンドウのタイトルバーの表示を選びます。", "style": "タスクバーのスタイル", "screen": "画面", "theme_window": "自分の設定 · テーマ", "group_ai": "マイ AI 管理", "group_settings": "自分の設定", "my_ai": "マイ AI", "my_ai_desc": "既定のAI · 順序 · 追加", "my_ai_window": "AI 管理 · マイ AI", "question_policy": "質問方針", "question_policy_desc": "AIが自分に質問する基準", "question_policy_window": "AI 管理 · 質問方針", "agents": "エージェント", "agents_desc": "個人エージェント一覧 · 登録", "account": "アカウント", "account_window": "自分の設定 · アカウント", "account_desc": "ログイン情報と表示言語", "agents_window": "自分の設定 · エージェント", "security": "セキュリティ", "security_desc": "パスワード変更 · ログインセッション", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "モダン", "style_dock": "ドック", "style_classic": "クラシック", "security_window": "自分の設定 · セキュリティ", "pin_project": "プロジェクトを開く", "pin_attachments": "添付ファイル", "pin_terminal": "ターミナル", "pin_git": "Git", "pin_search": "検索"},
   agent_capacity: {"label": "最大同時実行数", "running": "実行中", "summary": "実行中 {running} / 最大 {max}", "queued": "待機 {count}", "invalid": "1〜32の整数を入力してください。", "hint": "チャットとカードの合計です。超過したジョブは順番に待機します。", "lowered": "実行中のジョブは継続します。新しい上限を下回ると次のジョブを開始します。", "cli_missing": "このPCにAI CLIが見つからないため、CLIジョブを受信できません。", "connect": "接続", "token_hint": "登録トークンは10分間有効です。再発行すると以前のトークンは無効になります。", "waiting": "エージェントの接続待ち · 5秒ごとに確認", "enable_first": "使用をオンにして保存すると登録トークンを発行できます。", "enabled": "使用", "workdir_hint": "空のままではジョブを受信できません。エージェントPCで作業フォルダーを作成する場所を指定してください。例: /data/flowgate、C:\\flowgate", "sec_basic": "基本情報", "sec_run": "実行", "sec_workdir": "作業フォルダー", "create_sub": "名前だけで登録できます。その他は後から変更できます。", "not_connected": "まだPCと接続されていません", "enabled_on": "オンのとき、このエージェントがジョブを受信します。", "enabled_off": "ジョブを受信しません。", "unit_jobs": "件", "running_now": "実行中 {running}件", "queued_now": "待機 {count}件", "workdir_label": "作業フォルダーの場所", "workdir_preview": "ジョブごとに {path} フォルダーを作成します。", "cleanup_on": "作業終了から {hours}時間後にフォルダーを削除します（1〜720）。", "cleanup_off": "オフのとき、作業フォルダーは削除せずに残します。", "cli_missing_detail": "このPCでAI CLIが見つからないため、ジョブを受信できません。インストールすると次の接続から自動でジョブを受信します。", "token_title": "登録トークン", "token_until": "{at}まで", "no_token": "トークンがありません · 10分間有効", "no_token_hint": "ダイアログを閉じたか、10分が過ぎてトークンが期限切れになりました。削除して再登録せずに、新しく発行できます。", "no_changes": "変更なし", "changes": "未保存の変更 {count}件", "changes_one": "未保存の変更 1件", "workdir_shared": "現在はすべてのジョブが {path} フォルダーを共有しています。この欄を修正して保存すると、ジョブごとにフォルダーを分けます。"},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
