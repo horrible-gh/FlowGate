@@ -1,5 +1,12 @@
 <template>
-  <div class="ui-tabs" role="tablist" :aria-label="ariaLabel">
+  <div
+    class="ui-tabs"
+    :class="{ 'is-vertical': orientation === 'vertical' }"
+    role="tablist"
+    :aria-label="ariaLabel"
+    :aria-orientation="orientation"
+    :data-orientation="orientation"
+  >
     <button
       v-for="tab in tabs"
       :key="tab.key"
@@ -9,6 +16,7 @@
       class="ui-tab"
       :class="{ 'is-active': tab.key === modelValue }"
       :data-tone="tab.tone || undefined"
+      :data-tab="tab.key"
       :aria-selected="tab.key === modelValue"
       :disabled="tab.disabled"
       :tabindex="tab.key === modelValue ? 0 : -1"
@@ -24,6 +32,8 @@
 // Domain-free tab strip: visual selection + interaction only. The screen owns
 // the tab list, the active value and what changing tabs does — this component never
 // hardcodes a feature's tab set or reads router/feature state itself.
+// `orientation` (flowgate.v02test.0096 ④): 'horizontal' (default, a row with ← →) or 'vertical' (a column with ↑ ↓),
+// so a screen can switch its tab placement with one prop.
 import { nextTick } from 'vue'
 
 export interface TabItem {
@@ -34,11 +44,17 @@ export interface TabItem {
   tone?: string | null
 }
 
-const props = defineProps<{
-  tabs: TabItem[]
-  modelValue: string
-  ariaLabel?: string
-}>()
+export type TabOrientation = 'horizontal' | 'vertical'
+
+const props = withDefaults(
+  defineProps<{
+    tabs: TabItem[]
+    modelValue: string
+    ariaLabel?: string
+    orientation?: TabOrientation
+  }>(),
+  { ariaLabel: undefined, orientation: 'horizontal' },
+)
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string] }>()
 
@@ -57,17 +73,20 @@ function select(key: string) {
 }
 
 function onKeydown(event: KeyboardEvent, key: string) {
-  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+  const vertical = props.orientation === 'vertical'
+  const next = vertical ? 'ArrowDown' : 'ArrowRight'
+  const prev = vertical ? 'ArrowUp' : 'ArrowLeft'
+  if (event.key !== next && event.key !== prev) return
   event.preventDefault()
   const enabled = props.tabs.filter((t) => !t.disabled)
   const idx = enabled.findIndex((t) => t.key === key)
   if (idx === -1 || enabled.length === 0) return
-  const delta = event.key === 'ArrowRight' ? 1 : -1
-  const next = enabled[(idx + delta + enabled.length) % enabled.length]
-  select(next.key)
+  const delta = event.key === next ? 1 : -1
+  const target = enabled[(idx + delta + enabled.length) % enabled.length]
+  select(target.key)
   // Keyboard focus must follow selection to the newly active tab (WAI-ARIA APG tabs
   // pattern) regardless of whether the controlling parent has re-applied modelValue yet.
-  nextTick(() => buttonRefs.get(next.key)?.focus())
+  nextTick(() => buttonRefs.get(target.key)?.focus())
 }
 </script>
 
@@ -107,5 +126,23 @@ function onKeydown(event: KeyboardEvent, key: string) {
 .ui-tab:focus-visible {
   outline: 2px solid var(--fg2-focus);
   outline-offset: -2px;
+}
+
+/* Vertical: a column of tabs with the selection mark on the right edge instead of the bottom. */
+.ui-tabs.is-vertical {
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 0;
+  border-right: 1px solid var(--fg2-line);
+}
+
+.ui-tabs.is-vertical .ui-tab {
+  text-align: left;
+  border-bottom: 0;
+  border-right: 2px solid transparent;
+}
+
+.ui-tabs.is-vertical .ui-tab.is-active {
+  border-right-color: var(--fg2-blue);
 }
 </style>

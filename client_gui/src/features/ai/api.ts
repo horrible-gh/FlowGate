@@ -256,14 +256,6 @@ export async function fetchCurrentConnectionTest(projectId: string, providerId: 
   )
 }
 
-// Repeat-count ceiling: the system setting ai_repeat_count_max (system.settings.manage).
-export async function saveRepeatCountMax(value: number): Promise<void> {
-  await call(
-    () => patchRequest('/api/v1/system/settings', { updates: { ai_repeat_count_max: String(value) } }),
-    'gui.ai.request_failed.repeat_limit_save',
-  )
-}
-
 // Title AI: the system setting ai_title_provider — 'off', 'executor' (the AI that ran the card/chat) or a provider id.
 // Read only from the GET /system/settings row and saved alone on PATCH /system/settings (system.settings.manage).
 // null = the row is not there.

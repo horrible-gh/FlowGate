@@ -35,6 +35,9 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'ComposerImageStrip.vue',
         'ComposerModelPicker.vue',
         'ComposerSettings.vue',
+        // flowgate.v02test.0096 ④: the ⚙ settings window's AI tab and the window's place / size / tab memory.
+        'ComposerAiSettings.vue',
+        'floatingWindow.ts',
         'ComposerSourceModes.vue',
         'ComposerToolsMenu.vue',
         'ConversationComposer.vue',
@@ -129,6 +132,11 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
       /^@shared\/requestRecovery$/,
       /^@shared\/selfHeal$/,
       /^@shared\/connectionStatus$/,
+      // flowgate.v02test.0096: 자주 쓰는 AI (📌 pins / recent AI) per signed-in person — the AI picker and the ⚙ AI tab.
+      /^@shared\/aiFavorites$/,
+      // flowgate.v02test.0096 F96-5: my repeat limit / title AI load-save logic shared with AI 관리 › 기타 설정.
+      /^@shared\/myAiPreferences$/,
+      /^@\/core\/auth\/currentUser$/,
     ]
     for (const file of FILES) {
       for (const spec of importsOf(read(file))) expect(allowed.some((re) => re.test(spec)), `${rel(file)}: ${spec}`).toBe(true)
@@ -143,7 +151,10 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
 
   it('carries no Tool Panel Container, Palette, Git or Designer Shell code (R0001 §10)', () => {
     for (const file of FILES) {
-      const src = read(file)
+      // flowgate.v02test.0096 ④: the ⚙ settings window's 대화 / 음성 / AI tabs are the shared ui Tabs strip, not a Tool Panel.
+      const src = rel(file) === 'ComposerSettings.vue'
+        ? read(file).replace(/^import Tabs, \{[^}]*\} from '\.\.\/\.\.\/components\/ui\/Tabs\.vue'$/m, '')
+        : read(file)
       expect(src, rel(file)).not.toMatch(/features\/designer|DesignerToolPanel|PalettePanel|GitPanel|role="tab"|Tabs\.vue/)
     }
   })

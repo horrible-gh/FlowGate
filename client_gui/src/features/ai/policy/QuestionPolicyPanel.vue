@@ -1,14 +1,30 @@
 <template>
   <section class="question-policy" data-test="question-policy">
-    <div v-if="loading">{{ t('loading') }}</div>
+    <div v-if="loading" class="qp-loading">{{ t('loading') }}</div>
     <template v-else>
-      <header><label for="question-policy-body">{{ t('mine') }}</label>
-        <Button variant="secondary" :disabled="!loaded" @click="open = true">{{ t('assist') }}</Button></header>
-      <textarea id="question-policy-body" v-model="body" :disabled="!loaded || saving" :placeholder="t('example')" rows="13" />
-      <footer><span>{{ [...body].length }} / 4000 · {{ t(dirty ? 'unsaved' : 'saved') }}</span>
-        <Button :disabled="!loaded || saving || busy || !dirty || [...body].length > 4000" @click="save">{{ t('save') }}</Button></footer>
+      <!-- v02test.0096 F96-7 (mockup ⑤): one line on top — the name, 미리보기|편집, a gap, the save state and length,
+           [저장] (only while editing) and [AI와 정하기]. -->
+      <header class="qp-head">
+        <label id="question-policy-label" for="question-policy-body" class="qp-title">{{ t('title') }}</label>
+        <div class="qp-mode" role="group" :aria-label="t('view')">
+          <button type="button" class="qp-mode-btn" :class="{ 'is-active': mode === 'preview' }" :aria-pressed="mode === 'preview'"
+            data-test="qp-mode-preview" @click="mode = 'preview'">{{ t('preview') }}</button>
+          <button type="button" class="qp-mode-btn" :class="{ 'is-active': mode === 'edit' }" :aria-pressed="mode === 'edit'"
+            data-test="qp-mode-edit" @click="edit">{{ t('edit') }}</button>
+        </div>
+        <span class="qp-status" :class="{ 'is-dirty': dirty, 'is-over': length > 4000 }" data-test="qp-status" aria-live="polite">
+          {{ dirty ? '●' : '✓' }} {{ t(dirty ? 'unsaved' : 'saved') }} · {{ length }} / 4000</span>
+        <Button v-if="mode === 'edit'" variant="primary" size="sm" data-test="qp-save" :disabled="!loaded || saving || busy || !dirty || length > 4000" @click="save">{{ t('save') }}</Button>
+        <Button variant="secondary" size="sm" data-test="qp-assist" :disabled="!loaded" @click="open = true">{{ t('assist') }}</Button>
+      </header>
+      <textarea v-if="mode === 'edit'" id="question-policy-body" ref="bodyEl" v-model="body" :disabled="!loaded || saving" :placeholder="t('example')" />
+      <div v-else class="qp-preview" data-test="qp-preview" aria-labelledby="question-policy-label" @dblclick="edit">
+        <div v-if="body.trim()" class="qp-md qp-doc" v-html="bodyHtml" />
+        <p v-else class="qp-preview-empty">{{ t('emptyPreview') }}</p>
+      </div>
+      <p class="qp-foot"><template v-for="(part, index) in deliveredParts" :key="index"><code v-if="index % 2">{{ part }}</code><template v-else>{{ part }}</template></template></p>
     </template>
-    <p v-if="error" role="alert">{{ error }} <Button v-if="!loaded" @click="load">{{ t('retry') }}</Button></p>
+    <p v-if="error" class="qp-alert" role="alert">{{ error }} <Button v-if="!loaded" size="sm" @click="load">{{ t('retry') }}</Button></p>
     <ModelessShell kind-color="#a78bfa" :open="open" :title="t('assist')" :initial-x="80" :initial-y="100" :initial-width="510" :initial-height="570"
       :min-width="320" :min-height="340" @close="open = false">
       <!-- 0021 (0004-CH): the conversation looks and moves like the chat panel — the chat's own message bubbles
@@ -101,10 +117,20 @@ const failureCode = ref<string | null>(null)
 const retryable = computed(() => !NOT_RETRYABLE.has(failureCode.value ?? ''))
 const providers = ref<{ id: string; name: string }[]>([]), entries = ref<Entry[]>([]), reply = ref<Reply | null>(null)
 const loading = ref(true), loaded = ref(false), saving = ref(false), open = ref(false), busy = ref(false), applied = ref(false)
-const logEl = ref<HTMLElement | null>(null), inputEl = ref<HTMLTextAreaElement | null>(null)
+const logEl = ref<HTMLElement | null>(null), inputEl = ref<HTMLTextAreaElement | null>(null), bodyEl = ref<HTMLTextAreaElement | null>(null)
 const dirty = computed(() => body.value !== saved.value)
+const length = computed(() => [...body.value].length)
+/** v02test.0096: a saved policy opens as its rendered preview; an empty one opens in the editor. */
+const mode = ref<'preview' | 'edit'>('edit')
 const renderMarkdown = createMarkdownRenderer({ copyLabel: () => composer.t('gui.document_window.viewer.copy_code'), safe: true })
 const draftHtml = computed(() => (reply.value?.policy ? renderMarkdown(reply.value.policy) : ''))
+const bodyHtml = computed(() => (body.value.trim() ? renderMarkdown(body.value) : ''))
+/** The foot line with the name the AI receives (`[사용자 질의 방침]`) set apart as code: odd parts are the bracketed name. */
+const deliveredParts = computed(() => t('delivered').split(/(\[[^\]]+\])/))
+async function edit() {
+  mode.value = 'edit'
+  await nextTick(); bodyEl.value?.focus({ preventScroll: true })
+}
 let disposed = false
 let pendingId: string | null = null
 onBeforeUnmount(() => { disposed = true })
@@ -139,7 +165,7 @@ function grow() {
 watch(open, value => { if (value && entries.value.length) void reveal(busy.value ? 'end' : 'question', !busy.value) })
 async function load() {
   loading.value = true; error.value = ''
-  try { const policy = await loadPolicy(); body.value = saved.value = policy.body; loaded.value = true }
+  try { const policy = await loadPolicy(); body.value = saved.value = policy.body; loaded.value = true; mode.value = policy.body.trim() ? 'preview' : 'edit' }
   catch { error.value = t('error') }
   finally { loading.value = false }
   try { providers.value = await loadProviders() } catch { assistantError.value = t('error') }
@@ -159,7 +185,7 @@ async function save() {
 }
 function confirm() {
   if (!reply.value?.policy) return
-  body.value = reply.value.policy; applied.value = true
+  body.value = reply.value.policy; applied.value = true; mode.value = 'edit'
 }
 async function send(answer?: string) {
   if (busy.value || !provider.value) return
@@ -222,10 +248,32 @@ async function converse(): Promise<string | null> {
 onMounted(load)
 </script>
 <style scoped>
-.question-policy { max-width: 820px; padding: 8px 0; }
-header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-textarea#question-policy-body { width: 100%; box-sizing: border-box; margin: 16px 0; resize: vertical; padding: 12px; font: inherit; color: inherit; background: var(--color-bg, transparent); border: 1px solid var(--color-border, #aaa); border-radius: 8px; }
-footer span { opacity: .75; }
+/* v02test.0096 F96-7: the panel takes the whole height it is given (window and full screen); the body fills what the
+   top line and the foot leave, so no blank space sits under it. */
+.question-policy { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; box-sizing: border-box; }
+.qp-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.qp-title { font-size: 14px; font-weight: 700; color: var(--fg2-text); }
+.qp-mode { display: inline-flex; overflow: hidden; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius-sm, 7px); background: var(--fg2-control-surface-flat); }
+.qp-mode-btn { padding: 3px 12px; border: 0; border-radius: 0; background: transparent; color: var(--fg2-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.qp-mode-btn.is-active { background: var(--fg2-status-info-bg); color: var(--fg2-text); font-weight: 600; }
+.qp-status { margin-left: auto; font-size: 11.5px; color: var(--fg2-status-success-fg); white-space: nowrap; }
+.qp-status.is-dirty { color: var(--fg2-status-warning-fg, var(--fg2-muted)); }
+.qp-status.is-over { color: var(--fg2-status-danger-fg); }
+textarea#question-policy-body, .qp-preview { flex: 1 1 auto; width: 100%; box-sizing: border-box; min-height: 96px; color: var(--fg2-text, inherit); }
+/* 편집: the editor as before (a box), now filling the height. */
+textarea#question-policy-body { padding: 10px 12px; font: inherit; line-height: 1.5; resize: none;
+  background: var(--fg2-bg, transparent); border: 1px solid var(--fg2-line-strong, #aaa); border-radius: 8px; }
+/* 미리보기: a document, not an input box — no border, the UI font, ## as bold sub-headings and - as • lists. */
+.qp-preview { overflow-y: auto; padding: 2px 2px 4px; font-size: 13px; line-height: 1.6; }
+.qp-preview-empty { margin: 0; color: var(--fg2-muted); }
+.qp-doc :deep(h1), .qp-doc :deep(h2), .qp-doc :deep(h3), .qp-doc :deep(h4) { margin: .9em 0 .25em; font-size: 13px; font-weight: 700; color: var(--fg2-text); }
+.qp-doc :deep(ul) { list-style: none; padding-left: 0; }
+.qp-doc :deep(ul > li) { position: relative; padding-left: 1.1em; }
+.qp-doc :deep(ul > li)::before { content: '•'; position: absolute; left: .2em; color: var(--fg2-muted); }
+.qp-doc :deep(li + li) { margin-top: .1em; }
+.qp-foot { flex: none; margin: 0; font-size: 11.5px; color: var(--fg2-muted); }
+.qp-foot code { font-family: var(--fg2-font-mono, ui-monospace, monospace); font-size: 11px; }
+.qp-alert { margin: 0; }
 .policy-dialog { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
 .qp-top { display: flex; align-items: center; gap: 8px; }
 .qp-top select { flex: 1; min-width: 0; padding: 6px 8px; font: inherit; }
@@ -274,3 +322,4 @@ footer span { opacity: .75; }
   border: 1px solid var(--fg2-blue); border-radius: var(--fg2-control-radius-sm); background: var(--fg2-status-info-bg); color: var(--fg2-status-info-fg); }
 .qp-send:disabled { cursor: not-allowed; opacity: var(--fg2-control-disabled-opacity, .5); }
 </style>
+

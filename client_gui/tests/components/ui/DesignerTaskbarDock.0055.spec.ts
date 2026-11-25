@@ -27,7 +27,7 @@ describe('dock taskbar style', () => {
     expect(taskbarCapacity(2000, 5, 'dock')).toBe(5)
     expect(taskbarCapacity(400, 20, 'dock')).toBeLessThan(20)
   })
-  it('groups icon-only items with hover names and opens one row of all six icons over the blurred page', async () => {
+  it('groups icon-only items with hover names and opens one row of all seven icons over the blurred page', async () => {
     const wrapper = bar()
     await flushPromises()
     expect(wrapper.get('[data-test="designer-taskbar"]').attributes('data-taskbar-style')).toBe('dock')
@@ -50,8 +50,8 @@ describe('dock taskbar style', () => {
     expect(wrapper.element.contains(panel)).toBe(true)
     expect(wrapper.find('[data-test="dock-backdrop"]').exists()).toBe(true)
     expect(wrapper.find('.menu-board').exists()).toBe(false)
-    expect([...panel!.querySelectorAll('.dock-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
-    // One row holds all six tiles, with no group headings; a single line parts the two groups.
+    expect([...panel!.querySelectorAll('.dock-tile')].map(b => b.getAttribute('data-card'))).toEqual(['my-ai', 'ai-other', 'ai-policy', 'theme', 'agents', 'account', 'security'])
+    // One row holds all seven tiles, with no group headings; a single line parts the two groups.
     expect(panel!.querySelectorAll('.dock-grid-tiles')).toHaveLength(1)
     expect(panel!.querySelectorAll('[data-test="dock-grid-divider"]')).toHaveLength(1)
     expect(panel!.querySelector('.dock-tile-icon path')).not.toBeNull()
@@ -86,11 +86,11 @@ describe('dock taskbar style', () => {
     await nextTick()
     const key = async (name: string) => { (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true })); await nextTick() }
     await key('ArrowRight')
-    expect(document.activeElement?.getAttribute('data-card')).toBe('question-policy')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('ai-other')
     await key('ArrowDown')
-    expect(document.activeElement?.getAttribute('data-card')).toBe('theme')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('ai-policy')
     await key('ArrowLeft')
-    expect(document.activeElement?.getAttribute('data-card')).toBe('question-policy')
+    expect(document.activeElement?.getAttribute('data-card')).toBe('ai-other')
   })
   it('closes when the page outside is pressed or Esc is pressed, but not when an icon is pressed', async () => {
     const wrapper = bar()
@@ -130,3 +130,4 @@ describe('dock taskbar style', () => {
     expect(document.querySelector('.ui-modeless-panel')?.getAttribute('data-taskbar-style')).toBe('dock')
   })
 })
+

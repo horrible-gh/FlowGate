@@ -45,12 +45,15 @@ const net = vi.hoisted(() => ({
   failUsersGet: 0,
   actor: 'u1',
   paused: { review_count: 8, restart_count: 8 },
+  /** v02test.0096 F96-6: the system AI the title AI select offers (GET /system/ai-settings), and a failing read. */
+  systemAi: [] as { id: string; name: string; enabled: boolean }[],
+  failAiGet: 0,
 }))
 
 vi.mock('@shared/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@shared/api')>()
   const fail = (status: number, data: unknown) => Object.assign(new Error(`HTTP ${status}`), { response: { status, data } })
-  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'attach_read_max_mb', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode'])
+  const ALLOW = new Set(['storage_root', 'log_level', 'ai_repeat_count_max', 'ai_title_provider', 'attach_read_max_mb', 'scratch_ttl_value', 'scratch_ttl_unit', 'source_mode'])
   const MINUTES: Record<string, bigint> = { minute: 1n, hour: 60n, day: 1440n }
   const row = (key: string): Row => ({ setting_key: key, setting_value: net.rows[key].value, value_type: net.rows[key].type })
   const listRows = () => Object.keys(net.rows).sort().map(row)
@@ -119,6 +122,10 @@ vi.mock('@shared/api', async (importOriginal) => {
     if (call === 'GET /api/v1/system/settings') {
       if (net.failSettingsGet) throw fail(net.failSettingsGet, { detail: 'boom' })
       return { data: { settings: listRows() } }
+    }
+    if (call === 'GET /api/v1/system/ai-settings') {
+      if (net.failAiGet) throw fail(net.failAiGet, { detail: 'boom' })
+      return { data: { providers: net.systemAi.map((p) => ({ ...p })), default_provider_id: null, updated_at: null } }
     }
     if (call === 'PATCH /api/v1/system/settings') {
       if (net.holdNext) {
@@ -229,6 +236,7 @@ beforeEach(async () => {
   window.__accessToken__ = 'token-system-0076'
   net.rows = {
     ai_repeat_count_max: { value: '10', type: 'integer' },
+    ai_title_provider: { value: 'executor', type: 'string' },
     attach_read_max_mb: { value: '1', type: 'integer' },
     log_level: { value: 'INFO', type: 'string' },
     scratch_ttl_unit: { value: 'day', type: 'string' },
@@ -252,6 +260,12 @@ beforeEach(async () => {
   net.actor = 'u1'
   net.failUsersGet = 0
   net.paused = { review_count: 8, restart_count: 8 }
+  net.systemAi = [
+    { id: 'sys-a', name: 'System A', enabled: true },
+    { id: 'sys-off', name: 'System off', enabled: false },
+    { id: 'sys-b', name: 'System B', enabled: true },
+  ]
+  net.failAiGet = 0
   net.users = [
     user('u1', 'admin', { is_admin: true, tfa_enabled: true, workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'owner' }] }),
     user('u2', 'Kim Minseo', { workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'member' }] }),
@@ -274,7 +288,7 @@ afterEach(() => {
   for (const body of patches()) {
     const keys = Object.keys((body as { updates: Record<string, string> }).updates).sort()
     expect(keys).not.toContain('storage_root')
-    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max'], ['attach_read_max_mb']]).toContainEqual(keys)
+    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max'], ['ai_title_provider'], ['attach_read_max_mb']]).toContainEqual(keys)
   }
   wrapper?.unmount()
   wrapper = null
@@ -301,7 +315,7 @@ describe('V01 (시스템 부분) — 일반 joins the menus', () => {
 describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
   it('shows the stored and the effective Root apart, with the FLOWGATE_STORAGE_DIR notice; no Root control', async () => {
     const w = await open('/settings/system/general')
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
     expect(w.get('[data-testid="root-configured"]').text()).toBe('/data/stored-root')
     expect(w.get('[data-testid="root-effective"]').text()).toBe('/env/flowgate')
     expect(w.get('[data-testid="root-source"]').text()).toBe('환경 변수 FLOWGATE_STORAGE_DIR')
@@ -326,7 +340,7 @@ describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
     const w = await open('/settings/system/general')
     expect(w.find('[data-testid="root-error"]').exists()).toBe(true)
     expect(w.find('[data-testid="root-effective"]').exists()).toBe(false)
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
     expect((w.get('[data-testid="scratch-value"]').element as HTMLInputElement).value).toBe('7')
     net.failRoot = 0
     await click(w, '[data-testid="root-error"] button')
@@ -356,7 +370,7 @@ describe('V12 Scratch 정상·검증', () => {
     await click(w, '[data-testid="scratch-save"]')
     expect(patches()).toEqual([{ updates: { scratch_ttl_value: '6', scratch_ttl_unit: 'hour' } }])
     expect(net.requests).toEqual([
-      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings',
+      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings',
       'PATCH /api/v1/system/settings', 'GET /api/v1/system/settings',
     ])
     expect(w.find('[data-testid="scratch-saved"]').exists()).toBe(true)
@@ -936,5 +950,73 @@ describe('flowgate.v02test.0053 0002-CH turn 68 — 검증 is managed per card o
     delete net.rows.verify_run_timeout_sec
     const w = await open('/settings/system/general')
     expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+  })
+})
+
+describe('flowgate.v02test.0096 F96-6 — 제목 짓기 AI (ai_title_provider) moved here from AI 관리 › 기타 설정', () => {
+  const options = (w: VueWrapper) => w.findAll('[data-testid="title-ai-value"] option')
+  const selected = (w: VueWrapper) => (w.get('[data-testid="title-ai-value"]').element as HTMLSelectElement).value
+
+  it('sits after the repeat card and lists 끄기, 실행한 AI 그대로, a separator, then the enabled system AI in the system order', async () => {
+    const w = await open('/settings/system/general')
+    const cards = w.findAll('[data-card]').map((c) => c.attributes('data-card'))
+    expect(cards.indexOf('title-ai')).toBe(cards.indexOf('repeat') + 1)
+    expect(w.get('[data-card="title-ai"]').text()).toContain('제목 짓기 AI 기본값(시스템)')
+    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로', '──────────', 'System A', 'System B'])
+    expect(options(w).map((o) => o.attributes('value')).slice(0, 2)).toEqual(['off', 'executor'])
+    expect((options(w)[2].element as HTMLOptionElement).disabled).toBe(true)
+    expect(selected(w)).toBe('executor')
+    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined() // unchanged
+    expect(writes()).toEqual([])
+  })
+
+  it('saves ai_title_provider alone, the re-read agrees and Saved shows', async () => {
+    const w = await open('/settings/system/general')
+    await w.get('[data-testid="title-ai-value"]').setValue('sys-b')
+    await flushPromises()
+    await click(w, '[data-testid="title-ai-save"]')
+    expect(patches()).toEqual([{ updates: { ai_title_provider: 'sys-b' } }])
+    expect(net.requests.slice(-2)).toEqual(['PATCH /api/v1/system/settings', 'GET /api/v1/system/settings'])
+    expect(stored('ai_title_provider')).toBe('sys-b')
+    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(true)
+    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(false)
+    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('a failing save keeps the choice and shows the error, no Saved', async () => {
+    net.failPatch = 500
+    const w = await open('/settings/system/general')
+    await w.get('[data-testid="title-ai-value"]').setValue('off')
+    await flushPromises()
+    await click(w, '[data-testid="title-ai-save"]')
+    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(true)
+    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(false)
+    expect(selected(w)).toBe('off')
+    expect(stored('ai_title_provider')).toBe('executor')
+  })
+
+  it('keeps a stored AI that is off or no longer listed selectable as the current value', async () => {
+    net.rows.ai_title_provider = { value: 'sys-off', type: 'string' }
+    let w = await open('/settings/system/general')
+    expect(options(w).map((o) => o.text())).toContain('System off')
+    expect(selected(w)).toBe('sys-off')
+    w.unmount()
+    net.rows.ai_title_provider = { value: 'gone-id', type: 'string' }
+    w = await open('/settings/system/general')
+    expect(selected(w)).toBe('gone-id')
+  })
+
+  it('a failing system AI read leaves the fixed choices; a server without the row only disables this card', async () => {
+    net.failAiGet = 500
+    let w = await open('/settings/system/general')
+    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로'])
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+    w.unmount()
+    net.failAiGet = 0
+    delete net.rows.ai_title_provider
+    w = await open('/settings/system/general')
+    expect(w.find('[data-testid="title-ai-missing"]').exists()).toBe(true)
+    expect(w.find('[data-testid="title-ai-value"]').exists()).toBe(false)
+    expect(w.find('[data-testid="repeat-value"]').exists()).toBe(true)
   })
 })

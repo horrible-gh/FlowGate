@@ -40,7 +40,7 @@ describe('0043 message changes', () => {
     expect((w.get('[data-test="conv-setting-context"]').element as HTMLSelectElement).value).toBe('custom')
     await w.get('[data-test="conv-setting-context"]').setValue('checkpoint_recent')
     expect((w.get('[data-test="conv-setting-turns"]').element as HTMLInputElement).value).toBe('5')
-    await w.get('[data-test="conv-settings-save"]').trigger('click')
+    // F96-8: the pick is saved at once (no 저장 button).
     expect(w.emitted('save')![0][0]).toMatchObject({ context_mode: 'checkpoint_recent', checkpoint_max_turns: 5 })
     expect(w.emitted('save')![0][0]).not.toHaveProperty('context_turns')
     w.unmount()

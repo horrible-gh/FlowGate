@@ -203,7 +203,8 @@
 .provider-card {
   flex: none;
   display: grid;
-  grid-template-columns: 22px 18px 20px 36px minmax(0, 1fr) auto auto;
+  /* grip, rank, my-default radio, 📌 pin (v02test.0096), avatar, name, toggle, actions */
+  grid-template-columns: 22px 18px 20px 22px 36px minmax(0, 1fr) auto auto;
   gap: 12px;
   align-items: center;
   min-height: 60px;
