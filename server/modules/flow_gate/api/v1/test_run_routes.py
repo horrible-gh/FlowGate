@@ -422,3 +422,72 @@ def put_spec_asset(ts_id: str, path: str, body: TestAssetWriteBody, request: Req
         if hasattr(exc, "status_code"):
             return _err(exc)
         raise
+
+
+# Evidence uses the same project permissions and the worker's exact document binding.
+def _evidence_auth(ts_id, request, write=False):
+    from fastapi import HTTPException
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    doc = db_docs.get_by_id(ts_id)
+    if not doc or doc.get("type_code") != "TS":
+        raise HTTPException(404, detail={"error": "doc_not_found"})
+    if not auth.get("_is_user_jwt"):
+        if (auth.get("doc_ref") != ts_id or auth.get("group_id") != doc.get("group_id")
+                or auth.get("action_scope") not in ("test_run", "edit")):
+            raise HTTPException(403, detail={"error": "evidence_scope_forbidden"})
+        # This grants only evidence on the exact bound TS, never general source access.
+    permission = "perm_document_update" if write else "perm_document_read"
+    if not (auth.get("is_admin") or has_permission(auth.get("issued_to"), doc["project_id"], permission)):
+        raise HTTPException(403, detail={"error": "permission_denied"})
+    return doc, {"user_id": auth.get("issued_to"), "is_admin": bool(auth.get("is_admin"))}
+
+
+@router.get("/documents/{ts_id}/test-spec/evidence")
+def get_test_evidence(ts_id: str, request: Request, case_id: Optional[str] = None, kind: Optional[str] = None):
+    from modules.flow_gate.services import test_evidence_service as evidence
+    auth = _evidence_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    return evidence.listing(auth[0], case_id, kind)
+
+
+from fastapi import File, Form, UploadFile
+
+
+@router.post("/documents/{ts_id}/test-spec/cases/{case_id}/evidence", status_code=201)
+def post_test_evidence(ts_id: str, case_id: str, request: Request,
+                       file: UploadFile = File(...), kind: str = Form(...), attempt: int = Form(...)):
+    from modules.flow_gate.services import test_evidence_service as evidence
+    from modules.flow_gate.documents.attachments.flow_routes import invoke
+    auth = _evidence_auth(ts_id, request, write=True)
+    if isinstance(auth, JSONResponse):
+        return auth
+    return invoke(lambda: evidence.upload(auth[0], case_id, kind, file, auth[1], attempt))
+
+
+@router.get("/documents/{ts_id}/test-spec/evidence/{key}/preview")
+def preview_test_evidence(ts_id: str, key: str, request: Request):
+    from modules.flow_gate.services import test_evidence_service as evidence
+    from modules.flow_gate.documents.attachments.flow_routes import invoke
+    auth = _evidence_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    return invoke(lambda: evidence.preview(auth[0], key))
+
+
+@router.get("/documents/{ts_id}/test-spec/evidence/{key}/download")
+def download_test_evidence(ts_id: str, key: str, request: Request):
+    from fastapi.responses import FileResponse
+    from modules.flow_gate.services import test_evidence_service as evidence
+    from modules.flow_gate.documents.attachments import service
+    from modules.flow_gate.documents.attachments.flow_routes import invoke
+    auth = _evidence_auth(ts_id, request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    def download():
+        row = evidence.file_row(auth[0], key)
+        path, meta = service.resolve_download(row["doc_id"], row["filename"])
+        return FileResponse(path, media_type=meta["media_type"], headers=meta["headers"])
+    return invoke(download)

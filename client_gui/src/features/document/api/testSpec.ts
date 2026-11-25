@@ -34,7 +34,7 @@
 // AI run owns the group. `/test-document` refuses with a FastAPI `detail` (404, 403).
 import { documentErrorOf } from '../documentError'
 import { normalizeApiInput, normalizeApiError } from '@shared/apiErrors'
-import { getRequest, patchRequest, postRequest } from '@shared/api'
+import { getRequest, patchRequest, postRequest, postFormRequest, downloadBlobRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -712,4 +712,29 @@ export async function testSpecResultEnter(docId: string, result: TestSpecResultE
   if (list(record(response.data).refused_results).length) {
     throw { response: { status: 422, data: { error: 'invalid_spec', refused_results: record(response.data).refused_results } } }
   }
+}
+
+
+export interface TestSpecEvidenceFile {
+  key: string; filename: string; download_url: string; preview_url: string
+  test_evidence: { kind: 'input' | 'log' | 'output'; attempt: number }
+}
+export interface TestSpecEvidencePreview { kind: string; text?: string; src?: string; download?: boolean }
+export interface TestSpecEvidenceListing {
+  attachments: TestSpecEvidenceFile[]
+  cases: Record<string, { attempt: number; pass_reason: string | null }>
+}
+const evidenceBase = (tsId: string) => `${API}/documents/${encodeURIComponent(tsId)}/test-spec`
+export async function testSpecEvidenceList(tsId: string, caseId: string) {
+  return (await getRequest<TestSpecEvidenceListing>(`${evidenceBase(tsId)}/evidence?case_id=${encodeURIComponent(caseId)}`)).data
+}
+export async function testSpecEvidenceUpload(tsId: string, caseId: string, file: File, kind: string, attempt: number) {
+  const form = new FormData(); form.append('file', file); form.append('kind', kind); form.append('attempt', String(attempt))
+  return postFormRequest(`${evidenceBase(tsId)}/cases/${encodeURIComponent(caseId)}/evidence`, form)
+}
+export async function testSpecEvidencePreview(tsId: string, key: string) {
+  return (await getRequest<TestSpecEvidencePreview>(`${evidenceBase(tsId)}/evidence/${encodeURIComponent(key)}/preview`)).data
+}
+export async function testSpecEvidenceDownload(tsId: string, key: string) {
+  return (await downloadBlobRequest(`${evidenceBase(tsId)}/evidence/${encodeURIComponent(key)}/download`)).data
 }

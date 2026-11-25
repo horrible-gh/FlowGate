@@ -249,7 +249,6 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
       const found = view.value?.cases.find((c) => c.caseId === caseId)
       if (!found) return item('guard.no_case')
       if (operation === 'rerunCase' && (found.executionMode !== 'automated' || view.value?.caseCapabilities[caseId!] !== 'case_selectable')) return item('guard.case_unavailable')
-      if (operation === 'resultEntry' && found.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(view.value?.caseCapabilities[caseId!] ?? '')) return item('guard.server_result')
     }
     if (operation === 'rewriteAll' && test.runState.value.active) return item('reason.run_active')
     if (['caseSave', 'caseDelete'].includes(operation) && !presentation.value.hasScenario

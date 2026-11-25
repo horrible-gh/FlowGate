@@ -537,34 +537,13 @@ def _automated_case_keys(cases: list[dict]) -> set[str]:
 
 
 def result_entry_case_ids(cases: list[dict]) -> list[str]:
-    """(CH S6): the Cases whose results are entered -- ai/manual/external only.
-
-    Every automated Case gets its official result from a server run only. One the server
-    cannot run yet (unbound, command_missing, command_invalid) is not entered either: it
-    stays NOT_RUN until its target and run_command are bound, so its gate stays closed
-    instead of taking a PASS a person or a worker produced.
-    """
-    return [case["case_id"] for case in cases
-            if case.get("execution_mode") in RESULT_ENTRY_MODES]
+    """All cases accept result entry; PASS is checked against server evidence."""
+    return [case["case_id"] for case in cases]
 
 
 def refuse_server_run_results(cases: list[dict], normalized: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Split a submission into the results it may record and the ones it may not.
-
-    A result for an automated Case -- runnable by the server or not -- is refused item by
-    item, with its reason; the rest of the submission still records ("reject only that item").
-    """
-    server_run = _automated_case_keys(cases)
-    kept: list[dict] = []
-    refused: list[dict] = []
-    for item in normalized:
-        case_id = item.get("case_id")
-        if case_id and test_spec_service.case_id_key(case_id) in server_run:
-            refused.append({"case_id": case_id, "status": item.get("status"),
-                            "reason": "automated_case_server_run_only"})
-        else:
-            kept.append(item)
-    return kept, refused
+    """Keep entries for evidence validation before persistence."""
+    return normalized, []
 
 
 def validate_and_create_run(
@@ -917,7 +896,7 @@ def _build_spec_result_mention(
     the step to the server run instead.
     """
     cases = test_spec_service.parse_spec(_read_doc_content_or_empty(doc))["cases"]
-    entry_ids = set(result_entry_case_ids(cases))
+    entry_ids = {case["case_id"] for case in cases if test_spec_service.case_check(case)[0] != "code"}
     entry_cases = [case for case in cases if case["case_id"] in entry_ids]
     server_cases = [case for case in cases if case["case_id"] not in entry_ids]
     continuous_block = ""
@@ -973,6 +952,12 @@ def _build_spec_result_mention(
         "- POST without `results`/`junit_xml` to hand this step to the server run of the "
         "automated Cases instead (the TS approval already queued it).\n"
         f"{chain_note}\n"
+        "## Evidence files\n"
+        f"GET {api_base_url}/documents/{doc['doc_id']}/test-spec/evidence?case_id=<case_id>\n"
+        f"POST {api_base_url}/documents/{doc['doc_id']}/test-spec/cases/<case_id>/evidence\n"
+        "Use the same Bearer. Multipart fields: file, kind (input/log/output), attempt (from GET). "
+        "Upload each file separately; use the returned fg-attachment link. Manual PASS requires "
+        "an output attachment in the current attempt. Text and URL claims do not satisfy it.\n\n"
         "Cases you record:\n"
         f"{entry_block}\n\n"
         "Automated Cases -- server run only (do not submit):\n"
@@ -1294,6 +1279,7 @@ def record_spec_results(
                 refused_results=refused,
                 entry_case_ids=result_entry_case_ids(parsed["cases"]),
             )
+    from modules.flow_gate.services import test_evidence_service
     if not normalized:
         raise _http_error(
             422, "spec_results_required", doc_id=doc_id,
@@ -1302,6 +1288,7 @@ def record_spec_results(
 
     revision_no = doc.get("revision_no") or 0
     with _admission_lock:
+        test_evidence_service.validate_passes(doc, parsed["cases"], normalized, execution_run_id)
         pending = db_test_runs.get_pending_failure_origin(doc_id)
         if pending is not None:
             raise _http_error(
@@ -1946,6 +1933,13 @@ def scenario_report(ts_doc_id: Optional[str], rows: list[dict], run: Optional[di
         remarks = test_remark_service.counts_by_case(ts_doc_id) if ts_doc_id else {}
     except Exception:  # noqa: BLE001 -- display-only
         remarks = {}
+    from modules.flow_gate.services import test_evidence_service
+    evidence_doc = db_docs.get_by_id(ts_doc_id) if ts_doc_id else None
+    evidence = test_spec_service.evidence_counts(
+        item["test_evidence"] for item in test_evidence_service.tagged(evidence_doc)
+        if item["test_evidence"]["attempt"] == test_evidence_service.attempt_for(
+            ts_doc_id, item["test_evidence"]["case_id"])
+    ) if evidence_doc and evidence_doc.get("group_id") else {}
     cases = []
     for row in rows:
         key = test_spec_service.case_id_key(row.get("case_id") or "")
@@ -1961,7 +1955,7 @@ def scenario_report(ts_doc_id: Optional[str], rows: list[dict], run: Optional[di
             "skip_reason": row.get("skip_reason") or "",
             "open_remarks": int(tally.get("open") or 0),
             "resolved_remarks": int(tally.get("resolved") or 0),
-            "evidence": {"input": 0, "log": 0, "output": 0, "total": 0},
+            "evidence": evidence.get(key) or {"input": 0, "log": 0, "output": 0, "total": 0},
         })
     meta = test_spec_service.load_result_meta((run or {}).get("result_meta"))
     return {

@@ -27,11 +27,7 @@
           <span v-if="resultReason" class="hint" data-test="case-result-reason">{{ resultReason }}</span>
           <InspectorReason v-if="resultFailure" tone="danger" :text="resultFailure" data-test="case-result-failure" />
         </div></div>
-        <!-- Evidence: three boxes of files. The boxes, the add / drop place and the list are here; uploading is connected by the evidence work. -->
-        <div v-for="kind in evidenceKinds" :key="kind" class="field" role="group" :aria-label="t(k(`evidence_${kind}`))"><span>{{ t(k(`evidence_${kind}`)) }}</span><div class="control evidence" :data-test="`case-evidence-${kind}`">
-          <span class="hint" data-test="case-evidence-count">{{ evidenceOf(kind) ? t(k('evidence_files'), { n: evidenceOf(kind) }) : t(k('evidence_none')) }}</span>
-          <button type="button" class="drop" disabled :title="t('gui.inspector.testSpec.guard.unconnected')" data-test="case-evidence-add">{{ t(k('evidence_add')) }}</button>
-        </div></div>
+        <EvidenceFiles v-if="!adding && card.view.value?.tsDocId && state.caseId" :ts-id="card.view.value.tsDocId" :case-id="state.caseId" :revision="card.view.value" @eligibility="passReason = $event" @uploaded="card.reload()" />
         <!-- Remarks: one line only. It opens the modeless remark window beside this one. -->
         <div class="field" role="group" :aria-label="t(k('remarks'))"><span>{{ t(k('remarks')) }}</span><div class="control">
           <button type="button" class="remark-line" :class="{ 'remark-line--none': !remarkTally.open && !remarkTally.resolved }" :disabled="adding" data-test="case-remarks" @click="openRemarks">{{ remarkLabel }}</button>
@@ -60,15 +56,15 @@ import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import Textarea from '@/components/ui/Textarea.vue'
-import { testSpecCasePayload, type TestCaseResult, type TestEvidenceKind } from '@/features/document'
-import { documentHistoryWhen } from '@/features/documentWindow'
+import { testSpecCasePayload, type TestCaseResult } from '@/features/document'
+import { documentHistoryWhen, TestEvidenceFiles as EvidenceFiles } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
 import { caseDraft, newCaseDraft, addedCase, mergeCase, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.case.${key}`
 const { card, shell, state, close, current, geometry } = useScenarioWindow(() => props.target, 'case')
 const confirming = ref(false), checking = ref(false)
@@ -138,7 +134,15 @@ const checkOptions = computed(() => [{ value: 'code', label: t(k('code')) }, { v
 // ── Result: not run / pass / fail / skip ───────────────────────────────────────────────────────────
 const row = computed(() => card.value?.scenarioRows.value.find(item => item.caseId === state.value?.caseId) ?? null)
 const shownResult = computed<TestCaseResult>(() => row.value?.result ?? 'not_run')
-const resultOptions = computed(() => (['not_run', 'pass', 'fail', 'skip'] as const).map(value => ({ value, label: t(k(`result_${value}`)) })))
+const passReason = ref<string | null>('evidence_unavailable')
+watch(() => [state.value?.caseId, card.value?.view.value?.tsDocId], () => { passReason.value = 'evidence_unavailable' }, { flush: 'sync' })
+const passWords = computed(() => {
+  const lang = locale.value.split('-')[0]
+  if (passReason.value === 'exit_zero_required') return lang === 'ko' ? '정상 종료(종료 코드 0)가 필요합니다.' : lang === 'ja' ? '正常終了（終了コード0）が必要です。' : 'A normal exit (code 0) is required.'
+  if (passReason.value === 'output_evidence_required') return lang === 'ko' ? '현재 시도의 출력 증거 파일이 필요합니다.' : lang === 'ja' ? '現在の試行の出力証拠ファイルが必要です。' : 'An output evidence file for this attempt is required.'
+  return lang === 'ko' ? '증거 상태를 확인할 수 없습니다.' : lang === 'ja' ? '証拠の状態を確認できません。' : 'Evidence status is unavailable.'
+})
+const resultOptions = computed(() => (['not_run', 'pass', 'fail', 'skip'] as const).map(value => ({ value, label: t(k(`result_${value}`)), disabled: value === 'pass' && !!passReason.value, title: value === 'pass' && passReason.value ? passWords.value : undefined })))
 const resultAvailability = computed(() => adding.value || !state.value?.caseId ? { enabled: false, reason: 'guard.save_first' } : card.value?.can('resultEntry', state.value.caseId) ?? { enabled: false, reason: 'reason.busy' })
 const resultEnabled = computed(() => resultAvailability.value.enabled && !recording.value)
 const resultReason = computed(() => { const key = resultAvailability.value.reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' })
@@ -152,6 +156,7 @@ const skipping = ref(false), skipReason = ref(''), recording = ref(false), resul
 watch(() => state.value?.caseId, () => { confirming.value = false; skipping.value = false; skipReason.value = ''; resultFailure.value = '' })
 async function record(result: TestCaseResult, reasonText?: string) {
   const c = card.value, id = state.value?.caseId
+  if (result === 'pass' && passReason.value) return
   if (!current() || !c || !id || adding.value || recording.value || !c.can('resultEntry', id).enabled) return
   recording.value = true; resultFailure.value = ''
   try {
@@ -163,6 +168,7 @@ async function record(result: TestCaseResult, reasonText?: string) {
 }
 /** A skip is recorded with its one-line reason; the other three at once. */
 function pickResult(value: string) {
+  if (value === 'pass' && passReason.value) return
   if (value === 'skip') { skipping.value = true; return }
   skipping.value = false
   if (value === 'not_run' || value === 'pass' || value === 'fail') void record(value)
@@ -170,8 +176,6 @@ function pickResult(value: string) {
 function recordSkip() { if (skipReason.value.trim()) void record('skip', skipReason.value.trim()) }
 
 // ── Evidence boxes and the remark line ─────────────────────────────────────────────────────────────
-const evidenceKinds: readonly TestEvidenceKind[] = ['input', 'log', 'output']
-const evidenceOf = (kind: TestEvidenceKind) => row.value?.evidence[kind] ?? 0
 const remarkTally = computed(() => adding.value || !state.value?.caseId ? { open: 0, resolved: 0 } : card.value?.remarkCounts(state.value.caseId) ?? { open: 0, resolved: 0 })
 const remarkLabel = computed(() => remarkTally.value.open || remarkTally.value.resolved ? t(k('remarks_line'), { open: remarkTally.value.open, resolved: remarkTally.value.resolved }) : t(k('remarks_add')))
 function openRemarks() { const id = state.value?.caseId; if (id && !adding.value) card.value?.openWindow('remark', id) }

@@ -130,10 +130,15 @@ def download(flow_id, attachment_key, user):
     return path, meta
 
 
-def upload(flow_id, part, user, conflict="ask", expected_sha=None, attachment_key=None):
+def upload(flow_id, part, user, conflict="ask", expected_sha=None, attachment_key=None, *, test_evidence=None):
     owner = context(flow_id, user, True)
     if conflict not in ("ask", "keep_both", "overwrite"):
         raise AttachmentError(422, "INVALID_REQUEST", "Unknown conflict choice.")
+    if test_evidence is not None:
+        from modules.flow_gate.services.test_evidence_service import validate_tag
+        test_evidence = validate_tag(flow_id, test_evidence)
+        if conflict != "keep_both":
+            raise AttachmentError(422, "INVALID_REQUEST", "Evidence files must preserve previous attempts.")
     name = sanitize_attachment_name(part.filename)
     if name.startswith("__wp_pre_instruction__"):
         raise AttachmentError(400, "INVALID_FILENAME", "Reserved filename.")
@@ -190,8 +195,13 @@ def upload(flow_id, part, user, conflict="ask", expected_sha=None, attachment_ke
             if registry_replace(**values, expected_sha256=expected_sha) != 1:
                 raise AttachmentError(409, "ATTACHMENT_CHANGED", "The file changed. Check it again.")
         else:
-            registry_insert(**values, file_path=storage_relative(dest, doc["project_id"]))
-        return {"flow_id": flow_id, "filename": final_name}
+            import json
+            with get_store().transaction():
+                registry_insert(**values, file_path=storage_relative(dest, doc["project_id"]),
+                                test_evidence=json.dumps(test_evidence) if test_evidence is not None else None)
+        saved_key = key(values)
+        return {"flow_id": flow_id, "filename": final_name, "key": saved_key,
+                "link": "fg-attachment:" + saved_key, "test_evidence": test_evidence}
 
     try:
         result = run_in_document_guard(owner["doc_id"], commit)

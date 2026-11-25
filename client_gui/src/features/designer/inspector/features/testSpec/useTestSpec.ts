@@ -255,7 +255,7 @@ export function useTestSpec(target: () => InspectorTarget | null, writing: () =>
       const viewNow = view.value
       if (!viewNow?.tsDocId || testSpecRunDisabledReasonForCase()) return false
       const item = viewNow.cases.find((c) => c.caseId === result.case_id)
-      if (!item || (item.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(viewNow.caseCapabilities[item.caseId]))) return false
+      if (!item) return false
       return change('resultEntry', () => testSpecResultEnter(viewNow.tsDocId!, result))
     },
     form: computed(() => testSpecForm(view.value)),
