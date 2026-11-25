@@ -139,7 +139,8 @@ def test_issues_stuck_recovered_rework_revision_rereview_followup_no_no_targets(
         reason = "restart_orphaned"
     wire = _wire(clock, key)
     assert (wire["node_running"], wire["node_running_cause"]) == (False, None)
-    assert wire["intervention"] == {"kind": "needs_intervention", "reason": "review_not_passed:"+reason}
+    held = {k: v for k, v in wire["intervention"].items() if k != "stop_detail"}   # F98-4: an added field
+    assert held == {"kind": "needs_intervention", "reason": "review_not_passed:"+reason}
     assert runs.get(RID) == original_end
     assert documents.get_by_id(doc)["revision_no"] == 0
     hops = _first_hops(monkeypatch)

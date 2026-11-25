@@ -125,7 +125,10 @@ LIMIT = 3          # ``flowgate.card_intervention.reasons.SYSTEM_ERROR_RETRY_LIM
 
 def _intervention(env, key):
     shown = _node_run(env, key)
-    return shown["awaiting_approval"], shown["intervention"], shown["approval_wait_reason"]
+    found = shown["intervention"]
+    if isinstance(found, dict):                 # F98-4: the loop's cause (stop_detail) is an added field, not compared here
+        found = {k: v for k, v in found.items() if k != "stop_detail"}
+    return shown["awaiting_approval"], found, shown["approval_wait_reason"]
 
 
 def _reads(env, n=LIMIT + 1):
