@@ -6,87 +6,13 @@ from . import auto_title, activity, legacy_adapter, contracts as c
 log = logging.getLogger(__name__)
 
 
-_REQUEST_RULE = {
-    "ko": "실제 작업 사실에 기반한 30자 이내로 쓰고, 문서 번호·플로우 ID·카드 번호를 넣지 마세요.",
-    "en": "Base it on actual task facts, at most 30 characters. Never include document IDs, flow IDs or card numbers.",
-    "ja": "実際の作業内容に基づく30文字以内で書き、文書番号・フローID・カード番号を含めないでください。",
-}
-_REQUEST_TEXT = {
-    "new": {
-        "ko": "결과 제출 시 `flow_title`에 플로우 전체 작업을 나타내는 이름을 반드시 함께 보내세요. 플로우 이름으로만 쓰며, 카드와 채팅 이름은 각자 내용으로 따로 정합니다. 문서 제목 필드 `title`은 그대로 유지하세요.",
-        "en": "When submitting the result, you must also send a name for the whole task of the flow in the `flow_title` field. It names only the flow; cards and chats are named from their own content. Preserve `title` as the document title.",
-        "ja": "結果の送信時に `flow_title` でフロー全体の作業を表す名前を必ず送信してください。フロー名にのみ使い、カードとチャットの名前はそれぞれの内容で別に決めます。文書名フィールド `title` はそのまま維持してください。",
-    },
-    "edit": {
-        "ko": "편집 제출 시 선택 필드 `title`에 플로우 전체 작업을 나타내는 이름을 보내세요. 플로우 이름으로만 씁니다.",
-        "en": "When submitting the edit, send a name for the whole task of the flow in the optional `title` field. It names only the flow.",
-        "ja": "編集の送信時に任意フィールド `title` でフロー全体の作業を表す名前を送信してください。フロー名にのみ使います。",
-    },
-    "chat": {
-        "ko": "답변 제출 시 선택 필드 `title`에 이 채팅에서 다루는 내용을 나타내는 제목을 보내세요. 이 채팅의 이름으로만 씁니다.",
-        "en": "When submitting your answer, send a title for what this chat is about in the optional `title` field. It names only this chat.",
-        "ja": "回答の送信時に任意フィールド `title` でこのチャットの内容を表すタイトルを送信してください。このチャットの名前にのみ使います。",
-    },
-    "flow": {
-        "ko": "선택 필드 `flow_title`에는 이 채팅 한 건이 아니라 플로우 전체 작업을 나타내는 이름을 보내세요. 플로우 이름으로만 씁니다.",
-        "en": "In the optional `flow_title` field, send a name for the whole task of the flow, not just this chat. It names only the flow.",
-        "ja": "任意フィールド `flow_title` には、このチャット1件ではなくフロー全体の作業を表す名前を送信してください。フロー名にのみ使います。",
-    },
-}
-_REQUEST_NEW_DOC = {
-    "ko": "문서 등록(new)의 `title`은 문서 제목이므로 이 용도로 바꾸지 마세요.",
-    "en": "The `title` of document registration (new) is document metadata; preserve that document title.",
-    "ja": "文書登録(new)の `title` は文書名なので、この用途で変更しないでください。",
-}
-
-
-def _wanted_names(flow_id, doc_id):
-    """(flow still needs a name, chat still needs a name) for the next request."""
-    from . import first_names_ports as p
-
-    def read():
-        _, found = p.targets(flow_id, None, root=False)
-        names = p.ledger.load(flow_id).get("names", {})
-        want_flow = p.eligible("flow", found["flow"]) and not names.get("flow", {}).get("candidate")
-        want_chat = True
-        if doc_id:
-            try:
-                chat = p.targets(flow_id, doc_id, chat_only=True)[1]["chat"]
-                want_chat = (p.eligible("chat", chat)
-                             and not names.get("chat:" + doc_id, {}).get("candidate"))
-            except ValueError:
-                want_chat = False
-        return want_flow, want_chat
-    return p.guard(flow_id, read)
-
-
 def title_request(flow_id, locale="ko", action="chat", doc_id=None):
-    """Naming guidance: the flow name (``flow_title``) and, in a chat, that chat's own title."""
-    if action not in ("chat", "edit", "new"):
-        return ""
-    if not legacy_adapter.has_graph_definition(flow_id):
-        return ""
-    want_flow, want_chat = _wanted_names(flow_id, doc_id if action == "chat" else None)
-    locale = str(locale or "ko").lower().split("-")[0]
-    locale = locale if locale in _REQUEST_RULE else "ko"
-    parts = []
-    if action == "chat":
-        if want_chat:
-            parts.append(_REQUEST_TEXT["chat"][locale])
-        if want_flow:
-            parts.append(_REQUEST_TEXT["flow"][locale])
-    elif want_flow:
-        parts.append(_REQUEST_TEXT[action][locale])
-    if not parts:
-        return ""
-    parts.append(_REQUEST_RULE[locale])
-    if action == "chat":
-        parts.append(_REQUEST_NEW_DOC[locale])
-    return " ".join(parts)
+    # Naming has its own configured provider; executor replies no longer supply names.
+    return ""
 
 
 def submitted_title(token, title, doc_id=None, flow_title=None):
-    """A submitted ``title`` names only the chat it was posted in; ``flow_title`` only the flow."""
+    """After a committed reply: queue naming of every target from its own content."""
     flow_id = token.get("group_id")
     if not flow_id or not legacy_adapter.has_graph_definition(flow_id):
         return
@@ -99,16 +25,10 @@ def submitted_title(token, title, doc_id=None, flow_title=None):
         return
     doc = legacy_adapter.get_document(doc_id) if doc_id else None
     chat_id = doc_id if doc and doc.get("type_code") == "CH" else None
-    chat_seed = auto_title.clean_flow_title(title) if chat_id else None
-    flow_seed = auto_title.clean_flow_title(flow_title)
-    user = {"user_id": user_id}
-    seeded = tuple(k for k, seed in (("chat", chat_seed), ("flow", flow_seed)) if seed)
-    if seeded:
-        auto_title.generate_flow_names(flow_id, user, provider, "", chat_id, title=chat_seed,
-                                       flow_title=flow_seed, kinds=seeded)
-    rest = tuple(k for k in auto_title.NAME_KINDS if k not in seeded and (k != "chat" or chat_id))
-    # Document reads and the local fallback must not delay delivery of a committed reply.
-    _schedule(auto_title.generate_flow_names, flow_id, user, provider, "", chat_id, None, True, None, rest)
+    # Executor-supplied ``title`` / ``flow_title`` are ignored: every target (flow, start card,
+    # the chat of this reply) is named by the configured naming provider from its own content.
+    # Document reads and the model call must not delay delivery of a committed reply.
+    _schedule(auto_title.generate_flow_names, flow_id, {"user_id": user_id}, provider, "", chat_id)
 
 
 def notify(flow_id, targets=None, doc_id=None):
@@ -172,6 +92,13 @@ def run_context(flow_id, revision_no, provider_id=None):
             break
     binding = assignment_store.root_binding(flow_id) or {}
     root = documents.get_by_id(binding.get("doc_id")) if binding.get("doc_id") else None
+    if not binding.get("doc_id"):
+        # A draft card can already hold a document before confirmation persists a
+        # run binding. Reuse the naming target's resolution; never guess among roots.
+        from .first_names_ports import root_binding_context
+        _, preview = root_binding_context(flow_id)
+        if preview.status in ("bindable", "inherited") and preview.doc_id:
+            root = documents.get_by_id(preview.doc_id)
     text = ""
     if root:
         path, _ = paths.locate_storage_path(root.get("file_path") or "", root["project_id"],
@@ -191,7 +118,7 @@ def _run(flow_id, user_id, revision_no, provider_id=None):
                                    else run_context(flow_id, revision_no))
         provider = provider_id or provider
         if provider:
-            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text, allow_fallback=False)
+            auto_title.generate_flow_names(flow_id, {"user_id": user_id}, provider, text, allow_fallback=True)
         else:
             log.info("flow naming skipped reason=provider_missing flow=%s", flow_id)
     except Exception as exc:

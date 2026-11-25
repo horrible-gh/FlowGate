@@ -231,6 +231,25 @@ export async function saveRepeatCountMax(value: number): Promise<void> {
   )
 }
 
+// Title AI: the system setting ai_title_provider — 'off', 'executor' (the AI that ran the card/chat) or a provider id.
+// Read only from the GET /system/settings row and saved alone on PATCH /system/settings (system.settings.manage).
+// null = the row is not there.
+export async function fetchTitleProvider(): Promise<string | null> {
+  const data = await call(
+    () => getRequest<{ settings?: { setting_key: string; setting_value: string | null }[] }>('/api/v1/system/settings'),
+    'gui.ai.request_failed.title_provider_load',
+  )
+  const row = (data.settings ?? []).find((r) => r.setting_key === 'ai_title_provider')
+  return row?.setting_value || null
+}
+
+export async function saveTitleProvider(value: string): Promise<void> {
+  await call(
+    () => patchRequest('/api/v1/system/settings', { updates: { ai_title_provider: value } }),
+    'gui.ai.request_failed.title_provider_save',
+  )
+}
+
 // ── AI Evaluation ──────────────────────────────────────────────────────────────
 
 export interface StartEvaluationInput {

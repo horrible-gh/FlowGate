@@ -83,14 +83,14 @@ def _with_state(meta: dict, state: str) -> str:
     return json.dumps({**meta, META_KEY: {**meta[META_KEY], "state": state}}, ensure_ascii=False)
 
 
-def build_prompt(message: str) -> str:
+def build_prompt(message: str, limit: int = TITLE_MAX_CHARS) -> str:
     text = message.strip()
     if len(text) > MESSAGE_MAX_CHARS:
         text = text[:MESSAGE_MAX_CHARS]
     return (
         "Write a short title for a conversation that begins with the user message below.\n"
         "- Use the same language as the message.\n"
-        f"- At most {TITLE_MAX_CHARS} characters on one line, no quotes, no trailing period.\n"
+        f"- At most {limit} characters on one line, no quotes, no trailing period.\n"
         "- Never include document IDs, flow IDs, card numbers, or internal identifiers.\n"
         "- Reply with the title only. Do not call tools, read or modify files, or run commands.\n"
         "\n"
@@ -170,8 +170,9 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     if not legacy_adapter.update_meta_cas(doc_id, owed_text, claimed):
         raise _not_owed()
     try:
-        answer, reason = legacy_adapter.complete_prompt(
-            project_id, provider_id, build_prompt(message), timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+        answer, reason = legacy_adapter.complete_naming(
+            project_id, provider_id, build_prompt(message), str(user.get("user_id") or ""),
+            timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
     except Exception as exc:
         # Execution may already have happened. Leave claimed intact; never log prompt,
         # raw exception text, command arguments, credentials or the model's answer.
@@ -181,7 +182,7 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     title = clean_title(answer, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len())) if answer is not None else None
     if title is None:
         # Nothing was asked when the provider could not be used: the debt goes back.
-        unavailable = answer is None and reason in legacy_adapter.PROMPT_UNAVAILABLE_REASONS
+        unavailable = answer is None and reason in (legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {"title_disabled"})
         safe_reasons = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
             "timeout", "transport_failed", "provider_launch_failed", "execution_failed", "internal_error",
             "remote_cli_unsupported", "cancelled_by_user",
@@ -228,7 +229,8 @@ NAME_KINDS = ("chat", "flow", "root")
 def _safe_reason(reason: Optional[str]) -> str:
     safe = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
         "remote_cli_unsupported", "title_missing", "timeout", "transport_failed",
-        "provider_launch_failed", "execution_failed", "internal_error", "cancelled_by_user"}
+        "provider_launch_failed", "execution_failed", "internal_error", "cancelled_by_user",
+        "title_disabled"}
     return reason if reason in safe else "title_missing" if not reason else "unknown"
 
 
@@ -291,14 +293,16 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                         chat_doc_id: Optional[str] = None, title: Optional[str] = None,
                         allow_fallback: bool = True, flow_title: Optional[str] = None,
                         kinds: Optional[tuple] = None) -> dict:
-    """Name every eligible target from its own content; ``title`` seeds only the chat,
-    ``flow_title`` only the Flow. Best effort, durable and retryable per target."""
+    """Name every eligible target from its own content. Best effort, durable and retryable
+    per target. Names come from the configured naming provider only: ``title`` and
+    ``flow_title`` are accepted for caller compatibility but no longer seed anything,
+    because executor replies do not supply names."""
     targets, changed = {}, []
     for kind in (kinds or NAME_KINDS):
         if kind == "chat" and not chat_doc_id:
             continue
         state = _name_target(flow_id, user, provider_id, kind, message, chat_doc_id,
-                             seed=clean_flow_title(title if kind == "chat" else flow_title if kind == "flow" else None),
+                             seed=None,
                              allow_fallback=allow_fallback)
         if state == "changed":
             changed.append("card" if kind == "root" else kind)
@@ -367,8 +371,6 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
                 return group, target, "apply"
             if entry.get("lease_until", 0) > time.time():
                 return group, target, "busy"
-            if entry.get("fallback_requested") and kind != "root":
-                return group, target, "unchanged"
             entry.update(state="pending", ticket=ticket, lease_until=time.time() + FIRST_NAMES_LEASE_SEC)
             p.ledger.save(flow_id, record)
             return group, target, "generate"
@@ -381,7 +383,7 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
             return "unchanged"
         if step == "generate":
             title = _generate_candidate(flow_id, group, provider_id, kind, target, message,
-                                        chat_doc_id, ticket, allow_fallback, slot)
+                                        chat_doc_id, str((user or {}).get("user_id") or ""), allow_fallback)
 
             def remember():
                 record = p.ledger.load(flow_id)
@@ -437,9 +439,9 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
 
 
 def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat_doc_id,
-                        ticket, allow_fallback, slot) -> Optional[str]:
-    """A candidate from the target's own content: at most one model call per target."""
-    from . import first_names_ports as p
+                        user_id, allow_fallback) -> Optional[str]:
+    """A candidate from the target's own content, named by the configured naming provider
+    (``complete_naming``: off, the executor or an explicit provider, remote agents included)."""
     if kind == "chat":
         text = _first_user_message(chat_doc_id) or ""
     elif kind == "flow":
@@ -450,35 +452,17 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
     if not any(ch.isalnum() for ch in text):
         logger.info("flow naming skipped reason=empty_message flow=%s target=%s", flow_id, kind)
         return None
-    remote = legacy_adapter.naming_remote_provider(group["project_id"], provider_id)
-    if kind == "root":
-        # The card shows its document: without a model call, the document's own first line.
-        heading = heading_title("root", text, target.get("doc_type"))
-        if remote or not allow_fallback:
-            return heading
-    elif remote or not allow_fallback:
-        if remote:
-            logger.warning("flow_auto_title no_title flow=%s target=%s reason=title_missing", flow_id, kind)
-        return None
-
-    def spend():
-        # Persisted before execution: a timeout or process loss cannot spend it again.
-        record = p.ledger.load(flow_id)
-        entry = record.setdefault("names", {}).setdefault(slot, {})
-        if entry.get("ticket") != ticket or entry.get("fallback_requested"):
-            return False
-        entry["fallback_requested"] = True
-        p.ledger.save(flow_id, record)
-        return True
-    if not p.guard(flow_id, spend):
-        return heading if kind == "root" else None
-    answer, reason = legacy_adapter.complete_prompt(group["project_id"], provider_id,
-                                                    build_name_prompt(kind, text),
+    # The card shows its document: without a model answer, the document's own first line.
+    heading = heading_title("root", text, target.get("doc_type")) if kind == "root" else None
+    if not allow_fallback:
+        return heading
+    answer, reason = legacy_adapter.complete_naming(group["project_id"], provider_id,
+                                                    build_name_prompt(kind, text), user_id,
                                                     timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
     title = clean_flow_title(answer)
     if not title:
         logger.warning("flow_auto_title no_title flow=%s target=%s reason=%s", flow_id, kind, _safe_reason(reason))
-    return title or (heading if kind == "root" else None)
+    return title or heading
 
 
 # Bounded background entry point: no DB lock/model call on the sending thread.

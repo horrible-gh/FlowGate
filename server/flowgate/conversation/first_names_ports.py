@@ -21,6 +21,18 @@ def guard(flow_id, body):
     return with_flow_guard(flow_id, body)
 
 
+def root_binding_context(flow_id):
+    """Resolve the same live root for naming eligibility and pre-execution body reads."""
+    draft = definition_store.draft(flow_id)
+    latest = definition_store.latest_revision_no(flow_id)
+    definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
+    snap = read_snapshot(flow_id)
+    binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
+                                 alive_documents(snap), assignment_store.root_binding(flow_id),
+                                 lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
+    return definition, binding
+
+
 def targets(flow_id, chat_doc_id, *, chat_only=False, root=True):
     require_writable(flow_id)
     group = groups.get_by_id(flow_id)
@@ -31,13 +43,7 @@ def targets(flow_id, chat_doc_id, *, chat_only=False, root=True):
                     "manual": bool(record.get("flow_manual"))}}
     if not chat_only and root:
         try:
-            draft = definition_store.draft(flow_id)
-            latest = definition_store.latest_revision_no(flow_id)
-            definition = draft or (definition_store.revision(flow_id, latest) if latest else None)
-            snap = read_snapshot(flow_id)
-            binding = check_root_binding(as_graph(definition), read_ownership(flow_id).state,
-                                         alive_documents(snap), assignment_store.root_binding(flow_id),
-                                         lambda doc_id: follow_supersede(flow_id, snap.docs_by_id, doc_id))
+            definition, binding = root_binding_context(flow_id)
             if binding.node_key and binding.doc_type in ("R", "B"):
                 row = next(n for n in definition["nodes"] if n["node_key"] == binding.node_key)
                 st = title_store.state(flow_id, binding.node_key) if title_store.available() else None
