@@ -199,9 +199,12 @@ describe('v02test.0089 /me/ai-preferences contract', () => {
     expect(patch).toHaveBeenLastCalledWith('/api/v1/me/ai-preferences', { title_provider: 'off' })
   })
 
-  it('shows the localized reason for the contract error codes', async () => {
+  it.each(['flat', 'envelope'])('shows the localized reason for %s contract errors', async (shape) => {
     const refused = (code: string) => Object.assign(new Error(code), {
-      isAxiosError: true, response: { status: 422, data: { ok: false, error: { code } } },
+      isAxiosError: true, response: {
+        status: 422,
+        data: shape === 'flat' ? { code, ...(code === 'repeat_count_out_of_range' ? { max: 3 } : {}) } : { ok: false, error: { code } },
+      },
     })
     i18n.global.locale.value = 'ko'
     vi.spyOn(transport, 'patchRequest').mockRejectedValueOnce(refused('repeat_count_out_of_range'))
