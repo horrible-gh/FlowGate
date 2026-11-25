@@ -2657,8 +2657,6 @@ export default {
       filter_system: 'システム',
       filter_user: 'マイ AI',
       count_split: 'システム {system} 件・マイ AI {mine} 件',
-      order_hint: 'ドラッグで順序を変更します。AI の選択リストはこの順序で表示されます。',
-      order_hint_admin: 'ドラッグで順序を変更します。システム AI 同士の順序は全ユーザーのフォールバック順序としても保存されます。',
       fallback_order_changed: 'システムのフォールバック順序も変更されました。',
       my_default: 'マイ既定 AI に設定',
       // flowgate.v02test.0096 — 📌 pins an AI to the top of the AI picker (자주 쓰는 AI).
