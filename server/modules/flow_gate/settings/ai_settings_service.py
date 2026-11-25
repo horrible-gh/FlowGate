@@ -56,7 +56,7 @@ ID_PREFIX = "aip_"
 ID_SUFFIX_LEN = 6
 ID_RETRY_MAX = 5
 EXEC_TYPES = ("cli", "api")
-KINDS_CLI = ("claude", "copilot", "codex", "custom")
+KINDS_CLI = ("claude", "copilot", "codex", "gemini", "custom")
 KINDS_API = ("claude", "openai", "custom")
 MODES = ("inherit", "disabled", "custom")
 MODE_DEFAULT = "inherit"
@@ -148,8 +148,147 @@ def is_valid_model_name(model_name: Optional[str]) -> bool:
     return bool(_MODEL_NAME_RE.match(name))
 
 
+# Catalog keys are also the machine values sent by the editor.
+_CLI_MODEL_CATALOG = {
+    "claude": {
+        "versions": ("5.5",),
+        "models": ("opus", "sonnet", "haiku"),
+        "efforts": ("low", "medium", "high", "xhigh"),
+        "defaults": {"version": "5.5", "model": "opus", "effort": "high", "executable": "claude"},
+    },
+    "codex": {
+        "versions": ("6.2", "6.1"),
+        "models": ("luna", "terra", "sol", "astra"),
+        "efforts": ("low", "medium", "high", "xhigh"),
+        "defaults": {"version": "6.2", "model": "sol", "effort": "high", "executable": "codex"},
+    },
+    "gemini": {
+        "versions": ("3.8",),
+        "models": ("flash", "pro"),
+        "efforts": ("low", "medium", "high"),
+        "defaults": {"version": "3.8", "model": "flash", "effort": "medium", "executable": "agy"},
+    },
+}
+_CLI_MODEL_TEMPLATES = {
+    "claude": (
+        "{executable} --model claude-{model}-{version} --effort {effort} "
+        "--dangerously-skip-permissions -p -",
+        "Claude {model} {version}",
+    ),
+    "codex": (
+        "{executable} --ask-for-approval never --sandbox danger-full-access exec "
+        "--skip-git-repo-check --json --model gpt-{version}-{model} "
+        "-c model_reasoning_effort={effort} -",
+        "Codex GPT-{version} {model}",
+    ),
+    "gemini": (
+        "{executable} --output-format stream-json --dangerously-skip-permissions "
+        "--model gemini-{version}-{model}-{effort} --print-timeout {minutes}m",
+        "Gemini {version} {model}",
+    ),
+}
+_CLI_EXECUTABLE_PATTERN = r"(?:[A-Za-z]:)?[A-Za-z0-9_./\\][A-Za-z0-9_./\\-]*"
+_CLI_EXECUTABLE_RE = re.compile(_CLI_EXECUTABLE_PATTERN)
+
+
+def get_cli_model_catalog() -> dict:
+    return {
+        kind: {
+            **{key: list(entry[key]) for key in ("versions", "models", "efforts")},
+            "defaults": dict(entry["defaults"]),
+        }
+        for kind, entry in _CLI_MODEL_CATALOG.items()
+    }
+
+
+def _invalid_cli_selection(field: str, reason: str) -> AiSettingsValidationError:
+    return AiSettingsValidationError([{"field": field, "reason": reason}])
+
+
+def compose_cli_preset(
+    kind: str, *, version: str | None = None, model: str | None = None,
+    effort: str | None = None, executable: str | None = None,
+    timeout_seconds: int | None = None,
+) -> dict:
+    entry = _CLI_MODEL_CATALOG.get(kind)
+    if entry is None:
+        raise _invalid_cli_selection("kind", "unsupported_kind")
+    defaults = entry["defaults"]
+    version = defaults["version"] if version is None else version
+    model = defaults["model"] if model is None else model
+    effort = defaults["effort"] if effort is None else effort
+    executable = (executable or "").strip() or defaults["executable"]
+    for field, value, allowed in (
+        ("version", version, entry["versions"]),
+        ("model", model, entry["models"]),
+        ("effort", effort, entry["efforts"]),
+    ):
+        if value not in allowed:
+            raise _invalid_cli_selection(field, "unsupported_value")
+    if (len(executable) > MODEL_NAME_MAX or executable.endswith("\\")
+            or not _CLI_EXECUTABLE_RE.fullmatch(executable)):
+        raise _invalid_cli_selection("executable", "invalid_executable")
+    if timeout_seconds is not None and (
+        type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 604800
+    ):
+        raise _invalid_cli_selection("timeout_seconds", "invalid_timeout")
+    return {
+        "cli_command": build_preset_command(
+            kind, None, selection=(version, model, effort, executable),
+            timeout_seconds=timeout_seconds,
+        ),
+        "name": _CLI_MODEL_TEMPLATES[kind][1].format(version=version, model=model.title()),
+        "selection": {
+            "kind": kind, "version": version, "model": model, "effort": effort,
+            "executable": executable,
+        },
+    }
+
+
+def _cli_model_pattern(kind: str) -> re.Pattern:
+    entry = _CLI_MODEL_CATALOG[kind]
+    pattern = re.escape(_CLI_MODEL_TEMPLATES[kind][0])
+    fields = {"executable": _CLI_EXECUTABLE_PATTERN, "minutes": r"[1-9][0-9]{0,4}"}
+    for field, key in (("version", "versions"), ("model", "models"), ("effort", "efforts")):
+        values = entry[key]
+        if field == "version" and kind == "claude":
+            values = [value.replace(".", "-") for value in values]
+        fields[field] = "|".join(map(re.escape, values))
+    for field, value in fields.items():
+        pattern = pattern.replace(re.escape("{" + field + "}"), f"(?P<{field}>{value})")
+    return re.compile(pattern)
+
+
+_CLI_MODEL_PATTERNS = {kind: _cli_model_pattern(kind) for kind in _CLI_MODEL_CATALOG}
+
+
+def parse_cli_preset(cli_command: str, *, kind: str | None = None) -> dict | None:
+    for preset_kind, pattern in _CLI_MODEL_PATTERNS.items():
+        if kind is not None and kind != preset_kind:
+            continue
+        match = pattern.fullmatch(cli_command)
+        if match:
+            selection = match.groupdict()
+            minutes = selection.pop("minutes", None)
+            executable = selection["executable"]
+            if len(executable) > MODEL_NAME_MAX or executable.endswith("\\"):
+                return None
+            if preset_kind == "claude":
+                selection["version"] = selection["version"].replace("-", ".")
+            if minutes is not None and int(minutes) > 10080:
+                return None
+            result = compose_cli_preset(
+                preset_kind, **selection, timeout_seconds=int(minutes) * 60 if minutes else None,
+            )
+            if result["cli_command"] == cli_command:
+                return result["selection"]
+    return None
+
+
 def build_preset_command(
     kind: Optional[str], model_name: Optional[str], *, skip_permissions: bool = False,
+    selection: tuple[str, str, str, str] | None = None,
+    timeout_seconds: int | None = None,
 ) -> Optional[str]:
     """The canonical command for *kind* + *model_name* + permission state — what the
     model_name-driven "magic tool" hands a client instead of it owning any CLI's flags
@@ -164,6 +303,15 @@ def build_preset_command(
     ambiguous return value, and a caller that wants to pre-check without catching can ask
     is_valid_model_name() first.
     """
+    if selection is not None:
+        version, model, effort, executable = selection
+        template = _CLI_MODEL_TEMPLATES[kind][0]
+        # The editor can pass its existing execution limit in seconds. AGY accepts whole minutes.
+        minutes = 30 if timeout_seconds is None else (timeout_seconds + 59) // 60
+        return template.format(
+            executable=executable, version=version.replace(".", "-") if kind == "claude" else version,
+            model=model, effort=effort, minutes=minutes,
+        )
     preset = _CLI_PRESETS.get(kind or "")
     if preset is None:
         return None

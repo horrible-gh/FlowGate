@@ -325,3 +325,71 @@ class TestModelNameIsValidated:
         """No preset means no command at all, so there is nothing to inject into — the
         missing preset is still reported as None rather than as a validation error."""
         assert svc.build_preset_command(kind, "m; rm -rf /") is None
+
+@pytest.mark.parametrize(
+    "kind,expected_command,expected_name",
+    [
+        (
+            "claude",
+            "claude --model claude-opus-5-5 --effort high --dangerously-skip-permissions -p -",
+            "Claude Opus 5.5",
+        ),
+        (
+            "codex",
+            "codex --ask-for-approval never --sandbox danger-full-access exec "
+            "--skip-git-repo-check --json --model gpt-6.2-sol -c model_reasoning_effort=high -",
+            "Codex GPT-6.2 Sol",
+        ),
+        (
+            "gemini",
+            "agy --output-format stream-json --dangerously-skip-permissions "
+            "--model gemini-3.8-flash-medium --print-timeout 30m",
+            "Gemini 3.8 Flash",
+        ),
+    ],
+)
+def test_cli_catalog_default_command_and_round_trip(kind, expected_command, expected_name):
+    composed = svc.compose_cli_preset(kind)
+    assert composed["cli_command"] == expected_command
+    assert composed["name"] == expected_name
+    assert composed["selection"] == {"kind": kind, **svc.get_cli_model_catalog()[kind]["defaults"]}
+    assert svc.parse_cli_preset(expected_command) == composed["selection"]
+    assert svc.parse_cli_preset(expected_command, kind=kind) == composed["selection"]
+    assert svc.parse_cli_preset(expected_command, kind="custom") is None
+    assert svc.parse_cli_preset(expected_command + " ") is None
+
+
+def test_cli_catalog_override_and_timeout():
+    path = "/home/agent/tools/claude-linux/claude-account1"
+    claude = svc.compose_cli_preset("claude", model="sonnet", effort="xhigh", executable=path)
+    assert claude["name"] == "Claude Sonnet 5.5"
+    assert claude["cli_command"].startswith(path + " --model claude-sonnet-5-5 --effort xhigh ")
+    assert svc.parse_cli_preset(claude["cli_command"]) == claude["selection"]
+
+    gemini = svc.compose_cli_preset("gemini", model="pro", effort="high", timeout_seconds=2700)
+    assert gemini["cli_command"].endswith("--model gemini-3.8-pro-high --print-timeout 45m")
+    assert svc.parse_cli_preset(gemini["cli_command"]) == gemini["selection"]
+    assert svc.parse_cli_preset(svc.build_preset_command("copilot", None)) is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("model", "flash;echo"),
+        ("version", "3.8|cat"),
+        ("effort", "xhigh"),
+        ("executable", "agy && echo unsafe"),
+        ("executable", "agy\\"),
+        ("timeout_seconds", 0),
+    ],
+)
+def test_cli_catalog_rejects_invalid_selection(field, value):
+    with pytest.raises(svc.AiSettingsValidationError) as error:
+        svc.compose_cli_preset("gemini", **{field: value})
+    assert error.value.errors[0]["field"] == field
+
+
+def test_cli_parser_rejects_overlong_executable():
+    command = svc.compose_cli_preset("gemini")["cli_command"]
+    assert svc.parse_cli_preset("a" * 201 + command[3:]) is None
+
