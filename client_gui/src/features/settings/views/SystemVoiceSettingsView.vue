@@ -96,11 +96,13 @@
                 </div>
               </div>
               <div v-if="selModelInfo && !selModelInfo.available" class="fgs-row sub">
-                <span class="fgs-error" data-testid="voice-unavailable">{{ t('gui.voice.system.unavailable') }}<template v-if="selModelInfo.unavailableReason"> · {{ selModelInfo.unavailableReason }}</template></span>
+                <span class="fgs-error" data-testid="voice-unavailable">{{ t('gui.voice.system.unavailable') }}<template v-if="selModelInfo.unavailableReason"> · {{ voiceReasonText(selModelInfo.unavailableReason, t, te) }}</template></span>
               </div>
 
-              <div v-if="selServiceInfo && selModelInfo" class="fgs-row sub">
-                <VoiceLicenseNotice :service="selServiceInfo" :model="selModelInfo" />
+              <!-- F86: one summary line (engine and model license) and the link to the license window; the rest lives there. -->
+              <div v-if="selServiceInfo && selModelInfo" class="fgs-row sub vx-license" data-testid="voice-license-summary">
+                <span class="fgs-muted">{{ t('gui.licenses.summary', { engine: licenseText(selServiceInfo.license), model: licenseText(selModelInfo.license) }) }}</span>
+                <LicenseInfoLink :tab="selServiceInfo.id">{{ t('gui.licenses.open') }}</LicenseInfoLink>
               </div>
               <!-- Running installation -->
               <div v-if="job" class="fgs-row vx-apply" data-testid="voice-install-progress">
@@ -151,9 +153,20 @@
                   <strong>{{ testTarget ? selectionLabel(testTarget) : '—' }}</strong>
                 </div>
                 <div class="fgs-row-ctrl">
-                  <label>Upload your recording
-                    <input type="file" accept="audio/*" :disabled="!testTarget || testPhase !== 'idle'" data-testid="voice-test-upload" @change="uploadTest" />
-                  </label>
+                  <!-- The browser's own file button is hidden; the app button opens it and the chosen file's name shows beside it. -->
+                  <input
+                    ref="testFileInput"
+                    class="vx-file"
+                    type="file"
+                    accept="audio/*"
+                    tabindex="-1"
+                    aria-hidden="true"
+                    :disabled="!testTarget || testPhase !== 'idle'"
+                    data-testid="voice-test-upload"
+                    @change="uploadTest"
+                  />
+                  <span class="vx-file-name" data-testid="voice-test-file">{{ testFileName || t('gui.voice.test_no_file') }}</span>
+                  <Button size="sm" :disabled="!testTarget || testPhase !== 'idle'" data-testid="voice-test-upload-button" @click="testFileInput?.click()">{{ t('gui.voice.test_upload') }}</Button>
                   <span v-if="testPhase === 'recording'" class="vx-rec">● {{ formatClock(testSeconds) }}</span>
                   <button
                     type="button"
@@ -239,7 +252,7 @@ import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import { testTranscribe, type VoiceModel, type VoiceSelection, type VoiceService, type VoiceTranscription } from '@/features/conversation/voice/api'
-import { formatBytes, installVoiceMessages, voiceErrorKey } from '@/features/conversation/voice/messages'
+import { formatBytes, installVoiceMessages, voiceErrorKey, voiceReasonText } from '@/features/conversation/voice/messages'
 import { startRecording, type RecordingHandle } from '@/features/conversation/voice/recorder'
 import { errorCodeOf, formatClock } from '@/features/conversation/voice/useVoiceInput'
 import {
@@ -256,7 +269,7 @@ import {
   switchVoice,
   useVoice,
 } from '@/features/conversation/voice/voiceStore'
-import VoiceLicenseNotice from '@/features/conversation/voice/VoiceLicenseNotice.vue'
+import { LicenseInfoLink } from '@/features/licenses'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
@@ -291,6 +304,12 @@ const chipText = computed(() => {
   const s = installing.value ? 'installing' : status.value?.state ?? 'off'
   return t(`gui.voice.system.state.${s}`)
 })
+
+/** A license value for the summary line; none yet reads 확인 중. */
+function licenseText(license: string | null | undefined): string {
+  const value = (license ?? '').trim()
+  return value && !/^pending/i.test(value) ? value : t('gui.licenses.pending')
+}
 
 // ── Choice ─────────────────────────────────────────────────────────────────────────────
 const selService = ref('')
@@ -419,6 +438,9 @@ const testPhase = ref<TestPhase>('idle')
 const testSeconds = ref(0)
 const testResult = ref<VoiceTranscription | null>(null)
 const testError = ref<string | null>(null)
+const testFileInput = ref<HTMLInputElement | null>(null)
+/** The name of the file last chosen for the test (empty = none chosen yet). */
+const testFileName = ref('')
 let testRecording: RecordingHandle | null = null
 let testTick: ReturnType<typeof setInterval> | null = null
 let testGen = 0
@@ -439,6 +461,7 @@ async function uploadTest(event: Event): Promise<void> {
   const file = input.files?.[0]
   const target = testTarget.value
   if (!file || !target || testPhase.value !== 'idle') return
+  testFileName.value = file.name
   const gen = ++testGen
   testPhase.value = 'processing'
   testError.value = null
@@ -599,5 +622,31 @@ onBeforeUnmount(() => {
 
 .vx-tag {
   margin-left: 6px;
+}
+
+.vx-license {
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+/* The native file input stays in the page for the app button to open, but is never seen. */
+.vx-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vx-file-name {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--fg2-muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

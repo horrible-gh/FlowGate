@@ -469,3 +469,17 @@ export function formatBytes(bytes: number): string {
   const mb = bytes / 1_000_000
   return mb >= 1000 ? `${(mb / 1000).toFixed(1)}GB` : `${Math.max(1, Math.round(mb))}MB`
 }
+
+/**
+ * F86 — the shown text of a server `unavailable_reason`. The server reason is English (e.g. "This release requires
+ * Windows x64"); a known one is shown with its translation key, anything else as sent.
+ */
+export function voiceReasonText(
+  reason: string | null | undefined,
+  t: (key: string) => string,
+  has: (key: string) => boolean,
+): string {
+  if (!reason) return ''
+  if (/windows/i.test(reason) && has('gui.voice.unavailable_windows')) return t('gui.voice.unavailable_windows')
+  return reason
+}
