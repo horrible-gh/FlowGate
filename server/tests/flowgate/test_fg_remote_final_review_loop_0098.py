@@ -91,7 +91,14 @@ def test_remote_failure_checkpoints_stop_and_full_command_requests_review_again(
     before = len(_loops(starts))
     _read(env)
     assert len(_loops(starts)) == before
-    assert _wire(env, a)["intervention"]["reason"] == SPENT
+    intervention = _wire(env, a)["intervention"]
+    assert intervention == {
+        "kind": "needs_intervention", "reason": SPENT,
+        "stop_detail": saved["stop_detail"],
+    }
+    assert _read(env)["idle_reason"] == "needs_intervention"
+    from flowgate.graph_read import service as graph_read
+    assert graph_read.node_run(_wire(env, a), set())["intervention"] == intervention
     assert reasons.command_rerequest_due(SPENT)
     assert not reasons.retry_due([SPENT])
     first = one(env, a, "result_review", 1)
