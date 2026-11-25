@@ -49,6 +49,8 @@ import type {
   ConversationParticipant,
   ConversationScope,
   ConversationTurn,
+  MyAiPrefs,
+  MyAiPrefsUpdate,
   ProviderList,
   TurnAttachmentLink,
   TurnImage,
@@ -722,14 +724,19 @@ export async function markRead(chatId: string, lastReadSeq: number): Promise<num
 // ── Providers ────────────────────────────────────────────────────────────────────────
 export async function fetchProviders(projectId: string): Promise<ProviderList> {
   const data = await call(
-    () => getRequest<{ providers?: Array<{ id: string; name?: string | null; accepts_images?: boolean | null }>; default_provider_id?: string | null }>(
+    () => getRequest<{ providers?: Array<{ id: string; name?: string | null; accepts_images?: boolean | null; owner?: string | null }>; default_provider_id?: string | null }>(
       `${API}/ai-invoke/providers`,
       { project: projectId },
     ),
   )
   const providers: ChatProvider[] = (data?.providers ?? [])
     .filter((p) => p && typeof p.id === 'string')
-    .map((p) => ({ id: p.id, name: p.name || p.id, ...(typeof p.accepts_images === 'boolean' ? { acceptsImages: p.accepts_images } : {}) }))
+    .map((p) => ({
+      id: p.id,
+      name: p.name || p.id,
+      ...(typeof p.accepts_images === 'boolean' ? { acceptsImages: p.accepts_images } : {}),
+      ...(p.owner === 'user' || p.owner === 'system' ? { owner: p.owner } : {}),
+    }))
   return { providers, defaultProviderId: data?.default_provider_id ?? null }
 }
 
@@ -1013,6 +1020,18 @@ export async function issueChatMention(chatId: string): Promise<string> {
   )
   if (!data?.mention) throw clientCheckFailure()
   return data.mention
+}
+
+// ── My AI preferences (flowgate.v02test.0096 ④) ──────────────────────────────────────
+// The ⚙ AI tab's 최대 반복 횟수 / 제목 짓기 AI: the existing GET/PATCH /me/ai-preferences (v02test.0089), the same API
+// the AI 관리 screen uses — nothing new on the server.
+export async function fetchMyAiPrefs(): Promise<MyAiPrefs> {
+  return call(() => getRequest<MyAiPrefs>(`${API}/me/ai-preferences`))
+}
+
+/** Saves only the sent fields; answers the stored preferences (same shape as GET). */
+export async function saveMyAiPrefs(update: MyAiPrefsUpdate): Promise<MyAiPrefs> {
+  return call(() => patchRequest<MyAiPrefs>(`${API}/me/ai-preferences`, update))
 }
 
 

@@ -256,7 +256,8 @@ watch(
 
 .cvs-row {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  /* v02test.0096 ④: the label column fits its words, the control takes the rest. */
+  grid-template-columns: minmax(56px, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
@@ -312,18 +313,17 @@ watch(
   color: var(--fg2-status-warning-fg, var(--fg2-status-info-fg));
 }
 
+/* v02test.0096 ④: long service / model names (whisper.cpp, large-v3-turbo) wrap instead of being cut. */
 .cvs-dd-name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .cvs-list {
   max-height: 180px;
   overflow: auto;
-  margin: -2px 0 6px 72px;
+  margin: -2px 0 6px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-sm);
   background: var(--fg2-panel);
@@ -366,9 +366,7 @@ watch(
 .cvs-name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .cvs-r {
