@@ -14,6 +14,7 @@ export default {
     "open": "View license information",
     "summary": "Engine {engine} · Model {model}",
     "pending": "Under review",
+    "pending_sample_rights": "Sample rights under review",
     "direct_download": "All files are downloaded directly from official distributors. Offline installation bundles are provided after their license files have been verified. FFmpeg is not included in bundles.",
     "project_third_party": "Third-party license texts",
     "project_license": "Project LICENSE",

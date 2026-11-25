@@ -14,6 +14,7 @@ export default {
     "open": "ライセンス情報を見る",
     "summary": "エンジン {engine} · モデル {model}",
     "pending": "確認中",
+    "pending_sample_rights": "サンプルの権利を確認中",
     "direct_download": "すべてのファイルは公式配布元から直接ダウンロードします。オフラインインストール用パッケージはライセンスファイルの確認後に提供します。FFmpeg はパッケージに含めません。",
     "project_third_party": "サードパーティのライセンス全文",
     "project_license": "プロジェクト LICENSE",

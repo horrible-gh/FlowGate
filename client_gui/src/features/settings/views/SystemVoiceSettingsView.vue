@@ -308,6 +308,7 @@ const chipText = computed(() => {
 /** A license value for the summary line; none yet reads 확인 중. */
 function licenseText(license: string | null | undefined): string {
   const value = (license ?? '').trim()
+  if (value.toLowerCase() === 'pending:sample-rights') return t('gui.licenses.pending_sample_rights')
   return value && !/^pending/i.test(value) ? value : t('gui.licenses.pending')
 }
 
