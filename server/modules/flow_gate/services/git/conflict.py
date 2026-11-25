@@ -1863,6 +1863,10 @@ def note_resolver_finished(merge_id: int, run: dict) -> bool:
         "code": str(run.get("stop_code") or run.get("end_reason") or "no_resolution"),
         "provider": run.get("provider_name") or run.get("provider_id"),
     }
+    from flowgate.card_merge.auto_resolve import ai_failure
+    failure = ai_failure(run)
+    if failure:
+        attempt.update(code="ai_error", reason_summary=" ".join(failure.split())[:1000])
     attempt.update(state="failed", at=now_iso(), remaining=len(_gs.db_git.remaining_conflicts(int(merge_id))))
     context[RESOLVER_ATTEMPT_KEY] = attempt
     _gs.db_git.set_session_context(int(merge_id), context)

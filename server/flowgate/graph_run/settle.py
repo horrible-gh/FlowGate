@@ -247,6 +247,11 @@ def working(ctx, rows: list[dict]) -> bool:
     itself (``result_merge._wake``), never by a settlement."""
     from flowgate.graph_run import execution_store, result_merge
     from flowgate.gate_decisions.run_hold import gate_live
+    from flowgate.card_merge import auto_resolve
+    if (ctx.run.get("status") == engine.IDLE
+            and ctx.run.get("idle_reason") == IDLE_MERGE_CONFLICT
+            and auto_resolve.working(ctx.run_id)):
+        return True
     if execution_store.working(ctx.run_id):
         return True
     return ctx.run.get("status") in (engine.RUNNING, engine.PAUSED) and (
