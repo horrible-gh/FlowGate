@@ -95,7 +95,8 @@
               "source_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
             }
           ],
-          "redistribution_layout": "expanded"
+          "redistribution_layout": "expanded",
+          "license_url": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.2/LICENSE"
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -121,7 +122,8 @@
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "source_commit": "140fd653ae",
-          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae",
+          "license_url": null
         },
         {
           "filename": "jfk.wav",
@@ -129,9 +131,10 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         }
       ],
       "models": [
@@ -161,7 +164,8 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         },
         {
           "id": "base",
@@ -189,7 +193,8 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         },
         {
           "id": "small",
@@ -217,7 +222,8 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         },
         {
           "id": "medium",
@@ -245,7 +251,8 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         },
         {
           "id": "large-v3-turbo",
@@ -273,7 +280,8 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         },
         {
           "id": "large-v3",
@@ -301,13 +309,18 @@
               "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
               "source_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE"
         }
       ],
       "redistribution_status": "reviewed-cpu-runtime-subset",
       "native_notices": [
         "Six exact-artifact runtime files only; source attribution comments and MIT/zlib/Apache texts supplied.",
         "Microsoft VC++ x64 runtime and OpenMP (MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140) are separately provisioned system prerequisites, not bundled."
+      ],
+      "notice_keys": [
+        "whisper_runtime_subset",
+        "microsoft_system_prerequisites"
       ]
     },
     {
@@ -354,7 +367,8 @@
               "sha256": "e144db54f3cbd2110ccdd99cda1eaef528eb89a2f97bbee46989a7ba6b5292a3",
               "source_url": "https://raw.githubusercontent.com/likle/cargs/v1.0.3/LICENSE.md"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/5ce3d6d93a5f4fe11657bf11a6bf3a022eeef22f/LICENSE"
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -380,7 +394,8 @@
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "source_commit": "140fd653ae",
-          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae",
+          "license_url": null
         },
         {
           "filename": "jfk.wav",
@@ -388,9 +403,10 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         }
       ],
       "models": [
@@ -411,7 +427,8 @@
           "kind": "zipformer",
           "component_type": "weights",
           "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         },
         {
           "filename": "sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
@@ -490,7 +507,8 @@
               "size_bytes": 11358,
               "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
             }
-          }
+          },
+          "license_url": null
         }
       ],
       "redistribution_status": "pending-native-notices",
@@ -498,6 +516,11 @@
         "onnxruntime.dll 1.17.1: LICENSE and ThirdPartyNotices secured from the official 1.17.1 release",
         "cargs.dll 1.0.3: MIT license secured",
         "sherpa-onnx-c-api.dll statically linked dependencies (kaldi-native-fbank, OpenFst, etc.): notices pending; redistribution stays off"
+      ],
+      "notice_keys": [
+        "onnxruntime_notices",
+        "cargs_license",
+        "sherpa_static_notices_pending"
       ]
     },
     {
@@ -538,7 +561,8 @@
               "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
               "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/GPL-3.0-or-later.txt"
             }
-          ]
+          ],
+          "license_url": "https://raw.githubusercontent.com/alphacep/vosk-api/v0.3.45/COPYING"
         },
         {
           "filename": "ffmpeg-8.0-essentials_build.zip",
@@ -564,7 +588,8 @@
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "source_commit": "140fd653ae",
-          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae"
+          "source_url": "https://github.com/FFmpeg/FFmpeg/commit/140fd653ae",
+          "license_url": null
         },
         {
           "filename": "jfk.wav",
@@ -572,9 +597,10 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         }
       ],
       "models": [
@@ -598,7 +624,8 @@
           },
           "component_type": "weights",
           "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         },
         {
           "id": "small-en-us",
@@ -617,7 +644,8 @@
           "kind": "vosk",
           "component_type": "weights",
           "distribution": "direct-upstream",
-          "redistribution_allowed": false
+          "redistribution_allowed": false,
+          "license_url": null
         }
       ],
       "redistribution_status": "pending-native-notices",
@@ -625,6 +653,11 @@
         "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 runtime exception text secured; exact GCC patch level not proven",
         "libwinpthread-1.dll: mingw-w64 version and notice not proven; redistribution stays off",
         "libvosk.dll statically linked Kaldi/OpenFst/BLAS notices: pending; redistribution stays off"
+      ],
+      "notice_keys": [
+        "gcc_runtime_exception",
+        "mingw_notices_pending",
+        "vosk_static_notices_pending"
       ]
     }
   ]

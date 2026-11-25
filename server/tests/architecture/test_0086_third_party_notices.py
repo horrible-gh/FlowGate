@@ -109,5 +109,46 @@ class NoticeTests(unittest.TestCase):
         self.assertIn('COPY third_party/ /build/third_party/', client_stage)
 
 
+class VoiceLicenseContractTests(unittest.TestCase):
+    def test_all_locales_cover_catalog_notice_and_component_keys(self):
+        catalog = json.loads((ROOT / 'server/modules/flow_gate/services/voice_catalog.json').read_text(encoding='utf-8'))
+        required = {'window_title', 'close', 'tab_project', 'col_component', 'col_file', 'col_license',
+                    'col_source', 'source_link', 'open_for', 'open', 'summary', 'pending', 'direct_download',
+                    'project_third_party', 'project_license', 'loading', 'load_failed', 'nav_title'}
+        locales = {}
+        # These new message sections are JSON-compatible TypeScript object literals.
+        for locale in ('ko', 'en', 'ja'):
+            text = (ROOT / f'client_gui/src/app/i18n/{locale}.ts').read_text(encoding='utf-8')
+            messages, _ = json.JSONDecoder().raw_decode(text.split('  licenses: ', 1)[1])
+            voice, _ = json.JSONDecoder().raw_decode(text.split('  voice: ', 1)[1])
+            self.assertTrue(required <= messages.keys(), locale)
+            self.assertTrue(all(messages[k].strip() for k in required), locale)
+            self.assertEqual({'test_upload', 'test_no_file', 'unavailable_windows', 'system'}, voice.keys())
+            self.assertTrue(all(voice.values()))
+            self.assertEqual({'default_unavailable', 'download_upstream'}, voice['system'].keys())
+            self.assertTrue(all(value.strip() for value in voice['system'].values()))
+            self.assertIn('{name}', messages['open_for'])
+            self.assertIn('{engine}', messages['summary'])
+            self.assertIn('{model}', messages['summary'])
+            self.assertTrue({'engine', 'weights', 'runtime', 'other'} <= messages['component_type'].keys())
+            locales[locale] = messages
+        keys = []
+        for service in catalog['services']:
+            self.assertEqual(len(service['native_notices']), len(service['notice_keys']))
+            keys.extend(service['notice_keys'])
+            for item in service['artifacts'] + service['models']:
+                self.assertIn('license_url', item)
+                primary = item.get('notices', [{}])[0].get('source_url')
+                self.assertEqual(primary, item['license_url'])
+                for messages in locales.values():
+                    self.assertTrue(messages['component_type'][item['component_type']].strip())
+        self.assertEqual(len(keys), len(set(keys)))
+        for messages in locales.values():
+            self.assertEqual(set(keys), messages['notice'].keys())
+            self.assertTrue(all(messages['notice'].values()))
+        self.assertEqual('오픈소스 라이선스', locales['ko']['window_title'])
+        self.assertEqual('엔진 {engine} · 모델 {model}', locales['ko']['summary'])
+
+
 if __name__ == '__main__':
     unittest.main()

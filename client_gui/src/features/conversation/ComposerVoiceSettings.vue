@@ -72,14 +72,13 @@
           <span class="cvs-name">
             {{ item.name }}<span v-if="item.realtime" class="cvs-tag rt">{{ t('gui.voice.settings.realtime_tag') }}</span><span v-if="item.isDefault" class="cvs-tag">{{ t('gui.voice.settings.default_tag') }}</span>
           </span>
-          <VoiceLicenseNotice v-if="browsingServiceInfo" :service="browsingServiceInfo" :model="item" @click.stop />
           <span class="cvs-r">
             <template v-if="installingThis(item.id)">
               <span class="cvs-prog"><i :style="{ width: `${progressPercent}%` }"></i></span>
               <span class="cvs-pct">{{ progressPercent }}%</span>
               <button type="button" class="cvs-can" data-test="conv-voice-install-cancel" @click.stop="cancelInstall()">{{ t('gui.voice.mic.cancel') }}</button>
             </template>
-            <span v-else-if="!item.installed && !item.available" class="cvs-dim" :title="item.unavailableReason ?? ''">{{ t('gui.voice.system.unavailable') }}</span>
+            <span v-else-if="!item.installed && !item.available" class="cvs-dim" :title="voiceReasonText(item.unavailableReason, t, te)">{{ t('gui.voice.system.unavailable') }}</span>
             <button
               v-else-if="!item.installed && state.status?.canManage"
               type="button"
@@ -90,6 +89,10 @@
             >{{ t('gui.voice.settings.install') }} {{ formatBytes(item.sizeBytes) }}</button>
           </span>
         </div>
+      </div>
+      <!-- F86: no notice per model any more; one line per engine under the list opens that engine's license tab. -->
+      <div v-if="browsingServiceInfo" class="cvs-lic" data-test="conv-voice-license">
+        <LicenseInfoLink :tab="browsingServiceInfo.id">{{ t('gui.licenses.open_for', { name: browsingServiceInfo.name }) }}</LicenseInfoLink>
       </div>
       <div v-if="browsingPending && model" class="cvs-note">{{ t('gui.voice.settings.keep_using', { model: currentModelLabel }) }}</div>
 
@@ -127,8 +130,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VoicePrefs } from './voice/api'
-import VoiceLicenseNotice from './voice/VoiceLicenseNotice.vue'
-import { formatBytes, voiceErrorKey } from './voice/messages'
+import { LicenseInfoLink } from '@/features/licenses'
+import { formatBytes, voiceErrorKey, voiceReasonText } from './voice/messages'
 import { errorCodeOf } from './voice/useVoiceInput'
 import { cancelInstall, findService, installModel, loadVoice, sameSelection, updatePrefs, useVoice } from './voice/voiceStore'
 
@@ -506,6 +509,10 @@ watch(
 
 .cvs-note.is-info {
   color: var(--fg2-status-info-fg);
+}
+
+.cvs-lic {
+  padding: 2px 0 4px;
 }
 
 .cvs-link {

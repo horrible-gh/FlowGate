@@ -4,6 +4,51 @@
 import { PRODUCT_NAME } from '../../shared/productName.ts'
 
 export default {
+  licenses: {
+    "window_title": "오픈소스 라이선스",
+    "close": "닫기",
+    "tab_project": "FlowGate 전체",
+    "col_component": "구성요소",
+    "col_file": "파일",
+    "col_license": "라이선스",
+    "col_source": "원문",
+    "source_link": "원문",
+    "open_for": "{name} 라이선스 정보 보기",
+    "open": "라이선스 정보 보기",
+    "summary": "엔진 {engine} · 모델 {model}",
+    "pending": "확인 중",
+    "pending_sample_rights": "샘플 권리 확인 중",
+    "direct_download": "모든 파일은 공식 배포처에서 직접 받습니다. 오프라인 설치 묶음은 라이선스 파일 확인 뒤 제공합니다. FFmpeg은 묶음에 넣지 않습니다.",
+    "project_third_party": "제3자 라이선스 전문",
+    "project_license": "프로젝트 LICENSE",
+    "loading": "불러오는 중…",
+    "load_failed": "불러오지 못했습니다",
+    "nav_title": "오픈소스 고지",
+    "component_type": {
+      "engine": "엔진",
+      "weights": "모델",
+      "runtime": "런타임",
+      "other": "기타",
+      "ffmpeg": "FFmpeg",
+      "sample": "샘플"
+    },
+    "notice": {
+      "whisper_runtime_subset": "검증된 배포 파일의 런타임 파일 6개만 포함하며, 소스 출처 주석과 MIT·zlib·Apache 라이선스 전문을 제공합니다.",
+      "microsoft_system_prerequisites": "Microsoft VC++ x64 런타임과 OpenMP(MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140)는 함께 넣지 않으며, 시스템에 따로 설치되어 있어야 합니다.",
+      "onnxruntime_notices": "onnxruntime.dll 1.17.1: 공식 1.17.1 배포본에서 LICENSE와 ThirdPartyNotices를 확보했습니다.",
+      "cargs_license": "cargs.dll 1.0.3: MIT 라이선스 전문을 확보했습니다.",
+      "sherpa_static_notices_pending": "sherpa-onnx-c-api.dll에 정적으로 연결된 의존성(kaldi-native-fbank, OpenFst 등): 고지 확인 중이며, 재배포는 계속 보류합니다.",
+      "gcc_runtime_exception": "libgcc_s_seh-1.dll / libstdc++-6.dll: GCC 10 런타임 예외 조항을 확보했으나, 정확한 GCC 패치 버전은 확인되지 않았습니다.",
+      "mingw_notices_pending": "libwinpthread-1.dll: mingw-w64 버전과 고지가 확인되지 않아 재배포를 계속 보류합니다.",
+      "vosk_static_notices_pending": "libvosk.dll에 정적으로 연결된 Kaldi/OpenFst/BLAS 고지: 확인 중이며, 재배포는 계속 보류합니다."
+    }
+  },
+  voice: {
+    "system": { "default_unavailable": "기본으로 쓸 수 없음", "download_upstream": "공식 배포처에서 받기" },
+    "test_upload": "녹음 파일 올리기",
+    "test_no_file": "선택한 파일 없음",
+    "unavailable_windows": "이 버전은 Windows x64에서만 쓸 수 있습니다"
+  },
   taskbar: {"label": "태스크바", "menu": "메뉴", "more": "최소화한 창 {count}개 더 보기", "theme": "테마", "theme_hint": "태스크바와 메뉴, 창 제목줄 모양을 고릅니다.", "style": "태스크바 스타일", "screen": "화면", "theme_window": "내 설정 · 테마", "group_ai": "내 AI 관리", "group_settings": "내 설정", "my_ai": "내 AI", "my_ai_desc": "기본 AI · 순서 · 추가", "my_ai_window": "AI 관리 · 내 AI", "question_policy": "질의 방침", "question_policy_desc": "AI가 내게 물어볼 기준", "question_policy_window": "AI 관리 · 질의 방침", "agents": "에이전트", "agents_desc": "개인 에이전트 목록 · 등록", "account": "계정·화면", "account_window": "내 설정 · 계정·화면", "account_desc": "로그인 정보와 표시 언어", "agents_window": "내 설정 · 에이전트", "security": "보안·세션", "security_desc": "비밀번호 변경 · 로그인 세션", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "모던", "style_dock": "독", "style_classic": "클래식", "security_window": "내 설정 · 보안·세션", "pin_project": "프로젝트 열기", "pin_attachments": "첨부파일", "pin_terminal": "터미널", "pin_git": "Git", "pin_search": "찾기"},
   agent_capacity: {"label": "최대 동시 실행 수", "running": "지금 실행 중", "summary": "실행 중 {running} / 최대 {max}", "queued": "대기 {count}", "invalid": "1~32 사이의 정수를 입력하세요.", "hint": "채팅과 카드 작업을 합친 수이며, 넘는 작업은 순서대로 대기합니다.", "lowered": "실행 중인 작업은 끝까지 진행하고, 새 값 아래로 내려간 뒤부터 다음 작업을 받습니다.", "cli_missing": "AI CLI 없음 · 이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다.", "connect": "연결", "token_hint": "등록 토큰은 10분 동안 사용할 수 있습니다. 다시 발급하면 이전 토큰은 사용할 수 없습니다.", "waiting": "에이전트 접속을 기다리는 중 · 5초마다 확인", "enable_first": "사용을 켜고 저장하면 등록 토큰을 발급할 수 있습니다.", "enabled": "사용", "workdir_hint": "비어 있으면 작업을 받을 수 없습니다. 에이전트 PC에서 작업 폴더를 만들 위치를 지정하세요. 예: /data/flowgate, C:\\flowgate", "sec_basic": "기본 정보", "sec_run": "실행", "sec_workdir": "작업 폴더", "create_sub": "이름만 입력하면 바로 등록됩니다. 나머지는 나중에 바꿀 수 있습니다.", "not_connected": "아직 이 PC와 연결되지 않았습니다", "enabled_on": "켜져 있으면 이 에이전트가 작업을 받습니다.", "enabled_off": "작업을 받지 않습니다.", "unit_jobs": "개", "running_now": "지금 {running}개 실행 중", "queued_now": "대기 {count}개", "workdir_label": "작업 폴더 위치", "workdir_preview": "작업마다 {path} 폴더를 새로 만듭니다.", "cleanup_on": "작업이 끝나고 {hours}시간 뒤 폴더를 지웁니다 (1~720).", "cleanup_off": "끄면 작업 폴더를 지우지 않고 그대로 둡니다.", "cli_missing_detail": "이 PC에서 AI CLI를 찾지 못해 작업을 받을 수 없습니다. 설치하면 다음 접속부터 자동으로 작업을 받습니다.", "token_title": "등록 토큰", "token_until": "{at}까지", "no_token": "토큰이 없습니다 · 10분간 유효", "no_token_hint": "창을 닫았거나 10분이 지나 토큰이 만료됐습니다. 지우고 다시 등록할 필요 없이 새로 발급하면 됩니다.", "no_changes": "변경 사항 없음", "changes": "저장하지 않은 변경 {count}개", "changes_one": "저장하지 않은 변경 1개", "workdir_shared": "지금은 모든 작업이 {path} 폴더 하나를 같이 씁니다. 이 칸을 고쳐 저장하면 작업마다 폴더를 나눕니다."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
@@ -280,7 +325,6 @@ export default {
     user_role_member: '사용자',
   },
   nav: {
-    notices: {"title": "오픈소스 고지", "third_party": "제3자 라이선스 전문", "project_license": "프로젝트 LICENSE"},
     aria: '주요 화면',
     dashboard: { title: '대시보드', sub: '홈으로 돌아가기' },
     projects: { title: '프로젝트', sub: '프로젝트 관리' },

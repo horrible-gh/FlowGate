@@ -1,6 +1,51 @@
 import { PRODUCT_NAME } from '../../shared/productName.ts'
 
 export default {
+  licenses: {
+    "window_title": "Open-source licenses",
+    "close": "Close",
+    "tab_project": "All of FlowGate",
+    "col_component": "Component",
+    "col_file": "File",
+    "col_license": "License",
+    "col_source": "Source",
+    "source_link": "Source",
+    "open_for": "View license information for {name}",
+    "open": "View license information",
+    "summary": "Engine {engine} · Model {model}",
+    "pending": "Under review",
+    "pending_sample_rights": "Sample rights under review",
+    "direct_download": "All files are downloaded directly from official distributors. Offline installation bundles are provided after their license files have been verified. FFmpeg is not included in bundles.",
+    "project_third_party": "Third-party license texts",
+    "project_license": "Project LICENSE",
+    "loading": "Loading…",
+    "load_failed": "Could not load",
+    "nav_title": "Open-source notices",
+    "component_type": {
+      "engine": "Engine",
+      "weights": "Model",
+      "runtime": "Runtime",
+      "other": "Other",
+      "ffmpeg": "FFmpeg",
+      "sample": "Sample"
+    },
+    "notice": {
+      "whisper_runtime_subset": "Only six runtime files from the verified release artifact are included, with source attribution comments and the MIT, zlib and Apache license texts.",
+      "microsoft_system_prerequisites": "The Microsoft VC++ x64 runtime and OpenMP (MSVCP140/VCRUNTIME140/VCRUNTIME140_1/VCOMP140) are not bundled and must be installed separately on the system.",
+      "onnxruntime_notices": "onnxruntime.dll 1.17.1: LICENSE and ThirdPartyNotices have been obtained from the official 1.17.1 release.",
+      "cargs_license": "cargs.dll 1.0.3: The MIT license text has been obtained.",
+      "sherpa_static_notices_pending": "Dependencies statically linked into sherpa-onnx-c-api.dll (kaldi-native-fbank, OpenFst and others): notices are still under review; redistribution remains on hold.",
+      "gcc_runtime_exception": "libgcc_s_seh-1.dll / libstdc++-6.dll: The GCC 10 runtime exception text has been obtained, but the exact GCC patch version has not been verified.",
+      "mingw_notices_pending": "libwinpthread-1.dll: The mingw-w64 version and notices have not been verified; redistribution remains on hold.",
+      "vosk_static_notices_pending": "Kaldi/OpenFst/BLAS notices for code statically linked into libvosk.dll are still under review; redistribution remains on hold."
+    }
+  },
+  voice: {
+    "system": { "default_unavailable": "Default selection unavailable", "download_upstream": "Download from upstream" },
+    "test_upload": "Upload a recording",
+    "test_no_file": "No file selected",
+    "unavailable_windows": "This version is available only on Windows x64"
+  },
   taskbar: {"label": "Taskbar", "menu": "Menu", "more": "Show {count} more minimized windows", "theme": "Theme", "theme_hint": "Choose the look of the taskbar, menu and window title bars.", "style": "Taskbar style", "screen": "Screen", "theme_window": "My settings · Theme", "group_ai": "My AI management", "group_settings": "My settings", "my_ai": "My AI", "my_ai_desc": "Default AI · order · add", "my_ai_window": "AI management · My AI", "question_policy": "Question policy", "question_policy_desc": "When the AI should ask me", "question_policy_window": "AI management · Question policy", "agents": "Agents", "agents_desc": "My agents · register", "account": "Account", "account_window": "My settings · Account", "account_desc": "Sign-in details and display language", "agents_window": "My settings · Agents", "security": "Security", "security_desc": "Password · signed-in sessions", "style_flowgate": `${PRODUCT_NAME}`, "style_modern": "Modern", "style_dock": "Dock", "style_classic": "Classic", "security_window": "My settings · Security", "pin_project": "Open project", "pin_attachments": "Attachments", "pin_terminal": "Terminal", "pin_git": "Git", "pin_search": "Search"},
   agent_capacity: {"label": "Maximum concurrent jobs", "running": "Running now", "summary": "Running {running} / maximum {max}", "queued": "Queued {count}", "invalid": "Enter an integer from 1 to 32.", "hint": "Includes chats and card jobs. Additional jobs wait in order.", "lowered": "Running jobs finish normally. New jobs start once the count falls below the new limit.", "cli_missing": "AI CLI not found on this PC. It cannot receive CLI jobs.", "connect": "Connection", "token_hint": "Registration tokens last 10 minutes. Issuing a new token invalidates the previous token.", "waiting": "Waiting for the Agent · checking every 5 seconds", "enable_first": "Enable and save the Agent to issue a registration token.", "enabled": "Enabled", "workdir_hint": "Without it the Agent cannot receive jobs. Choose where job folders are created on the Agent PC, e.g. /data/flowgate or C:\\flowgate.", "sec_basic": "Basics", "sec_run": "Execution", "sec_workdir": "Job folders", "create_sub": "Only a name is required. You can change the rest later.", "not_connected": "Not connected to a PC yet", "enabled_on": "When on, this Agent receives jobs.", "enabled_off": "Receives no jobs.", "unit_jobs": "jobs", "running_now": "{running} running now", "queued_now": "{count} queued", "workdir_label": "Job folder location", "workdir_preview": "Each job gets a new folder: {path}", "cleanup_on": "Delete the folder {hours} hours after the job ends (1–720).", "cleanup_off": "When off, job folders are kept.", "cli_missing_detail": "AI CLI was not found on this PC, so it cannot receive jobs. Once installed, jobs start arriving from the next connection.", "token_title": "Registration token", "token_until": "Valid until {at}", "no_token": "No token · valid for 10 minutes", "no_token_hint": "The dialog was closed or the token expired after 10 minutes. Issue a new one; there is no need to delete and register again.", "no_changes": "No changes", "changes": "{count} unsaved changes", "changes_one": "1 unsaved change", "workdir_shared": "All jobs currently share one folder: {path}. Edit this field and save to give each job its own folder."},
   // 0060: the App Shell's one banner while the server is unreachable (shared/connectionStatus).
@@ -277,7 +322,6 @@ export default {
     user_role_member: 'Member',
   },
   nav: {
-    notices: {"title": "Open-source notices", "third_party": "Third-party license texts", "project_license": "Project LICENSE"},
     aria: 'Main screens',
     dashboard: { title: 'Dashboard', sub: 'Back to home' },
     projects: { title: 'Projects', sub: 'Manage projects' },

@@ -534,3 +534,37 @@ def test_excluded_paths_blocks_renamed_model_even_when_notices_approved(tmp_path
             action()
         assert exc.value.code == "voice_redistribution_pending"
     assert not (tmp_path / "out").exists()
+
+
+def test_catalog_license_links_and_notice_keys_for_admin_and_user(manager):
+    installed(manager)
+    for can_manage in (True, False):
+        services = manager.catalog(can_manage)["services"]
+        assert services
+        for service in services:
+            entry = vs.specification(service["id"])
+            assert service["notice_keys"] == entry["notice_keys"]
+            assert len(service["notice_keys"]) == len(service["native_notices"])
+            assert service["native_notices"] == entry["native_notices"]
+            assert service["license"] == entry["license"]
+            for component, artifact in zip(service["components"], entry["artifacts"], strict=True):
+                assert "license_url" in component
+                assert component["license_url"] == artifact["license_url"]
+                assert component["url"] == artifact["url"]
+                assert component["license"] == artifact["license"]
+    engine, ffmpeg, sample = manager.catalog(True)["services"][0]["components"]
+    assert engine["license_url"].endswith("/whisper.cpp/v1.8.2/LICENSE")
+    assert ffmpeg["license_url"] is None
+    assert sample["license_url"] is None
+
+
+def test_catalog_missing_optional_license_metadata_has_explicit_defaults(manager, monkeypatch):
+    catalog = copy.deepcopy(vs.CATALOG)
+    for entry in catalog["services"]:
+        entry.pop("notice_keys")
+        for artifact in entry["artifacts"]:
+            artifact.pop("license_url")
+    monkeypatch.setattr(vs, "CATALOG", catalog)
+    for service in manager.catalog(True)["services"]:
+        assert service["notice_keys"] == []
+        assert all("license_url" in c and c["license_url"] is None for c in service["components"])

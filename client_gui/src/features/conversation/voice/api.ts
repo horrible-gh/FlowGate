@@ -73,6 +73,17 @@ export interface VoiceModel {
   defaultEligible?: boolean
 }
 
+/** One downloaded file of a voice service (engine, weights, runtime, …) and its license. */
+export interface VoiceComponent {
+  filename: string
+  componentType: string
+  license: string
+  distribution: string
+  url: string
+  /** F86 contract 1: the license text URL of this component; null when the server has none. */
+  licenseUrl?: string | null
+}
+
 export interface VoiceService {
   id: string
   name: string
@@ -81,8 +92,10 @@ export interface VoiceService {
   installed: boolean
   available: boolean
   unavailableReason: string | null
-  components?: readonly { filename: string; componentType: string; license: string; distribution: string; url: string }[]
+  components?: readonly VoiceComponent[]
   nativeNotices?: readonly string[]
+  /** F86 contract 1: fixed notice keys, shown as `t('gui.licenses.notice.<key>')`; empty when the server sends none. */
+  noticeKeys?: readonly string[]
   models: readonly VoiceModel[]
 }
 
@@ -251,9 +264,13 @@ export function toVoiceCatalog(raw: unknown): VoiceService[] {
       license: text(s.license),
       components: Array.isArray(s.components) ? s.components.map((raw) => {
         const c = raw as Record<string, unknown>
-        return { filename: text(c.filename), componentType: text(c.component_type), license: text(c.license), distribution: text(c.distribution), url: text(c.url) }
+        return {
+          filename: text(c.filename), componentType: text(c.component_type), license: text(c.license),
+          distribution: text(c.distribution), url: text(c.url), licenseUrl: textOrNull(c.license_url),
+        }
       }) : [],
       nativeNotices: Array.isArray(s.native_notices) ? s.native_notices.filter((n): n is string => typeof n === 'string') : [],
+      noticeKeys: Array.isArray(s.notice_keys) ? s.notice_keys.filter((k): k is string => typeof k === 'string' && k !== '') : [],
       installed: s.installed === true || models.some((m) => m.installed),
       available: s.available !== false,
       unavailableReason: textOrNull(s.unavailable_reason),
