@@ -61,8 +61,10 @@ export const MENU_CARD_ICONS = {
   ai: 'M7 7h10v10H7z M10 3.5V7 M14 3.5V7 M10 17v3.5 M14 17v3.5 M3.5 10H7 M3.5 14H7 M17 10h3.5 M17 14h3.5',
   // a four-pointed spark
   'my-ai': KIND_ICONS.ai,
-  // a speech balloon with two lines
-  'question-policy': 'M4 5h16v11h-9l-4 4v-4H4z M8 9h8 M8 12h5',
+  // v02test.0096 AI 관리 · 기타 설정: two sliders
+  'ai-other': KIND_ICONS.settings,
+  // v02test.0096 AI 관리 · 방침 (질의 and later policies): a speech balloon with two lines
+  'ai-policy': 'M4 5h16v11h-9l-4 4v-4H4z M8 9h8 M8 12h5',
   // two sliders
   settings: KIND_ICONS.settings,
   // a circle split down the middle, one half striped

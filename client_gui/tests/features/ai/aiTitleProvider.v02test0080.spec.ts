@@ -4,13 +4,14 @@ import i18n from '@shared/i18n'
 import * as transport from '@shared/api'
 import { registerAppMessages } from '@/app/i18n'
 import { setCurrentUser } from '@/core/auth/currentUser'
-import AiProvidersPanel from '@/features/ai/providers/AiProvidersPanel.vue'
+import AiOtherSettingsPanel from '@/features/ai/manage/AiOtherSettingsPanel.vue'
 import * as api from '@/features/ai/api'
 import type { ProviderItem } from '@/features/ai/types'
 
 registerAppMessages(i18n)
 
-// v02test.0080 제목 짓기 AI: one dropdown right under "최대 반복 횟수" (system setting ai_title_provider).
+// v02test.0080 제목 짓기 AI (system setting ai_title_provider). v02test.0096 F96-3: in the 기타 설정 tab, the system column
+// of the 제목 짓기 AI row under the 최대 반복 횟수 row.
 const systemAi: ProviderItem[] = [
   { id: 'sys-a', name: 'System A', exec_type: 'api', kind: 'claude', enabled: true, exec_location: 'local' },
   { id: 'sys-off', name: 'System off', exec_type: 'cli', kind: 'claude', enabled: false, exec_location: 'local' },
@@ -18,13 +19,13 @@ const systemAi: ProviderItem[] = [
 ]
 const myAi: ProviderItem[] = [{ id: 'my-a', name: 'My A', exec_type: 'cli', kind: 'claude', enabled: true, exec_location: 'local' }]
 const policy = { repeat_count_min: 1, repeat_count_max: 5, repeat_count_hard_max: 30 }
-// v02test.0089: a user's own values (/me/ai-preferences) show in the 내 AI window and, for a non-administrator, here too.
+// v02test.0089: a user's own values (/me/ai-preferences) show in the 내 값 column beside it.
 const prefs = {
   title_provider: 'auto', title_provider_effective: 'executor',
   repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_system_max: 5, repeat_count_min: 1,
 }
 
-async function mountPanel({ admin = true, value = 'executor' as string | null, order = [] as string[], mineOnly = false } = {}) {
+async function mountPanel({ admin = true, value = 'executor' as string | null, order = [] as string[] } = {}) {
   setCurrentUser({ username: admin ? 'admin' : 'member', email: null, isAdmin: admin })
   if (admin) vi.spyOn(api, 'fetchSystemAi').mockResolvedValue({ providers: systemAi, default_provider_id: 'sys-a', updated_at: null, execution_policy: policy } as never)
   else vi.spyOn(api, 'fetchVisibleSystemAi').mockResolvedValue({ providers: systemAi, default_provider_id: 'sys-a' })
@@ -32,7 +33,7 @@ async function mountPanel({ admin = true, value = 'executor' as string | null, o
   vi.spyOn(api, 'fetchMyAiOrder').mockResolvedValue({ order })
   const fetchTitle = vi.spyOn(api, 'fetchTitleProvider').mockResolvedValue(value)
   vi.spyOn(api, 'fetchMyAiPreferences').mockResolvedValue({ ...prefs })
-  const wrapper = mount(AiProvidersPanel, { props: { mineOnly }, global: { plugins: [i18n] }, attachTo: document.body })
+  const wrapper = mount(AiOtherSettingsPanel, { global: { plugins: [i18n] }, attachTo: document.body })
   await flushPromises()
   return { wrapper, fetchTitle }
 }
@@ -50,19 +51,15 @@ describe('v02test.0080 제목 짓기 AI dropdown', () => {
     document.body.innerHTML = ''
   })
 
-  it('sits right under the repeat card with the name and dropdown only', async () => {
+  it('sits in the system column of the title row, under the repeat row, with the dropdown only', async () => {
     const { wrapper } = await mountPanel()
-    const cards = wrapper.findAll('.repeat-card')
-    expect(cards).toHaveLength(2)
-    expect(cards[0].text()).toContain('최대 반복 횟수')
-    expect(cards[1].attributes('data-test')).toBe('title-ai-card')
-    expect(cards[0].element.nextElementSibling).toBe(cards[1].element)
-    // v02test.0089: on the AI management screen the administrator's two cards name their system scope.
-    expect(cards[0].get('.repeat-info b').text()).toBe('최대 반복 횟수 상한(시스템)')
-    expect(cards[1].get('.repeat-info b').text()).toBe('제목 짓기 AI 기본값(시스템)')
-    expect(cards[1].find('small').exists()).toBe(false)
-    expect(cards[1].find('[title]').exists()).toBe(false)
-    expect((cards[1].get('select').element as HTMLSelectElement).value).toBe('executor')
+    const rows = wrapper.findAll('[role="row"]').filter((row) => row.find('[role="rowheader"]').exists())
+    expect(rows.map((row) => row.attributes('data-test'))).toEqual(['repeat-row', 'title-row'])
+    const card = rows[1].get('[data-test="title-ai-card"]')
+    expect(rows[0].find('[data-test="system-repeat-card"]').exists()).toBe(true)
+    expect(card.find('small').exists()).toBe(false)
+    expect(card.get('select').attributes('aria-label')).toBe('제목 짓기 AI (시스템)')
+    expect((card.get('select').element as HTMLSelectElement).value).toBe('executor')
     wrapper.unmount()
   })
 
@@ -106,34 +103,29 @@ describe('v02test.0080 제목 짓기 AI dropdown', () => {
     wrapper.unmount()
   })
 
-  it('is not shown to a non-administrator, in the mine-only window, or while the value is unknown', async () => {
-    // Those two places show the user's own title AI instead (v02test.0089), never the system value.
+  it('is not shown to a non-administrator or while the value is unknown', async () => {
+    // A non-administrator sees the system column read-only and their own title AI beside it (v02test.0089).
     let r = await mountPanel({ admin: false })
     expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
-    expect(r.wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
-    expect(r.fetchTitle).not.toHaveBeenCalled()
-    r.wrapper.unmount()
-    r = await mountPanel({ mineOnly: true })
-    expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
-    expect(r.wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(false)
+    expect(r.wrapper.find('[data-test="system-title-readonly"]').exists()).toBe(true)
     expect(r.wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
     expect(r.fetchTitle).not.toHaveBeenCalled()
     r.wrapper.unmount()
     r = await mountPanel({ value: null })
     expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
-    expect(r.wrapper.find('.repeat-card').exists()).toBe(true)
+    expect(r.wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(true)
     r.wrapper.unmount()
   })
 
   it('shows the names in English and Japanese', async () => {
     i18n.global.locale.value = 'en'
     let { wrapper } = await mountPanel()
-    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('Title AI default (system)')
+    expect(wrapper.get('[data-test="title-ai-select"]').attributes('aria-label')).toBe('Title AI (system)')
     expect(optionTexts(wrapper).slice(0, 2)).toEqual(['Off', 'Same AI that ran it'])
     wrapper.unmount()
     i18n.global.locale.value = 'ja'
     ;({ wrapper } = await mountPanel())
-    expect(wrapper.get('[data-test="title-ai-card"] .repeat-info b').text()).toBe('タイトル生成AIの既定値(システム)')
+    expect(wrapper.get('[data-test="title-ai-select"]').attributes('aria-label')).toBe('タイトル生成AI（システム）')
     expect(optionTexts(wrapper).slice(0, 2)).toEqual(['オフ', '実行したAIのまま'])
     wrapper.unmount()
   })
@@ -161,3 +153,4 @@ describe('v02test.0080 ai_title_provider contract', () => {
     expect(patch).toHaveBeenCalledWith('/api/v1/system/settings', { updates: { ai_title_provider: 'executor' } })
   })
 })
+

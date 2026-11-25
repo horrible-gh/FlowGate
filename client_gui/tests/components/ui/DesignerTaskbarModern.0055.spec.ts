@@ -40,7 +40,7 @@ describe('modern taskbar style', () => {
     await menu.trigger('click')
     expect(wrapper.find('.start-box').exists()).toBe(true)
     expect(wrapper.find('.menu-board').exists()).toBe(false)
-    expect(wrapper.findAll('.start-tile').map(b => b.attributes('data-card'))).toEqual(['my-ai', 'question-policy', 'theme', 'agents', 'account', 'security'])
+    expect(wrapper.findAll('.start-tile').map(b => b.attributes('data-card'))).toEqual(['my-ai', 'ai-other', 'ai-policy', 'theme', 'agents', 'account', 'security'])
     await wrapper.get('[data-card="theme"]').trigger('click')
     expect(wrapper.find('.start-box').exists()).toBe(false)
   })
@@ -53,3 +53,4 @@ describe('modern taskbar style', () => {
     expect(document.querySelector('.ui-modeless-panel')?.getAttribute('data-taskbar-style')).toBe('modern')
   })
 })
+
