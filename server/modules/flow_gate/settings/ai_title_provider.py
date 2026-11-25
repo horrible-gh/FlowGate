@@ -36,6 +36,8 @@ def validate(value):
         raise ValueError("ai_title_provider must be off, executor or an enabled provider id")
 
 
-def selected(executor):
-    setting = value()
+def selected(executor, user_id=None):
+    from modules.flow_gate.db import user_ai_preferences
+    personal = user_ai_preferences.get(user_id)["title_provider"] if user_id else "auto"
+    setting = value() if personal == "auto" else personal
     return None if setting == "off" else executor if setting == "executor" else setting

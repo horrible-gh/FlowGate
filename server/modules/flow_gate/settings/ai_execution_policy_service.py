@@ -45,6 +45,17 @@ REPEAT_COUNT_MIN_MAX = 1
 REPEAT_COUNT_HARD_MAX = 30
 
 
+def get_user_repeat_count_max(user_id) -> int:
+    """System ceiling by default; personal finite ceiling only with an explicit user."""
+    maximum = get_repeat_count_max()
+    if user_id:
+        from modules.flow_gate.db import user_ai_preferences
+        own = user_ai_preferences.get(user_id)["repeat_count_max"]
+        if type(own) is int and own >= REPEAT_COUNT_MIN_MAX:
+            return min(own, maximum)
+    return maximum
+
+
 def get_repeat_count_max() -> int:
     """The current effective ceiling N. Never raises.
 
@@ -90,7 +101,7 @@ def valid_setting_value(value: object) -> bool:
     return REPEAT_COUNT_MIN_MAX <= candidate <= REPEAT_COUNT_HARD_MAX
 
 
-def repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True) -> tuple[int, ...]:
+def repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True, user_id=None) -> tuple[int, ...]:
     """The full selectable set for one feature, built from the current effective max.
 
     `allow_unlimited=True` prepends -1 ("될 때까지"), `allow_zero=True` prepends 0
@@ -103,7 +114,7 @@ def repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True) -> t
         values.append(-1)
     if allow_zero:
         values.append(0)
-    values.extend(range(1, get_repeat_count_max() + 1))
+    values.extend(range(1, (get_user_repeat_count_max(user_id) if user_id else get_repeat_count_max()) + 1))
     return tuple(values)
 
 
@@ -118,10 +129,10 @@ def valid_repeat_count(value: object, *, allow_zero: bool, allow_unlimited: bool
     return value in repeat_count_choices(allow_zero=allow_zero, allow_unlimited=allow_unlimited)
 
 
-def execution_policy_payload() -> dict:
+def execution_policy_payload(user_id=None) -> dict:
     """The client-facing shape ridden on GET /api/v1/ai-invoke/providers (§3.5)."""
     return {
-        "repeat_count_max": get_repeat_count_max(),
+        "repeat_count_max": get_user_repeat_count_max(user_id) if user_id else get_repeat_count_max(),
         "repeat_count_min": REPEAT_COUNT_MIN_MAX,
         "repeat_count_hard_max": REPEAT_COUNT_HARD_MAX,
     }

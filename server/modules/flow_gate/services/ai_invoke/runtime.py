@@ -174,10 +174,10 @@ NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-o
 # turned the fixed tuple into this function in
 # ai_invoke_service.py's parameter block. That block IS runtime.py now, so the function
 # lands here — same body, same SSOT call, one address further in.
-def restart_max_attempts_choices() -> tuple[int, ...]:
+def restart_max_attempts_choices(user_id=None) -> tuple[int, ...]:
     """The dialog's selectable "재시작 횟수" set. SSOT is ai_execution_policy_service
     — this used to be the fixed tuple ."""
-    return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    return ai_execution_policy_service.repeat_count_choices(allow_zero=True, user_id=user_id)
 
 RESTART_MAX_ATTEMPTS_DEFAULT = 1
 

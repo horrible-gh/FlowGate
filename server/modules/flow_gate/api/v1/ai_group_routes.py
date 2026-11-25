@@ -192,7 +192,7 @@ def get_role_profiles(ai_group_id: str, user=Depends(get_current_user)):
 @router.get('/ai-groups/{ai_group_id}/role-profile-options')
 def get_role_profile_options(ai_group_id: str, locale: Literal['ko', 'en', 'ja'] = 'ko',
                              user=Depends(get_current_user)):
-    return _call(user, profiles.options, ai_group_id, locale)
+    return _call(user, profiles.options, ai_group_id, locale, user_id=user["user_id"])
 
 
 @router.put('/ai-groups/{ai_group_id}/role-profiles/{type_key}')
@@ -209,7 +209,7 @@ def set_role_profile_cell(ai_group_id: str, type_key: str, role: str,
 @router.put('/ai-groups/{ai_group_id}/role-profiles/{type_key}/review-count')
 def set_role_profile_review_count(ai_group_id: str, type_key: str, body: AIGroupProfileReviewCount,
                                   user=Depends(_manage)):
-    return _call(user, profiles.set_review_count, ai_group_id, type_key, body.model_dump())
+    return _call(user, profiles.set_review_count, ai_group_id, type_key, body.model_dump(), user_id=user["user_id"])
 
 
 @router.delete('/ai-groups/{ai_group_id}/role-profiles/{type_key}')

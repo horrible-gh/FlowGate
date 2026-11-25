@@ -13,6 +13,8 @@ from flowgate.ai_roles import invocations
 
 @pytest.fixture
 def catalog(monkeypatch):
+    from modules.flow_gate.db import user_ai_preferences
+    monkeypatch.setattr(user_ai_preferences, "get", lambda user: {"title_provider": "auto", "repeat_count_max": None})
     rows = {}
     providers = [dict(id="light", name="Haiku", enabled=True, exec_type="api"),
                  dict(id="remote", name="Agent", enabled=True, exec_type="cli", exec_location="remote",
@@ -119,7 +121,7 @@ def test_naming_background_does_not_wait(monkeypatch):
 
 # Reuse the real SQLite ledger/target fixtures to verify the new dispatch is wired
 # through durable names, rather than testing only the policy helper in isolation.
-from test_flow_first_names_0071 import naming, legacy_cards, db_path, env, FA, USER, TEXT, TITLE, titles
+from test_flow_first_names_0071 import naming, legacy_cards, db_path, env, FA, USER, TEXT, TITLE, ALL, titles
 from modules.flow_gate.graph_workflow.services import first_names_store as ledger
 
 
@@ -136,23 +138,24 @@ def test_names_are_applied_once_and_human_edit_wins(configured_names):
     n["hook"] = lambda: document_service.update_document(n["chat"], {"title": "Human title"}, "u_kim")
     result = auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"], title="Executor supplied text")
     assert result["targets"] == {"flow": "done", "root": "done", "chat": "skipped"}
-    assert titles(n) == (TITLE, TITLE, "Human title")
-    assert ledger.load(FA)["candidate"] == TITLE
+    assert titles(n) == (ALL[0], ALL[1], "Human title")
+    assert ledger.load(FA)["names"]["flow"]["candidate"] == ALL[0]
     auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"])
-    assert n["calls"] == 1
+    assert n["calls"] == 3
 
 
 def test_old_fallback_marker_does_not_block_configured_provider(configured_names):
     n = configured_names
     ledger.save(FA, {"fallback_requested": True})
     assert auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"])["status"] == "done"
-    assert titles(n) == (TITLE, TITLE, TITLE)
+    assert titles(n) == ALL
 
 
 def test_retry_after_provider_failure(configured_names):
     n = configured_names
-    n["answer"] = None
-    assert auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"])["status"] == "unchanged"
-    n["answer"] = TITLE
-    assert auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"])["status"] == "done"
+    n["answers"]["chat"] = None
+    assert auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"], kinds=("chat",))["status"] == "unchanged"
+    n["answers"]["chat"] = TITLE
+    assert auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"], kinds=("chat",))["status"] == "done"
+    assert titles(n)[2] == TITLE
     assert n["calls"] == 2
