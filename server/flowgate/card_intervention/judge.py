@@ -18,11 +18,14 @@ _log = logging.getLogger(__name__)
 def intervention(flow_id: str, row: dict) -> dict:
     """``{"kind": needs_intervention | system_error, "reason": <recorded reason> | completion_missing}``.
 
-    a card whose AI's answers require a new attempt nobody opened (``action_guard``) is
+    Current-stage/current-attempt loop questions win first (``question_pending``);
+    then a card whose AI's answers require a new attempt nobody opened (``action_guard``) is
     ``needs_intervention`` with ``action_required:<requirement>`` first — its answers' step is held, whatever was recorded."""
     from flowgate.card_settings import action_guard  # noqa: PLC0415
     from flowgate.card_settings import legacy_adapter  # noqa: PLC0415 — the B-1 reader of the card stage
 
+    if question_pending(flow_id, row):
+        return {"kind": "question_pending", "reason": "question_pending"}
     held = action_guard.node_reason(flow_id, row)
     if held is not None:
         return {"kind": reasons.NEEDS_INTERVENTION, "reason": held}
@@ -32,6 +35,33 @@ def intervention(flow_id: str, row: dict) -> dict:
     if detail:
         found[reasons.STOP_DETAIL] = detail     # F98-4: the closed loop's failure cause, an added field
     return found
+
+
+def question_pending(flow_id: str, row: dict) -> bool:
+    """Only confirmed unanswered questions of the latest loop in this attempt/stage.
+
+    Include stopped loops: their verdict consumption waits for answers too. Unknown
+    identity or failed reads do not hide an existing failure. This is read-only.
+    """
+    from flowgate.card_settings import legacy_adapter as legacy, question_wait
+
+    if row.get("status") not in ("open", "review") or not row.get("run_id") or not row.get("node_key"):
+        return False
+    try:
+        attempt = (legacy.run_store.active_attempt_id(row["run_id"], row["node_key"])
+                   or legacy.run_store.current_attempts(row["run_id"]).get(row["node_key"]))
+        if not attempt:
+            return False
+        doc = legacy.stage_document(row)
+        loops = legacy.review_loops(doc) if doc else []
+        loop = loops[0] if loops else None
+        if (not loop or loop.get("group_id") != flow_id or not loop.get("run_id")
+                or legacy._loop_attempt(loop["run_id"]) != attempt):
+            return False
+        return bool(question_wait.open_questions(flow_id, loop["run_id"]))
+    except Exception:
+        _log.warning("card loop question read failed node=%s", row.get("node_key"), exc_info=True)
+        return False
 
 
 def _loop_stop_detail(row: dict, recorded) -> "str | None":
