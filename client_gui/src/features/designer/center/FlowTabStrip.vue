@@ -909,13 +909,36 @@ function pickFromList(flowId: string, close: () => void) {
   color: var(--fg2-muted);
 }
 
+/* flowgate.v02test.0088 F88-3: a short line between tabs (half the tab's height). It is the tab's own left-edge
+   background, not a pseudo element, so the drop line (::before / ::after) never shares an element with it. */
+.flow-tab + .flow-tab {
+  background-image: linear-gradient(var(--fg2-line-strong), var(--fg2-line-strong));
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: 1px 16px;
+}
+
 .flow-tab:hover {
+  background-color: rgba(154, 181, 210, 0.06);
   color: var(--fg2-text);
+}
+
+/* no line on either side of the active or the hovered tab, none between number chips (the chip is the edge), and none
+   where a drop line shows (it would sit right beside it). */
+.flow-tab:hover,
+.flow-tab:hover + .flow-tab,
+.flow-tab.is-active + .flow-tab,
+.flow-tab.is-compact,
+.flow-tab.is-compact + .flow-tab,
+.flow-tab.is-drop-before,
+.flow-tab.is-drop-after + .flow-tab {
+  background-image: none;
 }
 
 .flow-tab.is-active {
   border-bottom-color: var(--fg2-blue);
-  background: rgba(75, 163, 255, 0.08);
+  border-radius: 6px 6px 0 0;
+  background: rgba(75, 163, 255, 0.12);
   color: var(--fg2-text);
 }
 
@@ -1159,15 +1182,51 @@ function pickFromList(flowId: string, close: () => void) {
 }
 
 .flow-tab.is-compact {
-  padding: 0 2px;
+  padding: 0 3px;
 }
 
 .flow-tab.is-compact .flow-tab-button {
-  padding: 0 6px;
+  padding: 0 2px;
 }
 
+/* F88-3: an inactive tab's number is a bordered chip — same width per digit count, centred, bright (not dimmed). */
 .flow-tab.is-compact .flow-tab-no {
-  margin-right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 20px;
+  margin: 0;
+  padding: 0 6px;
+  border: 1px solid rgba(154, 181, 210, 0.16);
+  border-radius: 5px;
+  background: rgba(154, 181, 210, 0.07);
+  color: #c6d5e6;
+  font: 600 11px/1 system-ui, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  vertical-align: middle;
+}
+
+/* hovered: the chip turns blue instead of the tab taking a background. */
+.flow-tab.is-compact:hover {
+  background-color: transparent;
+}
+
+.flow-tab.is-compact:hover .flow-tab-no {
+  border-color: rgba(75, 163, 255, 0.45);
+  background: rgba(75, 163, 255, 0.18);
+  color: var(--fg2-text);
+}
+
+.flow-tab.is-compact .flow-tab-archive,
+.flow-tab.is-compact .flow-tab-run,
+.flow-tab.is-compact .flow-tab-end,
+.flow-tab.is-compact .flow-tab-conflict,
+.flow-tab.is-compact .flow-tab-git,
+.flow-tab.is-compact .flow-tab-terminal,
+.flow-tab.is-compact .flow-tab-chat {
+  margin-right: 4px;
 }
 
 .flow-tab.is-compact:not(:hover):not(:focus-within) .flow-tab-close {
