@@ -32,7 +32,13 @@ defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 .ai-my-window :deep(.ai-providers-panel .page-title) { display: none; }
 .ai-my-window :deep(.ai-providers-panel .repeat-card) { margin-top: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-head) { margin-bottom: 8px; }
-.ai-my-window :deep(.ai-providers-panel .detail-panel) { margin-bottom: 0; }
+/* v02test.0089 F89-7: the list box takes all the height the window gives; the repeat limit and title AI cards (flex: none)
+   stay at the bottom, and on a short window the card list shrinks and scrolls instead of cutting them off. */
+.ai-my-window :deep(.ai-providers-panel) { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.ai-my-window :deep(.ai-providers-panel .detail-panel) { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
+.ai-my-window :deep(.ai-providers-panel .provider-cards) { flex: 1; min-height: 0; overflow: auto; }
+.ai-my-window :deep(.ai-providers-panel .empty-row) { margin: auto 0; }
+.ai-my-window :deep(.ai-providers-panel .order-hint) { margin-top: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-toolbar) { height: auto; min-height: 52px; padding: 8px 12px; flex-wrap: wrap; gap: 8px 12px; }
 .ai-my-window :deep(.ai-providers-panel .detail-search) { min-width: 120px; flex: 1 1 120px; }
 </style>
