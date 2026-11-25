@@ -82,7 +82,7 @@ try {
   assert.equal(styles[0].height, 32);assert.equal(styles[1].height, 36)
   for (const style of styles) { assert.equal(style.align, 'center');assert.equal(style.arrow, 'none');assert(style.background.includes('linear-gradient')) }
   results.push('32/36px role, group and review count selectors centered with one shared arrow')
-  await click('.question-policy header button')
+  await click('[data-test="qp-assist"]')
   await waitFor('!!document.querySelector(".qp-top select")')
   assert.equal(await evaluate('getComputedStyle(document.querySelector(".qp-top select")).alignItems'), 'center')
   results.push('question assistant picker uses the same alignment')
@@ -106,3 +106,4 @@ try {
 } finally {
   ws?.close();chrome?.kill();await server.close()
 }
+
