@@ -139,6 +139,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { TITLE_SEPARATOR, titleChoices, useMyAiPreferences } from '@shared/myAiPreferences'
 import {
   fetchMyAi,
   fetchMyAiOrder,
@@ -151,7 +152,7 @@ import {
   saveTitleProvider,
 } from '../api'
 import '../aiBaseSelect.css'
-import type { AiExecutionPolicy, MyAiPreferences, MyAiPreferencesUpdate, ProviderItem } from '../types'
+import type { AiExecutionPolicy, MyAiPreferences, ProviderItem } from '../types'
 import { installAiManageMessages } from './messages'
 
 const composer = useI18n({ useScope: 'global' }); installAiManageMessages(composer)
@@ -169,9 +170,6 @@ const repeatMax = ref(0)
 // Title AI (ai_title_provider): null until read; the select stays hidden while the value is unknown.
 const titleProvider = ref<string | null>(null)
 const titleSaving = ref(false)
-// My own title AI and repeat limit: null until read (or when the body is not in the contract shape).
-const prefs = ref<MyAiPreferences | null>(null)
-const prefsSaving = ref(false)
 const toasts = ref<ToastHostItem[]>([])
 let repeatTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
@@ -182,17 +180,6 @@ function pushToast(message: string): void {
 
 function dismissToast(id: string | number): void {
   toasts.value = toasts.value.filter((item) => item.id !== id)
-}
-
-// A body without the contract's fields (an older server) is treated as unavailable.
-function isPreferences(value: unknown): value is MyAiPreferences {
-  if (!value || typeof value !== 'object') return false
-  const p = value as Record<string, unknown>
-  return typeof p.title_provider === 'string'
-    && typeof p.repeat_count_max_effective === 'number'
-    && typeof p.repeat_count_system_max === 'number'
-    && typeof p.repeat_count_min === 'number'
-    && (p.repeat_count_max === null || p.repeat_count_max === undefined || typeof p.repeat_count_max === 'number')
 }
 
 // Every read stands alone: one that fails leaves its cell saying so and the rest of the table works.
@@ -218,58 +205,17 @@ async function load(): Promise<void> {
   loaded.value = true
 }
 
-async function loadPreferences(): Promise<void> {
-  try {
-    const data = await fetchMyAiPreferences()
-    // A change saved meanwhile is newer than this read.
-    if (!disposed && !prefsSaving.value && isPreferences(data)) prefs.value = { ...data, repeat_count_max: data.repeat_count_max ?? null }
-  } catch {
-    // My column says it could not load; the system column does not depend on it.
-  }
-}
-
-// Shown at once and saved at once; the server's answer (same shape as GET) replaces it, a failure puts the previous back.
-async function savePreferences(update: MyAiPreferencesUpdate, shown: MyAiPreferences): Promise<void> {
-  const previous = prefs.value
-  if (!previous || prefsSaving.value) return
-  prefs.value = shown
-  prefsSaving.value = true
-  try {
-    const data = await saveMyAiPreferences(update)
-    if (!disposed && isPreferences(data)) prefs.value = { ...data, repeat_count_max: data.repeat_count_max ?? null }
-  } catch (err: unknown) {
-    if (disposed) return
-    prefs.value = previous
-    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'))
-  } finally {
-    prefsSaving.value = false
-  }
-}
-
-// −/＋ moves my own value within repeat_count_min ~ the system ceiling, starting from the effective value.
-function stepMyRepeat(delta: number): void {
-  const p = prefs.value
-  if (!p || prefsSaving.value) return
-  const next = p.repeat_count_max_effective + delta
-  if (next < p.repeat_count_min || next > p.repeat_count_system_max) return
-  void savePreferences({ repeat_count_max: next }, { ...p, repeat_count_max: next, repeat_count_max_effective: next })
-}
-
-// Back to "not set": the system value applies again.
-function resetMyRepeat(): void {
-  const p = prefs.value
-  if (!p || prefsSaving.value || p.repeat_count_max === null) return
-  void savePreferences(
-    { repeat_count_max: null },
-    { ...p, repeat_count_max: null, repeat_count_max_effective: p.repeat_count_system_max },
-  )
-}
-
-function chooseMyTitleProvider(value: string): void {
-  const p = prefs.value
-  if (!p || prefsSaving.value || value === p.title_provider || value === TITLE_SEPARATOR) return
-  void savePreferences({ title_provider: value }, { ...p, title_provider: value })
-}
+// My own values (내 값): F96-5 moved their load / save into the composable the ⚙ settings window's AI tab uses as well.
+// A failed read leaves the column saying so (prefs stays null); the system column does not depend on it.
+const myPrefs = useMyAiPreferences<MyAiPreferences>({
+  fetch: fetchMyAiPreferences,
+  save: saveMyAiPreferences,
+  onSaveError: (err) => pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed')),
+})
+const { prefs, saving: prefsSaving, load: loadPreferences } = myPrefs
+const stepMyRepeat = myPrefs.stepRepeat
+const resetMyRepeat = myPrefs.resetRepeat
+const chooseMyTitleProvider = myPrefs.chooseTitle
 
 // Saved as soon as it is chosen; a failed save puts the previous value back.
 async function chooseTitleProvider(value: string): Promise<void> {
@@ -323,6 +269,7 @@ onBeforeUnmount(() => {
     void saveRepeat()
   }
   disposed = true
+  myPrefs.dispose()
 })
 
 // Every AI once, in my order: the saved ids that still exist, then the rest (system order, then mine) — the AI list's order.
@@ -335,15 +282,10 @@ const orderedItems = computed<ProviderItem[]>(() => {
 })
 
 // Fixed choices / separator / the AI in the list's order. Off AI are left out (the server refuses them), except the
-// stored one, which is always shown so the dropdown never claims another value.
-const TITLE_SEPARATOR = '__separator__'
+// stored one, which titleChoices always offers so the dropdown never claims another value.
 function titleOptions(current: string | null, fixed: SelectOption[]): SelectOption[] {
-  const items = orderedItems.value.filter((p) => p.enabled || p.id === current)
-  const ai: SelectOption[] = items.map((p) => ({ value: p.id, label: p.name }))
-  if (current && !fixed.some((option) => option.value === current) && !items.some((p) => p.id === current)) {
-    ai.push({ value: current, label: current })
-  }
-  return ai.length ? [...fixed, { value: TITLE_SEPARATOR, label: '──────────', disabled: true }, ...ai] : fixed
+  const ai = orderedItems.value.filter((p) => p.enabled || p.id === current).map((p) => ({ value: p.id, label: p.name }))
+  return titleChoices(current, fixed, ai)
 }
 
 // System: 끄기 / 실행한 AI 그대로 / the AI.

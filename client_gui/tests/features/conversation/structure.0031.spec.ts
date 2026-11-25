@@ -134,6 +134,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
       /^@shared\/connectionStatus$/,
       // flowgate.v02test.0096: 자주 쓰는 AI (📌 pins / recent AI) per signed-in person — the AI picker and the ⚙ AI tab.
       /^@shared\/aiFavorites$/,
+      // flowgate.v02test.0096 F96-5: my repeat limit / title AI load-save logic shared with AI 관리 › 기타 설정.
+      /^@shared\/myAiPreferences$/,
       /^@\/core\/auth\/currentUser$/,
     ]
     for (const file of FILES) {

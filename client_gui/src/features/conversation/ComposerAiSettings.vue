@@ -114,8 +114,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { useAiFavorites } from '@shared/aiFavorites'
+import { titleChoices, useMyAiPreferences, type TitleChoice } from '@shared/myAiPreferences'
 import { fetchMyAiPrefs, saveMyAiPrefs } from './api'
-import type { ChatProvider, MyAiPrefs, MyAiPrefsUpdate } from './types'
+import type { ChatProvider, MyAiPrefs } from './types'
 
 const props = defineProps<{
   providers: readonly ChatProvider[]
@@ -144,95 +145,36 @@ function addPin(event: Event): void {
 }
 
 // ── my repeat limit and title AI (/me/ai-preferences) ───────────────────────────────────
-const prefs = ref<MyAiPrefs | null>(null)
-const prefsState = ref<'loading' | 'ready' | 'error'>('loading')
-const saving = ref(false)
+// F96-5: the same load / save logic as AI 관리 › 기타 설정 (내 값), from the shared composable.
 const saveError = ref('')
-let disposed = false
-
-// A body without the contract's fields (an older server) counts as a failed read.
-function isPrefs(value: unknown): value is MyAiPrefs {
-  if (!value || typeof value !== 'object') return false
-  const p = value as Record<string, unknown>
-  return typeof p.title_provider === 'string'
-    && typeof p.repeat_count_max_effective === 'number'
-    && typeof p.repeat_count_system_max === 'number'
-    && typeof p.repeat_count_min === 'number'
-    && (p.repeat_count_max === null || p.repeat_count_max === undefined || typeof p.repeat_count_max === 'number')
-}
-
-const normalized = (p: MyAiPrefs): MyAiPrefs => ({ ...p, repeat_count_max: p.repeat_count_max ?? null })
-
-async function loadPrefs(): Promise<void> {
-  prefsState.value = 'loading'
-  try {
-    const data = await fetchMyAiPrefs()
-    if (disposed) return
-    if (!isPrefs(data)) throw new Error('invalid')
-    // A change saved meanwhile is newer than this read.
-    if (!saving.value) prefs.value = normalized(data)
-    prefsState.value = 'ready'
-  } catch {
-    if (!disposed) prefsState.value = 'error'
-  }
-}
-
-// Shown at once and saved at once; the server's answer replaces it, a failure puts the previous value back.
-async function save(update: MyAiPrefsUpdate, shown: MyAiPrefs): Promise<void> {
-  const previous = prefs.value
-  if (!previous || saving.value) return
-  prefs.value = shown
-  saving.value = true
-  saveError.value = ''
-  try {
-    const data = await saveMyAiPrefs(update)
-    if (!disposed && isPrefs(data)) prefs.value = normalized(data)
-  } catch (err: unknown) {
-    if (disposed) return
-    prefs.value = previous
+const control = useMyAiPreferences<MyAiPrefs>({
+  fetch: fetchMyAiPrefs,
+  save: saveMyAiPrefs,
+  onSaveError: (err) => {
     saveError.value = err instanceof Error && err.message ? err.message : t('gui.conversation.settings.ai_prefs_save_failed')
-  } finally {
-    saving.value = false
-  }
-}
+  },
+})
+const { prefs, state: prefsState, saving, load: loadPrefs } = control
 
-function stepRepeat(delta: number): void {
-  const p = prefs.value
-  if (!p) return
-  const next = p.repeat_count_max_effective + delta
-  if (next < p.repeat_count_min || next > p.repeat_count_system_max) return
-  void save({ repeat_count_max: next }, { ...p, repeat_count_max: next, repeat_count_max_effective: next })
+// Each new change starts without the previous failure line.
+const clearingError = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A): void => {
+  saveError.value = ''
+  fn(...args)
 }
+const stepRepeat = clearingError(control.stepRepeat)
+const resetRepeat = clearingError(control.resetRepeat)
+const chooseTitle = clearingError(control.chooseTitle)
 
-// Back to "not set": the system value applies again.
-function resetRepeat(): void {
-  const p = prefs.value
-  if (!p || p.repeat_count_max === null) return
-  void save({ repeat_count_max: null }, { ...p, repeat_count_max: null, repeat_count_max_effective: p.repeat_count_system_max })
-}
-
-const SEPARATOR = '__separator__'
-interface TitleOption {
-  value: string
-  label: string
-  disabled?: boolean
-}
-const fixedTitle = computed<TitleOption[]>(() => [
+const fixedTitle = computed<TitleChoice[]>(() => [
   { value: 'auto', label: t('gui.conversation.settings.ai_title_auto') },
   { value: 'off', label: t('gui.conversation.settings.ai_title_off') },
   { value: 'executor', label: t('gui.conversation.settings.ai_title_executor') },
 ])
 
-// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use. The stored value is always offered, so the
-// select never claims another one.
-const titleOptions = computed<TitleOption[]>(() => {
-  const current = prefs.value?.title_provider ?? ''
-  const ai: TitleOption[] = props.providers.map((p) => ({ value: p.id, label: p.name }))
-  if (current && !fixedTitle.value.some((o) => o.value === current) && !ai.some((o) => o.value === current)) {
-    ai.push({ value: current, label: current })
-  }
-  return ai.length ? [...fixedTitle.value, { value: SEPARATOR, label: '──────────', disabled: true }, ...ai] : fixedTitle.value
-})
+// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use.
+const titleOptions = computed<TitleChoice[]>(() =>
+  titleChoices(prefs.value?.title_provider, fixedTitle.value, props.providers.map((p) => ({ value: p.id, label: p.name }))),
+)
 
 function titleName(value: string): string {
   return fixedTitle.value.find((o) => o.value === value)?.label ?? nameOf(value)
@@ -244,14 +186,8 @@ const effectiveTitleName = computed(() => {
   return titleName(p.title_provider_effective || p.title_provider)
 })
 
-function chooseTitle(value: string): void {
-  const p = prefs.value
-  if (!p || value === p.title_provider || value === SEPARATOR) return
-  void save({ title_provider: value }, { ...p, title_provider: value })
-}
-
 onMounted(() => { void loadPrefs() })
-onBeforeUnmount(() => { disposed = true })
+onBeforeUnmount(control.dispose)
 </script>
 
 <style scoped>
