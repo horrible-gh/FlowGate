@@ -99,7 +99,7 @@ def test_unplaceable_requests_name_why(nodes, edges, after, code, params):
 
 @pytest.mark.parametrize("body, field", [
     (None, "body"), ({}, "cards"), ({"cards": []}, "cards"), ({"cards": [{}] * 6}, "cards"),
-    ({"cards": [{"doc_type": "N"}]}, "cards[0].doc_type"), ({"cards": [{"label": " "}]}, "cards[0].label"),
+    ({"cards": [{"doc_type": "T2"}]}, "cards[0].doc_type"), ({"cards": [{"label": " "}]}, "cards[0].label"),
     ({"cards": [{"label": "a", "instruction": "x"}]}, "cards[0]"), ({"cards": [{}], "gate": "yes"}, "gate"),
     ({"cards": [{}], "after": ""}, "after"), ({"cards": [{}], "mode": 1}, "mode"),
 ])

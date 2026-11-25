@@ -28,8 +28,10 @@ GUIDE = (
     "the change is large, first show the plan (which cards, after which card, what each does) and wait for the "
     "user's go-ahead; then place the cards, write each card's instruction yourself, and start the run. Never switch "
     "paths silently. Card work runs in the card's own workspace and is committed and merged by the card; while the "
-    "Flow runs, edit-mode chat is refused (graph_run_locked) but reading and messages work. Keep one change per card "
-    "and do not place research/design/plan cards: that part stays in this chat. An instruction is not a summary: put "
+    "Flow runs, edit-mode chat is refused (graph_run_locked) but reading and messages work. Keep one change per card. "
+    "Research and design cards (N, D / P / L / DB) can be placed like work and test cards: use them when the user "
+    "asks for one or the work needs its own research or design step, else that part stays in this chat (the work "
+    "plan card is retired and cannot be placed). An instruction is not a summary: put "
     "in the user's own words, facts you checked (file:line), what was decided and rejected, the done criteria and "
     "what not to do. Choose each card's AI yourself when you place it (the AI list first, then `roles` per card): "
     "instruction not_used when you write the card's instruction yourself, else an AI; execution an AI that fits the "
@@ -54,7 +56,10 @@ PLACE_DESCRIPTION = (
     "instruction line and roles (source chat / default / unset; `defaults_used` lists the roles you left to the "
     "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run. "
     "Each card may also carry `settings` ({review_count, restart, time_limit, verify_max_runs, verify_run_minutes}; a TS card only review_count): choose "
-    "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed."
+    "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed. "
+    "doc_type: T work (default), TS test, N research, D basic design, P protocol, L logic, DB DB design; each is "
+    "the card a person drops from the palette (label omitted: the palette name) with the same roles, instruction "
+    "line and, except TS, settings as a work card. A design card's instruction line is its DS document."
 )
 TOPOLOGY_GUIDE = """Explicit fork/join: supply links [{source, target}]. References are card:0..card:4 (cards list order),
 $after (resolved anchor), $end (reused/new confirm, or join). Existing node_keys may be sources;
@@ -99,12 +104,12 @@ _SETTINGS_OBJECT = {
     "type": "object", "additionalProperties": False,
     "properties": {
         "review_count": {**_SETTING_INT, "description": "AI reviews of the result: 0 none, -1 until it passes, 1..max."},
-        "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (T only)."},
-        "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (T only)."},
+        "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (not TS)."},
+        "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (not TS)."},
         "verify_max_runs": {**_SETTING_INT, "description": "Verifications the card may use: a whole number of 1 or more "
-                                                           "(presets 3, 5, 10); null = the default 3 (T only)."},
+                                                           "(presets 3, 5, 10); null = the default 10 (not TS)."},
         "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 2, 3, "
-                                                              "5, 10, 20, 30); null = the default 2 (T only)."},
+                                                              "5, 10, 20, 30); null = the default 1 (not TS)."},
     },
     "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
 }
@@ -117,7 +122,8 @@ PLACE_SCHEMA = {
             "items": {"type": "object", "properties": {
                 "label": {"type": "string", "minLength": 1, "description": "Card title shown on the canvas."},
                 "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
-                             "description": "T (work, default) or TS (test)."},
+                             "description": "T work (default), TS test, N research, D basic design, P protocol, "
+                                            "L logic, DB DB design."},
                 "roles": {**_ROLES_OBJECT, "description": "The card's AI per role, chosen by you (omitted roles take "
                                                           "the defaults)."},
                 "settings": _SETTINGS_OBJECT},
@@ -139,7 +145,7 @@ PLACE_SCHEMA = {
 }
 GET_ROLES_DESCRIPTION = (
     "Read the instruction / execution / review AI and the run settings (review count, restart, time limit) of a work "
-    "card this chat placed (any mode). The answer has each applicable role's state and selection, `settings` (each "
+    "card this chat placed, whatever its type (any mode). The answer has each applicable role's state and selection, `settings` (each "
     "one's value, default and choices), settings_version and context (send them back with set_card_roles), "
     "whether the card is locked (running) and `options`: the AIs you may pick (id, name, kind). Other cards are "
     "refused (403 chat_card_not_owned, with the node_keys this chat placed)."
@@ -323,10 +329,12 @@ def contract_place(api_base, raw_token):
         "`roles` per card is yours to choose (omitted roles take the defaults; `defaults_used` in the answer lists",
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
         "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
-        "T only), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; both T only, null = the",
+        "not TS), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; not TS, null = the",
         "default 10 / 1 minute). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
-        "Without links: places up to 5 work cards (T, or TS) in one chain and ends it in a confirm card",
+        "doc_type: T work (default), TS test, N research, D basic design, P protocol, L logic, DB DB design: the",
+        "palette card of that type (label omitted: its palette name). The retired work plan card cannot be placed.",
+        "Without links: places up to 5 work cards in one chain and ends it in a confirm card",
         "(the anchor's unstarted confirm card, else a new one). Without `after` the server picks the only",
         "work card -> unstarted confirm card edge, else the only tail; otherwise 409 chat_cards_anchor_ambiguous",
         "lists candidates. A Flow with no card yet starts the chain with a start card of its bug/requirement",
@@ -375,7 +383,7 @@ def contract_roles(api_base, raw_token):
         "group's role profile to the card: only when the user names the group (roles sent with it win).",
         '{"settings": {"review_count": 2}, "expected_settings_version": <from GET>} changes the run settings',
         "(review_count, restart, time_limit, verify_max_runs, verify_run_minutes; a value from its `choices`, null = default; with or without roles, one",
-        "save). 422 setting_not_applicable (a TS card has only review_count) / not_a_choice.",
+        "save). 422 setting_not_applicable (a TS card has only review_count) / not_a_choice. Any placed type.",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",
