@@ -63,6 +63,8 @@ whose automatic completion path failed (kind ``system_error``) is the error fami
 reconciliation, never a person's wait. The order is now ``completed``, ``no_targets``, ``waiting_confirm``,
 ``needs_intervention``, ``gate_publish``, ``merge_conflict``, ``error``, ``blocked_recovery``, ``blocked_rejected``,
 ``hold``, ``step_done``, ``needs_intervention`` for an unowned open review loop, else ``no_targets``.
+F98-6: confirmed questions in the current attempt/stage loop suppress that card's intervention and orphan
+classification. With no other wait, the existing step_done/no_targets rules apply; the card retains its Q marker.
 A run that went idle before stores ``waiting_approval``; it is read as
 ``waiting_confirm`` when a gate of the run is open for its decision, else ``needs_intervention`` (``reason_as_read``) and
 the stored value is never converted — a run read writes an idle reason only when the judged one differs from the one as
@@ -166,6 +168,9 @@ def _needs_intervention(ctx, row: dict) -> bool:
     node_type = _node_type(ctx, row["node_key"])
     if node_type == engine.GATE_NODE_TYPE:
         return False
+    from flowgate.card_intervention.judge import question_pending
+    if question_pending(ctx.flow_id, row):
+        return False  # the loop waits on Q, not its previous failure or assignment
     kind = _intervention_kind(ctx, row)
     if kind == engine.SYSTEM_ERROR:
         return False                                                      # T-2 rework: its error family first
@@ -285,6 +290,10 @@ def _orphaned_review_loop(ctx, row: dict) -> bool:
     node_key = row["node_key"]
     if row["status"] != "review" or not doc_id or _node_type(ctx, node_key) == engine.GATE_NODE_TYPE:
         return False
+
+    from flowgate.card_intervention.judge import question_pending
+    if question_pending(ctx.flow_id, row):
+        return False  # even a stopped/parked question loop is not an orphan
 
     from flowgate.card_settings import legacy_adapter as cards, review_stage
     from flowgate.graph_run import result_merge
