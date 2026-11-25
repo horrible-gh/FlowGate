@@ -53,9 +53,6 @@
               : t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
           </span>
         </div>
-        <p class="detail-hint order-hint" data-test="ai-order-hint">
-          {{ isAdmin && !mineOnly ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
-        </p>
 
         <div class="provider-cards">
           <div v-if="rows.length === 0" class="empty-row">
@@ -721,11 +718,6 @@ async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
 .count-hint {
   margin-left: auto;
   white-space: nowrap;
-}
-
-.order-hint {
-  margin: 0 0 8px;
-  padding: 0 12px;
 }
 
 /* While I follow the system default its radio is shown, but dimmer than my own pick. */

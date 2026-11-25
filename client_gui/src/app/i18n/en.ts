@@ -2656,8 +2656,6 @@ export default {
       filter_system: 'System',
       filter_user: 'My AI',
       count_split: 'System {system} · My AI {mine}',
-      order_hint: 'Drag to reorder. AI selection lists follow this order.',
-      order_hint_admin: 'Drag to reorder. The order of the system AI among themselves is also saved as everyone\'s fallback order.',
       fallback_order_changed: 'The system fallback order was changed as well.',
       my_default: 'Set as my default AI',
       // flowgate.v02test.0096 — 📌 pins an AI to the top of the AI picker (자주 쓰는 AI).
