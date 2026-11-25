@@ -110,7 +110,9 @@ def probe_provider(form: dict) -> dict:
     permission_rule = _ai_settings.permission_skip_rule(kind)
     permission_skip = _ai_settings.has_permission_skip(kind, cli_command)
 
-    prompt = form.get("prompt") or DEFAULT_PROBE_PROMPT
+    from .ai_invoke.provider_cli import _agy_exit, _cli_stdin
+
+    prompt = _cli_stdin(kind, form.get("prompt") or DEFAULT_PROBE_PROMPT)
 
     # A throwaway scratch dir as cwd, so a command that writes files does not touch the
     # project tree. The env mirrors the three keys the invoke path injects (with harmless
@@ -138,6 +140,8 @@ def probe_provider(form: dict) -> dict:
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
+    if kind == "gemini" and not timed_out:
+        exit_code, stderr = _agy_exit(stdout or "", stderr or "", exit_code)
     duration_ms = int((time.monotonic() - started) * 1000)
     result = {
         **base,
