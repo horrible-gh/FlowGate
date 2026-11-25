@@ -49,7 +49,7 @@
                 <td>{{ componentTypeLabel(component.componentType) }}</td>
                 <td class="lw-file">{{ component.filename }}</td>
                 <td>
-                  <span class="lw-pill" :class="{ pending: isPending(component.license) }">{{ isPending(component.license) ? t('gui.licenses.pending') : component.license }}</span>
+                  <span class="lw-pill" :class="{ pending: isPending(component.license) }">{{ licenseText(component.license) }}</span>
                 </td>
                 <td>
                   <a v-if="component.licenseUrl" class="lw-source" :href="component.licenseUrl" target="_blank" rel="noopener noreferrer">{{ t('gui.licenses.source_link') }}</a>
@@ -96,6 +96,12 @@ function componentTypeLabel(type: string): string {
 function isPending(license: string | null | undefined): boolean {
   const value = (license ?? '').trim()
   return value === '' || /^pending/i.test(value)
+}
+
+function licenseText(license: string | null | undefined): string {
+  const value = (license ?? '').trim()
+  if (value.toLowerCase() === 'pending:sample-rights') return t('gui.licenses.pending_sample_rights')
+  return isPending(value) ? t('gui.licenses.pending') : value
 }
 
 // ── FlowGate 전체: read once per window session; a failed read is tried again on the next open. ──────────

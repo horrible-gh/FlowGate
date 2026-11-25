@@ -17,6 +17,7 @@ export default {
     "open": "라이선스 정보 보기",
     "summary": "엔진 {engine} · 모델 {model}",
     "pending": "확인 중",
+    "pending_sample_rights": "샘플 권리 확인 중",
     "direct_download": "모든 파일은 공식 배포처에서 직접 받습니다. 오프라인 설치 묶음은 라이선스 파일 확인 뒤 제공합니다. FFmpeg은 묶음에 넣지 않습니다.",
     "project_third_party": "제3자 라이선스 전문",
     "project_license": "프로젝트 LICENSE",

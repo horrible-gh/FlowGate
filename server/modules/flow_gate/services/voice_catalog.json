@@ -131,7 +131,7 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "license_url": null
@@ -403,7 +403,7 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "license_url": null
@@ -597,7 +597,7 @@
           "size_bytes": 352078,
           "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
           "component_type": "sample",
-          "license": "미확정 — 샘플 권리 확인 필요",
+          "license": "pending:sample-rights",
           "distribution": "direct-upstream-only",
           "redistribution_allowed": false,
           "license_url": null
