@@ -375,6 +375,8 @@ export interface ChatProvider {
   name: string
   /** false = this AI is never given message images; absent = the server did not say. */
   acceptsImages?: boolean
+  /** 'user' = one of my own AI, 'system' = a system AI; absent = the server did not say (shown as a system AI). */
+  owner?: 'system' | 'user'
 }
 
 export interface ProviderList {

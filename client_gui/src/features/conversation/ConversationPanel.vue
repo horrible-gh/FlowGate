@@ -95,6 +95,7 @@
       :source-locked="sourceLocked"
       :providers="state.providers"
       :selected-provider-id="state.selectedProviderId"
+      :default-provider-id="state.defaultProviderId"
       :providers-status="state.providersStatus"
       :ai-pick-status="state.activeChatId !== null ? state.chatProviderStatus : 'ready'"
       :ai-pick-error="state.chatProviderError"

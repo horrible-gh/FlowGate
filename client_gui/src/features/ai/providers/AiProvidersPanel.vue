@@ -103,6 +103,21 @@
               @click="pickMyDefault(row)"
             />
 
+            <!-- v02test.0096: 📌 pins this AI to 자주 쓰는 AI at the top of the AI picker. A personal display choice of
+                 its own (useAiFavorites); the radio (my default) and the star (system default) keep their meaning. -->
+            <button
+              type="button"
+              class="pin"
+              :class="{ on: favorites.isPinned(row.item.id) }"
+              data-test="ai-pin-toggle"
+              :title="favorites.isPinned(row.item.id) ? t('gui.ai.owned.unpin') : t('gui.ai.owned.pin')"
+              :aria-label="t('gui.ai.owned.pin_aria', { name: row.item.name })"
+              :aria-pressed="favorites.isPinned(row.item.id)"
+              @click="favorites.togglePin(row.item.id)"
+            >
+              <span aria-hidden="true">📌</span>
+            </button>
+
             <span class="avatar-round" :class="getAvatarClass(row.item.name, row.item.kind)">
               {{ getInitials(row.item.name) }}
             </span>
@@ -369,6 +384,7 @@ import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { useAiFavorites } from '@shared/aiFavorites'
 import {
   AiRequestError,
   fetchMyAi,
@@ -410,6 +426,8 @@ const props = defineProps<{ mineOnly?: boolean }>()
 const { t } = useI18n()
 const { user } = useCurrentUser()
 const isAdmin = computed(() => !!user.value?.isAdmin)
+// 📌 pins (v02test.0096): stored apart from the AI list, per signed-in person; the composer's AI picker reads them.
+const favorites = useAiFavorites(() => user.value?.username)
 
 interface Row {
   owner: AiOwnerScope
@@ -988,6 +1006,39 @@ async function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
 }
 
 /* While I follow the system default its radio is shown, but dimmer than my own pick. */
+/* 📌 pin toggle (v02test.0096): faint while off, full colour with a ring while on. */
+.pin {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+
+.pin:hover {
+  opacity: 0.7;
+}
+
+.pin.on {
+  filter: none;
+  opacity: 1;
+  border-color: rgba(85, 169, 255, 0.55);
+  background: rgba(85, 169, 255, 0.12);
+}
+
+.pin:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 1px;
+}
+
 .radio.on.follow {
   border-color: #3f6d9c;
 }
