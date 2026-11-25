@@ -44,12 +44,6 @@ defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 .ai-manage-window :deep(.ai-providers-panel .detail-panel) { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
 .ai-manage-window :deep(.ai-providers-panel .provider-cards) { flex: 1; min-height: 0; overflow: auto; }
 .ai-manage-window :deep(.ai-providers-panel .empty-row) { margin: auto 0; }
-.ai-manage-window :deep(.ai-providers-panel .order-hint) { margin-top: 8px; }
 .ai-manage-window :deep(.ai-providers-panel .detail-toolbar) { height: auto; min-height: 52px; padding: 8px 12px; flex-wrap: wrap; gap: 8px 12px; }
 .ai-manage-window :deep(.ai-providers-panel .detail-search) { min-width: 120px; flex: 1 1 120px; }
-/* 방침 › 질의: the text box takes whatever height the window has instead of the page's fixed 13 rows. */
-.ai-manage-window :deep(.question-policy) { height: 100%; max-width: none; box-sizing: border-box; }
-.ai-manage-window :deep(textarea#question-policy-body), .ai-manage-window :deep(.qp-preview) { flex: 1 1 auto; min-height: 96px; }
-.ai-manage-window :deep(textarea#question-policy-body) { resize: none; }
-.ai-manage-window :deep(.question-policy > .qp-head), .ai-manage-window :deep(.question-policy > .qp-foot) { flex: none; }
 </style>
