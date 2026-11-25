@@ -2,7 +2,8 @@
   <section class="question-policy" data-test="question-policy">
     <div v-if="loading" class="qp-loading">{{ t('loading') }}</div>
     <template v-else>
-      <!-- v02test.0096 F96-3: one line on top — the name, 미리보기/편집, the save state and length, [저장], [AI와 정하기]. -->
+      <!-- v02test.0096 F96-7 (mockup ⑤): one line on top — the name, 미리보기|편집, a gap, the save state and length,
+           [저장] (only while editing) and [AI와 정하기]. -->
       <header class="qp-head">
         <label id="question-policy-label" for="question-policy-body" class="qp-title">{{ t('title') }}</label>
         <div class="qp-mode" role="group" :aria-label="t('view')">
@@ -13,15 +14,15 @@
         </div>
         <span class="qp-status" :class="{ 'is-dirty': dirty, 'is-over': length > 4000 }" data-test="qp-status" aria-live="polite">
           {{ dirty ? '●' : '✓' }} {{ t(dirty ? 'unsaved' : 'saved') }} · {{ length }} / 4000</span>
-        <Button variant="primary" size="sm" data-test="qp-save" :disabled="!loaded || saving || busy || !dirty || length > 4000" @click="save">{{ t('save') }}</Button>
+        <Button v-if="mode === 'edit'" variant="primary" size="sm" data-test="qp-save" :disabled="!loaded || saving || busy || !dirty || length > 4000" @click="save">{{ t('save') }}</Button>
         <Button variant="secondary" size="sm" data-test="qp-assist" :disabled="!loaded" @click="open = true">{{ t('assist') }}</Button>
       </header>
-      <textarea v-if="mode === 'edit'" id="question-policy-body" ref="bodyEl" v-model="body" :disabled="!loaded || saving" :placeholder="t('example')" rows="13" />
+      <textarea v-if="mode === 'edit'" id="question-policy-body" ref="bodyEl" v-model="body" :disabled="!loaded || saving" :placeholder="t('example')" />
       <div v-else class="qp-preview" data-test="qp-preview" aria-labelledby="question-policy-label" @dblclick="edit">
-        <div v-if="body.trim()" class="qp-md" v-html="bodyHtml" />
+        <div v-if="body.trim()" class="qp-md qp-doc" v-html="bodyHtml" />
         <p v-else class="qp-preview-empty">{{ t('emptyPreview') }}</p>
       </div>
-      <p class="qp-foot">{{ t('delivered') }}</p>
+      <p class="qp-foot"><template v-for="(part, index) in deliveredParts" :key="index"><code v-if="index % 2">{{ part }}</code><template v-else>{{ part }}</template></template></p>
     </template>
     <p v-if="error" class="qp-alert" role="alert">{{ error }} <Button v-if="!loaded" size="sm" @click="load">{{ t('retry') }}</Button></p>
     <ModelessShell kind-color="#a78bfa" :open="open" :title="t('assist')" :initial-x="80" :initial-y="100" :initial-width="510" :initial-height="570"
@@ -124,6 +125,8 @@ const mode = ref<'preview' | 'edit'>('edit')
 const renderMarkdown = createMarkdownRenderer({ copyLabel: () => composer.t('gui.document_window.viewer.copy_code'), safe: true })
 const draftHtml = computed(() => (reply.value?.policy ? renderMarkdown(reply.value.policy) : ''))
 const bodyHtml = computed(() => (body.value.trim() ? renderMarkdown(body.value) : ''))
+/** The foot line with the name the AI receives (`[사용자 질의 방침]`) set apart as code: odd parts are the bracketed name. */
+const deliveredParts = computed(() => t('delivered').split(/(\[[^\]]+\])/))
 async function edit() {
   mode.value = 'edit'
   await nextTick(); bodyEl.value?.focus({ preventScroll: true })
@@ -245,21 +248,31 @@ async function converse(): Promise<string | null> {
 onMounted(load)
 </script>
 <style scoped>
-.question-policy { display: flex; flex-direction: column; gap: 8px; max-width: 860px; min-height: 0; }
-.qp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.qp-title { margin-right: auto; font-size: 14px; font-weight: 700; color: var(--fg2-text); }
-.qp-mode { display: inline-flex; padding: 2px; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius-sm, 6px); background: var(--fg2-control-surface-flat); }
-.qp-mode-btn { padding: 3px 10px; border: 0; border-radius: var(--fg2-control-radius-sm, 5px); background: transparent; color: var(--fg2-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.qp-mode-btn.is-active { background: var(--fg2-status-info-bg); color: var(--fg2-status-info-fg); font-weight: 700; }
-.qp-status { font-size: 11.5px; color: var(--fg2-status-success-fg); white-space: nowrap; }
+/* v02test.0096 F96-7: the panel takes the whole height it is given (window and full screen); the body fills what the
+   top line and the foot leave, so no blank space sits under it. */
+.question-policy { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; box-sizing: border-box; }
+.qp-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.qp-title { font-size: 14px; font-weight: 700; color: var(--fg2-text); }
+.qp-mode { display: inline-flex; overflow: hidden; border: 1px solid var(--fg2-line-strong); border-radius: var(--fg2-control-radius-sm, 7px); background: var(--fg2-control-surface-flat); }
+.qp-mode-btn { padding: 3px 12px; border: 0; border-radius: 0; background: transparent; color: var(--fg2-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.qp-mode-btn.is-active { background: var(--fg2-status-info-bg); color: var(--fg2-text); font-weight: 600; }
+.qp-status { margin-left: auto; font-size: 11.5px; color: var(--fg2-status-success-fg); white-space: nowrap; }
 .qp-status.is-dirty { color: var(--fg2-status-warning-fg, var(--fg2-muted)); }
 .qp-status.is-over { color: var(--fg2-status-danger-fg); }
-textarea#question-policy-body, .qp-preview { width: 100%; box-sizing: border-box; min-height: 180px; padding: 10px 12px; font: inherit; color: var(--fg2-text, inherit);
+textarea#question-policy-body, .qp-preview { flex: 1 1 auto; width: 100%; box-sizing: border-box; min-height: 96px; color: var(--fg2-text, inherit); }
+/* 편집: the editor as before (a box), now filling the height. */
+textarea#question-policy-body { padding: 10px 12px; font: inherit; line-height: 1.5; resize: none;
   background: var(--fg2-bg, transparent); border: 1px solid var(--fg2-line-strong, #aaa); border-radius: 8px; }
-textarea#question-policy-body { resize: vertical; line-height: 1.5; }
-.qp-preview { overflow-y: auto; font-size: 13px; line-height: 1.55; }
+/* 미리보기: a document, not an input box — no border, the UI font, ## as bold sub-headings and - as • lists. */
+.qp-preview { overflow-y: auto; padding: 2px 2px 4px; font-size: 13px; line-height: 1.6; }
 .qp-preview-empty { margin: 0; color: var(--fg2-muted); }
-.qp-foot { margin: 0; font-size: 11px; color: var(--fg2-muted); }
+.qp-doc :deep(h1), .qp-doc :deep(h2), .qp-doc :deep(h3), .qp-doc :deep(h4) { margin: .9em 0 .25em; font-size: 13px; font-weight: 700; color: var(--fg2-text); }
+.qp-doc :deep(ul) { list-style: none; padding-left: 0; }
+.qp-doc :deep(ul > li) { position: relative; padding-left: 1.1em; }
+.qp-doc :deep(ul > li)::before { content: '•'; position: absolute; left: .2em; color: var(--fg2-muted); }
+.qp-doc :deep(li + li) { margin-top: .1em; }
+.qp-foot { flex: none; margin: 0; font-size: 11.5px; color: var(--fg2-muted); }
+.qp-foot code { font-family: var(--fg2-font-mono, ui-monospace, monospace); font-size: 11px; }
 .qp-alert { margin: 0; }
 .policy-dialog { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
 .qp-top { display: flex; align-items: center; gap: 8px; }
