@@ -83,14 +83,14 @@ def _with_state(meta: dict, state: str) -> str:
     return json.dumps({**meta, META_KEY: {**meta[META_KEY], "state": state}}, ensure_ascii=False)
 
 
-def build_prompt(message: str) -> str:
+def build_prompt(message: str, limit: int = TITLE_MAX_CHARS) -> str:
     text = message.strip()
     if len(text) > MESSAGE_MAX_CHARS:
         text = text[:MESSAGE_MAX_CHARS]
     return (
         "Write a short title for a conversation that begins with the user message below.\n"
         "- Use the same language as the message.\n"
-        f"- At most {TITLE_MAX_CHARS} characters on one line, no quotes, no trailing period.\n"
+        f"- At most {limit} characters on one line, no quotes, no trailing period.\n"
         "- Reply with the title only. Do not call tools, read or modify files, or run commands.\n"
         "\n"
         "User message:\n"
@@ -150,8 +150,9 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     if not legacy_adapter.update_meta_cas(doc_id, owed_text, claimed):
         raise _not_owed()
     try:
-        answer, reason = legacy_adapter.complete_prompt(
-            project_id, provider_id, build_prompt(message), timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+        answer, reason = legacy_adapter.complete_naming(
+            project_id, provider_id, build_prompt(message), str(user.get("user_id") or ""),
+            timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
     except Exception as exc:
         # Execution may already have happened. Leave claimed intact; never log prompt,
         # raw exception text, command arguments, credentials or the model's answer.
@@ -161,7 +162,7 @@ def generate(doc_id: str, user: dict, body: Any) -> dict:
     title = clean_title(answer, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len())) if answer is not None else None
     if title is None:
         # Nothing was asked when the provider could not be used: the debt goes back.
-        unavailable = answer is None and reason in legacy_adapter.PROMPT_UNAVAILABLE_REASONS
+        unavailable = answer is None and reason in (legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {"title_disabled"})
         safe_reasons = legacy_adapter.PROMPT_UNAVAILABLE_REASONS | {
             "timeout", "transport_failed", "provider_launch_failed", "execution_failed", "internal_error",
             "remote_cli_unsupported", "cancelled_by_user",
@@ -206,8 +207,7 @@ def generate_flow_names(flow_id: str, user: dict, provider_id: str, message: str
                         allow_fallback: bool = True) -> dict:
     """One durable candidate per flow, shared by every eligible target."""
     result = _generate_names(flow_id, user, provider_id, message, chat_doc_id,
-                             seed=clean_title(title, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len()))
-                                  if isinstance(title, str) else None,
+                             seed=None,
                              allow_fallback=allow_fallback)
     changed = result.get("changed", [])
     if changed:
@@ -256,9 +256,6 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
                     or str(message or "").strip())
             if not seed and not allow_fallback:
                 return group, None
-            if not seed and record.get("fallback_requested"):
-                logger.warning("flow_auto_title no_title flow=%s reason=title_missing", flow_id)
-                return group, None
             if not seed and not any(ch.isalnum() for ch in text):
                 return group, None
             pending = {kind: {**target, "state": "pending" if p.eligible(kind, target) else "skipped"}
@@ -280,26 +277,13 @@ def _generate_names(flow_id: str, user: dict, provider_id: str, message: str = "
         if "ineligible" in record:
             return {"status": "unchanged", "targets": {k: "skipped" for k in record["ineligible"]}}
         if not record.get("candidate"):
-            prompt = build_prompt(record["message"]) + (
+            prompt = build_prompt(record["message"], 30) + (
                 "\nThis title also names the workflow and its start card. "
                 "Use only the supplied task facts. If no concrete task can be identified, reply NO_TITLE.")
-            if legacy_adapter.naming_remote_provider(group["project_id"], provider_id):
-                answer, reason = None, "title_missing"
-            else:
-                # Persist the one supplementary-call budget before execution. Even a
-                # timeout/process loss cannot spend it again; a later reply supplies title.
-                def spend_fallback():
-                    current = p.ledger.load(key)
-                    if current.get("ticket") != ticket or current.get("fallback_requested"):
-                        return False
-                    current["fallback_requested"] = True
-                    p.ledger.save(key, current)
-                    return True
-                if not p.guard(flow_id, spend_fallback):
-                    return {"status": "unchanged"}
-                answer, reason = legacy_adapter.complete_prompt(group["project_id"], provider_id, prompt,
-                                                                timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
-            title = clean_title(answer, min(TITLE_MAX_CHARS, legacy_adapter.title_max_len()))
+            answer, reason = legacy_adapter.complete_naming(
+                group["project_id"], provider_id, prompt, str(user.get("user_id") or ""),
+                timeout=TIMEOUT_SEC, max_tokens=MAX_TOKENS)
+            title = clean_title(answer, min(30, legacy_adapter.title_max_len()))
             if title == "NO_TITLE":
                 title = None
             def remember():
