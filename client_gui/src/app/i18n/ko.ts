@@ -1453,6 +1453,14 @@ export default {
       provider: 'AI 선택',
       provider_loading: '불러오는 중',
       provider_failed: 'AI 목록 오류',
+      // flowgate.v02test.0096 — the AI picker's 자주 쓰는 AI / 내 AI / 시스템 AI sections and its search.
+      provider_frequent: '자주 쓰는 AI',
+      provider_mine: '내 AI',
+      provider_system: '시스템 AI',
+      provider_default: '기본',
+      provider_pinned: '고정함',
+      provider_search: 'AI 이름 검색',
+      provider_search_empty: '맞는 AI가 없습니다',
       // flowgate.v02test.0030 — the chat's AI is read before anything is sent on it.
       ai_pick_failed: '이 채팅의 AI를 확인하지 못해 전송을 멈췄습니다',
       ai_pick_retry: '다시 시도',
@@ -2642,6 +2650,10 @@ export default {
       order_hint_admin: '끌어서 순서를 바꿉니다. 시스템 AI끼리의 순서는 모든 사용자의 폴백 순서로도 저장됩니다.',
       fallback_order_changed: '시스템 폴백 순서도 함께 변경되었습니다.',
       my_default: '내 기본 AI로 지정',
+      // flowgate.v02test.0096 — 📌 pins an AI to the top of the AI picker (자주 쓰는 AI).
+      pin: '자주 쓰는 AI로 고정',
+      unpin: '고정 해제',
+      pin_aria: '{name} 고정',
       system_default: '시스템 기본',
       set_system_default: '시스템 기본으로 지정',
       owner_system: '시스템',
