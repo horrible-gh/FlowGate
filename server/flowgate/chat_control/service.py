@@ -9,6 +9,11 @@
 A start refuses work cards whose instruction line has no body (409 ``chat_run_instruction_missing``) unless the
 caller allows their instruction AI: the chat is meant to write the instruction itself (CH).
 
+(F92 R1-R7): a chat places every palette work card (``WORK_TYPES``: work, test, research, the four design cards),
+each the card a person drops from the palette (same ``palette_item_id``, default name and document lines). They all
+have the three AI roles and an instruction line, so the role / settings checks and the empty instruction check of a
+start (``missing_instructions``) cover them by their settings kind. The retired work plan card stays unplaceable.
+
 (test server E2E):
 - a new group's Flow has no card yet (its bug / requirement is a free document on the Canvas): placement starts the
   chain with a start card of the Flow's one live root (``placement`` ``new_root``); two live roots are ambiguous (409
@@ -54,7 +59,11 @@ from modules.flow_gate.graph_workflow.store import definition_store, run_store
 from . import card_role_store, placement, placement_roles, run_settings, topology
 
 _log = logging.getLogger(__name__)
-WORK_TYPES = ("T", "TS")
+# every work card a person can still drop from the Designer palette: work, test, research and the four design cards.
+# The work plan card (WP) is retired: a draft save refuses a new one (422 ``work_plan_retired``,
+# ``graph_service.write_draft``), so a chat cannot place it either. Start (R / B) and confirm cards stay the
+# server's; [+] custom and apply (T2) cards are not placed by a chat.
+WORK_TYPES = ("T", "TS", "N", "D", "P", "L", "DB")
 MAX_CARDS = 5
 PROTECTED = frozenset({"done", "open", "review"})
 GATE_LABELS = {"ko": "확인", "ja": "確認", "en": "Confirm"}
@@ -324,7 +333,8 @@ def parse_start(body: Any) -> bool:
 
 
 def missing_instructions(flow_id: str, record: dict) -> list[str]:
-    """Work cards still to run whose instruction line has no written body (the instruction AI would write one)."""
+    """Work cards still to run whose instruction line has no written body (the instruction AI would write one):
+    every placeable type (``WORK_TYPES``) has an instruction line."""
     rows = _run_rows(flow_id)
     out = []
     for node in record.get("nodes", []):
