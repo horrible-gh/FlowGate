@@ -2670,8 +2670,6 @@ export default {
       filter_system: '시스템',
       filter_user: '내 AI',
       count_split: '시스템 {system}개 · 내 AI {mine}개',
-      order_hint: '끌어서 순서를 바꿉니다. 이 순서대로 AI 선택 목록에 표시됩니다.',
-      order_hint_admin: '끌어서 순서를 바꿉니다. 시스템 AI끼리의 순서는 모든 사용자의 폴백 순서로도 저장됩니다.',
       fallback_order_changed: '시스템 폴백 순서도 함께 변경되었습니다.',
       my_default: '내 기본 AI로 지정',
       // flowgate.v02test.0096 — 📌 pins an AI to the top of the AI picker (자주 쓰는 AI).

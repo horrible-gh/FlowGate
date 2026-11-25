@@ -11,7 +11,7 @@ import type { MyAiPreferences, ProviderItem } from '@/features/ai/types'
 registerAppMessages(i18n)
 
 // v02test.0089: my own repeat limit and title AI (/me/ai-preferences), for every user. v02test.0096 F96-3: they moved
-// from under the AI list to the 기타 설정 tab, in the 내 값 column beside the system column (administrators edit it).
+// from under the AI list to the 기타 설정 tab; F96-6 left only the 내 값 there (the system values moved to 환경 설정).
 const systemAi: ProviderItem[] = [
   { id: 'sys-a', name: 'System A', exec_type: 'api', kind: 'claude', enabled: true, exec_location: 'local' },
   { id: 'sys-off', name: 'System off', exec_type: 'cli', kind: 'claude', enabled: false, exec_location: 'local' },
@@ -52,33 +52,24 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     document.body.innerHTML = ''
   })
 
-  it('shows my values beside the read-only system column to a user who is not an administrator', async () => {
-    const { wrapper, fetchTitle } = await mountPanel()
+  it.each([false, true])('admin=%s: shows my values only, in one column, with no system column or its note', async (admin) => {
+    const { wrapper, fetchTitle } = await mountPanel({ admin })
     const repeatRow = wrapper.get('[data-test="repeat-row"]')
     const titleRow = wrapper.get('[data-test="title-row"]')
-    expect(wrapper.findAll('[role="columnheader"]').map((h) => h.text())).toEqual(['', '시스템 (관리자)', '내 값'])
+    expect(wrapper.findAll('[role="columnheader"]')).toHaveLength(0)
+    expect(repeatRow.findAll('[role="cell"]')).toHaveLength(1)
+    expect(titleRow.findAll('[role="cell"]')).toHaveLength(1)
     expect(repeatRow.get('.repeat-info b').text()).toBe('최대 반복 횟수')
-    expect(repeatRow.get('[data-test="system-repeat-readonly"]').text()).toBe('5')
     expect(repeatRow.find('[data-test="my-repeat-card"]').exists()).toBe(true)
     expect(value(wrapper)).toBe('3')
     expect(titleRow.get('.repeat-info b').text()).toBe('제목 짓기 AI')
     expect(titleRow.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
-    expect(titleRow.find('[data-test="system-title-readonly"]').exists()).toBe(true)
     expect(selectValue(wrapper)).toBe('auto')
-    expect(wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test^="system-"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('시스템 (관리자)')
+    expect(wrapper.text()).not.toContain('관리자가 아니면')
     expect(fetchTitle).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('shows an administrator the system values and their own values side by side', async () => {
-    const { wrapper, fetchTitle } = await mountPanel({ admin: true })
-    expect(wrapper.find('[data-test="my-repeat-card"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="system-repeat-value"]').text()).toBe('5')
-    expect(wrapper.find('[data-test="title-ai-card"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="system-repeat-readonly"]').exists()).toBe(false)
-    expect(fetchTitle).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 
@@ -160,12 +151,13 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     wrapper.unmount()
   })
 
-  it('keeps the administrator\'s system column when my own values cannot be read', async () => {
+  it('tells an administrator too that my values could not load, with no system editor in their place', async () => {
     const r = await mountPanel({ admin: true, prefs: new Error('no route') })
     expect(r.fetchPrefs).toHaveBeenCalled()
     expect(r.wrapper.find('[data-test="my-repeat-card"]').exists()).toBe(false)
-    expect(r.wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(true)
-    expect(r.wrapper.find('[data-test="title-ai-card"]').exists()).toBe(true)
+    expect(r.wrapper.find('[data-test="my-title-ai-card"]').exists()).toBe(false)
+    expect(r.wrapper.get('[data-test="title-row"]').text()).toContain('불러오지 못했습니다')
+    expect(r.wrapper.find('[data-test="system-repeat-card"]').exists()).toBe(false)
     r.wrapper.unmount()
   })
 
