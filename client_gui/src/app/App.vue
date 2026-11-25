@@ -13,6 +13,7 @@
   <ProjectDialog @opened="openDesigner" />
   <DocumentWindows />
     <MergeWindows />
+  <LicenseInfoWindow />
   <ConnectionBanner />
 </template>
 
@@ -41,10 +42,14 @@
 // teleported modeless panels over whatever screen is shown; openers reach them through the feature's
 // public surface only.
 //
+// F86: the single mount of the open-source license window (features/licenses); every opener calls
+// `openLicenseWindow` from that feature's public surface.
+//
 // 0060: one connection banner for the whole app (ConnectionBanner) while the server cannot be reached.
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { MergeWindows } from '@/features/designer'
 import { DocumentWindows } from '@/features/documentWindow'
+import { LicenseInfoWindow } from '@/features/licenses'
 import { ProjectDialog, useProjectStore } from '@/features/project'
 import ConnectionBanner from './components/ConnectionBanner.vue'
 import Sidebar from './components/Sidebar.vue'
