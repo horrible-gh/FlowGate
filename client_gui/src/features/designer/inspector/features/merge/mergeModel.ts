@@ -59,6 +59,7 @@ export interface MergeAutoAttempt {
   readonly provider: { readonly name: string } | null
   readonly result: string | null
   readonly reason: string | null
+  readonly reasonSummary?: string | null
 }
 
 /** The server's automatic resolution as the window draws it (the card merge API's `autoResolve`, read structurally). */
@@ -68,6 +69,7 @@ export interface MergeAuto {
   readonly maxAttempts: number
   readonly attempts: readonly MergeAutoAttempt[]
   readonly unresolved: readonly { readonly path: string; readonly hunks: readonly { readonly startLine: number; readonly endLine: number }[] }[]
+  readonly fileCount?: number | null
 }
 
 /** The server is resolving the conflict by itself right now (the merge state stays `catching_up`). */
@@ -92,6 +94,72 @@ export function mergeAutoProgress(auto: Pick<MergeAuto, 'attempt' | 'maxAttempts
 /** `3` / `3–9` for a conflict hunk's lines. */
 export function mergeHunkRange(hunk: { startLine: number; endLine: number }): string {
   return hunk.endLine > hunk.startLine ? `${hunk.startLine}–${hunk.endLine}` : `${hunk.startLine}`
+}
+
+/** Result codes the window has a sentence for; any other (or none) reads as the plain `unknown` ('실패'), never the raw code. */
+export const MERGE_AUTO_RESULT_KEYS: readonly string[] = ['running', 'resolved', 'conflicts_left', 'check_failed', 'ai_error', 'timeout', 'no_other_ai']
+
+/** Message key (under `auto.results.`) of a try's result. */
+export function mergeAutoResultKey(result: string | null | undefined): string {
+  return result && MERGE_AUTO_RESULT_KEYS.includes(result) ? result : 'unknown'
+}
+
+/** How long a reason line may run before it is cut. */
+export const MERGE_REASON_MAX = 120
+
+const clip = (text: string): string => {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > MERGE_REASON_MAX ? `${flat.slice(0, MERGE_REASON_MAX).trimEnd()}…` : flat
+}
+const word = (value: unknown): string => (typeof value === 'string' ? value.trim() : typeof value === 'number' && Number.isFinite(value) ? String(value) : '')
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+
+/** The JSON inside a reason (`{...}`, maybe after a `code: ` prefix); undefined when there is none or it does not parse. */
+function reasonJson(reason: string): unknown {
+  const start = reason.search(/[{[]/)
+  if (start < 0) return undefined
+  try { return JSON.parse(reason.slice(start)) } catch { return undefined }
+}
+
+/**
+ * A check verdict (`result_verify.check`: `failures: [{ path, checker, line, message }]`, `failure_count`) or a like
+ * object -> `checker · path:line · message (+n)`; null when nothing readable is in it.
+ */
+export function mergeVerdictLine(value: unknown): string | null {
+  const row = isRecord(value) ? value : null
+  const list: unknown[] = Array.isArray(value) ? value
+    : row && Array.isArray(row.failures) ? row.failures
+    : row && Array.isArray(row.errors) ? row.errors
+    : row && Array.isArray(row.checks) ? row.checks
+    : row ? [row] : []
+  const first = list.find(isRecord)
+  if (!first) return null
+  const name = word(first.checker) || word(first.check) || word(first.name) || word(first.test)
+  const file = word(first.path) || word(first.file)
+  const line = word(first.line)
+  const message = word(first.message) || word(first.error) || word(first.detail)
+  const parts = [name, file && line ? `${file}:${line}` : file, message].filter(Boolean)
+  if (!parts.length) return null
+  const total = row && typeof row.failure_count === 'number' ? row.failure_count : list.filter(isRecord).length
+  return parts.join(' · ') + (total > 1 ? ` (+${total - 1})` : '')
+}
+
+/**
+ * What a try's reason shows: the server's summary when it sent one, else a line made from a JSON reason (older servers),
+ * else the reason cut to its first part. `raw` is the full reason when the line is not it (shown only on unfolding).
+ */
+export function mergeAutoReason(attempt: Pick<MergeAutoAttempt, 'reason' | 'reasonSummary'>): { line: string; raw: string | null } {
+  const reason = attempt.reason?.trim() ?? ''
+  const summary = attempt.reasonSummary?.trim() ?? ''
+  const json = !summary && reason ? reasonJson(reason) : undefined
+  const parsed = json === undefined ? null : mergeVerdictLine(json)
+  const line = summary ? clip(summary) : parsed ? clip(parsed) : clip(reason)
+  return { line, raw: reason && reason !== line ? reason : null }
+}
+
+/** A `{count}` sentence: the counted key when the count is a positive number, else its `_nocount` sibling (no "( file(s))"). */
+export function mergeCountKey(key: string, count: number | null | undefined): string {
+  return typeof count === 'number' && count > 0 ? key : `${key}_nocount`
 }
 
 /** The selection key of a card. */

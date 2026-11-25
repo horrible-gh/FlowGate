@@ -41,7 +41,7 @@
     <div v-else-if="screen === 'catching_up' && state" class="mz is-info" data-test="merge-box">
       <h4 class="mz-title is-info"><span class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>{{ autoInBox ? autoTitle : t(state.resolving ? 'gui.inspector.merge.catching_up.title_ai' : 'gui.inspector.merge.catching_up.title_merging') }}</h4>
       <p class="mz-text" data-test="merge-catching-up-text">
-        {{ autoInBox ? autoText : state.resolving ? t('gui.inspector.merge.catching_up.resolving', { count: state.files.length }) : t('gui.inspector.merge.catching_up.merging') }}
+        {{ autoInBox ? autoText : state.resolving ? tc('gui.inspector.merge.catching_up.resolving', state.files.length) : t('gui.inspector.merge.catching_up.merging') }}
       </p>
       <div class="mz-prog" :class="{ 'is-indeterminate': !state.files.length }"><i :style="progressStyle" /></div>
       <MergeAutoResolve v-if="autoInBox && autoResolve" :auto="autoResolve" />
@@ -194,7 +194,7 @@ import { closeMergeWindow, type MergeWindowEntry } from './mergeWindows'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import MergeAutoResolve from './MergeAutoResolve.vue'
-import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeReasonKey } from './mergeModel'
+import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeCountKey, mergeReasonKey } from './mergeModel'
 import { openCardMerge, useMerge } from './useMerge'
 
 const props = defineProps<{ target: InspectorTarget; win?: MergeWindowEntry }>()
@@ -236,7 +236,12 @@ const can = (action: string) => !!state.value?.actions.includes(action as never)
 const allResolved = computed(() => !!state.value?.files.length && state.value.files.every((file) => file.resolved))
 const openFiles = computed(() => (state.value?.files ?? []).filter((file) => !file.resolved))
 
-const summary = computed(() => ({ before: t('gui.inspector.merge.needs_choice.both'), file: '', after: '' }))
+/** A `{count}` sentence that never shows an empty count: without one (or 0) the counted part is left out. */
+const tc = (key: string, count: number | null | undefined, params: Record<string, unknown> = {}) =>
+  t(mergeCountKey(key, count), { ...params, count: count ?? 0 })
+/** The overlapping files: the merge state's list, else the count the automatic resolution sent (e.g. while paused). */
+const fileCount = computed(() => state.value?.files.length || state.value?.autoResolve?.fileCount || 0)
+const summary = computed(() => ({ before: tc('gui.inspector.merge.needs_choice.both', fileCount.value), file: '', after: '' }))
 
 const reasonText = computed(() => {
   const reason = state.value?.reason ?? null
@@ -259,7 +264,7 @@ const autoTitle = computed(() => {
   const auto = autoResolve.value
   if (!auto) return ''
   if (auto.state === 'running') return t('gui.inspector.merge.auto.running_title', mergeAutoProgress(auto))
-  return t('gui.inspector.merge.auto.exhausted_title', { count: auto.attempts.length || auto.maxAttempts })
+  return tc('gui.inspector.merge.auto.exhausted_title', auto.attempts.length || auto.maxAttempts)
 })
 const autoText = computed(() => (autoResolve.value?.state === 'running'
   ? t('gui.inspector.merge.auto.running_text', { ai: autoAiName.value })
@@ -294,8 +299,8 @@ const steps = computed<{ key: string; state: StepState; text: string }[]>(() => 
     const total = current.files.length
     const done = resolvedCount.value
     return [
-      { key: 'found', state: 'ok', text: t(`${base}.found`, { count: total }) },
-      { key: 'resolve', state: total && done >= total ? 'ok' : 'run', text: t(`${base}.resolve`, { done, count: total, ai: aiName.value }) },
+      { key: 'found', state: 'ok', text: tc(`${base}.found`, total) },
+      { key: 'resolve', state: total && done >= total ? 'ok' : 'run', text: tc(`${base}.resolve`, total, { done, ai: aiName.value }) },
       { key: 'verify', state: 'todo', text: t(`${base}.verify`) },
       { key: 'merge', state: 'todo', text: t(`${base}.merge_after`) },
     ]
