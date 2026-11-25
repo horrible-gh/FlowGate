@@ -1,25 +1,13 @@
 <template>
   <div class="ai-settings-view">
-    <header class="view-header">
-      <div class="header-left">
-        <Tabs
-          :model-value="activeTab"
-          :tabs="tabs"
-          :aria-label="t('gui.ai.tabs_aria')"
-          @change="onTabChange"
-        />
-      </div>
-    </header>
-
-    <!-- AI list: system AI and my AI in one list. -->
-    <main v-if="activeTab === 'ai'" class="view-content">
-      <AiProvidersPanel @changed="onProvidersChanged" />
-    </main>
-
-    <main v-show="activeTab === 'question-policy'" class="view-content">
-      <QuestionPolicyPanel v-if="policyOpened" />
-    </main>
-    <template v-if="activeTab !== 'ai' && activeTab !== 'question-policy'">
+    <!-- v02test.0096 F96-3: the same AI 관리 tabs as the taskbar window (AiManagePanel), plus AI 평가 and AI 그룹. -->
+    <AiManagePanel
+      :tab="activeTab"
+      :extra-tabs="extraTabs"
+      mode="page"
+      @update:tab="onTabChange"
+      @providers-changed="onProvidersChanged"
+    >
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
       <div v-if="loading && !loaded" class="view-loading">
@@ -70,7 +58,7 @@
           />
         </template>
       </main>
-    </template>
+    </AiManagePanel>
   </div>
 </template>
 
@@ -81,25 +69,22 @@ import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
-import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
+import type { TabItem } from '@/components/ui/Tabs.vue'
 import { fetchVisibleSystemAi, listAiGroups } from './api'
 import type { AiGroup, ProviderItem } from './types'
-import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
-import QuestionPolicyPanel from './policy/QuestionPolicyPanel.vue'
-import { installPolicyMessages } from './policy/messages'
+import AiManagePanel from './manage/AiManagePanel.vue'
+import { parseAiManageTab, type AiManageTab } from './manage/aiManageTabs'
 
-const composer = useI18n({ useScope: 'global' }); installPolicyMessages(composer)
-const { t } = composer
+const { t } = useI18n({ useScope: 'global' })
 const route = useRoute()
 const router = useRouter()
 
 // "AI 관리" (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
-// evaluations and the groups all belong to the system, not to a project.
-type TabKey = 'ai' | 'evaluation' | 'groups' | 'question-policy'
-const activeTab = ref<TabKey>('ai')
-const policyOpened = ref(false)
+// evaluations and the groups all belong to the system, not to a project. v02test.0096 F96-3: AI 목록 · AI 평가 ·
+// AI 그룹 · 기타 설정 · 방침 — the list, 기타 설정 and 방침 are the tabs the taskbar's AI 관리 window shows.
+const activeTab = ref<AiManageTab>('ai')
 
 const loading = ref(false)
 const loaded = ref(false)
@@ -112,26 +97,22 @@ const sectionErrors = ref<{ groups?: string | null }>({})
 
 let requestEpoch = 0
 
-const tabs = computed<TabItem[]>(() => [
-  { key: 'ai', label: t('gui.ai.tabs.ai') },
+const extraTabs = computed<TabItem[]>(() => [
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
-  { key: 'question-policy', label: t('gui.questionPolicy.title') },
 ])
 
 const activeProviders = computed<ProviderItem[]>(() =>
   systemProviders.value.filter((p) => p.enabled !== false)
 )
 
-// Links from before "AI 관리" (overview / system-ai / my-ai / policy / providers) open the AI list.
-function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'evaluation' || tabParam === 'groups' || tabParam === 'question-policy') return tabParam
-  return 'ai'
-}
+// Only evaluation and groups read the screen's data; the list, 기타 설정 and 방침 load their own.
+const needsData = (tab: AiManageTab) => tab === 'evaluation' || tab === 'groups'
 
-function onTabChange(newTab: string) {
-  activeTab.value = parseTab(newTab)
-  if (activeTab.value === 'question-policy') policyOpened.value = true
+// Links from before "AI 관리" (overview / system-ai / my-ai / policy / providers) open the AI list;
+// `question-policy` (before 방침) opens 방침.
+function onTabChange(newTab: AiManageTab) {
+  activeTab.value = newTab
   if (route.query.tab !== newTab) {
     void router.replace({ query: { ...route.query, tab: newTab } })
   }
@@ -184,18 +165,14 @@ async function loadData() {
 
 watch(
   () => route.query.tab,
-  (tabVal) => {
-    activeTab.value = parseTab(tabVal)
-    if (activeTab.value === 'question-policy') policyOpened.value = true
-  },
+  (tabVal) => { activeTab.value = parseAiManageTab(tabVal) },
   { immediate: true }
 )
 
-// Evaluation and groups need the usable AI; the AI list loads its own data.
 watch(
   activeTab,
   (tab) => {
-    if (tab !== 'ai' && tab !== 'question-policy' && !loaded.value && !loading.value) void loadData()
+    if (needsData(tab) && !loaded.value && !loading.value) void loadData()
   },
   { immediate: true }
 )
@@ -209,15 +186,6 @@ watch(
   min-height: 0;
   padding: 18px 24px 24px;
   overflow: hidden;
-}
-
-.view-header {
-  margin-bottom: 18px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
 }
 
 .view-loading,

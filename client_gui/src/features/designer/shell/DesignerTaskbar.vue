@@ -57,8 +57,7 @@
       <button v-for="entry in popup === 'overflow' ? overflow : []" :key="entry.id" type="button" role="menuitem" :title="entry.title" :style="{ '--kind-color': entry.color }" @click="restore(entry)">{{ entry.title }}</button>
     </div>
     </Transition>
-    <MyAiWindow :ref="(el) => setWindowRef('my-ai', el)" :open="windows['my-ai'].open" v-model:minimized="windows['my-ai'].minimized" @close="windows['my-ai'].open = false" />
-    <QuestionPolicyWindow :ref="(el) => setWindowRef('question-policy', el)" :open="windows['question-policy'].open" v-model:minimized="windows['question-policy'].minimized" @close="windows['question-policy'].open = false" />
+    <AiManageWindow :ref="(el) => setWindowRef('ai', el)" v-model:tab="aiTab" :open="windows.ai.open" v-model:minimized="windows.ai.minimized" @close="windows.ai.open = false" />
     <MeThemeWindow :ref="(el) => setWindowRef('theme', el)" :open="windows.theme.open" v-model:minimized="windows.theme.minimized" @close="windows.theme.open = false" />
     <MeAgentsWindow :ref="(el) => setWindowRef('agents', el)" :open="windows.agents.open" v-model:minimized="windows.agents.minimized" @close="windows.agents.open = false" />
     <MeAccountWindow :ref="(el) => setWindowRef('account', el)" :open="windows.account.open" v-model:minimized="windows.account.minimized" @close="windows.account.open = false" />
@@ -72,7 +71,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import { UI_SETTINGS_PATH, type UiSettingsResponse } from '@shared/aiFinishedCardRetention'
 import { useCurrentUser } from '@/core/auth/currentUser'
-import { MyAiWindow, QuestionPolicyWindow } from '@/features/ai'
+import { AiManageWindow, installAiManageMessages, type AiWindowTab } from '@/features/ai'
 import MeThemeWindow from '@/features/settings/windows/MeThemeWindow.vue'
 import MeAgentsWindow from '@/features/settings/windows/MeAgentsWindow.vue'
 import MeAccountWindow from '@/features/settings/windows/MeAccountWindow.vue'
@@ -87,6 +86,7 @@ import { CANVAS_ICON, KIND_ICONS, MENU_CARD_ICONS, MENU_ICON, PIN_ICONS, TASKBAR
 const props = withDefaults(defineProps<{ hasFlow?: boolean }>(), { hasFlow: false })
 const emit = defineEmits<{ pin: [key: TaskbarPin] }>()
 const { t } = useI18n()
+installAiManageMessages(useI18n({ useScope: 'global' }))
 const { user } = useCurrentUser()
 const root = ref<HTMLElement | null>(null)
 const menuTrigger = ref<HTMLButtonElement | null>(null)
@@ -173,21 +173,36 @@ function restore(entry: ModelessEntry) { hideTip(); close(); entry.restore() }
 // Menu cards open a window over the Designer instead of leaving the page. A card whose window
 // is already open (or minimized) brings that window back rather than opening a second one.
 // The board lists only what belongs to "me", one group per source screen; cards are added one at a time.
-type CardKey = 'my-ai' | 'question-policy' | 'theme' | 'agents' | 'account' | 'security'
+// v02test.0096 F96-3: the AI group's three cards (내 AI / 기타 설정 / 방침) open ONE AI 관리 window on their tab; when the
+// window is already open (or minimized) the card switches it to that tab and brings it to the front.
+type AiCardKey = 'my-ai' | 'ai-other' | 'ai-policy'
+type CardKey = AiCardKey | 'theme' | 'agents' | 'account' | 'security'
+type WindowKey = 'ai' | 'theme' | 'agents' | 'account' | 'security'
+const AI_CARD_TABS: Record<AiCardKey, AiWindowTab> = { 'my-ai': 'ai', 'ai-other': 'other', 'ai-policy': 'policy' }
+const isAiCard = (key: CardKey): key is AiCardKey => key in AI_CARD_TABS
+const windowOf = (key: CardKey): WindowKey => (isAiCard(key) ? 'ai' : key)
 // Each icon is a line path (MENU_CARD_ICONS), not a font symbol.
 const menuGroups: { key: string; label: string; icon: string; color: string; cards: { key: CardKey; icon: string; title: string; body: string }[] }[] = [
-  { key: 'ai', label: 'gui.taskbar.group_ai', icon: MENU_CARD_ICONS.ai, color: '#a78bfa', cards: [{ key: 'my-ai', icon: MENU_CARD_ICONS['my-ai'], title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'question-policy', icon: MENU_CARD_ICONS['question-policy'], title: 'gui.taskbar.question_policy', body: 'gui.taskbar.question_policy_desc' }] },
+  { key: 'ai', label: 'gui.taskbar.group_ai', icon: MENU_CARD_ICONS.ai, color: '#a78bfa', cards: [{ key: 'my-ai', icon: MENU_CARD_ICONS['my-ai'], title: 'gui.taskbar.my_ai', body: 'gui.taskbar.my_ai_desc' }, { key: 'ai-other', icon: MENU_CARD_ICONS['ai-other'], title: 'gui.aiManage.cards.other', body: 'gui.aiManage.cards.other_desc' }, { key: 'ai-policy', icon: MENU_CARD_ICONS['ai-policy'], title: 'gui.aiManage.cards.policy', body: 'gui.aiManage.cards.policy_desc' }] },
   { key: 'settings', label: 'gui.taskbar.group_settings', icon: MENU_CARD_ICONS.settings, color: '#94a3b8', cards: [{ key: 'theme', icon: MENU_CARD_ICONS.theme, title: 'gui.taskbar.theme', body: 'gui.taskbar.style' }, { key: 'agents', icon: MENU_CARD_ICONS.agents, title: 'gui.taskbar.agents', body: 'gui.taskbar.agents_desc' }, { key: 'account', icon: MENU_CARD_ICONS.account, title: 'gui.taskbar.account', body: 'gui.taskbar.account_desc' }, { key: 'security', icon: MENU_CARD_ICONS.security, title: 'gui.taskbar.security', body: 'gui.taskbar.security_desc' }] },
 ]
-const windows = reactive<Record<CardKey, { open: boolean; minimized: boolean }>>({ 'my-ai': { open: false, minimized: false }, 'question-policy': { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false }, security: { open: false, minimized: false } })
-const windowRefs: Partial<Record<CardKey, { bringToFront?: () => void } | null>> = {}
-function setWindowRef(key: CardKey, el: unknown) { windowRefs[key] = el as { bringToFront?: () => void } | null }
-function cardState(key: CardKey) { return !windows[key].open ? 'closed' : windows[key].minimized ? 'minimized' : 'open' }
+const windows = reactive<Record<WindowKey, { open: boolean; minimized: boolean }>>({ ai: { open: false, minimized: false }, theme: { open: false, minimized: false }, agents: { open: false, minimized: false }, account: { open: false, minimized: false }, security: { open: false, minimized: false } })
+const aiTab = ref<AiWindowTab>('ai')
+const windowRefs: Partial<Record<WindowKey, { bringToFront?: () => void } | null>> = {}
+function setWindowRef(key: WindowKey, el: unknown) { windowRefs[key] = el as { bringToFront?: () => void } | null }
+// An AI card shows the window's state only while the window is on its tab.
+function cardState(key: CardKey) {
+  const win = windows[windowOf(key)]
+  if (!win.open || (isAiCard(key) && AI_CARD_TABS[key] !== aiTab.value)) return 'closed'
+  return win.minimized ? 'minimized' : 'open'
+}
 function openCard(key: CardKey) {
   close()
-  if (!windows[key].open) { windows[key].open = true; return }
-  windows[key].minimized = false
-  windowRefs[key]?.bringToFront?.()
+  if (isAiCard(key)) aiTab.value = AI_CARD_TABS[key]
+  const win = windowOf(key)
+  if (!windows[win].open) { windows[win].open = true; return }
+  windows[win].minimized = false
+  windowRefs[win]?.bringToFront?.()
 }
 function outside(event: Event) {
   if (event.target instanceof Node && !root.value?.contains(event.target) && !popupRoot.value?.contains(event.target)) close()
@@ -509,4 +524,5 @@ button:focus-visible { outline: 2px solid var(--fg2-accent, #6478dc); outline-of
 [data-taskbar-style="classic"] .taskbar-item.pin-item:hover:not([aria-disabled="true"]) { background: rgba(255, 255, 255, .14); }
 [data-taskbar-style="classic"] .pin-item.is-on { border-color: #5d8fd0; color: #b3d2ff; }
 </style>
+
 
