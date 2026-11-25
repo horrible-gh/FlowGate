@@ -161,6 +161,54 @@ def test_issues_stuck_recovered_rework_revision_rereview_followup_no_no_targets(
     for _ in range(3):
         assert command(clock, "full").get("idle_reason") != "no_targets"
         assert node_run(clock, follow)["status"] == "open"
+@pytest.mark.parametrize("owner", [None, "live", "group_lease", "handoff", "remote_hold", "question_wait", "exception"])
+def test_open_review_loop_idle_reason_before_sweep(clock, decided, starts, fork_join, completions,
+                                                  monkeypatch, owner):
+    from flowgate.card_settings import question_loop_wait
+    from flowgate.graph_run import settle
+
+    key, doc, rr = _reviewed_ai_result(clock, monkeypatch, starts)
+    ended(clock, rr["intent_exec_id"], RID)
+    active_loop(clock, doc=doc)
+    _sql(clock["db"], "UPDATE ai_invoke_document_review_loops SET updated_at=?,deadline_at=? WHERE run_id=?",
+         (NOW.isoformat(), FUTURE, RID))
+    original = loops.get(RID)
+    actual_live = service.is_run_live
+    monkeypatch.setattr(service, "is_run_live", lambda run_id: owner == "live" if run_id == RID else actual_live(run_id))
+    if owner == "group_lease":
+        monkeypatch.setattr(group_ai_leases, "get_by_run_id",
+                            lambda run_id: {"expires_at": FUTURE} if run_id == RID else None)
+    if owner == "handoff":
+        monkeypatch.setattr(review_stage, "handoff_owned_by", lambda run_id: run_id == RID)
+    if owner == "remote_hold":
+        monkeypatch.setattr(remote, "held_run_ids", lambda: {RID})
+    if owner == "question_wait":
+        monkeypatch.setattr(question_loop_wait, "owns", lambda run_id: run_id == RID)
+    if owner == "exception":
+        monkeypatch.setattr(admission, "review_loop_owner", Mock(side_effect=RuntimeError("owner unreadable")))
+
+    ctx = settle.engine.load_context(run_store.active_run(FA), None, None)
+    rows = settle.engine.node_runs(ctx.run_id)
+    assert next(row for row in rows if row["node_key"] == key)["status"] == "review"
+    expected = "needs_intervention" if owner is None else "no_targets"
+    assert settle.idle_reason(ctx, rows, settle.engine.read_run_state(ctx)) == expected
+    if owner == "exception":
+        admission.review_loop_owner.assert_called_with(original, include_recent=False)
+    assert loops.get(RID) == original
+
+
+def test_orphaned_review_loop_skips_gate(monkeypatch):
+    from types import SimpleNamespace
+    from flowgate.graph_run import settle
+
+    lookup = Mock()
+    monkeypatch.setattr(legacy, "running_review_loop", lookup)
+    ctx = SimpleNamespace(node_rows={"gate": {"node_type": settle.engine.GATE_NODE_TYPE}})
+    row = {"node_key": "gate", "status": "review", "result_doc_id": "result"}
+    assert settle._orphaned_review_loop(ctx, row) is False
+    lookup.assert_not_called()
+
+
 def test_old_loop_guard_window_until_sweeper_closes(clock, decided, starts, fork_join, completions, monkeypatch):
     key, doc, rr, a2 = old_loop(clock, monkeypatch, starts, old_document=True)
     assert not legacy.node_running(FA, key) and legacy.review_loop_active(doc)

@@ -62,7 +62,8 @@ intake (``gate_decisions.intake``) and the approval wake (``command``) see ``wai
 whose automatic completion path failed (kind ``system_error``) is the error family (``error``), retried by the run read's
 reconciliation, never a person's wait. The order is now ``completed``, ``no_targets``, ``waiting_confirm``,
 ``needs_intervention``, ``gate_publish``, ``merge_conflict``, ``error``, ``blocked_recovery``, ``blocked_rejected``,
-``hold``, ``step_done``, else ``no_targets``. A run that went idle before stores ``waiting_approval``; it is read as
+``hold``, ``step_done``, ``needs_intervention`` for an unowned open review loop, else ``no_targets``.
+A run that went idle before stores ``waiting_approval``; it is read as
 ``waiting_confirm`` when a gate of the run is open for its decision, else ``needs_intervention`` (``reason_as_read``) and
 the stored value is never converted — a run read writes an idle reason only when the judged one differs from the one as
 read. An intervention card stops only its own descendants (a node not done propagates nothing, an AND join waits: the
@@ -77,6 +78,7 @@ no system error.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from flowgate.graph_run import legacy_adapter as engine
@@ -99,6 +101,9 @@ IDLE_REASONS = (IDLE_COMPLETED, IDLE_NO_TARGETS, IDLE_WAITING_CONFIRM, IDLE_NEED
                 IDLE_BLOCKED_RECOVERY)
 CONFIRM_WAITS = (IDLE_WAITING_CONFIRM, LEGACY_WAITING_APPROVAL)   # a confirm wait, as stored now or before 0119 T-2
 CAUSE_COMPLETED, CAUSE_IDLE, CAUSE_WORK_RESUMED = "completed", "run_idle", "work_resumed"
+
+
+_log = logging.getLogger(__name__)
 
 
 def _node_type(ctx, key: str) -> Optional[str]:
@@ -271,6 +276,35 @@ def _completion(ctx, state) -> tuple[bool, Optional[str]]:
         return False, None
 
 
+def _orphaned_review_loop(ctx, row: dict) -> bool:
+    """Check for an unowned open loop on a general review card, ignoring sweep grace.
+
+    An ownership lookup failure leaves the existing idle classification in effect.
+    """
+    doc_id = row.get("result_doc_id")
+    node_key = row["node_key"]
+    if row["status"] != "review" or not doc_id or _node_type(ctx, node_key) == engine.GATE_NODE_TYPE:
+        return False
+
+    from flowgate.card_settings import legacy_adapter as cards, review_stage
+    from flowgate.graph_run import result_merge
+    from modules.flow_gate.services.ai_invoke import admission
+
+    try:
+        loop = cards.running_review_loop(ctx.flow_id, node_key, doc_id)
+        if (not loop or loop.get("group_id") != ctx.flow_id
+                or loop.get("current_stage") not in ("review", "rework") or loop.get("stop_reason")):
+            return False
+        if (result_merge.integration_waiting(ctx.run_id, node_key)
+                or review_stage._handoff_pending(ctx.flow_id, node_key)
+                or cards.node_ai_run_active(ctx.flow_id, node_key)):
+            return False
+        return admission.review_loop_owner(loop, include_recent=False) is None
+    except Exception:  # An unreadable owner must not be treated as absent.
+        _log.warning("could not judge review-loop ownership for %s", doc_id, exc_info=True)
+        return False
+
+
 def idle_reason(ctx, rows: list[dict], state) -> str:
     """Why a run with no work going on and nothing its command may open is idle (the order: module docstring).
     IDLE_GATE_PUBLISH means a parked reservation with no other human wait; priority stays unchanged."""
@@ -300,6 +334,8 @@ def idle_reason(ctx, rows: list[dict], state) -> str:
         return IDLE_HOLD                                     # 
     if ctx.run.get("run_mode") == engine.MODE_STEP and ctx.run.get("step_node_keys"):
         return IDLE_STEP_DONE                                # the step's targets were opened and it ended normally
+    if any(_orphaned_review_loop(ctx, row) for row in rows):
+        return IDLE_NEEDS_INTERVENTION
     return IDLE_NO_TARGETS
 
 
