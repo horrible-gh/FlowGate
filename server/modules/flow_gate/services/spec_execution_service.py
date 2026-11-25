@@ -22,6 +22,7 @@ import json
 import posixpath
 import shutil
 import sys
+import time
 import threading
 from pathlib import Path
 
@@ -424,6 +425,8 @@ class ExistingRunnerAdapter:
             if active is not None:
                 runner._clear_current_control(active, control)
             control.close()
+        base["exit_code"] = None if outcome.timed_out else outcome.exit_code
+        base["stderr_tail"] = outcome.stderr_tail or outcome.stdout_tail or ""
         output = ((outcome.stdout_tail or "") + (outcome.stderr_tail or ""))[-4000:]
         if outcome.timed_out:
             return blocked(f"timeout after {timeout}s", output)
@@ -549,6 +552,7 @@ def execute(run: dict) -> None:
         for case in spec_cases:
             if case["case_id"] not in selected_ids or active.cancel_event.is_set():
                 continue
+            started = time.monotonic()
             loc = AutomationRefResolver.resolve(case)
             if loc.get("command"):
                 # One Case, one command: its verdict belongs to this Case only.
@@ -557,7 +561,8 @@ def execute(run: dict) -> None:
                     source_identity=executed_identity)
                 if active.cancel_event.is_set():
                     break
-                exit_code = None
+                exit_code = outcome.get("exit_code")
+                output = outcome.get("stderr_tail") or ""
                 results.append(outcome)
                 node_results = [outcome]
             else:
@@ -571,6 +576,12 @@ def execute(run: dict) -> None:
                 node_results = _pytest_results(case, loc, xml, exit_code, output, run=run,
                                                identity=executed_identity,
                                                selected_ids=selected_ids, results=results)
+            from modules.flow_gate.services import test_evidence_service
+            for item in node_results:
+                test_evidence_service.record_execution(doc, run, item["case_id"], exit_code,
+                    int((time.monotonic() - started) * 1000), output)
+                if item.get("status") == "PASS" and exit_code != 0:
+                    item["status"] = "FAIL"
             if node_results:
                 # the Case result is kept and shown before the remaining Cases run.
                 reported_ids.extend(item["case_id"] for item in node_results)

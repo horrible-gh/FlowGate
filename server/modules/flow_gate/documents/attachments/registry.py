@@ -72,6 +72,7 @@ def registry_insert(
     uploaded_by: Optional[str],
     uploaded_at: Optional[str] = None,
     is_legacy_migrated: bool = False,
+    test_evidence: Optional[str] = None,
     store=None,
 ) -> None:
     """§2-5 A8 / §2-11 M6.
@@ -100,6 +101,10 @@ def registry_insert(
             now,
         ],
     )
+
+    if test_evidence is not None:
+        st._execute("UPDATE attachments SET test_evidence = ? WHERE doc_id = ? AND filename = ?",
+                    [test_evidence, doc_id, filename])
 
 
 def registry_replace(

@@ -37,3 +37,5 @@ export { openWorkPlanEditWindow, type WorkPlanEditRequest } from '@/features/wor
 export { setWorkPlanEditOpener, type WorkPlanEditOpener } from '@/features/workPlanWindow/workPlanEditWindows'
 
 export * from './tsEditSession'
+
+export { default as TestEvidenceFiles } from './TestEvidenceFiles.vue'
