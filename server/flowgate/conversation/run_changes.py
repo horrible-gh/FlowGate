@@ -1,19 +1,22 @@
-"""What one chat AI run changed: start/end tree snapshots, diff, file detail.
+"""What one chat AI run changed: its own writes, diff, file detail.
 
 Run changes are not Group changes. Group changes compare the group's scope floor with
-the current worktree; a run change compares the worktree content when ONE chat run
-started with the content when it ended:
+the current worktree; a run change holds only what ONE chat run wrote itself:
 
-* the snapshot is a Git tree written from an isolated temporary index
-  (``GIT_INDEX_FILE``) seeded from HEAD, so the real index, HEAD and working tree are
-  never touched and no repository lock is taken. Tracked and untracked files are
-  included, ignored files are not;
-* at most one row per run, written at finalization when the trees differ -- also for a
-  failed, cancelled or timed-out run. Changes made after the run ended belong to the
-  next run's start tree, never to this run;
-* a group without a managed worktree, or a snapshot that fails, never fails the chat
-  run: the run change is simply not recorded, a warning is logged and the run record
-  carries ``source_change_capture = unavailable`` with the reason.
+* the group worktree is shared with card runs, other chat runs and people, so the
+  worktree at the run's start is NOT compared with the worktree at its end -- that
+  reported everybody's changes as this run's. The run's own writes are recorded where
+  they happen (``run_source_ledger``): each file tool call made with the run's token
+  and each command the run executed;
+* at finalization the record becomes two small Git trees -- the changed paths before
+  and after the run's own writes -- built in an isolated temporary index, so the real
+  index, HEAD and working tree are never touched. Ignored files are left out;
+* at most one row per run, written at finalization when the run changed something --
+  also for a failed, cancelled or timed-out run. A run that wrote nothing (a reading
+  run, or an answer only) stores nothing, whatever else changed meanwhile;
+* a group without a managed worktree, or trees that cannot be written, never fails the
+  chat run: the run change is simply not recorded, a warning is logged and the run
+  record carries ``source_change_capture = unavailable`` with the reason.
 """
 from __future__ import annotations
 
@@ -144,7 +147,8 @@ def managed_worktree(run: dict) -> Optional[Path]:
 
 
 def start_snapshot(run: dict) -> Optional[str]:
-    """Admission: record the run's start tree. Never raises and never refuses the run."""
+    """Before any provider starts: begin recording the run's own writes in the group
+    worktree. Never raises and never refuses the run. Returns the worktree root."""
     if run.get("action_scope") != "chat":
         return None
     try:
@@ -158,36 +162,44 @@ def start_snapshot(run: dict) -> Optional[str]:
         _mark_unavailable(run, CAPTURE_REASON_NO_WORKTREE)
         return None
     try:
-        tree = capture_tree(root)
+        opened = legacy_adapter.source_ledger().open_run(run.get("run_id"), root)
     except Exception as exc:
         logger.warning("chat run %s: start snapshot failed; run change disabled: %s",
                        run.get("run_id"), exc)
-        _mark_unavailable(run, CAPTURE_REASON_START_FAILED, str(exc)[:200])
+        opened = False
+        detail = str(exc)[:200]
+    else:
+        detail = None
+    if not opened:
+        _mark_unavailable(run, CAPTURE_REASON_START_FAILED, detail)
         return None
-    run["source_start_tree"] = tree
+    run["source_start_tree"] = None
     run["source_change_root"] = str(root)
     run["source_change_capture"] = c.CAPTURE_READY
     run["source_change_capture_reason"] = None
-    return tree
+    return str(root)
 
 
 def finalize_run(run: dict) -> Optional[dict]:
     """Finalization: store (and announce) the run change when anything changed."""
     if run.get("action_scope") != "chat":
         return None
-    start_tree = run.get("source_start_tree")
     root = run.get("source_change_root")
-    if not start_tree or not root or not run.get("doc_ref"):
+    ledger = legacy_adapter.source_ledger()
+    if not root or not run.get("doc_ref"):
+        ledger.discard_run(run.get("run_id"))
         return None
     try:
-        end_tree = capture_tree(root)
+        trees = ledger.close_run(run.get("run_id"))
     except Exception as exc:
         logger.warning("chat run %s: end snapshot failed; run change skipped: %s", run.get("run_id"), exc)
         _mark_unavailable(run, CAPTURE_REASON_END_FAILED, str(exc)[:200])
         return None
-    run["source_end_tree"] = end_tree
-    if end_tree == start_tree:
+    if not trees:
         return None
+    # Only the paths this run wrote, before and after its own writes.
+    start_tree, end_tree = trees
+    run["source_start_tree"], run["source_end_tree"] = start_tree, end_tree
     try:
         files = diff_trees(Path(root), start_tree, end_tree)
     except Exception as exc:

@@ -106,6 +106,13 @@ def git_service_error_type() -> type:
     return _git_service().GitServiceError
 
 
+def source_ledger():
+    """The per-run record of own source writes (``run_source_ledger``)."""
+    from modules.flow_gate.services import run_source_ledger
+
+    return run_source_ledger
+
+
 def emit_event(event_type: str, project_id: str, group_id: Optional[str], payload: dict) -> None:
     """Best-effort SSE broadcast through the existing publisher (never raises)."""
     try:
