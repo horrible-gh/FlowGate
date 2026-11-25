@@ -84,6 +84,20 @@ class CliPresetCommandIn(BaseModel):
     skip_permissions: bool = False
 
 
+class CliModelSelectionIn(BaseModel):
+    kind: str
+    version: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    executable: str | None = None
+    timeout_seconds: int | None = Field(default=None, strict=True)
+
+
+class CliPresetParseIn(BaseModel):
+    cli_command: str = Field(max_length=_svc.CLI_COMMAND_MAX)
+    kind: str | None = None
+
+
 class ProjectAiSettingsPut(SystemAiSettingsPut):
     mode: str
 
@@ -309,6 +323,25 @@ def put_my_ai_order(body: UserAiOrderPut, user=Depends(get_current_user)):
         )
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
+
+
+@router.get("/ai-settings/cli-model-catalog")
+def get_cli_model_catalog(user=Depends(get_current_user)):
+    return {"ok": True, "catalog": _svc.get_cli_model_catalog()}
+
+
+@router.post("/ai-settings/cli-preset-compose")
+def compose_cli_preset(body: CliModelSelectionIn, user=Depends(get_current_user)):
+    try:
+        return {"ok": True, **_svc.compose_cli_preset(**body.model_dump())}
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)
+
+
+@router.post("/ai-settings/cli-preset-parse")
+def parse_cli_preset(body: CliPresetParseIn, user=Depends(get_current_user)):
+    selection = _svc.parse_cli_preset(body.cli_command, kind=body.kind)
+    return {"ok": True, "kind": selection["kind"] if selection else "custom", "selection": selection}
 
 
 @router.post("/me/ai-providers/cli-preset-command")
