@@ -516,6 +516,15 @@ export default {
         // flowgate.v02gui.0015 T3
         action_required_new_attempt: 'Q&A 답변에서 새 attempt가 필요하다고 정했지만 아직 열리지 않아 카드를 다시 부르지 않았습니다. `다음 단계` 또는 `전체 실행`을 누르면 새 attempt로 다시 엽니다. 검토 중인 카드는 중지한 뒤 실행하세요.',
       },
+      // flowgate.v02test.F98-4 — an intervention's failure cause (the closed review loop's stop_detail), shown as `<문구>(<코드>)`;
+      // other causes are shown as sent (cardInterventionCauseText).
+      card_intervention_causes: {
+        model_not_found: '모델을 지원하지 않음',
+        provider_capacity: '모델 수용량 초과',
+        provider_failed: 'AI 제공자 오류',
+        timeout: '제한 시간 초과',
+        providers_exhausted: '실행할 수 있는 AI 제공자 없음',
+      },
       // flowgate.v02.0056 F2-1 — a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // 작업 중 (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {

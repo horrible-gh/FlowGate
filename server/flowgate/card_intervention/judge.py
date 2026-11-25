@@ -8,7 +8,11 @@ in the instruction stage, else the result; the B-1 run events, read as they are 
 """
 from __future__ import annotations
 
+import logging
+
 from flowgate.card_intervention import reasons
+
+_log = logging.getLogger(__name__)
 
 
 def intervention(flow_id: str, row: dict) -> dict:
@@ -22,4 +26,31 @@ def intervention(flow_id: str, row: dict) -> dict:
     held = action_guard.node_reason(flow_id, row)
     if held is not None:
         return {"kind": reasons.NEEDS_INTERVENTION, "reason": held}
-    return reasons.state(legacy_adapter.approval_wait_reason(flow_id, row))
+    recorded = legacy_adapter.approval_wait_reason(flow_id, row)
+    found = reasons.state(recorded)
+    detail = _loop_stop_detail(row, recorded)
+    if detail:
+        found[reasons.STOP_DETAIL] = detail     # F98-4: the closed loop's failure cause, an added field
+    return found
+
+
+def _loop_stop_detail(row: dict, recorded) -> "str | None":
+    """F98-4: the ``stop_detail`` (failure cause, e.g. ``model_not_found``) of the closed review loop that left the card
+    in intervention, or None. Only for ``review_not_passed:<stop reason>``, and only from the latest loop of the stage
+    document when it is stopped with that very stop reason (an older loop's cause is never shown for a newer stop).
+    A failed read tells none: the intervention itself is still answered."""
+    stop = reasons.loop_stop_reason(recorded)
+    if stop is None:
+        return None
+    from flowgate.card_settings import legacy_adapter  # noqa: PLC0415
+
+    try:
+        doc_id = legacy_adapter.stage_document(row)
+        loops = legacy_adapter.review_loops(doc_id) if doc_id else []
+    except Exception:  # noqa: BLE001 — the intervention is answered without its cause
+        _log.warning("card intervention stop detail read failed node=%s", row.get("node_key"), exc_info=True)
+        return None
+    latest = next((loop for loop in loops if loop.get("current_stage") == "stopped"), None)
+    if latest is None or latest.get("stop_reason") != stop:
+        return None
+    return reasons.stop_detail_text(latest.get("stop_detail"))
