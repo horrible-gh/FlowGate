@@ -26,7 +26,6 @@ const ko = {
     live_hint: '말하는 대로 회색 글이 나옵니다. ■를 누르면 확정합니다.',
   },
   settings: {
-    title: '음성 입력',
     after: '녹음 후',
     as_text: '글로',
     as_audio: '음성',
@@ -42,7 +41,6 @@ const ko = {
     admin_off: '관리자가 꺼 둠',
     none_installed: '설치된 모델이 없습니다.',
     use_default: '관리자 기본 모델 쓰기',
-    using_default: '관리자 기본 모델',
     loading: '불러오는 중…',
     load_failed: '음성 설정을 불러오지 못했습니다.',
     retry: '다시 시도',
@@ -186,7 +184,6 @@ const en: Messages = {
     live_hint: 'Grey text follows your speech. Press ■ to confirm.',
   },
   settings: {
-    title: 'Voice input',
     after: 'After recording',
     as_text: 'Text',
     as_audio: 'Voice',
@@ -202,7 +199,6 @@ const en: Messages = {
     admin_off: 'Turned off by an administrator',
     none_installed: 'No model is installed.',
     use_default: 'Use the administrator default',
-    using_default: 'Administrator default',
     loading: 'Loading…',
     load_failed: 'Could not load voice settings.',
     retry: 'Retry',
@@ -331,7 +327,6 @@ const ja: Messages = {
     live_hint: '話すと灰色の文字が表示されます。■で確定します。',
   },
   settings: {
-    title: '音声入力',
     after: '録音後',
     as_text: '文字',
     as_audio: '音声',
@@ -347,7 +342,6 @@ const ja: Messages = {
     admin_off: '管理者がオフにしています',
     none_installed: 'インストール済みのモデルがありません。',
     use_default: '管理者の既定モデルを使う',
-    using_default: '管理者の既定モデル',
     loading: '読み込み中…',
     load_failed: '音声設定を読み込めませんでした。',
     retry: '再試行',
