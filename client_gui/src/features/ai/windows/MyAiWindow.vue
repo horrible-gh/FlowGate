@@ -1,6 +1,6 @@
 <template>
   <ModelessShell ref="shell" kind-color="#a78bfa" :open="open" :minimized="minimized" :title="t('gui.taskbar.my_ai_window')"
-    :initial-x="48" :initial-y="initialY" :initial-width="initialWidth" :initial-height="initialHeight" :min-width="420" :min-height="260"
+    :initial-x="48" :initial-y="initialY" :initial-width="initialWidth" :initial-height="initialHeight" :min-width="420" :min-height="380"
     @update:minimized="emit('update:minimized', $event)" @close="emit('close')">
     <div class="ai-my-window" data-test="my-ai-window">
       <AiProvidersPanel mine-only />
@@ -18,8 +18,9 @@ defineProps<{ open: boolean; minimized: boolean }>()
 const emit = defineEmits<{ close: []; 'update:minimized': [value: boolean] }>()
 const { t } = useI18n()
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
-const initialWidth = Math.min(720, Math.max(420, window.innerWidth - 96))
-const initialHeight = Math.min(440, Math.max(260, window.innerHeight - 200))
+// v02test.0089: larger first size so the list keeps 4+ rows above the repeat limit and title AI cards.
+const initialWidth = Math.min(860, Math.max(420, window.innerWidth - 96))
+const initialHeight = Math.min(640, Math.max(380, window.innerHeight - 200))
 // Opens above the taskbar, clear of the menu board's place.
 const initialY = Math.max(70, window.innerHeight - initialHeight - 90)
 defineExpose({ bringToFront: () => shell.value?.bringToFront() })
@@ -31,7 +32,13 @@ defineExpose({ bringToFront: () => shell.value?.bringToFront() })
 .ai-my-window :deep(.ai-providers-panel .page-title) { display: none; }
 .ai-my-window :deep(.ai-providers-panel .repeat-card) { margin-top: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-head) { margin-bottom: 8px; }
-.ai-my-window :deep(.ai-providers-panel .detail-panel) { margin-bottom: 0; }
+/* v02test.0089 F89-7: the list box takes all the height the window gives; the repeat limit and title AI cards (flex: none)
+   stay at the bottom, and on a short window the card list shrinks and scrolls instead of cutting them off. */
+.ai-my-window :deep(.ai-providers-panel) { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.ai-my-window :deep(.ai-providers-panel .detail-panel) { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
+.ai-my-window :deep(.ai-providers-panel .provider-cards) { flex: 1; min-height: 0; overflow: auto; }
+.ai-my-window :deep(.ai-providers-panel .empty-row) { margin: auto 0; }
+.ai-my-window :deep(.ai-providers-panel .order-hint) { margin-top: 8px; }
 .ai-my-window :deep(.ai-providers-panel .detail-toolbar) { height: auto; min-height: 52px; padding: 8px 12px; flex-wrap: wrap; gap: 8px 12px; }
 .ai-my-window :deep(.ai-providers-panel .detail-search) { min-width: 120px; flex: 1 1 120px; }
 </style>
