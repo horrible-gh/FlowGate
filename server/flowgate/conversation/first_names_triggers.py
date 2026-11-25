@@ -58,10 +58,11 @@ def chat(doc_id, user, body):
     if not any(t.get("speaker") == "ai" and str(t.get("body") or "").strip()
                for t in legacy_adapter.first_turns(doc_id, 20)):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_NO_MESSAGE, "no AI reply yet")
-    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id, kinds=("chat",))
-    # The flow and start card are named from their own content in the background.
+    # The flow and start card are named from their own content in the background. Queued
+    # before the chat's own (waited-for) name so the three names are made at the same time.
     _schedule(auto_title.generate_flow_names, flow_id, dict(user), provider, "", doc_id, None, True, None,
               ("flow", "root"))
+    result = auto_title.generate_flow_names(flow_id, user, provider, chat_doc_id=doc_id, kinds=("chat",))
     if result["targets"].get("chat", "unchanged") in ("failed", "pending", "unchanged"):
         raise c.ConversationError(409, c.ERR_CONVERSATION_AUTO_TITLE_UNAVAILABLE, "naming pending")
     saved = legacy_adapter.get_document(doc_id) or doc
