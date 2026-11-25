@@ -61,7 +61,9 @@ def wire(row):
     if not row:
         return None
     d = row["data"]
-    return {k: d[k] for k in ("state", "attempt", "max_attempts", "attempts", "unresolved")}
+    out = {k: d[k] for k in ("state", "attempt", "max_attempts", "attempts", "unresolved")}
+    out["count"] = len(sessions.remaining_conflicts(row["merge_id"]))
+    return out
 
 
 def view(flow_id, node_key, attempt_id=None):
@@ -214,10 +216,9 @@ def notify(row):
 
 
 def unresolved(row):
-    from flowgate.graph_run import result_merge, workspace
+    from modules.flow_gate.services.git import conflict
     from modules.flow_gate.storage.safe_path import resolve_in_root
-    attempt = workspace.attempt(row["attempt_id"])
-    _, root, _ = result_merge._group_root(attempt)
+    _, _, _, root = conflict._session_context(row["group_id"], row["merge_id"])
     out = []
     for path in sessions.remaining_conflicts(row["merge_id"]):
         hunks, start_line = [], None
@@ -260,10 +261,45 @@ def reopen_candidate(row):
         rm.git_commit._release_group_lock(lock)
 
 
+def reason_summary(result, reason):
+    """Readable display text, with the original diagnostic kept in reason."""
+    if not reason:
+        return None
+    raw = str(reason)
+    if result == "check_failed":
+        try:
+            verdict = json.loads(raw)
+        except (ValueError, TypeError):
+            verdict = None
+        if isinstance(verdict, dict):
+            items = []
+            for failure in verdict.get("failures") or []:
+                location = failure.get("path") or "unknown file"
+                if failure.get("line") is not None:
+                    location += ":" + str(failure["line"])
+                items.append(f"{failure.get('checker') or '검사'} · {location}: {failure.get('message') or '검사 실패'}")
+            raw = "; ".join(items) or "병합 검사 실패: " + str(verdict.get("status") or "unknown")
+    return " ".join(raw.split())[:1000]
+
+
+def ai_failure(record):
+    if not record:
+        return "AI 실행 등록 전에 중단되었습니다"
+    failed = (record.get("outcome") in ("error", "failed")
+              or record.get("end_reason") in ("worker_error", "timeout", "provider_failed")
+              or record.get("stop_code") == "provider_failed"
+              or record.get("exit_code") not in (None, 0))
+    if not failed:
+        return None
+    detail = record.get("error_message") or record.get("message") or record.get("end_reason") or record.get("stop_code") or "실행 실패"
+    exit_code = record.get("exit_code")
+    return f"AI 실행 실패 (exit code {exit_code}): {detail}" if exit_code not in (None, 0) else f"AI 실행 실패: {detail}"
+
+
 def finish_attempt(row, result, reason=None):
     d = row["data"]
     d["attempts"][-1].update(result=result, reason=" ".join(str(reason).splitlines())[:2000] if reason else None,
-                              ended_at=now_iso())
+                              reason_summary=reason_summary(result, reason), ended_at=now_iso())
     d["ai_run_id"] = None
     if result == "check_failed":
         reopen_candidate(row)
@@ -411,6 +447,7 @@ def step(row):
     if row["state"] == "skipped_paused":
         d["state"] = "running"
         save(row)
+        notify(row)
     lease = group_ai_leases.get_active(row["group_id"])
     if d["attempts"] and d["phase"] not in ("next", "waiting", "launching"):
         started = datetime.fromisoformat(d["attempts"][-1]["started_at"])
@@ -472,8 +509,9 @@ def step(row):
         if d.pop("timed_out", False):
             finish_attempt(row, "timeout", "Resolver exceeded 600 seconds")
             return
-        if not record or record.get("outcome") in ("error", "failed") or record.get("end_reason") in ("worker_error", "timeout"):
-            finish_attempt(row, "ai_error", (record or {}).get("end_reason") or "Admission interrupted before worker registration")
+        failure = ai_failure(record)
+        if failure:
+            finish_attempt(row, "ai_error", failure)
             return
         if sessions.remaining_conflicts(merge_id):
             rejection = sessions.session_context(session).get("resolver_attempt") or {}
