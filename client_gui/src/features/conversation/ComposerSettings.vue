@@ -1,10 +1,13 @@
 <template>
   <!-- ⚙ and the settings window (flowgate.v02test.0096 ④): a modeless window floating near the composer, so the chat
        stays readable and usable while it is open. It moves by its title bar, resizes by its corner, never leaves the
-       screen and reopens at its last place, size and tab (localStorage). Tabs: 대화 (send action, context, timeout —
-       saved by 저장 as before), 음성 (this person's voice input settings, saved on change) and AI (this chat's AI,
-       📌 pins, my repeat limit and title AI, saved on change). A press elsewhere does not close it; ⚙, × or Esc inside
-       it does. Opening never re-queries the chat settings: it redraws the last confirmed ones. -->
+       screen and reopens at its last place, size and tab (localStorage). Tabs: 대화 (send action, context, timeout),
+       음성 (this person's voice input settings) and AI (this chat's AI, 📌 pins, my repeat limit and title AI) — every
+       tab saves a change at once (F96-8: no 취소 / 저장 any more; a failed 대화 save puts the confirmed values back and
+       the session shows the error toast). The height follows the open tab unless the person resized the window; all
+       three tabs draw the same row (label left, value right, shared through the --csx-* variables below). A press
+       elsewhere does not close it; ⚙, × or Esc inside it does. Opening never re-queries the chat settings: it redraws
+       the last confirmed ones. -->
   <div ref="rootEl" class="csx">
     <button
       ref="btnEl"
@@ -47,17 +50,17 @@
           @update:model-value="selectTab"
         />
         <div class="csx-body" role="tabpanel" :data-tab="tab">
-          <template v-if="tab === 'chat'">
+          <div v-if="tab === 'chat'" class="csx-rows" data-test="conv-chat-settings">
             <label class="csx-row">
-              <span>{{ t('gui.conversation.settings.send_action') }}</span>
-              <select v-model="draftSendAction" class="csx-select" data-test="conv-setting-send-action">
+              <span class="csx-label">{{ t('gui.conversation.settings.send_action') }}</span>
+              <select v-model="draftSendAction" class="csx-select" data-test="conv-setting-send-action" @change="commit">
                 <option value="none">{{ t('gui.conversation.settings.send_none') }}</option>
                 <option value="invoke_ai" :disabled="!hasProviders">{{ t('gui.conversation.settings.send_invoke') }}</option>
                 <option value="copy_mention">{{ t('gui.conversation.settings.send_copy') }}</option>
               </select>
             </label>
             <label class="csx-row">
-              <span>{{ t('gui.conversation.settings.context') }}</span>
+              <span class="csx-label">{{ t('gui.conversation.settings.context') }}</span>
               <select v-model="draftRange" class="csx-select" data-test="conv-setting-context" @change="onRangeChange">
                 <option v-for="n in settings.contextTurnsPresets" :key="n" :value="String(n)">{{ t('gui.conversation.settings.context_turns', { n }) }}</option>
                 <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
@@ -67,7 +70,7 @@
                 <option value="checkpoint_recent">{{ t('gui.conversation.settings.context_checkpoint_recent') }}</option>
               </select>
             </label>
-            <div v-if="(draftRange === 'custom' || draftRange === 'checkpoint_recent')" class="csx-row csx-turns">
+            <div v-if="(draftRange === 'custom' || draftRange === 'checkpoint_recent')" class="csx-row csx-sub">
               <span></span>
               <div>
                 <input
@@ -80,7 +83,8 @@
                   data-test="conv-setting-turns"
                   :aria-label="t('gui.conversation.settings.context')"
                   :aria-invalid="!turnsValid"
-                  @keydown.enter.prevent="saveSettings"
+                  @change="commit"
+                  @keydown.enter.prevent="commit"
                 />
                 <div v-if="!turnsValid" class="csx-err" role="alert" data-test="conv-setting-turns-error">
                   {{ t('gui.conversation.settings.context_invalid', { min: settings.contextTurnsMin, max: settings.contextTurnsMax }) }}
@@ -88,22 +92,33 @@
               </div>
             </div>
             <label class="csx-row">
-              <span>{{ t('gui.conversation.settings.timeout') }}</span>
-              <select v-model="draftTimeout" :disabled="timeoutEnabled === false" class="csx-select" data-test="conv-setting-timeout">
+              <span class="csx-label">{{ t('gui.conversation.settings.timeout') }}</span>
+              <select v-model="draftTimeout" :disabled="timeoutEnabled === false" class="csx-select" data-test="conv-setting-timeout" @change="commit">
                 <option value="none">{{ t('gui.conversation.settings.timeout_none') }}</option>
                 <option v-for="n in [30, 60, 120, 240]" :key="n" :value="String(n)">{{ t('gui.conversation.settings.timeout_minutes', { n }) }}</option>
                 <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
               </select>
             </label>
-            <input v-if="draftTimeout === 'custom'" v-model="draftTimeoutText" class="csx-select" inputmode="numeric" data-test="conv-setting-timeout-minutes" :aria-label="t('gui.conversation.settings.timeout')" />
-            <div v-if="!timeoutValid" class="csx-err" role="alert">{{ t('gui.conversation.settings.timeout_invalid') }}</div>
-            <div class="csx-foot">
-              <button type="button" class="csx-link" @click="close">{{ t('gui.conversation.cancel') }}</button>
-              <button type="button" class="csx-save" data-test="conv-settings-save" :disabled="saving || !turnsValid || !timeoutValid" @click="saveSettings">
-                {{ t('gui.conversation.save') }}
-              </button>
+            <div v-if="draftTimeout === 'custom'" class="csx-row csx-sub">
+              <span></span>
+              <div>
+                <input
+                  v-model="draftTimeoutText"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="off"
+                  class="csx-select csx-num"
+                  :class="{ 'is-invalid': !timeoutValid }"
+                  data-test="conv-setting-timeout-minutes"
+                  :aria-label="t('gui.conversation.settings.timeout')"
+                  :aria-invalid="!timeoutValid"
+                  @change="commit"
+                  @keydown.enter.prevent="commit"
+                />
+                <div v-if="!timeoutValid" class="csx-err" role="alert">{{ t('gui.conversation.settings.timeout_invalid') }}</div>
+              </div>
             </div>
-          </template>
+          </div>
           <ComposerVoiceSettings v-else-if="tab === 'voice'" />
           <ComposerAiSettings
             v-else
@@ -114,13 +129,13 @@
           />
         </div>
       </div>
-      <div class="csx-grip" data-test="conv-settings-resize" aria-hidden="true" @pointerdown.stop="win.startResize"></div>
+      <div class="csx-grip" data-test="conv-settings-resize" aria-hidden="true" @pointerdown.stop="win.startResize" @dblclick="win.resetSize"></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, type DeepReadonly } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, type DeepReadonly } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Tabs, { type TabItem, type TabOrientation } from '../../components/ui/Tabs.vue'
 import ComposerAiSettings from './ComposerAiSettings.vue'
@@ -155,13 +170,33 @@ const rootEl = ref<HTMLElement | null>(null)
 const btnEl = ref<HTMLElement | null>(null)
 const winEl = ref<HTMLElement | null>(null)
 const open = ref(false)
-const win = useFloatingWindow({ width: 360, height: 400, minWidth: 280, minHeight: 220 })
+// F96-8: `height` is only the estimate for the first placement; the window is as tall as the open tab (capped at the
+// screen, where the body scrolls) unless the person resized it with the grip.
+const win = useFloatingWindow({ width: 360, height: 300, minWidth: 280, minHeight: 160 })
 const winStyle = computed(() => ({
   left: `${win.rect.x}px`,
   top: `${win.rect.y}px`,
   width: `${win.rect.width}px`,
-  height: `${win.rect.height}px`,
+  ...(win.sized.value ? { height: `${win.rect.height}px` } : { maxHeight: `${win.maxHeight.value}px` }),
 }))
+
+// The rendered height goes back to the window logic, so a taller tab (or an opened voice list) stays on screen.
+let sizeObserver: ResizeObserver | null = null
+function measureWindow(): void {
+  const el = winEl.value
+  if (el) win.measure(el.getBoundingClientRect().height)
+}
+watch(winEl, (el) => {
+  sizeObserver?.disconnect()
+  sizeObserver = null
+  if (!el) return
+  if (typeof ResizeObserver !== 'undefined') {
+    sizeObserver = new ResizeObserver(() => measureWindow())
+    sizeObserver.observe(el)
+  }
+  void nextTick(measureWindow)
+}, { flush: 'post' })
+onBeforeUnmount(() => sizeObserver?.disconnect())
 
 const tabItems = computed<TabItem[]>(() => [
   { key: 'chat', label: t('gui.conversation.settings.tab_chat') },
@@ -176,6 +211,7 @@ function selectTab(value: string): void {
   if (!isTab(value)) return
   tab.value = value
   win.rememberTab(value)
+  void nextTick(measureWindow)
 }
 
 function close(): void {
@@ -210,6 +246,17 @@ function toggleSettings(): void {
     close()
     return
   }
+  resetDrafts()
+  // The last place, size and tab come back; the first time it opens right above the ⚙ button.
+  const anchor = btnEl.value?.getBoundingClientRect?.() ?? null
+  win.openAt(anchor)
+  const remembered = win.storedTab()
+  if (isTab(remembered)) tab.value = remembered
+  open.value = true
+}
+
+/** The 대화 tab shows the last server-confirmed settings (on open, and after a failed save). */
+function resetDrafts(): void {
   const minutes = props.settings.timeoutMinutes ?? null
   draftTimeout.value = minutes == null ? 'none' : [30, 60, 120, 240].includes(minutes) ? String(minutes) : 'custom'
   draftTimeoutText.value = String(minutes ?? 120)
@@ -223,41 +270,72 @@ function toggleSettings(): void {
         : 'custom'
   draftTurnsText.value = String(draftRange.value === 'checkpoint_recent' ? (props.settings.checkpointMaxTurns ?? 5) : props.settings.contextTurns)
   shownRange = draftRange.value
-  // The last place, size and tab come back; the first time it opens right above the ⚙ button.
-  const anchor = btnEl.value?.getBoundingClientRect?.() ?? null
-  win.openAt(anchor)
-  const remembered = win.storedTab()
-  if (isTab(remembered)) tab.value = remembered
-  open.value = true
 }
 
 // Only a person's own pick runs this (not the reopen redraw): choosing "사용자 입력" right
-// after a preset starts the input from that preset's number.
+// after a preset starts the input from that preset's number. The pick is then saved like any other change.
 function onRangeChange(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   if (value === 'custom' && /^\d+$/.test(shownRange)) draftTurnsText.value = shownRange
   if (value === 'checkpoint_recent') draftTurnsText.value = String(props.settings.checkpointMaxTurns ?? 5)
   shownRange = value
+  commit()
 }
 
-function saveSettings(): void {
+/**
+ * The 대화 tab's values as a patch, or null when they are what the server already holds. Same shape as the former
+ * 저장: send_action and the context always, timeout_minutes only when it changed. Never context_turns with 'all' /
+ * 'checkpoint' (L0010 §2-7-4: the kept number must survive).
+ */
+function buildPatch(): ChatSettingsPatch | null {
+  const s = props.settings
   const patch: ChatSettingsPatch = { send_action: draftSendAction.value }
-  if (!turnsValid.value || !timeoutValid.value) return
+  let sameContext: boolean
   if (draftRange.value === 'checkpoint_recent') {
     patch.context_mode = 'checkpoint_recent'
     patch.checkpoint_max_turns = Number(draftTurnsText.value.trim())
+    sameContext = s.contextMode === 'checkpoint_recent' && (s.checkpointMaxTurns ?? 5) === patch.checkpoint_max_turns
   } else if (draftRange.value === 'all' || draftRange.value === 'checkpoint') {
-    // L0010 §2-7-4: never send context_turns with 'all' (nor 'checkpoint') — the number must survive.
     patch.context_mode = draftRange.value === 'all' ? 'all' : 'checkpoint'
+    sameContext = s.contextMode === patch.context_mode
   } else {
-    if (!turnsValid.value || !timeoutValid.value) return
     patch.context_mode = 'recent'
     patch.context_turns = Number(draftRange.value === 'custom' ? draftTurnsText.value.trim() : draftRange.value)
+    sameContext = s.contextMode !== 'all' && s.contextMode !== 'checkpoint' && s.contextMode !== 'checkpoint_recent' && s.contextTurns === patch.context_turns
   }
   const timeout = draftTimeout.value === 'none' ? null : Number(draftTimeout.value === 'custom' ? draftTimeoutText.value : draftTimeout.value)
-  if (timeout !== (props.settings.timeoutMinutes ?? null)) patch.timeout_minutes = timeout
+  if (timeout !== (s.timeoutMinutes ?? null)) patch.timeout_minutes = timeout
+  const unchanged = sameContext && patch.send_action === s.sendAction && !('timeout_minutes' in patch)
+  return unchanged ? null : patch
+}
+
+// One save at a time: a change made while one is on its way is sent (with every value as shown then) once it answers.
+let inFlight = false
+let queued = false
+
+/** A finished pick or typed value of the 대화 tab: saved at once when every value is valid (the old rules). */
+function commit(): void {
+  if (!turnsValid.value || !timeoutValid.value) return
+  if (inFlight) {
+    queued = true
+    return
+  }
+  const patch = buildPatch()
+  if (!patch) return
+  inFlight = true
   emit('save', patch, (ok) => {
-    if (ok) close()
+    inFlight = false
+    if (!ok) {
+      // The server kept the previous values: show them again (the session already showed the error toast).
+      queued = false
+      resetDrafts()
+      return
+    }
+    if (queued) {
+      queued = false
+      // After the confirmed settings reach this window, so the change is weighed against them.
+      void nextTick(commit)
+    }
   })
 }
 </script>
@@ -304,9 +382,14 @@ function saveSettings(): void {
   border-radius: var(--fg2-overlay-radius, var(--fg2-control-radius));
   background: var(--fg2-panel);
   box-shadow: var(--fg2-overlay-shadow);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--fg2-muted);
   overflow: hidden;
+  /* F96-8: one row shape for the 대화 / 음성 / AI tabs — the tab components read these. */
+  --csx-label-width: 88px;
+  --csx-row-gap: 8px;
+  --csx-row-height: 28px;
+  --csx-control-height: 26px;
 }
 
 .csx-head {
@@ -347,7 +430,7 @@ function saveSettings(): void {
 }
 
 .csx-main {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -372,11 +455,11 @@ function saveSettings(): void {
 }
 
 .csx-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 8px 10px 12px;
+  padding: 10px 12px 14px;
 }
 
 /* Corner grip: drag to resize. */
@@ -391,17 +474,32 @@ function saveSettings(): void {
   background: linear-gradient(135deg, transparent 50%, var(--fg2-line-strong) 50%, var(--fg2-line-strong) 60%, transparent 60%, transparent 72%, var(--fg2-line-strong) 72%, var(--fg2-line-strong) 82%, transparent 82%);
 }
 
+.csx-rows {
+  display: grid;
+  gap: var(--csx-row-gap);
+}
+
+/* Label left, value right, on one line; the label column is the same width in every tab. */
 .csx-row {
   display: grid;
-  /* The label column fits its words; the control takes the rest, so long values are not cut. */
-  grid-template-columns: minmax(64px, max-content) minmax(0, 1fr);
+  grid-template-columns: var(--csx-label-width) minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  margin-top: 6px;
+  gap: 8px;
+  min-height: var(--csx-row-height);
+}
+
+.csx-sub {
+  margin-top: calc(var(--csx-row-gap) * -0.5);
+}
+
+.csx-label {
+  color: var(--fg2-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .csx-select {
-  height: 27px;
+  height: var(--csx-control-height);
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -425,39 +523,6 @@ function saveSettings(): void {
 .csx-err {
   margin-top: 3px;
   color: var(--fg2-status-danger-fg, #d33);
-}
-
-.csx-foot {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.csx-link {
-  border: 0;
-  background: transparent;
-  color: var(--fg2-status-info-fg);
-  font: inherit;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.csx-save {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--fg2-blue);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-status-info-bg);
-  color: var(--fg2-text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.csx-save:disabled {
-  cursor: progress;
-  opacity: var(--fg2-control-disabled-opacity);
 }
 
 .csx-btn:focus-visible {

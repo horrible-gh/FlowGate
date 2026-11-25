@@ -1,7 +1,9 @@
 <template>
   <!-- AI tab of the ⚙ settings window (flowgate.v02test.0096 ④): this chat's AI, the 📌 pins of 자주 쓰는 AI (the same
        pins the AI picker and AI 관리 use, card ①'s composable) and my own 최대 반복 횟수 / 제목 짓기 AI with the system
-       values beside them (the existing /me/ai-preferences API). Every change here is saved at once. -->
+       values beside them (the existing /me/ai-preferences API). Every change here is saved at once.
+       F96-8: the same one-line rows as the 대화 / 음성 tabs (label left, value right, the window's --csx-* sizes); the
+       system value sits next to the stepper and the title AI in effect inside the 자동 choice, not on extra lines. -->
   <div class="cas" data-test="conv-ai-settings">
     <label class="cas-row">
       <span class="cas-label">{{ t('gui.conversation.settings.ai_this_chat') }}</span>
@@ -18,48 +20,46 @@
       </select>
     </label>
 
-    <div class="cas-block">
-      <div class="cas-label">{{ t('gui.conversation.settings.ai_pinned') }}</div>
-      <p class="cas-hint">{{ t('gui.conversation.settings.ai_pinned_hint') }}</p>
-      <ul v-if="pinnedRows.length" class="cas-pins" data-test="conv-setting-pins">
-        <li v-for="row in pinnedRows" :key="row.id" class="cas-pin" :data-provider-id="row.id">
-          <span aria-hidden="true">📌</span>
-          <span class="cas-pin-name" :title="row.name">{{ row.name }}</span>
-          <button
-            type="button"
-            class="cas-icon"
-            data-test="conv-setting-pin-remove"
-            :aria-label="t('gui.conversation.settings.ai_pin_remove', { name: row.name })"
-            :title="t('gui.conversation.settings.ai_pin_remove', { name: row.name })"
-            @click="favorites.setPinned(row.id, false)"
-          >×</button>
-        </li>
-      </ul>
-      <p v-else class="cas-hint" data-test="conv-setting-pins-empty">{{ t('gui.conversation.settings.ai_pinned_empty') }}</p>
-      <select
-        v-if="unpinned.length"
-        class="cas-select cas-add"
-        data-test="conv-setting-pin-add"
-        value=""
-        :aria-label="t('gui.conversation.settings.ai_pin_add')"
-        @change="addPin($event)"
-      >
-        <option value="" disabled>＋ {{ t('gui.conversation.settings.ai_pin_add') }}</option>
-        <option v-for="p in unpinned" :key="p.id" :value="p.id">{{ p.name }}</option>
-      </select>
+    <div class="cas-row is-top">
+      <span class="cas-label">{{ t('gui.conversation.settings.ai_pinned') }}</span>
+      <div class="cas-value">
+        <ul v-if="pinnedRows.length" class="cas-pins" data-test="conv-setting-pins">
+          <li v-for="row in pinnedRows" :key="row.id" class="cas-pin" :data-provider-id="row.id">
+            <span aria-hidden="true">📌</span>
+            <span class="cas-pin-name" :title="row.name">{{ row.name }}</span>
+            <button
+              type="button"
+              class="cas-x"
+              data-test="conv-setting-pin-remove"
+              :aria-label="t('gui.conversation.settings.ai_pin_remove', { name: row.name })"
+              :title="t('gui.conversation.settings.ai_pin_remove', { name: row.name })"
+              @click="favorites.setPinned(row.id, false)"
+            >×</button>
+          </li>
+        </ul>
+        <select
+          v-if="unpinned.length"
+          class="cas-select"
+          data-test="conv-setting-pin-add"
+          value=""
+          :aria-label="t('gui.conversation.settings.ai_pin_add')"
+          @change="addPin($event)"
+        >
+          <option value="" disabled>＋ {{ t('gui.conversation.settings.ai_pin_add') }}</option>
+          <option v-for="p in unpinned" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+        <span v-else-if="!pinnedRows.length" class="cas-ref" data-test="conv-setting-pins-empty">{{ t('gui.conversation.settings.ai_pinned_empty') }}</span>
+      </div>
     </div>
 
-    <div v-if="prefsState === 'loading'" class="cas-hint">{{ t('gui.conversation.settings.ai_prefs_loading') }}</div>
-    <div v-else-if="prefsState === 'error'" class="cas-hint is-error" role="alert" data-test="conv-setting-prefs-error">
+    <div v-if="prefsState === 'loading'" class="cas-note">{{ t('gui.conversation.settings.ai_prefs_loading') }}</div>
+    <div v-else-if="prefsState === 'error'" class="cas-note is-error" role="alert" data-test="conv-setting-prefs-error">
       {{ t('gui.conversation.settings.ai_prefs_failed') }}
       <button type="button" class="cas-link" @click="loadPrefs">{{ t('gui.conversation.retry') }}</button>
     </div>
     <template v-else-if="prefs">
       <div class="cas-row">
-        <span class="cas-label">
-          {{ t('gui.conversation.settings.ai_repeat') }}
-          <small class="cas-ref" data-test="conv-setting-repeat-system">{{ t('gui.conversation.settings.ai_repeat_system', { max: prefs.repeat_count_system_max }) }}</small>
-        </span>
+        <span class="cas-label">{{ t('gui.conversation.settings.ai_repeat') }}</span>
         <span class="cas-stepper">
           <button
             type="button"
@@ -78,6 +78,7 @@
             :disabled="saving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
             @click="stepRepeat(1)"
           >＋</button>
+          <small class="cas-ref" data-test="conv-setting-repeat-system">{{ t('gui.conversation.settings.ai_repeat_system', { max: prefs.repeat_count_system_max }) }}</small>
           <button
             v-if="prefs.repeat_count_max !== null"
             type="button"
@@ -89,15 +90,12 @@
         </span>
       </div>
       <label class="cas-row">
-        <span class="cas-label">
-          {{ t('gui.conversation.settings.ai_title') }}
-          <small class="cas-ref" data-test="conv-setting-title-effective">{{ t('gui.conversation.settings.ai_title_effective', { name: effectiveTitleName }) }}</small>
-        </span>
+        <span class="cas-label">{{ t('gui.conversation.settings.ai_title') }}</span>
         <select
           class="cas-select"
           data-test="conv-setting-title-ai"
           :value="prefs.title_provider"
-          :title="titleName(prefs.title_provider)"
+          :title="t('gui.conversation.settings.ai_title_effective', { name: effectiveTitleName })"
           :disabled="saving"
           @change="chooseTitle(($event.target as HTMLSelectElement).value)"
         >
@@ -105,7 +103,7 @@
         </select>
       </label>
     </template>
-    <div v-if="saveError" class="cas-hint is-error" role="alert" data-test="conv-setting-prefs-save-error">{{ saveError }}</div>
+    <div v-if="saveError" class="cas-note is-error" role="alert" data-test="conv-setting-prefs-save-error">{{ saveError }}</div>
   </div>
 </template>
 
@@ -171,10 +169,13 @@ const fixedTitle = computed<TitleChoice[]>(() => [
   { value: 'executor', label: t('gui.conversation.settings.ai_title_executor') },
 ])
 
-// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use.
-const titleOptions = computed<TitleChoice[]>(() =>
-  titleChoices(prefs.value?.title_provider, fixedTitle.value, props.providers.map((p) => ({ value: p.id, label: p.name }))),
-)
+// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use. While 자동 is chosen, the AI it resolves to is
+// named inside that choice ("자동(시스템 기본) · Haiku 5.5") instead of on a line of its own.
+const titleOptions = computed<TitleChoice[]>(() => {
+  const autoInUse = prefs.value?.title_provider === 'auto' && effectiveTitleName.value && effectiveTitleName.value !== titleName('auto')
+  const fixed = fixedTitle.value.map((o) => (o.value === 'auto' && autoInUse ? { ...o, label: `${o.label} · ${effectiveTitleName.value}` } : o))
+  return titleChoices(prefs.value?.title_provider, fixed, props.providers.map((p) => ({ value: p.id, label: p.name })))
+})
 
 function titleName(value: string): string {
   return fixedTitle.value.find((o) => o.value === value)?.label ?? nameOf(value)
@@ -191,43 +192,59 @@ onBeforeUnmount(control.dispose)
 </script>
 
 <style scoped>
+/* F96-8: the row shape shared with the 대화 / 음성 tabs (sizes from the window's --csx-* variables). */
 .cas {
   display: grid;
-  gap: 10px;
+  gap: var(--csx-row-gap, 8px);
 }
 
 .cas-row {
   display: grid;
-  grid-template-columns: minmax(64px, max-content) minmax(0, 1fr);
+  grid-template-columns: var(--csx-label-width, 88px) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  min-height: var(--csx-row-height, 28px);
+}
+
+.cas-row.is-top {
+  align-items: start;
+}
+
+.cas-row.is-top > .cas-label {
+  line-height: var(--csx-control-height, 26px);
 }
 
 .cas-label {
   color: var(--fg2-text);
   font-weight: 600;
-  display: grid;
+  overflow-wrap: anywhere;
 }
 
-.cas-ref,
-.cas-hint {
+.cas-value {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cas-ref {
   color: var(--fg2-muted);
   font-weight: 400;
   font-size: 10.5px;
 }
 
-.cas-hint {
-  margin: 2px 0;
+.cas-note {
+  color: var(--fg2-muted);
 }
 
-.cas-hint.is-error {
+.cas-note.is-error {
   color: var(--fg2-status-danger-fg, #d33);
 }
 
 .cas-select {
   width: 100%;
   min-width: 0;
-  height: 27px;
+  box-sizing: border-box;
+  height: var(--csx-control-height, 26px);
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-sm);
   background: var(--fg2-bg);
@@ -236,28 +253,23 @@ onBeforeUnmount(control.dispose)
   padding: 0 5px;
 }
 
-.cas-add {
-  margin-top: 4px;
-}
-
-.cas-block {
-  display: grid;
-  gap: 2px;
-}
-
 .cas-pins {
   list-style: none;
-  margin: 2px 0 0;
+  margin: 0;
   padding: 0;
-  display: grid;
-  gap: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .cas-pin {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
+  gap: 4px;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 22px;
+  padding: 1px 2px 1px 6px;
   border: 1px solid var(--fg2-line);
   border-radius: var(--fg2-control-radius-sm);
   color: var(--fg2-text);
@@ -265,9 +277,25 @@ onBeforeUnmount(control.dispose)
 
 /* Long AI names wrap instead of being cut. */
 .cas-pin-name {
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.cas-x {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--fg2-control-radius-sm);
+  background: transparent;
+  color: var(--fg2-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cas-x:hover {
+  color: var(--fg2-text);
+  background: var(--fg2-control-surface);
 }
 
 .cas-stepper {
@@ -276,6 +304,11 @@ onBeforeUnmount(control.dispose)
   gap: 6px;
   flex-wrap: wrap;
   color: var(--fg2-text);
+}
+
+.cas-stepper > b {
+  min-width: 14px;
+  text-align: center;
 }
 
 .cas-icon {

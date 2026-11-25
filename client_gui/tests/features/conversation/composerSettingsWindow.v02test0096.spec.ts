@@ -1,5 +1,6 @@
 // flowgate.v02test.0096 ④ — the ⚙ settings window: modeless, 대화 / 음성 / AI tabs (horizontal by default, vertical by
 // one prop), last place / size / tab remembered, always inside the viewport, and the AI tab's saves.
+// F96-8: the height follows the content unless resized by hand, and the 대화 tab saves each change at once.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
@@ -95,7 +96,51 @@ describe('⚙ settings window (v02test.0096 ④)', () => {
 
   it('clampRect keeps every edge on screen and never grows past the viewport', () => {
     expect(clampRect({ x: -50, y: 900, width: 2000, height: 300 }, { width: 800, height: 600 }, { width: 280, height: 220 })).toEqual({ x: 4, y: 296, width: 792, height: 300 })
-    expect(parseStoredWindow('{broken')).toEqual({ rect: null, tab: null })
+    expect(parseStoredWindow('{broken')).toEqual({ rect: null, tab: null, sized: false })
+  })
+
+  it('F96-8: follows the content height; an old stored height (400) is not used, only a size set by hand', async () => {
+    localStorage.setItem(SETTINGS_WINDOW_KEY, JSON.stringify({ rect: { x: 20, y: 20, width: 360, height: 400 }, tab: 'chat' }))
+    expect(parseStoredWindow(localStorage.getItem(SETTINGS_WINDOW_KEY)).sized).toBe(false)
+    const w = mountSettings()
+    await w.get('[data-test="conv-settings-btn"]').trigger('click')
+    const el = () => w.get('[data-test="conv-settings"]').element as HTMLElement
+    expect(el().style.height).toBe('')
+    expect(parseInt(el().style.maxHeight, 10)).toBeLessThanOrEqual(window.innerHeight)
+
+    // dragging the corner grip fixes the size, and it is remembered as set by hand
+    await w.get('[data-test="conv-settings-resize"]').trigger('pointerdown', { button: 0, clientX: 100, clientY: 100 })
+    document.dispatchEvent(Object.assign(new Event('pointermove'), { clientX: 120, clientY: 340 }))
+    document.dispatchEvent(new Event('pointerup'))
+    await w.vm.$nextTick()
+    expect(el().style.height).not.toBe('')
+    expect(parseStoredWindow(localStorage.getItem(SETTINGS_WINDOW_KEY)).sized).toBe(true)
+
+    // a double-click on the grip goes back to the content height
+    await w.get('[data-test="conv-settings-resize"]').trigger('dblclick')
+    expect(el().style.height).toBe('')
+    expect(parseStoredWindow(localStorage.getItem(SETTINGS_WINDOW_KEY)).sized).toBe(false)
+    w.unmount()
+  })
+
+  it('F96-8: the 대화 tab has no 취소 / 저장 and saves a change at once; a failure puts the old value back', async () => {
+    const w = mountSettings()
+    await w.get('[data-test="conv-settings-btn"]').trigger('click')
+    expect(w.find('[data-test="conv-settings-save"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('취소')
+    await w.get('[data-test="conv-setting-send-action"]').setValue('copy_mention')
+    const [patch, done] = w.emitted('save')![0] as [Record<string, unknown>, (ok: boolean) => void]
+    expect(patch).toMatchObject({ send_action: 'copy_mention' })
+    done(false)
+    await w.vm.$nextTick()
+    expect((w.get('[data-test="conv-setting-send-action"]').element as HTMLSelectElement).value).toBe(DEFAULT_CHAT_SETTINGS.sendAction)
+    expect(w.find('[data-test="conv-settings"]').exists()).toBe(true)
+    // an invalid typed number is not sent
+    await w.get('[data-test="conv-setting-context"]').setValue('custom')
+    await w.get('[data-test="conv-setting-turns"]').setValue('0')
+    await w.get('[data-test="conv-setting-turns"]').trigger('change')
+    expect(w.emitted('save')).toHaveLength(1)
+    w.unmount()
   })
 
   it('AI tab: picks this chat\'s AI, manages 📌 pins and saves my repeat limit at once', async () => {

@@ -1,9 +1,10 @@
 <template>
   <!-- Voice section of the chat ⚙ popover: 녹음 후 (text / voice), 서비스 ▼, 모델 ▼ and 실시간. These are this person's own
        settings (/me/ui-settings) and are saved as soon as they change; the chat settings' 저장 does not cover them.
-       An administrator can install a model right here (the same installation API as 시스템 › 음성 입력). -->
+       An administrator can install a model right here (the same installation API as 시스템 › 음성 입력).
+       F96-8: it is the ⚙ window's 음성 tab, so no own title or divider; the same one-line rows as the 대화 / AI tabs
+       (the window's --csx-* sizes), and the license link and 관리자 기본 모델 쓰기 share one short line. -->
   <div class="cvs" data-test="conv-voice-settings">
-    <div class="cvs-title">{{ t('gui.voice.settings.title') }}</div>
 
     <div v-if="!state.loaded && !state.loadError" class="cvs-note">{{ t('gui.voice.settings.loading') }}</div>
     <div v-else-if="!state.loaded" class="cvs-note is-error" role="alert">
@@ -90,10 +91,6 @@
           </span>
         </div>
       </div>
-      <!-- F86: no notice per model any more; one line per engine under the list opens that engine's license tab. -->
-      <div v-if="browsingServiceInfo" class="cvs-lic" data-test="conv-voice-license">
-        <LicenseInfoLink :tab="browsingServiceInfo.id">{{ t('gui.licenses.open_for', { name: browsingServiceInfo.name }) }}</LicenseInfoLink>
-      </div>
       <div v-if="browsingPending && model" class="cvs-note">{{ t('gui.voice.settings.keep_using', { model: currentModelLabel }) }}</div>
 
       <div v-if="state.prefs.action === 'text'" class="cvs-row">
@@ -115,9 +112,12 @@
         </span>
       </div>
 
-      <div v-if="state.prefs.service" class="cvs-row cvs-sub">
-        <span></span>
-        <button type="button" class="cvs-link" data-test="conv-voice-use-default" :disabled="state.busy" @click="save({ service: '', model: '', realtime: false })">{{ t('gui.voice.settings.use_default') }}</button>
+      <!-- F86: no notice per model any more; one link per engine opens that engine's license tab. -->
+      <div v-if="browsingServiceInfo || state.prefs.service" class="cvs-foot">
+        <span v-if="browsingServiceInfo" class="cvs-lic" data-test="conv-voice-license">
+          <LicenseInfoLink :tab="browsingServiceInfo.id">{{ t('gui.licenses.open_for', { name: browsingServiceInfo.name }) }}</LicenseInfoLink>
+        </span>
+        <button v-if="state.prefs.service" type="button" class="cvs-link" data-test="conv-voice-use-default" :disabled="state.busy" @click="save({ service: '', model: '', realtime: false })">{{ t('gui.voice.settings.use_default') }}</button>
       </div>
     </template>
 
@@ -242,26 +242,23 @@ watch(
 
 <style scoped>
 .cvs {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--fg2-line);
-  font-size: 11.5px;
+  display: grid;
+  gap: var(--csx-row-gap, 8px);
 }
 
-.cvs-title {
-  margin-bottom: 6px;
-  font-weight: 700;
-  color: var(--fg2-text);
-}
-
+/* F96-8: the row shape shared with the 대화 / AI tabs (sizes from the window's --csx-* variables). */
 .cvs-row {
   display: grid;
-  /* v02test.0096 ④: the label column fits its words, the control takes the rest. */
-  grid-template-columns: minmax(56px, max-content) minmax(0, 1fr);
+  grid-template-columns: var(--csx-label-width, 88px) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
-  color: var(--fg2-muted);
+  min-height: var(--csx-row-height, 28px);
+}
+
+.cvs-row > :first-child {
+  color: var(--fg2-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .cvs-row > :last-child {
@@ -276,11 +273,12 @@ watch(
 }
 
 .cvs-seg button {
+  height: calc(var(--csx-control-height, 26px) - 2px);
   border: 0;
   background: transparent;
   color: var(--fg2-muted);
   font: inherit;
-  padding: 3px 12px;
+  padding: 0 12px;
   cursor: pointer;
 }
 
@@ -292,15 +290,17 @@ watch(
 .cvs-dd {
   width: 100%;
   min-width: 0;
+  min-height: var(--csx-control-height, 26px);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-control-surface);
+  background: var(--fg2-bg);
   color: var(--fg2-text);
   font: inherit;
-  padding: 4px 8px;
+  padding: 2px 5px;
   cursor: pointer;
   text-align: left;
 }
@@ -323,7 +323,7 @@ watch(
 .cvs-list {
   max-height: 180px;
   overflow: auto;
-  margin: -2px 0 6px;
+  margin: calc(var(--csx-row-gap, 8px) * -0.5) 0 0 calc(var(--csx-label-width, 88px) + 8px);
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius-sm);
   background: var(--fg2-panel);
@@ -497,7 +497,6 @@ watch(
 }
 
 .cvs-note {
-  margin: 2px 0 6px;
   color: var(--fg2-muted);
 }
 
@@ -509,8 +508,13 @@ watch(
   color: var(--fg2-status-info-fg);
 }
 
-.cvs-lic {
-  padding: 2px 0 4px;
+.cvs-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-left: calc(var(--csx-label-width, 88px) + 8px);
+  font-size: 10.5px;
 }
 
 .cvs-link {
@@ -520,9 +524,5 @@ watch(
   font: inherit;
   padding: 0;
   cursor: pointer;
-}
-
-.cvs-sub {
-  margin-top: -2px;
 }
 </style>
