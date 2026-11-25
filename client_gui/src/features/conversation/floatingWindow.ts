@@ -4,7 +4,12 @@
 // resizes by its corner and is always pulled back fully inside the viewport (on open, while dragging / resizing and
 // when the browser window shrinks). The last place, size and tab are kept in this browser's localStorage, so the
 // window opens again where it was left. Nothing here talks to the server.
-import { onBeforeUnmount, reactive } from 'vue'
+//
+// flowgate.v02test.0096 F96-8: the height follows the content by default (the window is as tall as the open tab, capped
+// at the viewport, where the body scrolls). Only a size the person set with the corner grip is kept as a fixed height
+// (`sized`); a height stored before this (the old fixed 400) is ignored, so a short tab never leaves an empty bottom.
+// Double-clicking the grip goes back to the content height.
+import { onBeforeUnmount, reactive, ref } from 'vue'
 
 export const SETTINGS_WINDOW_KEY = 'fg.composer_settings_window.v1'
 
@@ -18,11 +23,14 @@ export interface WindowRect {
 export interface StoredWindow {
   rect: WindowRect | null
   tab: string | null
+  /** True only when the person resized the window by hand; otherwise the stored height is not used. */
+  sized: boolean
 }
 
 export interface FloatingWindowOptions {
   storageKey?: string
   width: number
+  /** The height used to place the window before its content has been measured. */
   height: number
   minWidth: number
   minHeight: number
@@ -36,17 +44,17 @@ function finite(value: unknown): value is number {
 
 /** A stored value as rect + tab; anything unreadable reads as nothing stored. */
 export function parseStoredWindow(raw: string | null): StoredWindow {
-  if (!raw) return { rect: null, tab: null }
+  if (!raw) return { rect: null, tab: null, sized: false }
   try {
     const data = JSON.parse(raw) as Record<string, unknown> | null
-    if (!data || typeof data !== 'object') return { rect: null, tab: null }
+    if (!data || typeof data !== 'object') return { rect: null, tab: null, sized: false }
     const r = data.rect as Record<string, unknown> | null | undefined
     const rect = r && finite(r.x) && finite(r.y) && finite(r.width) && finite(r.height) && r.width > 0 && r.height > 0
       ? { x: r.x, y: r.y, width: r.width, height: r.height }
       : null
-    return { rect, tab: typeof data.tab === 'string' && data.tab ? data.tab : null }
+    return { rect, tab: typeof data.tab === 'string' && data.tab ? data.tab : null, sized: !!rect && data.sized === true }
   } catch {
-    return { rect: null, tab: null }
+    return { rect: null, tab: null, sized: false }
   }
 }
 
@@ -82,14 +90,19 @@ export function placeNear(anchor: { left: number; right: number; top: number; bo
 export function useFloatingWindow(options: FloatingWindowOptions) {
   const key = options.storageKey ?? SETTINGS_WINDOW_KEY
   const margin = options.margin ?? 4
-  const min = { width: options.minWidth, height: options.minHeight }
   const rect = reactive<WindowRect>({ x: 0, y: 0, width: options.width, height: options.height })
+  /** A height the person chose with the grip; false = the height follows the content. */
+  const sized = ref(false)
+  /** The tallest the window may be (viewport less the margins); the content scrolls past it. */
+  const maxHeight = ref(Math.max(1, viewport().height - margin * 2))
+  // Set while the first place above the ⚙ button still uses the estimated height.
+  let firstAnchor: { left: number; right: number; top: number; bottom: number } | null = null
 
   function load(): StoredWindow {
     try {
       return parseStoredWindow(typeof localStorage === 'undefined' ? null : localStorage.getItem(key))
     } catch {
-      return { rect: null, tab: null }
+      return { rect: null, tab: null, sized: false }
     }
   }
 
@@ -97,22 +110,52 @@ export function useFloatingWindow(options: FloatingWindowOptions) {
 
   function persist(): void {
     try {
-      localStorage.setItem(key, JSON.stringify({ rect: { ...rect }, tab }))
+      localStorage.setItem(key, JSON.stringify({ rect: { ...rect }, tab, sized: sized.value }))
     } catch {
       // Best effort: the window still works for this page.
     }
   }
 
   function apply(next: WindowRect): void {
-    Object.assign(rect, clampRect(next, viewport(), min, margin))
+    const view = viewport()
+    maxHeight.value = Math.max(1, view.height - margin * 2)
+    // A content-height window has no minimum height of its own: its measured height is what it is.
+    Object.assign(rect, clampRect(next, view, { width: options.minWidth, height: sized.value ? options.minHeight : 0 }, margin))
   }
 
-  /** On open: the remembered rect, or a first place near the anchor; both pulled inside the viewport. */
+  /** On open: the remembered place (and size, if set by hand), or a first place near the anchor; pulled inside the viewport. */
   function openAt(anchor: { left: number; right: number; top: number; bottom: number } | null): void {
     const stored = load()
     tab = stored.tab ?? tab
-    apply(stored.rect ?? placeNear(anchor, { width: options.width, height: options.height }, viewport(), margin))
+    sized.value = stored.sized
+    firstAnchor = stored.rect ? null : anchor
+    const estimate = { width: options.width, height: options.height }
+    apply(stored.rect
+      ? { ...stored.rect, height: stored.sized ? stored.rect.height : Math.min(rect.height, estimate.height) }
+      : placeNear(anchor, estimate, viewport(), margin))
     if (typeof window !== 'undefined') window.addEventListener('resize', onViewportResize)
+  }
+
+  /**
+   * The window's rendered height (content height while not sized by hand). The first place above the ⚙ button is
+   * redone with the real height; afterwards a taller tab only pulls the window back inside the screen.
+   */
+  function measure(height: number): void {
+    if (sized.value || !(height > 0) || mode === 'resize') return
+    if (firstAnchor) {
+      const anchor = firstAnchor
+      firstAnchor = null
+      apply(placeNear(anchor, { width: rect.width, height }, viewport(), margin))
+      return
+    }
+    if (height !== rect.height) apply({ ...rect, height })
+  }
+
+  /** Back to the content height (double-click on the grip). */
+  function resetSize(): void {
+    if (!sized.value) return
+    sized.value = false
+    persist()
   }
 
   function onClose(): void {
@@ -167,13 +210,21 @@ export function useFloatingWindow(options: FloatingWindowOptions) {
     const dx = event.clientX - startX
     const dy = event.clientY - startY
     if (mode === 'move') apply({ ...origin, x: origin.x + dx, y: origin.y + dy })
-    else apply({ ...origin, width: Math.max(min.width, origin.width + dx), height: Math.max(min.height, origin.height + dy) })
+    else {
+      // The first drag of the grip fixes the height: from here on the window keeps the size the person gives it.
+      sized.value = true
+      firstAnchor = null
+      apply({ ...origin, width: Math.max(options.minWidth, origin.width + dx), height: Math.max(options.minHeight, origin.height + dy) })
+    }
   }
 
   function onPointerUp(): void {
     const was = mode
     stopPointer()
-    if (was) persist()
+    if (was) {
+      if (was === 'move') firstAnchor = null
+      persist()
+    }
   }
 
   function stopPointer(): void {
@@ -185,5 +236,5 @@ export function useFloatingWindow(options: FloatingWindowOptions) {
 
   onBeforeUnmount(onClose)
 
-  return { rect, openAt, onClose, startMove, startResize, storedTab, rememberTab, persist }
+  return { rect, sized, maxHeight, openAt, onClose, measure, resetSize, startMove, startResize, storedTab, rememberTab, persist }
 }

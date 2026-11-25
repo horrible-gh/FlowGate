@@ -263,8 +263,7 @@ describe('v02test.0025 context setting 체크포인트 사용', () => {
     const options = select.findAll('option')
     expect(options.map((o) => o.attributes('value'))).toEqual(['5', '10', '15', 'custom', 'all', 'checkpoint', 'checkpoint_recent'])
     expect(options[options.length - 2].text()).toBe('체크포인트 사용')
-    await select.setValue('checkpoint')
-    await wrapper.find('[data-test="conv-settings-save"]').trigger('click')
+    await select.setValue('checkpoint') // F96-8: saved at once
     await flushPromises()
     const patch = source.saveChatSettings.mock.calls.at(-1)![0] as Record<string, unknown>
     expect(patch.context_mode).toBe('checkpoint')
@@ -275,7 +274,8 @@ describe('v02test.0025 context setting 체크포인트 사용', () => {
     expect(line.attributes('data-kind')).toBe('exclude')
     expect(line.text()).toContain('여기부터 전송됩니다')
 
-    // Reopening shows 체크포인트 사용 selected.
+    // Closing and reopening shows 체크포인트 사용 selected.
+    await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
     await wrapper.find('[data-test="conv-settings-btn"]').trigger('click')
     expect((wrapper.find('[data-test="conv-setting-context"]').element as HTMLSelectElement).value).toBe('checkpoint')
     wrapper.unmount()
