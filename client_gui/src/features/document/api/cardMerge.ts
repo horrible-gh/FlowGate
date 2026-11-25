@@ -17,8 +17,10 @@
 //     { state: running | succeeded | exhausted | stopped_by_person | skipped_paused, attempt: 1..3, max_attempts: 3,
 //       attempts: [{ no, mode: ai | rebase | rebase_ai | switch_ai, provider: { id, name } | null,
 //                    result: running | resolved | conflicts_left | check_failed | ai_error | timeout | no_other_ai,
-//                    reason, started_at, ended_at }],
-//       unresolved: [{ path, hunks: [{ start_line, end_line }] }] }
+//                    reason, reason_summary?, started_at, ended_at }],
+//       unresolved: [{ path, hunks: [{ start_line, end_line }] }], count? }
+//     reason_summary (optional, newer servers): a one-line, person-readable reason; `reason` may then stay the raw text
+//       (a check failure's JSON verdict). count (optional): the conflicted file count (e.g. while skipped_paused).
 //   While it runs the state stays `catching_up`; after the last failure (exhausted) it is `needs_choice` as before.
 //
 // Refusals are the Graph envelope `{ ok: false, error: { code, message, params } }` (cardMergeErrorOf): 409
@@ -69,6 +71,8 @@ export interface CardMergeAutoAttempt {
   /** null = a result this screen does not know. */
   readonly result: CardMergeAutoResult | null
   readonly reason: string | null
+  /** The server's one-line reason (`reason_summary`); null from an older server (the screen then reads `reason` itself). */
+  readonly reasonSummary: string | null
   readonly startedAt: string | null
   readonly endedAt: string | null
 }
@@ -89,6 +93,8 @@ export interface CardMergeAutoResolve {
   readonly maxAttempts: number
   readonly attempts: readonly CardMergeAutoAttempt[]
   readonly unresolved: readonly CardMergeAutoUnresolved[]
+  /** The conflicted file count the server sent (`count`); null when absent or not a positive number. */
+  readonly fileCount: number | null
 }
 
 export interface CardMergeCard {
@@ -149,6 +155,7 @@ export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | nul
           provider: provider(attempt.provider),
           result: cardMergeAutoResults.find((key) => key === attempt.result) ?? null,
           reason: text(attempt.reason),
+          reasonSummary: text(attempt.reason_summary),
           startedAt: text(attempt.started_at),
           endedAt: text(attempt.ended_at),
         }
@@ -170,7 +177,11 @@ export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | nul
         return [{ path, hunks }]
       })
     : []
-  return { state, attempt: count(row.attempt) ?? attempts.length, maxAttempts: maxAttempts && maxAttempts > 0 ? maxAttempts : 3, attempts, unresolved }
+  const fileCount = count(row.count)
+  return {
+    state, attempt: count(row.attempt) ?? attempts.length, maxAttempts: maxAttempts && maxAttempts > 0 ? maxAttempts : 3, attempts, unresolved,
+    fileCount: fileCount !== null && fileCount > 0 ? Math.floor(fileCount) : null,
+  }
 }
 
 /** A state answer -> CardMergeState (an unknown state reads as hidden, unknown actions are dropped). */

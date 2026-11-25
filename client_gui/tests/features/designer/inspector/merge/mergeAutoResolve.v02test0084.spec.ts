@@ -7,7 +7,9 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MergeWindow from '@/features/designer/inspector/features/merge/MergeWindow.vue'
 import { mergeWindows } from '@/features/designer/inspector/features/merge/mergeWindows'
-import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeHunkRange } from '@/features/designer/inspector/features/merge/mergeModel'
+import {
+  MERGE_REASON_MAX, mergeAutoCurrent, mergeAutoProgress, mergeAutoReason, mergeAutoResultKey, mergeAutoRunning, mergeCountKey, mergeHunkRange, mergeVerdictLine,
+} from '@/features/designer/inspector/features/merge/mergeModel'
 import { toInspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import type { FlowGraph, FlowGraphNode, FlowGraphNodeRun, FlowGraphSelection } from '@/features/designer/center/graph/flowGraph'
 import { prepareInspectorI18n } from '../support/inspectorSupport'
@@ -85,15 +87,16 @@ describe('auto_resolve on the wire', () => {
     expect(toCardMergeState(raw({ auto_resolve: exhausted() })).autoResolve).toEqual({
       state: 'exhausted', attempt: 3, maxAttempts: 3,
       attempts: [
-        { no: 1, mode: 'ai', provider: { id: 'aip_x', name: 'Claude' }, result: 'conflicts_left', reason: '충돌 표시가 남았습니다', startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
-        { no: 2, mode: 'rebase_ai', provider: { id: 'aip_x', name: 'Claude' }, result: 'check_failed', reason: 'test_upload_queue 실패', startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
-        { no: 3, mode: 'switch_ai', provider: { id: 'aip_y', name: 'Codex' }, result: 'ai_error', reason: 'AI 실행 오류', startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
+        { no: 1, mode: 'ai', provider: { id: 'aip_x', name: 'Claude' }, result: 'conflicts_left', reason: '충돌 표시가 남았습니다', reasonSummary: null, startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
+        { no: 2, mode: 'rebase_ai', provider: { id: 'aip_x', name: 'Claude' }, result: 'check_failed', reason: 'test_upload_queue 실패', reasonSummary: null, startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
+        { no: 3, mode: 'switch_ai', provider: { id: 'aip_y', name: 'Codex' }, result: 'ai_error', reason: 'AI 실행 오류', reasonSummary: null, startedAt: '2026-11-25T08:00:00+09:00', endedAt: 'x' },
       ],
       unresolved: [{ path: 'src/queue.ts', hunks: [{ startLine: 12, endLine: 18 }, { startLine: 40, endLine: 40 }] }, { path: 'src/other.ts', hunks: [] }],
+      fileCount: null,
     })
     const odd = toCardMergeState(raw({ auto_resolve: { state: 'running', attempts: [{ mode: 'x', result: 'y', provider: null }, 'bad'], unresolved: [{ hunks: [] }, { path: 'p', hunks: [{ start_line: 'a' }, { start_line: 5 }] }] } })).autoResolve!
     expect(odd).toMatchObject({ state: 'running', attempt: 2, maxAttempts: 3 })
-    expect(odd.attempts[0]).toMatchObject({ no: 1, mode: null, result: null, provider: null, reason: null })
+    expect(odd.attempts[0]).toMatchObject({ no: 1, mode: null, result: null, provider: null, reason: null, reasonSummary: null })
     expect(odd.unresolved).toEqual([{ path: 'p', hunks: [{ startLine: 5, endLine: 5 }] }])
   })
 
@@ -202,6 +205,8 @@ describe('exhausted', () => {
     expect(box.find('h4').classes()).toContain('is-danger')
     expect(w.findAll('[data-test="merge-auto-file"]').map((row) => row.find('code').text())).toEqual(['src/queue.ts', 'src/other.ts'])
     expect(w.findAll('[data-test="merge-auto-hunks"]').map((row) => row.text())).toEqual(['12–18, 40행'])
+    expect(w.findAll('[data-test="merge-auto-no-hunks"]').map((row) => row.text())).toEqual(['충돌 구간 정보 없음'])
+    expect(w.findAll('[data-test="merge-auto-reason-raw"]')).toHaveLength(0)
     const rows = w.findAll('[data-test="merge-auto-attempt"]')
     expect(rows.map((row) => row.find('[data-test="merge-auto-ai"]').text())).toEqual(['Claude', 'Claude', 'Codex'])
     expect(rows.map((row) => row.find('[data-test="merge-auto-result"]').text())).toEqual(['충돌이 남음', '검사 실패', 'AI 오류'])
@@ -263,5 +268,125 @@ describe('the short states and none', () => {
     expect(q(w, 'merge-auto-note').exists()).toBe(false)
     expect(q(w, 'merge-summary').text()).toBe(t('gui.inspector.merge.needs_choice.both'))
     expect(w.findAll('[data-test="merge-files"] .mz-fr')).toHaveLength(2)
+  })
+})
+
+// flowgate.v02test.0084 (F84-6) — the failure screen's wording and conflict parts: the AI error result, a check failure's
+// reason as one readable line (raw JSON only on unfolding), "no conflict part information" for an empty hunk list, and
+// `{count}` sentences that drop the counted part instead of showing "( file(s))".
+const VERDICT = JSON.stringify({
+  status: 'failed', checked: 2, failure_count: 2, warnings: [], preexisting: 0, skipped: 0,
+  failures: [
+    { path: 'server/app/queue.py', checker: 'python_ast', line: 42, message: 'invalid syntax' },
+    { path: 'server/app/other.py', checker: 'python_ast', line: 7, message: 'unexpected indent' },
+  ],
+})
+
+describe('F84-6 the reason, result and count rules', () => {
+  it('reads reason_summary and count from the wire; a bad count reads as none', async () => {
+    const { toCardMergeAutoResolve } = await import('@/features/document/api/cardMerge')
+    const auto = toCardMergeAutoResolve({ state: 'skipped_paused', count: 3, attempts: [attempt(1, { result: 'check_failed', reason: VERDICT, reason_summary: '구문 검사 · a.py:1 · 오류' })] })!
+    expect(auto.fileCount).toBe(3)
+    expect(auto.attempts[0]).toMatchObject({ reason: VERDICT, reasonSummary: '구문 검사 · a.py:1 · 오류' })
+    for (const count of [0, -1, 'x', null, undefined]) expect(toCardMergeAutoResolve({ state: 'skipped_paused', count })!.fileCount).toBeNull()
+  })
+
+  it('a result the screen does not know reads as the plain failure key', () => {
+    expect(['ai_error', 'check_failed', 'conflicts_left'].map(mergeAutoResultKey)).toEqual(['ai_error', 'check_failed', 'conflicts_left'])
+    expect([null, undefined, '', 'provider_failed'].map(mergeAutoResultKey)).toEqual(['unknown', 'unknown', 'unknown', 'unknown'])
+  })
+
+  it('the reason line: the summary, else a line from the JSON verdict, else the cut text', () => {
+    expect(mergeAutoReason({ reason: VERDICT, reasonSummary: ' 구문 검사 실패 ' })).toEqual({ line: '구문 검사 실패', raw: VERDICT })
+    expect(mergeAutoReason({ reason: VERDICT, reasonSummary: null })).toEqual({ line: 'python_ast · server/app/queue.py:42 · invalid syntax (+1)', raw: VERDICT })
+    expect(mergeAutoReason({ reason: `verification_failed: ${VERDICT}` }).line).toBe('python_ast · server/app/queue.py:42 · invalid syntax (+1)')
+    expect(mergeAutoReason({ reason: '충돌 표시가 남았습니다' })).toEqual({ line: '충돌 표시가 남았습니다', raw: null })
+    const broken = `{"status": "failed", "failures": [{"path": "${'x'.repeat(200)}`
+    const cut = mergeAutoReason({ reason: broken })
+    expect(cut.line.endsWith('…')).toBe(true)
+    expect(cut.line.length).toBe(MERGE_REASON_MAX + 1)
+    expect(cut.raw).toBe(broken)
+    expect(mergeAutoReason({ reason: null, reasonSummary: null })).toEqual({ line: '', raw: null })
+    expect(mergeVerdictLine({ check: 'pytest', file: 'tests/a.py', error: 'boom' })).toBe('pytest · tests/a.py · boom')
+    expect(mergeVerdictLine({ status: 'failed', failures: [] })).toBeNull()
+  })
+
+  it('a count sentence falls back to its no-count key', () => {
+    expect([mergeCountKey('k', 2), mergeCountKey('k', 0), mergeCountKey('k', null), mergeCountKey('k', undefined)]).toEqual(['k', 'k_nocount', 'k_nocount', 'k_nocount'])
+  })
+})
+
+describe('F84-6 the exhausted screen', () => {
+  it.each([['ko', 'AI 오류', '실패'], ['en', 'AI error', 'Failed'], ['ja', 'AI エラー', '失敗']])('%s: AI error and an unknown result in words, never the raw code', async (locale, aiError, unknown) => {
+    i18n.global.locale.value = locale
+    const base = exhausted()
+    api.read.mockResolvedValue(await state({ auto_resolve: { ...base, attempts: [...base.attempts.slice(0, 2), attempt(3, { result: 'provider_failed', reason: 'x', ended_at: 'x' }), attempt(4, { result: 'ai_error', reason: 'exit 1', ended_at: 'x' })] } }))
+    const w = await mountTab()
+    const results = w.findAll('[data-test="merge-auto-result"]').map((row) => row.text())
+    expect(results.slice(2)).toEqual([unknown, aiError])
+    expect(w.text()).not.toContain('provider_failed')
+    expect(w.find('[data-test="merge-auto-no-hunks"]').text()).toBe(t('gui.inspector.merge.auto.no_hunks'))
+  })
+
+  it('a check failure shows one readable line; the raw JSON is only inside the fold', async () => {
+    const base = exhausted()
+    api.read.mockResolvedValue(await state({ auto_resolve: { ...base, attempts: [attempt(1, { result: 'check_failed', reason: VERDICT, ended_at: 'x' }), attempt(2, { result: 'check_failed', reason: VERDICT, reason_summary: '구문 검사 실패: queue.py 42행', ended_at: 'x' })] } }))
+    const w = await mountTab()
+    const reasons = w.findAll('[data-test="merge-auto-reason"]').map((row) => row.text())
+    expect(reasons).toEqual(['python_ast · server/app/queue.py:42 · invalid syntax (+1)', '구문 검사 실패: queue.py 42행'])
+    for (const reason of reasons) expect(reason).not.toContain('{')
+    const folds = w.findAll('[data-test="merge-auto-reason-raw"]')
+    expect(folds).toHaveLength(2)
+    expect(folds[0].element.tagName).toBe('DETAILS')
+    expect(folds[0].find('summary').text()).toBe('원문 보기')
+    expect(folds[0].find('pre').text()).toBe(VERDICT)
+  })
+
+  it('an exhausted answer with every hunk list empty says so per file instead of a blank', async () => {
+    api.read.mockResolvedValue(await state({ auto_resolve: exhausted({ unresolved: [{ path: 'a.ts', hunks: [] }, { path: 'b.ts' }] }) }))
+    const w = await mountTab()
+    expect(w.findAll('[data-test="merge-auto-file"]')).toHaveLength(2)
+    expect(w.findAll('[data-test="merge-auto-hunks"]')).toHaveLength(0)
+    expect(w.findAll('[data-test="merge-auto-no-hunks"]').map((row) => row.text())).toEqual(['충돌 구간 정보 없음', '충돌 구간 정보 없음'])
+  })
+})
+
+describe('F84-6 count sentences', () => {
+  it.each(['en', 'ja', 'ko'])('%s: paused conflict without a count drops the counted part', async (locale) => {
+    i18n.global.locale.value = locale
+    api.read.mockResolvedValue(await state({ files: [], auto_resolve: { state: 'skipped_paused', attempts: [] } }))
+    const w = await mountTab()
+    const text = q(w, 'merge-summary').text()
+    expect(text).toBe(t('gui.inspector.merge.needs_choice.both_nocount'))
+    expect(text).not.toMatch(/\(\s*(file\(s\)|重なったファイル\s*件)\)/)
+    expect(text).not.toContain('{count}')
+  })
+
+  it('paused conflict with the server count puts the number in', async () => {
+    i18n.global.locale.value = 'en'
+    api.read.mockResolvedValue(await state({ files: [], auto_resolve: { state: 'skipped_paused', count: 3, attempts: [] } }))
+    const w = await mountTab()
+    expect(q(w, 'merge-summary').text()).toContain('(3 file(s))')
+    expect(q(w, 'merge-auto-note').text()).toBe('The run is paused, so automatic resolution did not start.')
+  })
+
+  it('the progress box with no file list reads without a count', async () => {
+    i18n.global.locale.value = 'en'
+    api.read.mockResolvedValue(await state({ state: 'catching_up', resolving: { run_id: 'run_1' }, files: [], actions: [] }))
+    const w = await mountTab()
+    expect(q(w, 'merge-catching-up-text').text()).toBe(t('gui.inspector.merge.catching_up.resolving_nocount'))
+    const log = w.findAll('[data-test="merge-log"] > div').map((row) => row.text())
+    expect(log[0]).not.toContain('()')
+    expect(log[1]).not.toContain('0/0')
+  })
+
+  it('every no-count key exists in ko, en and ja', () => {
+    for (const locale of ['ko', 'en', 'ja']) {
+      for (const key of ['auto.exhausted_title_nocount', 'auto.no_hunks', 'auto.reason_raw', 'catching_up.resolving_nocount',
+        'catching_up.steps.found_nocount', 'catching_up.steps.resolve_nocount', 'needs_choice.both_nocount']) {
+        expect(i18n.global.te(`gui.inspector.merge.${key}`, locale)).toBe(true)
+        expect(i18n.global.t(`gui.inspector.merge.${key}`, {}, { locale })).not.toContain('{count}')
+      }
+    }
   })
 })

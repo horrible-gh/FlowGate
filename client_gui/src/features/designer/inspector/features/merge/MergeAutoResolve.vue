@@ -7,6 +7,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="FILE_ICON" /></svg>
           <code :title="file.path">{{ file.path }}</code>
           <span v-if="file.hunks.length" class="ma-hunks" data-test="merge-auto-hunks">{{ hunkText(file.hunks) }}</span>
+          <span v-else class="ma-hunks is-none" data-test="merge-auto-no-hunks">{{ t('gui.inspector.merge.auto.no_hunks') }}</span>
         </div>
       </div>
     </div>
@@ -19,9 +20,15 @@
             <b>{{ t('gui.inspector.merge.auto.attempt_no', { no: attempt.no }) }}</b>
             · {{ t(`gui.inspector.merge.auto.modes.${attempt.mode ?? 'unknown'}`) }}
             · <span data-test="merge-auto-ai">{{ attempt.provider?.name ?? t('gui.inspector.merge.auto.no_ai') }}</span>
-            · <span class="ma-result" :class="`is-${tone(attempt.result)}`" data-test="merge-auto-result">{{ t(`gui.inspector.merge.auto.results.${attempt.result ?? 'unknown'}`) }}</span>
+            · <span class="ma-result" :class="`is-${tone(attempt.result)}`" data-test="merge-auto-result">{{ t(`gui.inspector.merge.auto.results.${mergeAutoResultKey(attempt.result)}`) }}</span>
           </span>
-          <span v-if="attempt.reason" class="ma-reason" data-test="merge-auto-reason">{{ attempt.reason }}</span>
+          <template v-if="attempt.reason || attempt.reasonSummary">
+            <span class="ma-reason" data-test="merge-auto-reason">{{ mergeAutoReason(attempt).line }}</span>
+            <details v-if="mergeAutoReason(attempt).raw" class="ma-raw" data-test="merge-auto-reason-raw">
+              <summary>{{ t('gui.inspector.merge.auto.reason_raw') }}</summary>
+              <pre>{{ mergeAutoReason(attempt).raw }}</pre>
+            </details>
+          </template>
         </li>
       </ol>
     </div>
@@ -30,7 +37,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { mergeHunkRange, type MergeAuto } from './mergeModel'
+import { mergeAutoReason, mergeAutoResultKey, mergeHunkRange, type MergeAuto } from './mergeModel'
 
 // The automatic resolution's detail: the files and conflict parts it could not settle, and what each try did.
 withDefaults(defineProps<{ auto: MergeAuto; showUnresolved?: boolean }>(), { showUnresolved: false })
@@ -62,4 +69,8 @@ const hunkText = (hunks: readonly { startLine: number; endLine: number }[]): str
 .ma-mark.is-run, .ma-result.is-run { color: #7cc0ff; }
 .ma-mark.is-bad, .ma-result.is-bad { color: #ff96a6; }
 .ma-reason { grid-column: 2; min-width: 0; color: #8ea5bd; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ma-hunks.is-none { color: #8ea5bd; font-style: italic; }
+.ma-raw { grid-column: 2; min-width: 0; color: #6f87a0; font-size: 11px; }
+.ma-raw summary { cursor: pointer; width: max-content; }
+.ma-raw pre { max-height: 160px; margin: 4px 0 0; padding: 6px 8px; overflow: auto; border: 1px solid #1b2b42; border-radius: 4px; background: #050d17; color: #a9bed4; font-family: ui-monospace, Consolas, monospace; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
