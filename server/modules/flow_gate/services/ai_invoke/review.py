@@ -2162,6 +2162,18 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
             "stop_detail": f"{AUTO_REJECT_FAILED_STOP_DETAIL}: {detail}"[:480],
             "attempts_used": int(bundle.get("attempts_used") or 0),
         }
+    if bundle.get("remote_final_failure"):
+        # The worker ends this run on the same signal; no worker remains to
+        # execute a reserved retry. Close in the checkpoint transaction now.
+        remote = bundle["remote_final_failure"]
+        cause = (next((remote.get(key) for key in ("cause", "reason", "code") if remote.get(key)), None)
+                 if isinstance(remote, dict) else None)
+        detail = cause or bundle.get("failure_detail") or "remote final failure"
+        return {
+            **common, "current_stage": "stopped", "stop_reason": "retry_exhausted",
+            "stop_detail": f"remote final failure: {detail}"[:480],
+            "attempts_used": int(bundle.get("attempts_used") or 0),
+        }
     if bundle.get("last_hop_outcome") == "failed" or bundle.get("history_lookup_failed"):
         used = int(bundle.get("attempts_used") or 0)
         maximum = int(bundle.get("failure_restart_max_attempts") or 0)
@@ -2496,6 +2508,7 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
         "last_hop_outcome": "succeeded" if succeeded else "failed",
         "attempts_used": attempts,
         "failure_detail": run.get("last_message") or run.get("end_reason"),
+        "remote_final_failure": run.get("remote_final_failure"),
         "now": now,
         # (A2): the time the loop spent parked for its questions is not loop time.
         "deadline_at": (deadline + timedelta(seconds=question_wait_sec)) if deadline is not None else None,
