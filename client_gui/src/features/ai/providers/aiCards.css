@@ -59,6 +59,13 @@
   color: var(--fg2-muted);
 }
 
+/* Two classes: outranks the shared Select's own width: 100%. */
+.title-ai-card .title-ai-select {
+  flex: none;
+  width: 260px;
+  max-width: 50%;
+}
+
 .repeat-stepper {
   display: flex;
   align-items: center;

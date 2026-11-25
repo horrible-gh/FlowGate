@@ -235,6 +235,23 @@
           </IconButton>
         </div>
       </div>
+
+      <!-- Title AI: system setting ai_title_provider, saved as soon as a choice is made. Name and dropdown only, no hint
+           (user decision). Shown once the value is read; the AI list below the separator follows the list above. -->
+      <div v-if="isAdmin && !mineOnly && titleProvider !== null" class="repeat-card title-ai-card" data-test="title-ai-card">
+        <div class="repeat-info">
+          <b>{{ t('gui.ai.providers.title_ai') }}</b>
+        </div>
+        <Select
+          class="title-ai-select ai-base-select"
+          :model-value="titleProvider"
+          :options="titleProviderOptions"
+          :disabled="titleSaving"
+          :aria-label="t('gui.ai.providers.title_ai')"
+          data-test="title-ai-select"
+          @update:model-value="chooseTitleProvider"
+        />
+      </div>
     </template>
 
     <AiProviderEditDialog
@@ -288,6 +305,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
+import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
@@ -301,9 +319,12 @@ import {
   saveMyAi,
   saveMyAiDefault,
   saveMyAiOrder,
+  fetchTitleProvider,
   saveRepeatCountMax,
   saveSystemAi,
+  saveTitleProvider,
 } from '../api'
+import '../aiBaseSelect.css'
 import type { AiExecutionPolicy, AiOwnerScope, AiProbeResult, ProviderItem } from '../types'
 import AiIcon from '../AiIcon.vue'
 import { PROVIDERS_MAX } from '../limits'
@@ -361,6 +382,9 @@ const overId = ref<string | null>(null)
 const order = ref<string[]>([])
 let disposed = false
 let repeatTimer: ReturnType<typeof setTimeout> | null = null
+// Title AI (ai_title_provider): null until read; the card stays hidden while the value is unknown.
+const titleProvider = ref<string | null>(null)
+const titleSaving = ref(false)
 
 function listOf(owner: AiOwnerScope): ProviderItem[] {
   return owner === 'system' ? systemList.value : myList.value
@@ -377,6 +401,7 @@ async function load(): Promise<void> {
     // My order is read beside the lists and never holds them up: until it answers (or if it fails) the list shows
     // system AI first, then mine.
     void loadOrder()
+    void loadTitleProvider()
     const [system, mine] = await Promise.all([
       isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
@@ -407,7 +432,35 @@ async function loadOrder(): Promise<void> {
   }
 }
 
+async function loadTitleProvider(): Promise<void> {
+  if (!isAdmin.value || props.mineOnly) return
+  try {
+    const value = await fetchTitleProvider()
+    // A choice saved meanwhile is newer than this read.
+    if (!disposed && !titleSaving.value) titleProvider.value = value
+  } catch {
+    // The card stays hidden; the rest of the screen does not depend on it.
+  }
+}
+
 void load()
+
+// Saved as soon as it is chosen; a failed save puts the previous value back.
+async function chooseTitleProvider(value: string): Promise<void> {
+  const previous = titleProvider.value
+  if (previous === null || titleSaving.value || value === previous || value === TITLE_SEPARATOR) return
+  titleProvider.value = value
+  titleSaving.value = true
+  try {
+    await saveTitleProvider(value)
+  } catch (err: unknown) {
+    if (disposed) return
+    titleProvider.value = previous
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+  } finally {
+    titleSaving.value = false
+  }
+}
 
 // No save button: the value is written shortly after the last −/＋ click.
 function stepRepeat(delta: number): void {
@@ -455,6 +508,23 @@ const orderedRows = computed<Row[]>(() => {
   for (const item of myList.value) if (!byId.has(item.id)) byId.set(item.id, { owner: 'user', item })
   const ids = [...order.value.filter((id) => byId.has(id)), ...byId.keys()]
   return [...new Set(ids)].map((id, index) => ({ ...byId.get(id)!, rank: index + 1 }))
+})
+
+// 끄기 / 실행한 AI 그대로 / separator / the AI in the list's order. Off AI are left out (the server refuses them),
+// except the stored one, which is always shown so the dropdown never claims another value.
+const TITLE_SEPARATOR = '__separator__'
+const titleProviderOptions = computed<SelectOption[]>(() => {
+  const current = titleProvider.value
+  const fixed: SelectOption[] = [
+    { value: 'off', label: t('gui.ai.providers.title_ai_off') },
+    { value: 'executor', label: t('gui.ai.providers.title_ai_executor') },
+  ]
+  const items = orderedRows.value.map((row) => row.item).filter((p) => p.enabled || p.id === current)
+  const ai: SelectOption[] = items.map((p) => ({ value: p.id, label: p.name }))
+  if (current && current !== 'off' && current !== 'executor' && !items.some((p) => p.id === current)) {
+    ai.push({ value: current, label: current })
+  }
+  return ai.length ? [...fixed, { value: TITLE_SEPARATOR, label: '──────────', disabled: true }, ...ai] : fixed
 })
 
 const rows = computed<Row[]>(() => {
