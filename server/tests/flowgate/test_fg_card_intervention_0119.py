@@ -168,7 +168,8 @@ def test_a_review_that_did_not_pass_stops_only_its_descendants_and_the_run_waits
     _stage_ended(a, result_a)
 
     shown = _node_run(env, a)
-    assert shown["intervention"] == {"kind": "needs_intervention", "reason": NOT_PASSED}
+    held = {k: v for k, v in shown["intervention"].items() if k != "stop_detail"}   # F98-4: an added field
+    assert held == {"kind": "needs_intervention", "reason": NOT_PASSED}
     assert (shown["awaiting_approval"], shown["approval_wait_reason"]) == (False, NOT_PASSED)
     _approval_route_gone(env, a)                                        # never a person's approval
     assert _states(env)[a] == "review"

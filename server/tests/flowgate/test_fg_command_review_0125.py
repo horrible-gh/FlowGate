@@ -174,7 +174,8 @@ def _assert_spent(env, a, result, latest, seqs=1):
     assert (doc["doc_review_status"], int(doc["revision_no"])) == ("revised", latest)
     assert db_reviews.get_latest_for_revision(result, latest) is None
     assert node_run(env, a)["status"] == "review"
-    assert _wire(env, a)["intervention"] == {"kind": "needs_intervention", "reason": NOT_PASSED}
+    held = {k: v for k, v in _wire(env, a)["intervention"].items() if k != "stop_detail"}   # F98-4: an added field
+    assert held == {"kind": "needs_intervention", "reason": NOT_PASSED}
     assert _records(env, a) == []
 
 
