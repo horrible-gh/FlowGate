@@ -34,7 +34,7 @@
 // AI run owns the group. `/test-document` refuses with a FastAPI `detail` (404, 403).
 import { documentErrorOf } from '../documentError'
 import { normalizeApiInput, normalizeApiError } from '@shared/apiErrors'
-import { getRequest, patchRequest, postRequest, postFormRequest, downloadBlobRequest } from '@shared/api'
+import { getRequest, patchRequest, postRequest, postFormRequest, downloadBlobRequest, deleteRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -741,4 +741,15 @@ export async function testSpecEvidencePreview(tsId: string, key: string) {
 }
 export async function testSpecEvidenceDownload(tsId: string, key: string) {
   return (await downloadBlobRequest(`${evidenceBase(tsId)}/evidence/${encodeURIComponent(key)}/download`)).data
+}
+/**
+ * F81 case window v8: one evidence file removed. Evidence is a tagged Flow attachment (same key in both listings),
+ * so the existing Flow attachment delete removes it, guarded by the file's current sha256 as the Flow file list does.
+ */
+export async function testSpecEvidenceDelete(flowId: string, key: string) {
+  const base = `${API}/flows/${encodeURIComponent(flowId)}/attachments`
+  const rows = (await getRequest<{ attachments: { key: string; content_sha256: string }[] }>(base)).data.attachments
+  const row = rows.find(item => item.key === key)
+  if (!row) throw new Error('evidence_not_found')
+  return deleteRequest(`${base}/${encodeURIComponent(key)}?expected_sha256=${encodeURIComponent(row.content_sha256)}`)
 }

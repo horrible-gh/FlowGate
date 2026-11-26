@@ -152,6 +152,24 @@ def upload(doc, case_id, kind, part, user, attempt=None):
         return result
 
 
+def evidence_removed(raw_tag):
+    """A tagged evidence file was deleted through the Flow attachment delete: the report md is rebuilt as on upload.
+
+    The file is already gone when this runs, so a failed rebuild is logged instead of failing the delete; the next
+    result, evidence or case change rebuilds the report again.
+    """
+    tag = spec.load_result_meta(raw_tag)
+    doc = documents.get_by_id(tag["ts_doc_id"]) if tag.get("ts_doc_id") else None
+    if not doc or doc.get("type_code") != "TS":
+        return
+    from modules.flow_gate.services.test_card_changes import regenerate
+    try:
+        regenerate(doc)
+    except Exception:  # noqa: BLE001 - the delete is committed; only the report rebuild failed.
+        import logging
+        logging.getLogger(__name__).exception("test evidence report rebuild failed after delete: %s", doc["doc_id"])
+
+
 def file_row(doc, key):
     row = next((r for r in tagged(doc) if r["key"] == key), None)
     if row is None:

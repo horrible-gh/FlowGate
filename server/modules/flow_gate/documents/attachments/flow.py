@@ -219,12 +219,13 @@ def upload(flow_id, part, user, conflict="ask", expected_sha=None, attachment_ke
 
 def remove(flow_id, attachment_key, user, expected_sha):
     owner = context(flow_id, user, True)
-    placed = {}
+    placed, removed = {}, {}
     def commit():
         context(flow_id, user, True)
         row = find(flow_id, attachment_key)
         if not expected_sha or row["content_sha256"] != expected_sha:
             raise AttachmentError(409, "ATTACHMENT_CHANGED", "The file changed. Check it again.")
+        removed["test_evidence"] = row.get("test_evidence")
         doc = service.load_document(row["doc_id"])
         _, path = resolve_registered_attachment(doc, row["filename"], require_file=False)
         if path.exists():
@@ -241,6 +242,10 @@ def remove(flow_id, attachment_key, user, expected_sha):
             os.replace(placed["backup"], placed["path"])
         raise
     emit(owner)
+    if removed.get("test_evidence"):
+        # F81: a test evidence file is gone, so its TS report md is rebuilt as after an evidence upload (R §3-1).
+        from modules.flow_gate.services.test_evidence_service import evidence_removed
+        evidence_removed(removed["test_evidence"])
     return result
 
 
