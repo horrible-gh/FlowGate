@@ -100,7 +100,7 @@ def _write_written(doc_id, body="## 작업\n\n지시 AI가 쓴 지시서 본문\
 
     path = get_storage_root("flowgate", create=True) / "docs" / f"{doc_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\ntitle: {doc_id}\n---\n{body}", encoding="utf-8")
+    path.write_text(body if body.startswith("---\n") else f"---\ntitle: {doc_id}\n---\n{body}", encoding="utf-8")
     db_documents.update(doc_id, {"file_path": f"docs/{doc_id}.md"})
 
 

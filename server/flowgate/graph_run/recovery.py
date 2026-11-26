@@ -220,7 +220,7 @@ def restart(group, user_id, body, recheck):
         # Every card is fresh in the new run; do not skip old protected projections.
         from flowgate.card_documents import lines, slots
         missing = [n["node_key"] for n in (record or {}).get("nodes", [])
-                   if n.get("node_type") == "document" and n.get("doc_type") in ("T", "TS")
+                   if n.get("node_type") == "document" and n.get("doc_type") == "T"
                    and not lines.has_body((lines.line_document(flow_id, n["node_key"], slots.INSTRUCTION,
                        n.get("node_type"), n.get("doc_type")) or {}).get("document"))]
         if missing:

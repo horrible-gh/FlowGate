@@ -426,7 +426,7 @@ def instruction_document(flow_id: str, node: dict) -> dict:
                                             repository.values(flow_id, node["node_key"]))
     if not doc_type:
         return {}
-    line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
+    line = card_lines.line_document(flow_id, node["node_key"], card_slots.preparation_slot(node.get("node_type"), node.get("doc_type")), node.get("node_type"),
                                     node.get("doc_type")) or {}
     doc = line.get("document")
     if doc and doc["doc_id"] in legacy.invalidated_documents(flow_id, node["node_key"]):

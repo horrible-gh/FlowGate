@@ -168,7 +168,9 @@ def save_instruction(env, key, body="## 작업\n\n사람이 쓴 지시서\n"):
     """A person saves the card's instruction line draft (its body), then the save's contact (CONTENT_SAVED)."""
     from modules.flow_gate.graph_workflow.services import card_settings_ports
 
-    doc_id = line_doc(env, key, "instruction")
+    from flowgate.card_settings import repository
+    current = repository.card_node(FA, key)
+    doc_id = line_doc(env, key, "scenario" if current.get("doc_type") == "TS" else "instruction")
     _write_written(doc_id, body)
     card_settings_ports.instruction_saved(FA, doc_id)
     return doc_id

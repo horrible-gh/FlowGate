@@ -12,16 +12,14 @@ the documents; nothing here touches storage.
   with the earlier implementation)
 - work plan (WP): work plan · deploy
 - design (D / P / L / DB) · research (N) · work (T / T2) · custom: instruction · report
-- test (TS): instruction · scenario · report — the scenario (cases) lives inside the TS document
-  (0549 contract 2: no separate case document), so the scenario line shares the instruction document.
-  Its instruction stays a person's: the test cards take no instruction AI (TS is reorganized later).
+- test (TS): scenario · report. The scenario owns the existing TS document, including its legacy brief.
 - gate and unknown types: no lines.
 
 the card approval approves the documents of a card's approval lines
 (``approval_slots``): the instruction then the report of a research / work / apply / design / custom /
 test card (N + NR, T + TR, T2 + TR2, DS + design, TS + TSR), the requirement of R / B and the plan of WP.
-The record-only lines (AI delegation, deploy) are excluded. The scenario shares the TS
-but is also an addressable approval line.
+The record-only lines (AI delegation, deploy) are excluded. A test card approves its
+scenario (TS), then its report (TSR).
 """
 from __future__ import annotations
 
@@ -89,12 +87,16 @@ def card_slots(node_type: Optional[str], doc_type: Optional[str], *, ai_delegati
     if t == "WP":
         return (CardSlot(PLAN, "WP", HUMAN), CardSlot(DEPLOY, RECORD_DOC_TYPE, RUN))
     if t == "TS":
-        return (CardSlot(INSTRUCTION, "TS", HUMAN), CardSlot(SCENARIO, "TS", RUN, shares=INSTRUCTION),
-                CardSlot(REPORT, "TSR", RUN))
+        return (CardSlot(SCENARIO, "TS", RUN), CardSlot(REPORT, "TSR", RUN))
     if t in _PAIRS:
         instruction, report = _PAIRS[t]
         return (CardSlot(INSTRUCTION, instruction, INSTRUCTED), CardSlot(REPORT, report, RUN))
     return ()
+
+
+def preparation_slot(node_type: Optional[str], doc_type: Optional[str]) -> str:
+    """The first-stage document: a test scenario, otherwise an instruction."""
+    return SCENARIO if node_type == "document" and str(doc_type or "").upper() == "TS" else INSTRUCTION
 
 
 def instruction_and_report(node_type: Optional[str], doc_type: Optional[str]) -> Optional[tuple[str, str]]:

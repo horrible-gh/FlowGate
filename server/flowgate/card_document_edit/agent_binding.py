@@ -45,6 +45,9 @@ def bind(token, doc):
             node = target.settings.card_node(flow_id, row["node_key"])
             if node is None:
                 raise missing()
+            if (node.get("doc_type") == "TS" and row["slot"] == slots.INSTRUCTION
+                    and row["doc_type"] == "TS"):
+                continue  # Retired alias; the surviving scenario row supplies the coordinate.
             spec = next((s for s in lines._slots(flow_id, node) if s.slot == row["slot"]), None)
             if spec is None or not slots.lines_of(node.get("node_type"), node.get("doc_type"), [row]):
                 raise missing()

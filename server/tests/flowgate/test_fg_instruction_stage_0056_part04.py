@@ -84,7 +84,7 @@ def test_the_instruction_line_is_written_by_the_instruction_ai_or_a_person(env):
     assert [(x["slot"], x["author"]) for x in lines[km["tmp_x"]]] == [
         ("instruction", "instruction_ai_or_human"), ("report", "run")]
     assert [(x["slot"], x["author"]) for x in lines[km["tmp_s"]]] == [
-        ("instruction", "human"), ("scenario", "run"), ("report", "run")]            # TS: a person's
+        ("scenario", "run"), ("report", "run")]            # TS: a person's
     from flowgate.card_documents import slots
 
     assert (slots.author_of("instruction", "T"), slots.author_of("instruction", "DS"),

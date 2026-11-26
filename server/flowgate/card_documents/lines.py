@@ -114,7 +114,8 @@ def _rows_by_node(flow_id: str) -> dict[str, list[dict]]:
 
 def _released(flow_id: str, node_key: str, rows: list[dict], wanted: set) -> list[dict]:
     """The node's lines the draft no longer uses and no confirmed revision of the node shows."""
-    stale = [r for r in rows if _signature(r) not in wanted and r["slot"] != cs.DELEGATION]
+    stale = [r for r in rows if _signature(r) not in wanted and r["slot"] != cs.DELEGATION
+             and not ((cs.SCENARIO, "TS") in wanted and _signature(r) == (cs.INSTRUCTION, "TS"))]
     if not stale:
         return []
     kept = {cs.slot_signature(s) for node_type, doc_type in repository.revision_kinds(flow_id, node_key)
@@ -134,6 +135,11 @@ def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, regis
     if (slot.slot == cs.INSTRUCTION and slot.doc_type != "TS"
             and card_settings.values(group["group_id"], node["node_key"]).get("instruction") == "omit"):
         return None, False
+    if slot.slot == cs.SCENARIO and slot.doc_type == "TS":
+        old = next((r for r in repository.rows(group["group_id"], [node["node_key"]])
+                    if r["slot"] == cs.INSTRUCTION and r["doc_type"] == "TS"), None)
+        if old:
+            return old["doc_id"], bool(old["owned"])
     if slot.shares:
         return made.get(slot.shares), False
     if slot.doc_type not in registered:
@@ -326,6 +332,8 @@ def lines_by_node(flow_id: str, docs_by_id: dict, node_keys: Optional[Iterable[s
     reviews = legacy.review_counts([shown["doc_id"] for _row, shown in shown_rows if shown])
     out: dict[str, list[dict]] = {}
     for row, shown in shown_rows:
+        if row["slot"] == cs.INSTRUCTION and row["doc_type"] == "TS":
+            continue  # Preserve historical storage, but never expose the retired TS line.
         review_count = reviews.get(shown["doc_id"], 0) if shown else 0
         rejection_count = legacy.rejection_count(shown)
         written, body_state = legacy.line_body_facts(shown)

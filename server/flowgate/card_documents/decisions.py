@@ -89,6 +89,8 @@ def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
     doc = docs.get(slot)
     if not doc:
         context.refuse("document_slot_missing", slot=slot)
+    from .slots import preparation_slot
+    preparation = preparation_slot(node.get("node_type"), node.get("doc_type"))
     wanted = outputs.instruction_type(flow_id, node)
     # A recovered pending card has no stage until the next command. That is not
     # the legacy one-stage contract and must not suppress its instruction cascade.
@@ -101,11 +103,11 @@ def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
         context.refuse("document_slot_not_required", slot=slot)
     targets = [(slot, doc, None)]
     if slot == "report" and action == "approve" and separate:
-        instruction = docs.get("instruction")
+        instruction = docs.get(preparation)
         if not instruction or instruction.get("type_code") != wanted:
-            context.refuse("document_required_output_missing", slot="instruction")
-        targets.insert(0, ("instruction", instruction, doc["doc_id"]))
-    if slot == "instruction" and action == "reject":
+            context.refuse("document_required_output_missing", slot=preparation)
+        targets.insert(0, (preparation, instruction, doc["doc_id"]))
+    if slot == preparation and action == "reject":
         report = docs.get("report")
         if report and report.get("doc_review_status") in APPROVED:
             targets.append(("report", report, doc["doc_id"]))
@@ -119,6 +121,8 @@ def _targets(flow_id, node_key, node, docs, slot, action, *, recovering=False):
             if action == "approve":
                 gates.require_test_gate(target)
         except gates.GateRefused as exc:
+            if str(exc) == "scenario_no_cases":
+                context.refuse("scenario_no_cases", slot=target_slot)
             context.refuse("document_decision_gate_refused", slot=target_slot, detail=str(exc))
     if action == "reject" and not recovering:
         context.require_rejection_safe(flow_id, node_key, docs)
