@@ -121,9 +121,9 @@ PLACE_SCHEMA = {
             "type": "array", "minItems": 0, "maxItems": service.MAX_CARDS,
             "items": {"type": "object", "properties": {
                 "label": {"type": "string", "minLength": 1, "description": "Card title shown on the canvas."},
-                "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
+                "doc_type": {"type": "string", "enum": list(service.WORK_TYPES) + ["R"],
                              "description": "T work (default), TS test, N research, D basic design, P protocol, "
-                                            "L logic, DB DB design."},
+                                            "L logic, DB DB design; R requirement alone (no roles, settings, after, links, join or gate=true)."},
                 "roles": {**_ROLES_OBJECT, "description": "The card's AI per role, chosen by you (omitted roles take "
                                                           "the defaults)."},
                 "settings": _SETTINGS_OBJECT},
