@@ -299,7 +299,7 @@ def test_final_approval_marks_bug_root_done(monkeypatch):
 
     result = routes.finalize_workflow_endpoint(
         routes.DocumentBodyRequest(doc_id=bug_id),
-        {"user_id": "user-1"},
+        {"user_id": "user-1", "is_admin": True},
     )
 
     assert updated == {"doc_id": bug_id, "doc_review_status": "wf_done"}

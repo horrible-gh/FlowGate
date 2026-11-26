@@ -98,7 +98,7 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
             project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
         ),
         request=_FakeRequest({"X-Locale": "ko"}),
-        current_user={"user_id": "usr_test"},
+        current_user={"user_id": "usr_test", "is_admin": True},
     )
 
     assert result["data"]["doc_review_status"] == "approved"
@@ -153,7 +153,7 @@ def test_next_approved_wp_head_without_instruction_or_note_uses_legacy_generic(m
             project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
         ),
         request=_FakeRequest({"X-Locale": "ko"}),
-        current_user={"user_id": "usr_test"},
+        current_user={"user_id": "usr_test", "is_admin": True},
     )
     content = (tmp_path / "document.md").read_text(encoding="utf-8")
     assert "content_source: work_plan_legacy_generated" in content
@@ -196,7 +196,7 @@ def test_next_approved_wp_head_expands_the_step_instruction_text(monkeypatch, tm
             project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
         ),
         request=_FakeRequest({"X-Locale": "ko"}),
-        current_user={"user_id": "usr_test"},
+        current_user={"user_id": "usr_test", "is_admin": True},
     )
     content = (tmp_path / "document.md").read_text(encoding="utf-8")
     assert "content_source: work_plan_instruction_document" in content
@@ -217,7 +217,7 @@ def test_next_approved_rejects_non_instruction_types(monkeypatch, bad_type):
                 prev_doc_id="proj-main-0001-R0001", type_code=bad_type,
             ),
             request=_FakeRequest(),
-            current_user={"user_id": "usr_test"},
+            current_user={"user_id": "usr_test", "is_admin": True},
         )
     assert exc.value.status_code == 422
 
@@ -246,7 +246,7 @@ def test_next_approved_blocks_without_approve_permission(monkeypatch, tmp_path):
                 project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
             ),
             request=_FakeRequest({"X-Locale": "ko"}),
-            current_user={"user_id": "usr_test"},
+            current_user={"user_id": "usr_test", "is_admin": True},
         )
     assert exc.value.status_code == 403
     reserve.assert_not_called()
@@ -272,7 +272,7 @@ def test_next_approved_head_type_mismatch(monkeypatch, tmp_path):
                 project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
             ),
             request=_FakeRequest(),
-            current_user={"user_id": "usr_test"},
+            current_user={"user_id": "usr_test", "is_admin": True},
         )
     assert exc.value.status_code == 409
 
@@ -298,6 +298,6 @@ def test_next_approved_slot_already_occupied(monkeypatch, tmp_path):
                 project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
             ),
             request=_FakeRequest(),
-            current_user={"user_id": "usr_test"},
+            current_user={"user_id": "usr_test", "is_admin": True},
         )
     assert exc.value.status_code == 409

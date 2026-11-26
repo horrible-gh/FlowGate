@@ -327,14 +327,14 @@ def test_group_rename_guard_rejects_disposed_group(real_store, monkeypatch):
     body = wf.GroupUpdateRequest(title="renamed")
 
     # Live group: the rename succeeds.
-    res = wf.update_group_endpoint(gid, body, {"user_id": "u-x"})
+    res = wf.update_group_endpoint(gid, body, {"user_id": "u-x", "is_admin": True})
     assert res["group_id"] == gid
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 
     # Disposed group: renaming is now rejected at the server with 409.
     with pytest.raises(HTTPException) as exc:
-        wf.update_group_endpoint(gid, body, {"user_id": "u-x"})
+        wf.update_group_endpoint(gid, body, {"user_id": "u-x", "is_admin": True})
     assert exc.value.status_code == 409
     assert "group_disposed" in str(exc.value.detail)
 
@@ -435,7 +435,7 @@ def test_rejection_reason_guard_rejects_disposed_group(real_store, monkeypatch):
 
     monkeypatch.setattr(wf, "_get_user_permissions", lambda u: {"document.reject"})
     body = wf.RejectionReasonRequest(reason="still wrong")
-    user = {"user_id": "u-x"}
+    user = {"user_id": "u-x", "is_admin": True}
 
     # Live group: correcting the rejection reason succeeds and updates the entry in place.
     res = asyncio.run(wf.update_rejection_reason_endpoint(root_id, body, user))
@@ -470,7 +470,7 @@ def test_register_result_guard_rejects_disposed_group(real_store, monkeypatch):
 
     monkeypatch.setattr(wf, "_get_user_permissions", lambda u: {"document.update"})
     body = wf.DocumentTransitionRequest()
-    user = {"user_id": "u-x"}
+    user = {"user_id": "u-x", "is_admin": True}
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 

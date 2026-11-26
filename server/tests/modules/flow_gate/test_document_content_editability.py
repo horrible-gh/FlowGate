@@ -35,7 +35,7 @@ def test_closed_document_content_is_editable_before_final_approval(env):
     doc_id = _doc(FB, 1, "R", review="wf_in_progress", status="closed",
                   file_path=str(env["storage"] / "R0001.md"))
     result = routes.update_document_content(
-        doc_id, routes.DocumentContentUpdate(content="updated"), {"user_id": "u_kim"},
+        doc_id, routes.DocumentContentUpdate(content="updated"), {"user_id": "u_kim", "is_admin": True},
     )
     assert (env["storage"] / "R0001.md").read_text(encoding="utf-8") == "updated"
     assert result["content"] == "updated"
@@ -53,7 +53,7 @@ def test_document_content_is_locked_after_final_approval(env):
         routes.update_document_content(
             doc["doc_id"],
             routes.DocumentContentUpdate(content="updated"),
-            {"user_id": "u_kim"},
+            {"user_id": "u_kim", "is_admin": True},
         )
 
     assert exc_info.value.status_code == 422

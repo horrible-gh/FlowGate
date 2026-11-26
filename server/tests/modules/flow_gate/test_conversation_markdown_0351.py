@@ -238,7 +238,7 @@ def _markdown_client() -> TestClient:
 
     app = FastAPI()
     app.include_router(routes.router)
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u1", "username": "sjm"}
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u1", "username": "sjm", "is_admin": True}
     return TestClient(app)
 
 
@@ -288,7 +288,7 @@ def _content_client() -> TestClient:
 
     app = FastAPI()
     app.include_router(routes.router)
-    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u1", "username": "sjm"}
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u1", "username": "sjm", "is_admin": True}
     return TestClient(app)
 
 

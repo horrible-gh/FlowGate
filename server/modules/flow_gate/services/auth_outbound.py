@@ -34,6 +34,14 @@ def _extract_bearer(request: Request) -> Optional[str]:
     return None
 
 
+def _load_active_user(user_id: str):
+    """The user row through the shared auth cache (invalidated on user updates)."""
+    from modules.flow_gate.auth import auth_cache
+    from modules.flow_gate.db import users as db_users
+
+    return auth_cache.user_cache().get_or_load(user_id, lambda: db_users.get_by_id(user_id))
+
+
 def _verify_user_jwt(raw: str):
     from modules.flow_gate.auth.jwt_service import decode_token
     from modules.flow_gate.auth.token_store import is_blacklisted
@@ -61,6 +69,24 @@ def _verify_user_jwt(raw: str):
     subject = payload.get("sub")
     if not subject:
         return None
+
+    # Same account/session rules as the console session path (auth.middleware):
+    # a revoked session or a disabled account stops the token at once.
+    try:
+        from modules.flow_gate.auth.session_store import is_session_active
+
+        sid = payload.get("sid")
+        if sid and not is_session_active(sid):
+            return _fail(401, "session_revoked")
+        user = _load_active_user(subject)
+    except Exception as exc:
+        from modules.flow_gate.db.resilience import auth_unavailable
+        error = auth_unavailable(exc)
+        return _fail(error.status_code, error.detail)
+    if user is None:
+        return _fail(401, "User not found")
+    if not user.get("is_active"):
+        return _fail(401, "User account is inactive")
 
     return {
         **payload,
@@ -106,15 +132,76 @@ def verify_bearer(request: Request):
     return token_rec
 
 
-def can_read_project(auth: dict, project_id: str) -> bool:
-    """Resolve the requesting user's current permission on the target project."""
+_READ = "perm_document_read"
+_SYSTEM_PROJECT = "__SYSTEM__"
+
+
+def _jwt_user(auth: dict) -> Optional[dict]:
+    """The caller of a user JWT in the shape ``rbac.access.can`` judges.
+
+    None for a worker token. The administrator flag comes from the stored user
+    row (shared auth cache), never from the token payload.
+    """
+    if not auth.get("_is_user_jwt"):
+        return None
     user_id = auth.get("issued_to")
-    return bool(user_id and project_id and
-                has_permission(user_id, project_id, "perm_document_read"))
+    row = _load_active_user(user_id) if user_id else None
+    return {"user_id": user_id, "is_admin": bool((row or {}).get("is_admin"))}
+
+
+def can_read_project(auth: dict, project_id: str) -> bool:
+    """May the caller read ``project_id``.
+
+    A user JWT goes through the one judgment ``rbac.access.can``: administrators
+    pass, anyone else must be a member of that project (a role on ``__SYSTEM__``
+    alone is not membership) and hold ``perm_document_read``. A worker token keeps
+    its existing rule, the owner's permission on the target project.
+    """
+    user_id = auth.get("issued_to")
+    if not (user_id and project_id):
+        return False
+    user = _jwt_user(auth)
+    if user is not None:
+        from modules.flow_gate.rbac import access
+
+        return access.can(user, project_id, _READ)
+    return bool(has_permission(user_id, project_id, _READ))
+
+
+def readable_project_clause(auth: dict, column: str) -> tuple[str, list]:
+    """SQL fragment (starting with ``AND``) limiting ``column`` to readable projects.
+
+    The same rule as ``can_read_project`` evaluated by the database, so lists never
+    load every project to filter it in Python. ``column`` must be qualified with
+    the outer table alias (for example ``g.project_id``); a bare name would bind
+    to the role row inside the ``EXISTS`` subquery and detach the permission from
+    the listed row's project, so it is refused.
+    """
+    from modules.flow_gate.rbac import access
+
+    column = access.outer_column(column)
+    user_id = auth.get("issued_to")
+    if not user_id:
+        return " AND 1 = 0", []
+    user = _jwt_user(auth)
+    if user is not None:
+        return access.member_permission_clause(user, _READ, column)
+    # Worker token: the owner's permission on the row's project, the same rule
+    # as ``has_permission(user_id, project_id, perm_document_read)``.
+    return (
+        " AND" + access.role_permission_exists(column),
+        [user_id, _SYSTEM_PROJECT, _READ],
+    )
 
 
 def readable_projects(auth: dict) -> list[str]:
+    """IDs of the projects the caller may read, selected in SQL."""
     from modules.flow_gate.db.connection import get_store
-    return [r["project_id"] for r in get_store()._fetch_all(
-        "SELECT project_id FROM projects", [])
-        if can_read_project(auth, r["project_id"])]
+
+    sql, params = readable_project_clause(auth, "p.project_id")
+    rows = get_store()._fetch_all(
+        "SELECT p.project_id AS project_id FROM projects p WHERE 1 = 1" + sql
+        + " ORDER BY p.project_id",
+        params,
+    )
+    return [r["project_id"] for r in rows]

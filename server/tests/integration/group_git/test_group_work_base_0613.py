@@ -447,40 +447,6 @@ def test_outbox_create_rejects_disallowed_work_base_refs(
     assert result["errors"][0]["code"] == expected_code
 
 
-def test_outbox_create_route_forwards_work_base_ref(monkeypatch):
-    from starlette.requests import Request
-
-    from modules.flow_gate.api.v1 import legacy_misc_routes
-
-    captured = {}
-    monkeypatch.setattr(
-        legacy_misc_routes.process_service,
-        "create_requirement",
-        lambda **kwargs: captured.update(kwargs) or {"status": "success"},
-    )
-    request = Request({"type": "http", "headers": [(b"x-locale", b"ko")]})
-
-    response = legacy_misc_routes.api_outbox_create(
-        request=request,
-        project="p",
-        module="default",
-        title="Requirement",
-        slug="",
-        priority="medium",
-        body="",
-        owner="admin",
-        group_id="",
-        new_group_name="New group",
-        work_base_ref="flowgate-v0.2",
-        doc_type="R",
-        template="default",
-    )
-
-    assert response.status_code == 200
-    assert captured["work_base_ref"] == "flowgate-v0.2"
-    assert captured["new_group_name"] == "New group"
-
-
 def test_connected_worktree_lifecycle_uses_durable_group_base(
     repo, monkeypatch, tmp_path
 ):

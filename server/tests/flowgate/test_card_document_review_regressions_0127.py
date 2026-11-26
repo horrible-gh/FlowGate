@@ -49,11 +49,11 @@ def test_non_card_patch_without_flow_returns_200_and_saves(env, monkeypatch, ali
     if alias == 'content':
         @app.patch('/{doc_id}/content')
         def patch(doc_id: str, body: routes.DocumentContentUpdate):
-            return fn(doc_id, body, {'user_id':'user'})
+            return fn(doc_id, body, {'user_id':'user','is_admin':True})
     else:
         @app.patch('/content')
         def patch(body: routes.DocumentContentUpdateRpc):
-            return fn(body, {'user_id':'user'})
+            return fn(body, {'user_id':'user','is_admin':True})
     response = TestClient(app).patch(url, json=body)
     assert response.status_code == 200, response.text
     assert 'without Flow' in env.path.read_text(encoding='utf-8')

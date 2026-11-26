@@ -18,7 +18,12 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.services import card_ids, display_names
-from modules.flow_gate.services.auth_outbound import verify_bearer, can_read_project, readable_projects
+from modules.flow_gate.services.auth_outbound import (
+    can_read_project,
+    readable_project_clause,
+    readable_projects,
+    verify_bearer,
+)
 from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundList"])
@@ -54,6 +59,8 @@ def list_projects(
     err = _validate_limit(limit)
     if err:
         return err
+    if offset < 0:
+        return _fail(400, "offset must be >= 0")
 
     status_filter = is_active if is_active is not None else status
     active_filter: Optional[int] = 1
@@ -69,11 +76,19 @@ def list_projects(
             return _fail(400, "status/is_active must be active, inactive, or all")
 
     store = get_store()
-    rows = store._fetch_all("SELECT * FROM projects ORDER BY project_id", [])
-    rows = [r for r in rows if can_read_project(auth, r["project_id"])
-            and (active_filter is None or r.get("is_active", 1) == active_filter)]
-    total = len(rows)
-    rows = rows[offset:offset + limit]
+    # Visibility, status and paging all run in SQL (no full project scan in Python).
+    where_sql, where_params = readable_project_clause(auth, "projects.project_id")
+    if active_filter is not None:
+        where_sql += " AND projects.is_active = ?"
+        where_params = [*where_params, active_filter]
+    total_row = store._fetch_one(
+        "SELECT COUNT(*) AS cnt FROM projects WHERE 1 = 1" + where_sql, where_params)
+    total = int((total_row or {}).get("cnt") or 0)
+    rows = store._fetch_all(
+        "SELECT * FROM projects WHERE 1 = 1" + where_sql
+        + " ORDER BY project_id LIMIT ? OFFSET ?",
+        [*where_params, limit, offset],
+    )
 
     items = [
         {
