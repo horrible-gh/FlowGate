@@ -19,6 +19,24 @@ def _invalidate_auth_cache(user_id: str) -> None:
 
 
 
+def _versions_enabled(store) -> bool:
+    """True once deploy SQL 214 (users.authz_version) is in place."""
+    try:
+        from modules.flow_gate.rbac import permission_service
+
+        return bool(permission_service._caps(store)["versions"])
+    except Exception:  # noqa: BLE001 -- a store without the schema helpers (test double) has no versions
+        return False
+
+
+def _drop_permission_cache(user_id: str) -> None:
+    try:
+        from modules.flow_gate.rbac import permission_service
+    except Exception:
+        return
+    permission_service.invalidate_cache(user_id)
+
+
 def get_by_id(user_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM users WHERE user_id = ?", [user_id]
@@ -98,10 +116,17 @@ def update(user_id: str, updates: dict[str, Any]) -> Optional[dict]:
     updates = {k: v for k, v in updates.items() if k not in ("user_id", "created_at")}
     updates["updated_at"] = now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
+    # the administrator flag and the account state decide what the person may do: raise the
+    # permission version in the same statement (design 0004-D §3.3).
+    versioned = bool({"is_admin", "is_active"} & set(updates)) and _versions_enabled(store)
+    if versioned:
+        set_clause += ", authz_version = authz_version + 1"
     store._execute(
         f"UPDATE users SET {set_clause} WHERE user_id = ?",
         [*updates.values(), user_id],
     )
+    if versioned:
+        _drop_permission_cache(user_id)
     # the auth path caches this row for a few seconds; a change to
     # is_active / is_admin must not wait for the TTL.
     _invalidate_auth_cache(user_id)

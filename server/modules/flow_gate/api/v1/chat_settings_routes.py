@@ -64,7 +64,7 @@ def _settings_scope(user: dict, project_id: Optional[str], group_id: Optional[st
     if not project_id or not group_id:
         raise chat_settings_service.ChatSettingsError("source_access_mode", "project_id and group_id must be supplied together.")
     # Use the conversation adapters and its document-read permission, as activity does.
-    if not legacy_adapter.has_permission(user, "perm_document_read", project_id):
+    if not legacy_adapter.has_permission(user, "project.document.read", project_id):
         raise HTTPException(status_code=403, detail="Forbidden")
     if legacy_adapter.get_project(project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")

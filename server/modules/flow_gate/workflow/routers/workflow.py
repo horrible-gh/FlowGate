@@ -99,9 +99,9 @@ _MEMBER_WORKFLOW_CEILING = frozenset({
 
 # Which RBAC permission on the project unlocks which workflow names.
 _RBAC_TO_WORKFLOW = {
-    "perm_document_create": ("document.create",),
-    "perm_document_read": ("document.read",),
-    "perm_document_update": ("document.update", "own.draft", "document.delete.own.draft"),
+    "project.document.create": ("document.create",),
+    "project.document.read": ("document.read",),
+    "project.document.update": ("document.update", "own.draft", "document.delete.own.draft"),
 }
 
 

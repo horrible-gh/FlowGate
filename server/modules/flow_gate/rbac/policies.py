@@ -1,7 +1,7 @@
 """RBAC policies — own/all branching and context-dependent permission evaluation.
 
 Handle policies that cannot be decided by simple permission_id membership:
-  - document.delete.own.draft : If perm_document_delete is not held,
+  - document.delete.own.draft : If project.document.delete is not held,
     allow deletion only for documents owned by the user and in draft state (D011 r1 §3-2, PM decision No.4)
   - document.update : Allow updates until final approval, except terminal lifecycle states
 
@@ -40,7 +40,7 @@ def can_delete_document(
     """Determine whether a document can be deleted (own/all branching).
 
     Priority:
-      1. If perm_document_delete is held → allow deleting any document (all)
+      1. If project.document.delete is held → allow deleting any document (all)
       2. If owner_id == user_id and status is draft → allow deletion (own.draft)
       3. Otherwise → deny
 
@@ -48,7 +48,7 @@ def can_delete_document(
     """
     perms = get_user_permissions(user_id, project_id)
 
-    if "perm_document_delete" in perms:
+    if "project.document.delete" in perms:
         return PolicyResult(allowed=True, reason="all")
 
     owner_id: Optional[str] = document.get("owner_id")
@@ -67,12 +67,12 @@ def can_update_document(
 ) -> PolicyResult:
     """Determine whether a document can be updated.
 
-    Requires perm_document_update and an editable document.
+    Requires project.document.update and an editable document.
     """
     perms = get_user_permissions(user_id, project_id)
 
-    if "perm_document_update" not in perms:
-        return PolicyResult(allowed=False, reason="Permission denied: perm_document_update")
+    if "project.document.update" not in perms:
+        return PolicyResult(allowed=False, reason="Permission denied: project.document.update")
 
     if not is_document_editable(document):
         return PolicyResult(allowed=False, reason="Document is not editable")
@@ -92,8 +92,8 @@ def evaluate(
     Other permission_id checks are determined by simple membership.
     """
     _CONTEXT_DEPENDENT = {
-        "perm_document_delete": can_delete_document,
-        "perm_document_update": can_update_document,
+        "project.document.delete": can_delete_document,
+        "project.document.update": can_update_document,
     }
 
     if permission_id in _CONTEXT_DEPENDENT:

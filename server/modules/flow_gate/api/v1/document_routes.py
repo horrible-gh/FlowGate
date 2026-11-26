@@ -1159,8 +1159,8 @@ def download_document(request: Request, doc_id: str):
         return _fail(404, f"Document {doc_id} does not exist")
     if auth.get("_is_user_jwt"):
         user_id = auth.get("issued_to")
-        if not user_id or not has_permission(user_id, doc.get("project_id"), "perm_document_read"):
-            return _fail(403, "Insufficient permissions for this operation (perm_document_read required)")
+        if not user_id or not has_permission(user_id, doc.get("project_id"), "project.document.read"):
+            return _fail(403, "Insufficient permissions for this operation (project.document.read required)")
     else:
         scope_err = _validate_document_scope(auth, doc, doc_id)
         if scope_err is not None:

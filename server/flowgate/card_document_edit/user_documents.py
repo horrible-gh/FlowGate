@@ -97,7 +97,7 @@ def keep_card_frontmatter(req):
 
 def user_read_document(actor: Actor, doc_id: str) -> dict:
     doc = _document(doc_id)
-    guards.authorize(actor, doc["project_id"], "perm_document_read", flow_id=doc.get("group_id"))
+    guards.authorize(actor, doc["project_id"], "project.document.read", flow_id=doc.get("group_id"))
     fresh, body = read._snapshot_parts(doc["doc_id"])
     return _read_payload(fresh, body, target.classify_card_slot(fresh))
 
@@ -110,7 +110,7 @@ def user_revise_document(actor: Actor, doc_id: str, raw_body, locale: str = "ko"
     required_text(content, "content", "invalid_content", nonempty=False)
     key = _idempotency_key(body.get("idempotency_key"))
     doc = _document(doc_id)
-    guards.authorize(actor, doc["project_id"], "perm_document_update", flow_id=doc.get("group_id"))
+    guards.authorize(actor, doc["project_id"], "project.document.update", flow_id=doc.get("group_id"))
     classification = target.classify_card_slot(doc)
     if classification == target.CARD:
         raise invalid("card_binding_missing", "card_binding", "invalid_format", doc,

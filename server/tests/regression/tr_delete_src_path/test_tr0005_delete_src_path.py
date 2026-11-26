@@ -185,7 +185,7 @@ def test_delete_rejects_symlink_component(monkeypatch):
 # ── authorization ────────────────────────────────────────────────────────────
 
 def test_delete_forbidden_without_delete_permission(monkeypatch):
-    # a user JWT without perm_document_delete is rejected.
+    # a user JWT without project.document.delete is rejected.
     client = _client(monkeypatch, is_user_jwt=True, can_delete=False)
     (ROOT / "keep.md").write_text("k", encoding="utf-8")
     res = client.request("DELETE", _url(), json={"path": "keep.md", "type": "file"})
@@ -196,7 +196,7 @@ def test_delete_forbidden_without_delete_permission(monkeypatch):
 
 def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
     # worker/outbound tokens (and cross-project tokens) must ALSO be gated
-    # by perm_document_delete — not just perm_document_read. is_user_jwt=False models a
+    # by project.document.delete — not just project.document.read. is_user_jwt=False models a
     # worker token; can_delete=False models a token whose issued_to user lacks delete on
     # THIS project (e.g. a token bound to a different project).
     client = _client(monkeypatch, is_user_jwt=False, can_delete=False)

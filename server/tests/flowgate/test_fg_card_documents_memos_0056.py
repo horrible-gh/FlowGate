@@ -336,7 +336,7 @@ def test_a_line_write_is_refused_outside_the_card_s_lines(env, permissions):
     assert params["errors"] == [{"field": "extra", "reason": "unknown_field"},
                                 {"field": "content", "reason": "not_a_text"}]
     assert reason("gn_nobody", "report", expect=404)[0] == "node_not_found"
-    permissions.add("perm_document_create")
+    permissions.add("project.document.create")
     code, params = reason(km["tmp_t"], "report", expect=403)
     assert (code, params["required"]) == ("flow_access_denied", "create")
 
@@ -855,8 +855,8 @@ def test_a_memo_body_of_four_byte_characters_at_its_maximum_round_trips(env):
 
 
 @pytest.mark.parametrize("denied, call, required", [
-    ("perm_document_read", "list", "read"), ("perm_document_create", "create", "create"),
-    ("perm_document_update", "change", "update"), ("perm_document_delete", "delete", "delete")])
+    ("project.document.read", "list", "read"), ("project.document.create", "create", "create"),
+    ("project.document.update", "change", "update"), ("project.document.delete", "delete", "delete")])
 def test_memos_follow_the_document_permissions(env, permissions, denied, call, required):
     key = put_draft(env, FB, 0, [node("tmp_t", "T")])["key_map"]["tmp_t"]
     memo_id = _memo(env, FB, key, {"title": "t"})["memo"]["memo_id"]

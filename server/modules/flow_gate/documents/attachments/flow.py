@@ -29,7 +29,7 @@ def context(flow_id, user, write=False):
     group = groups.get_by_id(flow_id)
     if not group:
         raise AttachmentError(404, "FLOW_NOT_FOUND", "Flow not found.")
-    requests.require_permission(user, "perm_document_update" if write else "perm_document_read", group["project_id"])
+    requests.require_permission(user, "project.document.update" if write else "project.document.read", group["project_id"])
     docs = get_store()._fetch_all(
         "SELECT * FROM documents WHERE group_id = ? AND project_id = ? ORDER BY seq, doc_id",
         [flow_id, group["project_id"]])

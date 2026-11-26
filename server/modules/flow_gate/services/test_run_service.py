@@ -3900,11 +3900,11 @@ def _broadcast(event_type: str, doc: dict, payload: dict) -> None:
 
 
 def user_can_run_tests(user_id: str, project_id: str, is_admin: bool = False) -> bool:
-    return bool(is_admin) or has_permission(user_id, project_id, "perm_test_run")
+    return bool(is_admin) or has_permission(user_id, project_id, "project.run")
 
 
 def token_can_run_tests(user_id: str, project_id: str) -> bool:
-    """perm_test_run gate for worker-token callers (inbox action:test_run).
+    """project.run gate for worker-token callers (inbox action:test_run).
 
     Same semantics as the UI routes' user_can_run_tests — is_admin bypass first. The
     inbox handler previously called has_permission alone, which re-created the 0086

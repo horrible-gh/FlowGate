@@ -99,10 +99,10 @@ def test_permission_is_checked_for_read_and_update(env, monkeypatch):
         return False
     monkeypatch.setattr(guards, "has_permission", deny)
     read = result(env.client.get(URL, headers=USER))
-    assert error(read, 403, "permission_denied")["required"] == "perm_document_read"
+    assert error(read, 403, "permission_denied")["required"] == "project.document.read"
     denied = save(env, body())
-    assert error(denied, 403, "permission_denied")["required"] == "perm_document_update"
-    assert asked == [("user", "flowgate", "perm_document_read"), ("user", "flowgate", "perm_document_update")]
+    assert error(denied, 403, "permission_denied")["required"] == "project.document.update"
+    assert asked == [("user", "flowgate", "project.document.read"), ("user", "flowgate", "project.document.update")]
     assert unchanged(env) == before
 
 

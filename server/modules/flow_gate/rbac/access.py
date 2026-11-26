@@ -1,19 +1,25 @@
-"""Single project-access judgment for human (session JWT) requests.
+"""The one access judgment: ``can(user, target, permission_id)`` (design 0004-D §2.2).
 
-Every project-scoped check goes through ``can(user, project_id, permission_id)``:
+The scope of a permission ID is its first word:
 
-* A system administrator (``users.is_admin``) may do everything.
-* Anyone else must be a member of the target project, i.e. hold a row in
-  ``user_project_roles`` for that exact project. Workspace access is already
-  materialised into that table, so it is the only membership source. Holding a
-  role on ``__SYSTEM__`` does not make a user a member of any real project.
-* A member must also hold the permission through ``permission_service``.
+* ``system.*``    — system administrators (``users.is_admin``) only.
+* ``workspace.*`` — judged on a workspace with ``can_workspace``: the caller's member role
+  (owner/admin/member) through ``workspace_role_permissions``, plus the workspace's project
+  creation policy and state. Project roles are not used.
 
-The project is always taken from the stored target (document, group, document
-type) and never from a project/group ID the client wrote next to it. When a
-request names several targets, every one of them must pass.
+Until the one-time grant migration has completed (``permission_service.migration_ready``) only
+system administrators pass, in both the project and the workspace scope (design 7.1).
+* ``project.*``   — judged on a project with ``can``: a system administrator may do
+  everything; anyone else needs the permission in their one role on that project
+  (``permission_service``: the highest of direct, team and workspace value). No role means
+  not a member, and a role on ``__SYSTEM__`` never counts.
 
-List endpoints use ``visible_project_clause`` so the filter is applied in SQL
+The project is always taken from the stored target (document, group, document type) and never
+from a project/group ID the client wrote next to it. When a request names several targets,
+every one of them must pass.
+
+List endpoints use ``visible_project_clause`` / ``member_permission_clause``: the projects the
+caller may see are computed from their grants and applied as an ``IN (...)`` condition in SQL,
 instead of fetching every row and filtering in Python.
 """
 from __future__ import annotations
@@ -26,7 +32,7 @@ from typing import Any, Iterable, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db import connection as _connection
 from modules.flow_gate.rbac import permission_service as _permission_service
 
 SYSTEM_PROJECT = "__SYSTEM__"
@@ -41,20 +47,30 @@ _PROJECT_FIELDS = ("project_id",)
 # Endpoint parameters holding the signed-in user, never a target.
 _USER_KEYS = ("current_user", "user")
 
+# The read permission a request without a stored target may still use.
+READ_PERMISSION = "project.document.read"
+
+
+def get_store():
+    """The store, looked up at call time (a test may swap it after this module is imported)."""
+    return _connection.get_store()
+
 
 def is_admin(user: Optional[dict]) -> bool:
     return bool(user and user.get("is_admin"))
 
 
+def scope_of(permission_id: str) -> str:
+    """'system' / 'workspace' / 'project' (anything else is treated as project scope)."""
+    head = (permission_id or "").split(".", 1)[0]
+    return head if head in ("system", "workspace") else "project"
+
+
 def is_member(user_id: Optional[str], project_id: Optional[str]) -> bool:
-    """True when the user holds a role on exactly this project."""
+    """True when the user holds a role on exactly this project (direct, team or workspace)."""
     if not user_id or not project_id or project_id == SYSTEM_PROJECT:
         return False
-    row = get_store()._fetch_one(
-        "SELECT 1 AS ok FROM user_project_roles WHERE user_id = ? AND project_id = ?",
-        [user_id, project_id],
-    )
-    return row is not None
+    return _permission_service.effective_role(user_id, project_id) is not None
 
 
 def can(user: Optional[dict], project_id: Optional[str], permission_id: str) -> bool:
@@ -63,8 +79,11 @@ def can(user: Optional[dict], project_id: Optional[str], permission_id: str) -> 
         return False
     if is_admin(user):
         return True
+    if scope_of(permission_id) != "project":
+        # system.* is for system administrators; workspace.* is judged on a workspace.
+        return False
     user_id = user.get("user_id")
-    if not is_member(user_id, project_id):
+    if not user_id or not project_id or project_id == SYSTEM_PROJECT:
         return False
     return _permission_service.has_permission(user_id, project_id, permission_id)
 
@@ -72,7 +91,108 @@ def can(user: Optional[dict], project_id: Optional[str], permission_id: str) -> 
 def require(user: Optional[dict], project_id: Optional[str], permission_id: str) -> None:
     """Raise 403 unless ``can`` allows the request."""
     if not can(user, project_id, permission_id):
+        if user and not is_admin(user) and not _permission_service.migration_ready():
+            # the grant migration has not completed: only administrators are served (design 7.1)
+            raise HTTPException(status_code=403, detail="rbac_migration_incomplete")
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# ── workspace scope (design 2.2-B) ───────────────────────────────────────────
+
+def workspace_member_role(workspace_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
+    if not workspace_id or not user_id:
+        return None
+    row = get_store()._fetch_one(
+        "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+        [workspace_id, user_id],
+    )
+    return (row or {}).get("role")
+
+
+# The deploy SQL mapping (design 2.4), used only by a schema that predates it.
+_WORKSPACE_ROLE_FALLBACK = {
+    "owner": {"workspace.view", "workspace.member.manage", "workspace.team.manage", "workspace.admin",
+              "workspace.project.create"},
+    "admin": {"workspace.view", "workspace.member.manage", "workspace.team.manage", "workspace.project.create"},
+    "member": {"workspace.view", "workspace.project.create"},
+}
+
+
+def _workspace_role_permissions(role: str) -> set[str]:
+    store = get_store()
+    if not _permission_service._table_exists(store, "workspace_role_permissions"):
+        return set(_WORKSPACE_ROLE_FALLBACK.get(role, ()))
+    rows = store._fetch_all(
+        "SELECT permission_id FROM workspace_role_permissions WHERE workspace_role = ?", [role]
+    )
+    return {row["permission_id"] for row in rows}
+
+
+_PROJECT_CREATE_ROLES = {
+    "owner": ("owner",),
+    "owner_admin": ("owner", "admin"),
+    "all": ("owner", "admin", "member"),
+}
+
+
+def can_workspace(user: Optional[dict], workspace: Any, permission_id: str) -> bool:
+    """May ``user`` use the ``workspace.*`` permission on ``workspace`` (a row or an id).
+
+    The judgment every workspace request goes through. Until the grant migration has
+    completed only system administrators pass (design 7.1, the same gate as ``can``); after
+    that ``workspace_rule`` decides.
+    """
+    if not user:
+        return False
+    if not is_admin(user) and not _permission_service.migration_ready():
+        return False
+    return workspace_rule(user, workspace, permission_id)
+
+
+def workspace_rule(user: Optional[dict], workspace: Any, permission_id: str) -> bool:
+    """The workspace rule of design 2.2-B on the stored data, without the migration gate.
+
+    A system administrator always may. Anyone else needs a member role whose mapping holds
+    the permission. ``workspace.project.create`` also follows the workspace's creation policy
+    and needs an active workspace; in a disabled workspace only viewing and the owner's
+    administration (re-enabling) remain (2.2-B 4).
+
+    Requests use ``can_workspace``. This function is called directly only by table ③ of the
+    grant migration, which is computed while the migration record still says 'running'.
+    """
+    if not user:
+        return False
+    ws = workspace if isinstance(workspace, dict) else None
+    if ws is None and workspace:
+        ws = get_store()._fetch_one("SELECT * FROM workspaces WHERE workspace_id = ?", [workspace])
+    if not ws:
+        return False
+    active = (ws.get("status") or "active") == "active"
+    if permission_id == "workspace.project.create" and not active:
+        return False
+    if is_admin(user):
+        return True
+    if scope_of(permission_id) != "workspace":
+        return False
+    role = workspace_member_role(ws.get("workspace_id"), user.get("user_id"))
+    if role is None or permission_id not in _workspace_role_permissions(role):
+        return False
+    if not active and permission_id not in ("workspace.view", "workspace.admin"):
+        return False
+    if permission_id == "workspace.project.create":
+        policy = ws.get("project_create_policy") or "owner_admin"
+        return role in _PROJECT_CREATE_ROLES.get(policy, ("owner",))
+    return True
+
+
+# ── list conditions ──────────────────────────────────────────────────────────
+
+def _in_clause(column: str, project_ids: Iterable[str]) -> tuple[str, list]:
+    ids = sorted({pid for pid in project_ids if pid and pid != SYSTEM_PROJECT})
+    if not ids:
+        return " AND 1 = 0", []
+    marks = ", ".join("?" for _ in ids)
+    return f" AND {column} IN ({marks})", ids
 
 
 def visible_project_clause(user: Optional[dict], column: str = "project_id") -> tuple[str, list]:
@@ -83,27 +203,20 @@ def visible_project_clause(user: Optional[dict], column: str = "project_id") -> 
     """
     if is_admin(user):
         return "", []
-    user_id = (user or {}).get("user_id") or ""
-    return (
-        f" AND {column} IN (SELECT upr.project_id FROM user_project_roles upr"
-        " WHERE upr.user_id = ? AND upr.project_id <> ?)",
-        [user_id, SYSTEM_PROJECT],
-    )
+    return _in_clause(column, _permission_service.permitted_projects((user or {}).get("user_id")))
 
 
-# Aliases used inside the correlated subqueries below. An outer column must not
-# reuse them, or it would bind to the inner row instead of the listed row.
+# Aliases reserved for the access subqueries; a listed row's column must not reuse them.
 _INNER_ALIASES = frozenset({"acl_member", "acl_role", "acl_perm"})
 _QUALIFIED_COLUMN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def outer_column(column: str) -> str:
-    """Validate that ``column`` names the listed row's project column.
+    """Validate that ``column`` names the listed row's project column as ``alias.column``.
 
-    Used inside an ``EXISTS`` subquery, a bare ``project_id`` resolves to the
-    inner ``user_project_roles`` row, so the permission would no longer be tied
-    to the listed row's project. The column must therefore be qualified with
-    the outer table alias (for example ``g.project_id``).
+    List queries join several tables, so a bare ``project_id`` may bind to a different table
+    than the listed row. The column must be qualified (for example ``g.project_id``) and must
+    not use an alias reserved for the access subqueries.
     """
     match = _QUALIFIED_COLUMN.match(column or "")
     if not match or match.group(1) in _INNER_ALIASES:
@@ -111,33 +224,14 @@ def outer_column(column: str) -> str:
     return column
 
 
-def role_permission_exists(column: str) -> str:
-    """``EXISTS`` fragment: the user holds the permission for the row's project.
-
-    The same role join and ``__SYSTEM__`` aggregation as
-    ``permission_service.get_user_permissions``, correlated to ``column`` of
-    the outer row. Parameters: ``user_id``, ``SYSTEM_PROJECT``, ``permission_id``.
-    """
-    column = outer_column(column)
-    return (
-        " EXISTS (SELECT 1 FROM user_project_roles acl_role"
-        " JOIN role_permissions acl_perm ON acl_role.role_id = acl_perm.role_id"
-        f" WHERE acl_role.user_id = ? AND acl_role.project_id IN ({column}, ?)"
-        " AND acl_perm.permission_id = ?)"
-    )
-
-
 def member_permission_clause(
     user: Optional[dict], permission_id: str, column: str
 ) -> tuple[str, list]:
     """SQL fragment limiting ``column`` to projects where ``can`` allows ``permission_id``.
 
-    The same rule as ``can`` expressed in SQL, so a list never loads every
-    project row to judge it in Python: an administrator gets no condition,
-    anyone else must hold a role on the project itself (``__SYSTEM__`` never
-    counts as membership) and hold the permission through the same role join
-    ``permission_service`` uses. ``column`` must be the outer row's qualified
-    project column (see ``outer_column``). The fragment starts with ``AND``.
+    The same rule as ``can``: an administrator gets no condition, anyone else gets the projects
+    on which their one role holds the permission. ``column`` must be qualified (see
+    ``outer_column``). The fragment starts with ``AND``.
     """
     column = outer_column(column)
     if is_admin(user):
@@ -145,12 +239,21 @@ def member_permission_clause(
     user_id = (user or {}).get("user_id") or ""
     if not user_id:
         return " AND 1 = 0", []
-    return (
-        f" AND {column} IN (SELECT acl_member.project_id FROM user_project_roles acl_member"
-        " WHERE acl_member.user_id = ? AND acl_member.project_id <> ?)"
-        " AND" + role_permission_exists(column),
-        [user_id, SYSTEM_PROJECT, user_id, SYSTEM_PROJECT, permission_id],
-    )
+    return _in_clause(column, _permission_service.permitted_projects(user_id, permission_id))
+
+
+def permitted_project_clause(user_id: Optional[str], permission_id: str, column: str) -> tuple[str, list]:
+    """``member_permission_clause`` for the owner of a worker token (judged by the stored
+    user row: an administrator owner sees everything, a disabled owner nothing)."""
+    column = outer_column(column)
+    if not user_id:
+        return " AND 1 = 0", []
+    row = get_store()._fetch_one("SELECT is_admin, is_active FROM users WHERE user_id = ?", [user_id])
+    if not row or not row.get("is_active"):
+        return " AND 1 = 0", []
+    if row.get("is_admin"):
+        return "", []
+    return _in_clause(column, _permission_service.permitted_projects(user_id, permission_id))
 
 
 def project_of_document(doc_id: Optional[str]) -> Optional[str]:
@@ -279,12 +382,10 @@ def check_target(kwargs: dict, permission_id: str) -> None:
     if not projects:
         # Nothing project-scoped is named (for example a missing document, which
         # the endpoint answers with 404, or a global type list). Reads stay open
-        # to signed-in users; changes need the permission on __SYSTEM__.
-        if permission_id == "perm_document_read":
+        # to signed-in users; a change without a target is for system administrators.
+        if permission_id == READ_PERMISSION:
             return
-        if not _permission_service.has_permission(user.get("user_id"), SYSTEM_PROJECT, permission_id):
-            raise HTTPException(status_code=403, detail="Forbidden")
-        return
+        raise HTTPException(status_code=403, detail="Forbidden")
     for project in projects:
         require(user, project, permission_id)
 

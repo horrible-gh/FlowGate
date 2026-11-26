@@ -866,7 +866,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
 # ── Document endpoints ──────────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def create_document(
     body: DocumentCreate,
     current_user: dict = Depends(get_current_user),
@@ -1040,7 +1040,7 @@ def _canonical_doc_module(project_id: str, group_id: str, requested: Optional[st
 
 
 @router.post("/related", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def create_related_document(
     body: RelatedDocCreate,
     current_user: dict = Depends(get_current_user),
@@ -1160,7 +1160,7 @@ def create_related_document(
     return {"data": doc, "doc_id": doc_id}
 
 @router.post("/next-empty", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def create_next_empty_document(
     request: Request,
     body: NextEmptyDocumentCreate,
@@ -1429,7 +1429,7 @@ def _tr2_error_response(exc) -> JSONResponse:
 
 
 @router.get("/next-empty/preflight")
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def preflight_next_empty_document(
     prev_doc_id: str = Query(...),
     type_code: str = Query(...),
@@ -2131,7 +2131,7 @@ def create_next_approved_core(
 
 
 @router.post("/next-approved", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def create_next_approved_document(
     body: NextApprovedDocumentCreate,
     request: Request,
@@ -2217,7 +2217,7 @@ from modules.flow_gate.services.workflow_rework_service import (  # noqa: E402
 
 
 @router.post("/workflow/final-approval", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def open_final_approval(
     body: _GroupDocRef,
     current_user: dict = Depends(get_current_user),
@@ -2297,7 +2297,7 @@ def open_final_approval(
 
 
 @router.post("/workflow/reopen")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def reopen_workflow(
     body: _ReopenBody,
     current_user: dict = Depends(get_current_user),
@@ -2336,7 +2336,7 @@ def reopen_workflow(
 
 
 @router.get("/workflow/{doc_id}/return-point")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_workflow_return_point(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -2364,7 +2364,7 @@ def get_workflow_return_point(
 
 
 @router.post("/workflow/{doc_id}/return-point/cancel-commits")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def retry_cancel_tr_commits(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -2402,7 +2402,7 @@ def retry_cancel_tr_commits(
 
 
 @router.post("/workflow/{doc_id}/return-point/reapply-commits")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def retry_reapply_tr_commits(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -2484,7 +2484,7 @@ def _attach_tr_commit_restore(
 
 
 @router.post("/workflow/restore")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def restore_workflow(
     body: _RestoreBody,
     current_user: dict = Depends(get_current_user),
@@ -2740,7 +2740,7 @@ def _create_next_empty_document_for_auto_draft(
 
 
 @router.get("")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def list_documents(
     project_id: str = Query(...),
     module: Optional[str] = Query(None),
@@ -2764,7 +2764,7 @@ def list_documents(
 
 
 @router.get("/detail")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_document_rpc(
     doc_id: str = Query(...),
     current_user: dict = Depends(get_current_user),
@@ -2774,7 +2774,7 @@ def get_document_rpc(
 
 
 @router.get("/content")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_document_content_rpc(
     doc_id: str = Query(...),
     current_user: dict = Depends(get_current_user),
@@ -2784,7 +2784,7 @@ def get_document_content_rpc(
 
 
 @router.get("/body-diagnosis")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def diagnose_document_bodies(
     group_id: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
@@ -2808,12 +2808,12 @@ def diagnose_document_bodies(
         scope_project = access.project_of_group(group_id) if group_id is not None else project_id
         if scope_project is None:
             raise HTTPException(status_code=404, detail=f"Flow not found: {group_id}")
-        access.require(current_user, scope_project, "perm_document_read")
+        access.require(current_user, scope_project, "project.document.read")
     return body_recovery.diagnose_scope(group_id=group_id, project_id=project_id)
 
 
 @router.post("/body-recovery")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def recover_document_bodies(
     body: BodyRecoveryRequest,
     current_user: dict = Depends(get_current_user),
@@ -2836,7 +2836,7 @@ def recover_document_bodies(
 
 
 @router.post("/mention-copy")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def record_mention_copy(
     body: MentionCopyRecordRpc,
     current_user: dict = Depends(get_current_user),
@@ -2852,7 +2852,7 @@ def record_mention_copy(
 
 
 @router.get("/mention-copy")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_mention_copy(
     doc_id: str = Query(...),
     current_user: dict = Depends(get_current_user),
@@ -2874,7 +2874,7 @@ def get_mention_copy(
 
 
 @router.post("/import-url")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def import_document_url(
     body: DocumentUrlImportRequest,
     current_user: dict = Depends(get_current_user),
@@ -2903,7 +2903,7 @@ def import_document_url(
 
 
 @router.patch("/content")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document_content_rpc(
     body: DocumentContentUpdateRpc,
     current_user: dict = Depends(get_current_user),
@@ -2924,7 +2924,7 @@ class TestBriefSaveBody(BaseModel):
 
 
 @router.get("/{doc_id}/test-brief")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_test_brief(doc_id: str, current_user: dict = Depends(get_current_user)) -> dict:
     from modules.flow_gate.services import test_run_service, test_spec_service
     doc = document_service.get_document(doc_id)
@@ -2937,7 +2937,7 @@ def get_test_brief(doc_id: str, current_user: dict = Depends(get_current_user)) 
 
 
 @router.put("/{doc_id}/test-brief")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def save_test_brief(doc_id: str, body: TestBriefSaveBody,
                     current_user: dict = Depends(get_current_user), request: Request = None) -> dict:
     from modules.flow_gate.services import test_spec_service
@@ -2967,7 +2967,7 @@ class TestSpecSaveBody(BaseModel):
 
 
 @router.get("/{doc_id}/test-document")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_test_document(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -2996,7 +2996,7 @@ def get_test_document(
 
 
 @router.put("/{doc_id}/test-spec")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def save_test_spec(
     doc_id: str,
     body: TestSpecSaveBody,
@@ -3067,7 +3067,7 @@ def save_test_spec(
 
 
 @router.patch("/workflow")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document_workflow_rpc(
     body: WorkflowUpdateRpc,
     current_user: dict = Depends(get_current_user),
@@ -3081,7 +3081,7 @@ def update_document_workflow_rpc(
 
 
 @router.patch("/update")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document_rpc(
     body: DocumentUpdateRpc,
     current_user: dict = Depends(get_current_user),
@@ -3095,7 +3095,7 @@ def update_document_rpc(
 
 
 @router.delete("/delete", status_code=204, response_model=None)
-@require_permission("perm_document_delete")
+@require_permission("project.document.delete")
 def delete_document_rpc(
     body: DocumentDeleteRpc,
     current_user: dict = Depends(get_current_user),
@@ -3105,7 +3105,7 @@ def delete_document_rpc(
 
 
 @router.post("/transitions")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def transition_document_rpc(
     body: TransitionRequestRpc,
     current_user: dict = Depends(get_current_user),
@@ -3127,8 +3127,8 @@ async def _attachment_permission_refusal(doc_id: str, user: Optional[dict], perm
     document in a project they hold no role in. These routes now check the same per-project
     permission through the shared judgment ``rbac.access.can`` on the document's stored
     project (administrators pass, everyone else must be a member of that project; a role on
-    ``__SYSTEM__`` alone is not membership): ``perm_document_read`` to see,
-    ``perm_document_update`` to change. A missing document is left to the service, which
+    ``__SYSTEM__`` alone is not membership): ``project.document.read`` to see,
+    ``project.document.update`` to change. A missing document is left to the service, which
     answers its own 404.
     """
     import anyio.to_thread
@@ -3171,7 +3171,7 @@ async def upload_attachment_rpc(
       existing success handling is untouched, and the `Deprecation` / `Link` headers point
       new callers at the canonical URL.
     """
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.update")
     if refusal is not None:
         return refusal
     try:
@@ -3303,7 +3303,7 @@ def _scope_fallback_body(doc: dict) -> Optional[str]:
 
 
 @router.get("/{doc_id}")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_document(
     doc_id: str,
     include: Optional[str] = Query(None),
@@ -3392,7 +3392,7 @@ def _conversation_compat_block(doc_id: str, projection: bool) -> dict:
 
 
 @router.get("/{doc_id}/content")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_document_content(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -3438,7 +3438,7 @@ def get_document_content(
 
 
 @router.patch("/{doc_id}/content")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document_content(
     doc_id: str,
     body: DocumentContentUpdate,
@@ -3586,7 +3586,7 @@ def _save_write_checks(doc: dict) -> None:
 
 
 @router.post("/{doc_id}/regenerate")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def regenerate_document_file(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -3634,7 +3634,7 @@ def _recovery_refused_response(refused) -> JSONResponse:
 
 
 @router.patch("/{doc_id}/root-type")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def convert_root_type(
     doc_id: str,
     body: RootTypeConvert,
@@ -3685,7 +3685,7 @@ def convert_root_type(
 
 
 @router.patch("/{doc_id}/workflow")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document_workflow(
     doc_id: str,
     body: WorkflowUpdate,
@@ -3711,7 +3711,7 @@ def update_document_workflow(
 
 
 @router.patch("/{doc_id}")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def update_document(
     doc_id: str,
     body: DocumentUpdate,
@@ -3730,7 +3730,7 @@ def update_document(
 
 
 @router.delete("/{doc_id}", status_code=204, response_model=None)
-@require_permission("perm_document_delete")
+@require_permission("project.document.delete")
 def delete_document(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -3759,7 +3759,7 @@ def delete_document(
 
 
 @router.post("/{doc_id}/transitions")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def transition_document(
     doc_id: str,
     body: TransitionRequest,
@@ -3782,7 +3782,7 @@ def transition_document(
 # ── Document type endpoints ──────────────────────────────────────────────────────
 
 @router.get("/types/list")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def list_document_types(
     project_id: Optional[str] = Query(None),
     series: Optional[str] = Query(None),
@@ -3793,7 +3793,7 @@ def list_document_types(
 
 
 @router.post("/types", status_code=201)
-@require_permission("perm_document_type_manage")
+@require_permission("project.document_type.manage")
 def create_document_type(
     body: DocumentTypeCreate,
     current_user: dict = Depends(get_current_user),
@@ -3803,7 +3803,7 @@ def create_document_type(
 
 
 @router.delete("/types/{type_id}", status_code=204, response_model=None)
-@require_permission("perm_document_type_manage")
+@require_permission("project.document_type.manage")
 def delete_document_type(
     type_id: int,
     current_user: dict = Depends(get_current_user),
@@ -3844,7 +3844,7 @@ async def upload_attachment(
     `projects/*/attachments/{doc_id}` location, and the absolute `str(dest)` in the response
     (NR0003 G4).
     """
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.update")
     if refusal is not None:
         return refusal
     try:
@@ -3873,7 +3873,7 @@ async def list_attachments(
     A document with no attachments answers 200 and an empty array — not 404. The card draws
     its empty state from that answer.
     """
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.read")
     if refusal is not None:
         return refusal
     try:
@@ -3898,7 +3898,7 @@ async def download_attachment(
     A read path, so a disposed group or a running AI run does not block it — D0010 §6-1 keeps
     the list and the download alive while the document is read-only.
     """
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.read")
     if refusal is not None:
         return refusal
     try:
@@ -3921,7 +3921,7 @@ async def delete_attachment(
     current_user: dict = Depends(get_current_user),
 ):
     """Delete one attachment — file first, then the row (P0011 §5, L0012 §2-8)."""
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.update")
     if refusal is not None:
         return refusal
     try:
@@ -3944,7 +3944,7 @@ async def read_attachment(
     current_user: dict = Depends(get_current_user),
 ):
     """Read an attachment's content instead of downloading it (P0011 §6)."""
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_read")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.read")
     if refusal is not None:
         return refusal
     try:
@@ -3977,7 +3977,7 @@ async def copy_attachment_to_source(
     Called by whoever works on the source, never by the attachment card — the approved deck
     has no copy button and D0010 §6-7 refuses to invent one.
     """
-    refusal = await _attachment_permission_refusal(doc_id, current_user, "perm_document_update")
+    refusal = await _attachment_permission_refusal(doc_id, current_user, "project.document.update")
     if refusal is not None:
         return refusal
     try:

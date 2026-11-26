@@ -44,8 +44,8 @@ def test_legacy_still_checks_group_activity(env, monkeypatch):
     monkeypatch.setattr(operation, "busy", lambda _: True)
     assert call(env)["reason"] == "time_machine"
 @pytest.mark.parametrize("method,suffix,permission", [
-    ("get", "archive", "perm_document_read"), ("post", "archive", "perm_document_update"),
-    ("post", "restore", "perm_document_update"),
+    ("get", "archive", "project.document.read"), ("post", "archive", "project.document.update"),
+    ("post", "restore", "project.document.update"),
 ])
 def test_project_scoped_permissions(env, method, suffix, permission):
     env["denied"].add(permission)

@@ -81,13 +81,13 @@ def setup_t330_db() -> _TestDB:
     db.execute(
         "INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at) "
         "VALUES (?, ?, ?)",
-        ["perm_document_read", "Document Read", now],
+        ["project.document.read", "Document Read", now],
     )
     
     db.execute(
         "INSERT OR IGNORE INTO role_permissions(role_id,permission_id) "
         "VALUES (?, ?)",
-        ["role_worker", "perm_document_read"],
+        ["role_worker", "project.document.read"],
     )
     
     # Project

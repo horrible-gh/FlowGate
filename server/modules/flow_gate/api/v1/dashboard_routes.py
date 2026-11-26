@@ -86,11 +86,11 @@ def dashboard_summary(
         return _fail(404, f"Project {project_id} does not exist")
 
     user_id = current_user.get("user_id")
-    if not user_id or not has_permission(user_id, project_id, "perm_document_read"):
+    if not user_id or not has_permission(user_id, project_id, "project.document.read"):
         return _fail(
             403,
             "Insufficient permissions for this operation "
-            "(perm_document_read required)",
+            "(project.document.read required)",
         )
 
     try:
@@ -136,10 +136,10 @@ def _authorize_project(project_id: str, current_user: dict) -> tuple[str | None,
     if db_projects.get_by_id(project_id) is None:
         return None, _fail(404, f"Project {project_id} does not exist")
     user_id = current_user.get("user_id")
-    if not user_id or not has_permission(user_id, project_id, "perm_document_read"):
+    if not user_id or not has_permission(user_id, project_id, "project.document.read"):
         return None, _fail(
             403,
-            "Insufficient permissions for this operation (perm_document_read required)",
+            "Insufficient permissions for this operation (project.document.read required)",
         )
     return user_id, None
 

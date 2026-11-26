@@ -239,9 +239,10 @@ def _delegate(env, uid="usr_ag_d0076"):
     permission_service.clear_all_cache()
 
 
-# What the real router/auth/RBAC answered for D on every §2.6 route after the delegation, as observed.
-# Pinned so a change in the server's behaviour shows up; NOT an is_admin-only result, NOT a release basis.
-D_OBSERVED = [200, 200, 201, 200, 201, 200, 200, 204]
+# What the real router/auth/RBAC answers for D on every agent route after the delegation. System
+# permissions belong to system administrators only and a role on __SYSTEM__ grants nothing, so the
+# delegation opens none of them (it used to: 200, 200, 201, 200, 201, 200, 200, 204).
+D_OBSERVED = [403, 403, 403, 403, 403, 403, 403, 403]
 
 
 def test_v06_d_delegated_observation_every_agent_route(env):

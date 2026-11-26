@@ -40,9 +40,9 @@ def _require_storage_target(user: dict, body: dict) -> None:
     group_project = access.project_of_group(body.get("group_id") or None)
     targets = {p for p in (project_id, group_project) if p}
     if not targets and not access.is_admin(user):
-        access.require(user, None, "perm_document_update")
+        access.require(user, None, "project.document.update")
     for target in targets:
-        access.require(user, target, "perm_document_update")
+        access.require(user, target, "project.document.update")
 
 
 # The handlers `await request.json()` on the loop and hand every DB/file step,

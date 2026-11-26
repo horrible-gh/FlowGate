@@ -236,7 +236,7 @@ def test_mode_then_permission_then_document_state(chat, monkeypatch):
     monkeypatch.setattr(guards, "has_permission", lambda *a: False)
     result, _ = api(chat, True)
     p = error(result, 403, "permission_denied")
-    assert p == {"flow_id": F, "required": "perm_document_update"}
+    assert p == {"flow_id": F, "required": "project.document.update"}
     result, _ = api(chat)
     error(result, 403, "permission_denied")
     assert business_state(chat.env) == state

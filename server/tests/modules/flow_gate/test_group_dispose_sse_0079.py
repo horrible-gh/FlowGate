@@ -376,19 +376,19 @@ def test_qa_register_guard_rejects_disposed_group(real_store):
 
     # Live group: reject_disposed=True does NOT 409 (only RBAC may 403) — disposal-gating
     # is the property under test, so assert it specifically does not fire here.
-    live = _doc_project_or_403(root_id, "u-nobody", "perm_document_create", reject_disposed=True)
+    live = _doc_project_or_403(root_id, "u-nobody", "project.document.create", reject_disposed=True)
     assert not (isinstance(live, JSONResponse) and live.status_code == 409)
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 
     # Disposed group, write path: 409 (disposal check precedes the permission check).
-    resp = _doc_project_or_403(root_id, "u-nobody", "perm_document_create", reject_disposed=True)
+    resp = _doc_project_or_403(root_id, "u-nobody", "project.document.create", reject_disposed=True)
     assert isinstance(resp, JSONResponse)
     assert resp.status_code == 409
 
     # Disposed group, read path (reject_disposed=False): NOT gated by disposal — viewing
     # the Q&A of a discarded group is still allowed (any 4xx here is RBAC, never 409).
-    read = _doc_project_or_403(root_id, "u-nobody", "perm_document_read", reject_disposed=False)
+    read = _doc_project_or_403(root_id, "u-nobody", "project.document.read", reject_disposed=False)
     assert not (isinstance(read, JSONResponse) and read.status_code == 409)
 
 

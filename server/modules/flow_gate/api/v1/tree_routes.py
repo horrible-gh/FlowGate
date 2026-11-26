@@ -238,7 +238,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     """Delete one file or directory from the base checkout, or from a group's worktree."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
-    if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
+    if not has_permission(auth["issued_to"], project_id, "project.document.delete"):
         return _err(403, "FORBIDDEN", "insufficient permission for this operation")
 
     group_id = (body.group_id or "").strip() or None
@@ -698,8 +698,8 @@ def _rfc5987_encode(name: str) -> str:
 def _check_project_auth(request: Request, project_id: str):
     """Verify Bearer token and check project_id permission.
 
-    - Worker token: perm_document_read is checked inside verify_bearer() against the token's project.
-    - User JWT: after verify_bearer() validation, perm_document_read is additionally checked
+    - Worker token: project.document.read is checked inside verify_bearer() against the token's project.
+    - User JWT: after verify_bearer() validation, project.document.read is additionally checked
       against the requested project_id.
 
     Success: returns token_rec dict.
@@ -711,7 +711,7 @@ def _check_project_auth(request: Request, project_id: str):
 
     if token_rec.get("_is_user_jwt"):
         user_id: str = token_rec["issued_to"]
-        if not has_permission(user_id, project_id, "perm_document_read"):
+        if not has_permission(user_id, project_id, "project.document.read"):
             return _err(403, "FORBIDDEN", "insufficient permission for this operation")
 
     return token_rec
@@ -732,7 +732,7 @@ def download_file(
 
     Complies with P007 §2-1 spec.
     - Response: application/octet-stream, Content-Disposition RFC 5987 UTF-8 encoding.
-    - Auth: verify_bearer() + perm_document_read.
+    - Auth: verify_bearer() + project.document.read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
     - 0327 T0004: group_id downloads that group's worktree copy (NR0003 recommendation 3).
     """
@@ -779,7 +779,7 @@ def download_zip(
     - Reads the ZIP from SpooledTemporaryFile in chunks and sends via StreamingResponse.
     - Preserves directory structure; empty folders are not included.
     - Content-Disposition RFC 5987 UTF-8 encoding.
-    - Auth: verify_bearer() + perm_document_read.
+    - Auth: verify_bearer() + project.document.read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
     - 0327 T0004: group_id zips that group's worktree copy (NR0003 recommendation 3).
     """

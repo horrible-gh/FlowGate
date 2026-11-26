@@ -41,7 +41,7 @@ class TestWorkspaces:
         user_admin_service.assign_project_role("u_free", "beta", "role_worker", granted_by="u_admin")
         assert ws.member_role("ws_default", "u_free") == "member"
         ws.sync("ws_default")
-        assert _role(store, "u_free", "beta") == "role_worker"
+        assert _role(store, "u_free", "beta") == "role_developer"
         user_admin_service.revoke_project_role("u_free", "beta")
         ws.sync("ws_default")
         assert _role(store, "u_free", "beta") is None
@@ -80,20 +80,21 @@ class TestLegacyRbacRoleRoutes:
 
         wid = self._workspace(store, default_member="dev")
         ws.add_member(ADMIN, wid, "u_free", "member")
-        assert _role(store, "u_free", "gamma") == "role_worker"
+        assert _role(store, "u_free", "gamma") == "role_developer"
         resp = _rbac_client(ADMIN).delete("/rbac/users/u_free/roles/gamma")
         assert resp.status_code == 204
         assert _role(store, "u_free", "gamma") is None
         ws.sync(wid)
         assert _role(store, "u_free", "gamma") is None
-        assert _role(store, "u_free", "delta") == "role_worker"
+        assert _role(store, "u_free", "delta") == "role_developer"
 
-    def test_a_project_manager_cannot_pull_an_outsider_into_the_workspace(self, store, monkeypatch):
-        from modules.flow_gate.rbac.routers import rbac_admin
+    def test_a_project_manager_cannot_pull_an_outsider_into_the_workspace(self, store):
         from modules.flow_gate.settings import workspace_service as ws
 
         wid = self._workspace(store)
-        monkeypatch.setattr(rbac_admin, "get_user_permissions", lambda uid, pid: {"perm_role_assign"})
+        # u_dev really manages gamma (project admin role), but is no workspace owner/admin
+        granted = _rbac_client(ADMIN).post("/rbac/users/u_dev/roles", json={"project_id": "gamma", "role_id": "role_admin"})
+        assert granted.status_code == 201 and ws.member_role(wid, "u_dev") == "member"
         client = _rbac_client(_user("u_dev"))
         resp = client.post("/rbac/users/u_free/roles", json={"project_id": "gamma", "role_id": "role_worker"})
         assert resp.status_code == 403
@@ -102,7 +103,7 @@ class TestLegacyRbacRoleRoutes:
         ws.add_member(ADMIN, wid, "u_free", "member")
         resp = client.post("/rbac/users/u_free/roles", json={"project_id": "gamma", "role_id": "role_worker"})
         assert resp.status_code == 201  # an existing member: the project-level grant stands
-        assert _role(store, "u_free", "gamma") == "role_worker"
+        assert _role(store, "u_free", "gamma") == "role_developer"
 
     def test_disabled_workspace_and_custom_roles_take_no_grant(self, store):
         from modules.flow_gate.settings import workspace_service as ws
@@ -138,4 +139,4 @@ class TestLegacyRbacRoleRoutes:
         }, created_by="u_admin")
         uid = created["user_id"]
         assert ws.member_role(wid, uid) == "member"
-        assert (_role(store, uid, "gamma"), _role(store, uid, "delta")) == ("role_worker", None)
+        assert (_role(store, uid, "gamma"), _role(store, uid, "delta")) == ("role_developer", None)

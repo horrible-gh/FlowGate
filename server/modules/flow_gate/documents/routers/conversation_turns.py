@@ -110,7 +110,7 @@ def _session_actor(request: Request, current_user: dict) -> dict:
     "/{doc_id}/conversation/turns",
     dependencies=[Depends(_worker_token_redirect("turns", "GET"))],
 )
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def list_conversation_turns(
     doc_id: str,
     request: Request,
@@ -140,7 +140,7 @@ def list_conversation_turns(
 
 
 @router.post("/{doc_id}/conversation/read")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def mark_conversation_read(
     doc_id: str,
     body: ConversationReadMark,
@@ -173,7 +173,7 @@ def _conversation_doc(doc_id: str) -> dict:
 
 
 @router.get("/{doc_id}/conversation/settings")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_conversation_settings(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -188,7 +188,7 @@ def get_conversation_settings(
 
 
 @router.patch("/{doc_id}/conversation/settings")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def patch_conversation_settings(
     doc_id: str,
     body: dict = Body(...),
@@ -212,7 +212,7 @@ def patch_conversation_settings(
 
 
 @router.get("/{doc_id}/conversation/markdown")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_conversation_markdown(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
@@ -264,7 +264,7 @@ def get_conversation_markdown(
     status_code=201,
     dependencies=[Depends(_worker_token_redirect("turn", "POST"))],
 )
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def append_conversation_turn(
     doc_id: str,
     body: ConversationTurnAppend,
@@ -294,7 +294,7 @@ def append_conversation_turn(
     return JSONResponse(status_code=status, content=result)
 
 @router.patch("/{doc_id}/conversation/turns/{seq}")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def mutate_conversation_turn(doc_id: str, seq: int, request: Request,
                              body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     if set(body) - {"body", "delete", "expected_version"} or type(body.get("delete", False)) is not bool:

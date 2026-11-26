@@ -49,7 +49,7 @@ def test_auto_approved_http_path_accepts_t2(monkeypatch, tmp_path):
         monkeypatch, head={"id": 10, "type": "T2", "result_doc_id": None},
         group_id=group_id, prev_doc_id=prev_doc_id, tmp_path=tmp_path,
         created_doc=created, refreshed_doc=refreshed,
-        perms={"document.approve", "document.update", "perm_document_create"},
+        perms={"document.approve", "document.update", "project.document.create"},
         locale_label="Proposal",
     )
     monkeypatch.setattr(routes.numbering_service, "reserve_document",

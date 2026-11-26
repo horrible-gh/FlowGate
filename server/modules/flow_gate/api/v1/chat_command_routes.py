@@ -77,7 +77,7 @@ def _readable_chat_doc(doc_id: str, user: dict) -> dict:
     doc = db_documents.get_by_id(doc_id)
     if not doc or str(doc.get("type_code") or doc.get("type") or "").upper() != "CH":
         raise commands.ChatCommandError(404, "chat_document_not_found")
-    if not _has_permission(user, "perm_document_read", doc.get("project_id")):
+    if not _has_permission(user, "project.document.read", doc.get("project_id")):
         raise commands.ChatCommandError(403, "forbidden")
     return doc
 

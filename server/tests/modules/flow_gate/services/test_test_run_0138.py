@@ -124,7 +124,7 @@ def test_migration_052_adds_test_run_schema_and_scope(all_migrations_db):
     ).fetchone()
     assert row["action_scope"] == "test_run"
     perm = conn.execute(
-        "SELECT permission_id FROM permissions WHERE permission_id='perm_test_run'"
+        "SELECT permission_id FROM permissions WHERE permission_id='project.run'"
     ).fetchone()
     assert perm is not None
     conn.execute("DELETE FROM tokens WHERE token_id='tok_test_run_scope'")

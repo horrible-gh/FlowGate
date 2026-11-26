@@ -90,7 +90,7 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
     reg, trans = _wire_common(
         monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
         tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=refreshed_doc,
-        perms={"document.approve", "document.update", "perm_document_create"},
+        perms={"document.approve", "document.update", "project.document.create"},
     )
 
     result = routes.create_next_approved_document(
@@ -139,7 +139,7 @@ def test_next_approved_wp_head_without_instruction_or_note_uses_legacy_generic(m
     reg, trans = _wire_common(
         monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
         tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=created_doc,
-        perms={"document.approve", "document.update", "perm_document_create"},
+        perms={"document.approve", "document.update", "project.document.create"},
     )
     monkeypatch.setattr(
         routes.document_service, "get_document",
@@ -182,7 +182,7 @@ def test_next_approved_wp_head_expands_the_step_instruction_text(monkeypatch, tm
     reg, trans = _wire_common(
         monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
         tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=created_doc,
-        perms={"document.approve", "document.update", "perm_document_create"},
+        perms={"document.approve", "document.update", "project.document.create"},
     )
     monkeypatch.setattr(
         routes.document_service, "get_document",

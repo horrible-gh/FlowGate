@@ -185,7 +185,7 @@ def test_every_endpoint_requires_write_permission(client, monkeypatch, suffix, m
     monkeypatch.setattr(service, 'control', lambda *a: pytest.fail('unauthorized control'))
     response=getattr(client,method)('/api/v1/flows/f/nodes/a/self-check'+suffix)
     assert response.status_code == 403
-    assert seen == ['perm_document_update']
+    assert seen == ['project.document.update']
 
 
 @pytest.mark.parametrize('suffix,method', [('', 'get'),('/runs/r1/force-stop','post'),('/runs/r1/cancel-waiting','post')])
