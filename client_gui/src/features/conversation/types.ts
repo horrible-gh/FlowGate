@@ -375,6 +375,8 @@ export interface ChatProvider {
   name: string
   /** false = this AI is never given message images; absent = the server did not say. */
   acceptsImages?: boolean
+  /** 'user' = one of my own AI, 'system' = a system AI; absent = the server did not say (shown as a system AI). */
+  owner?: 'system' | 'user'
 }
 
 export interface ProviderList {
@@ -423,6 +425,25 @@ export interface ChatSettings {
   contextTurnsMin: number
   contextTurnsMax: number
   sourceAccessModes: SourceAccessMode[]
+}
+
+/**
+ * flowgate.v02test.0096 ④: my own title AI and repeat limit as the ⚙ AI tab shows them — the existing
+ * GET/PATCH /me/ai-preferences (v02test.0089, the same API as AI 관리). title_provider: 'auto' (the system rule), 'off',
+ * 'executor' (the AI that answered) or a provider id; repeat_count_max: mine (null = not set), capped by the system value.
+ */
+export interface MyAiPrefs {
+  title_provider: string
+  title_provider_effective: string
+  repeat_count_max: number | null
+  repeat_count_max_effective: number
+  repeat_count_system_max: number
+  repeat_count_min: number
+}
+
+export interface MyAiPrefsUpdate {
+  title_provider?: string
+  repeat_count_max?: number | null
 }
 
 export interface ChatSettingsPatch {

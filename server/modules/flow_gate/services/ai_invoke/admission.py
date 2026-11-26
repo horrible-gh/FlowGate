@@ -968,10 +968,15 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
     # flowgate.v02test.0025: in the caller's display order (AI 관리 list) when they saved one. Only
     # the order of this list changes -- the default and every fallback chain stay as they were.
     providers = ai_settings_service.apply_user_order(user_id, (effective.get("providers") or []) + personal)
+    # flowgate.v02test.0096: each brief says whose AI it is ("user" = the caller's own, "system" = a system AI), so
+    # the composer's AI picker can group 내 AI / 시스템 AI. Display only; nothing secret rides on it.
+    personal_ids = {p.get("id") for p in personal}
     return {
         "ok": True,
         "project": project_id,
-        "providers": [oracle._provider_brief(provider) for provider in providers],
+        "providers": [{**oracle._provider_brief(provider),
+                       "owner": "user" if provider.get("id") in personal_ids else "system"}
+                      for provider in providers],
         "default_provider_id": (ai_settings_service.personal_default_id(user_id, personal)
                                 or effective.get("default_provider_id")),
         # the only metadata endpoint every execution

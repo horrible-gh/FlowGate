@@ -50,14 +50,14 @@ describe('AiSettingsView (0015 T0003, AI 관리 since 0017 CH0006)', () => {
     document.body.innerHTML = ''
   })
 
-  it('opens on the AI list with three tabs and needs no current project', async () => {
+  it('opens on the AI list with the AI 관리 tabs and needs no current project', async () => {
     mockApis()
     const listGroups = vi.spyOn(api, 'listAiGroups').mockResolvedValue([])
     expect(useProjectStore().currentProject).toBeFalsy()
 
     const wrapper = await mountView()
 
-    expect(wrapper.findAll('.ui-tab').map((tab) => tab.text())).toEqual(['AI 목록', 'AI 평가', 'AI 그룹', '질의 방침'])
+    expect(wrapper.findAll('.ui-tab').map((tab) => tab.text())).toEqual(['AI 목록', 'AI 평가', 'AI 그룹', '기타 설정', '방침'])
     expect(wrapper.findComponent({ name: 'AiProvidersPanel' }).exists()).toBe(true)
     expect(wrapper.find('.no-project-box').exists()).toBe(false)
     // The AI list loads its own data; evaluation/group data waits for those tabs.
@@ -117,3 +117,4 @@ describe('AiSettingsView (0015 T0003, AI 관리 since 0017 CH0006)', () => {
     wrapper.unmount()
   })
 })
+

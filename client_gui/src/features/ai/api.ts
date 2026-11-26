@@ -25,6 +25,10 @@ import type {
   AiGroupStateInput,
   AiGroupUpdateInput,
   AiProbeResult,
+  CliModelCatalog,
+  CliPresetComposeInput,
+  CliPresetComposeResult,
+  CliPresetParseResult,
   MyAiPreferences,
   MyAiPreferencesUpdate,
   ProviderItem,
@@ -180,6 +184,33 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
   )
 }
 
+// CLI model catalog and composition (flowgate.v02test.0097): the connection editor draws its
+// kind/version/model/effort lists from the server and lets the server build the command and name.
+export async function fetchCliModelCatalog(): Promise<CliModelCatalog> {
+  const data = await call(
+    () => getRequest<{ catalog?: CliModelCatalog }>(`${API}/ai-settings/cli-model-catalog`),
+    'gui.ai.providers.catalog_load_failed',
+  )
+  return data.catalog ?? {}
+}
+
+export async function composeCliPreset(input: CliPresetComposeInput): Promise<CliPresetComposeResult> {
+  return call(
+    () => postRequest<CliPresetComposeResult>(`${API}/ai-settings/cli-preset-compose`, input),
+    'gui.ai.providers.compose_failed',
+  )
+}
+
+export async function parseCliPreset(cliCommand: string, kind?: string): Promise<CliPresetParseResult> {
+  return call(
+    () => postRequest<CliPresetParseResult>(`${API}/ai-settings/cli-preset-parse`, {
+      cli_command: cliCommand,
+      ...(kind ? { kind } : {}),
+    }),
+    'gui.ai.providers.compose_failed',
+  )
+}
+
 // Read-only system AI for users who are not administrators (the "AI 관리" list shows both owners).
 export async function fetchVisibleSystemAi(): Promise<VisibleSystemAi> {
   return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'gui.ai.request_failed.system_load')
@@ -222,14 +253,6 @@ export async function fetchCurrentConnectionTest(projectId: string, providerId: 
   return call(
     () => getRequest<AiConnectionTestCurrent>(`${project(projectId)}/ai-connection-tests/current`, { provider_id: providerId }),
     'gui.ai.request_failed.connection_test_load',
-  )
-}
-
-// Repeat-count ceiling: the system setting ai_repeat_count_max (system.settings.manage).
-export async function saveRepeatCountMax(value: number): Promise<void> {
-  await call(
-    () => patchRequest('/api/v1/system/settings', { updates: { ai_repeat_count_max: String(value) } }),
-    'gui.ai.request_failed.repeat_limit_save',
   )
 }
 

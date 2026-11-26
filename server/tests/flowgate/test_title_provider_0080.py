@@ -34,15 +34,15 @@ def catalog(monkeypatch):
 
 def test_default_get_and_save_contract(catalog):
     rows, providers = catalog
-    assert settings.get_one(policy.KEY)["setting_value"] == "light"
-    assert next(r for r in settings.get_all() if r["setting_key"] == policy.KEY)["setting_value"] == "light"
+    assert settings.get_one(policy.KEY)["setting_value"] == "executor"
+    assert next(r for r in settings.get_all() if r["setting_key"] == policy.KEY)["setting_value"] == "executor"
     assert policy.KEY not in rows
     routes.update_settings(routes.SettingsPatch(updates={policy.KEY: "remote"}), user={"user_id": "admin"})
     assert settings.get_one(policy.KEY)["setting_value"] == "remote"
     providers.clear()
     assert policy.value() == "remote"
     rows.clear()
-    assert policy.value() == "off"
+    assert policy.value() == "executor"
 
 
 @pytest.mark.parametrize("value", [None, "", "missing", " remote", "disabled"])

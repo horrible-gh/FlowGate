@@ -6,7 +6,8 @@ MODEL = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._:/@-]*\Z")
 BARE = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/=@+,")
 FLAGS = {"claude": {"-p", "--print", "--dangerously-skip-permissions"},
          "codex": {"--skip-git-repo-check", "--json"},
-         "copilot": {"--no-ask-user", "--allow-all"}}
+         "copilot": {"--no-ask-user", "--allow-all"},
+         "gemini": {"--dangerously-skip-permissions", "--sandbox"}}
 
 
 def valid(value):
@@ -80,14 +81,21 @@ def requested(provider, command=None, shell_kind=None):
     kind = provider.get("kind")
     if kind not in FLAGS:
         return result("not_parsed", reason="custom_command")
-    words = shell_words(command if command is not None else provider.get("cli_command") or "", shell_kind)
+    command = command if command is not None else provider.get("cli_command") or ""
+    if kind == "gemini" and shell_kind == "remote_agent":
+        # Use only tokenizations shared by both supported Agent shells.
+        words = shell_words(command, "posix_sh")
+        if words != shell_words(command, "windows_cmd"):
+            words = None
+    else:
+        words = shell_words(command, shell_kind)
     if words is None:
         return result("not_parsed", reason="shell_syntax")
     program = re.split(r"[/\\]", words[0])[-1] if words else ""
     if shell_kind == "windows_cmd":
         program = program.lower()
     program = re.sub(r"\.(exe|cmd|bat|ps1)$", "", program)
-    if program != kind:
+    if program != ("agy" if kind == "gemini" else kind):
         return result("not_parsed", reason="wrapped_command")
     specs, i = [], 1
     while i < len(words):
@@ -140,7 +148,7 @@ def capability(provider, req):
         return "api_reported"
     if provider.get("kind") == "copilot":
         return "cli_reported"
-    if provider.get("kind") in ("claude", "codex") and req["state"] == "value":
+    if provider.get("kind") in ("claude", "codex", "gemini") and req["state"] == "value":
         return "cli_request_only"
     return "cli_none"  # ALLOW: evidence never changes admission.
 
@@ -165,7 +173,7 @@ def confirmed(exec_type, kind, outcome):
         output = outcome.get("stdout_full") or ""
         if not output.strip():
             return empty("no_result")
-        if kind in ("claude", "codex"):
+        if kind in ("claude", "codex", "gemini"):
             return empty("kind_reports_no_model")
         if kind != "copilot":
             return empty("custom_command")

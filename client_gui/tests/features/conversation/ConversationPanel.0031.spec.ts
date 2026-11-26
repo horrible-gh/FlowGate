@@ -250,15 +250,28 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     expect(find('conv-source-mode').findAll('button').map((b) => b.attributes('aria-pressed'))).toEqual(['false', 'true', 'false', 'false'])
   })
 
-  it('saves chat settings from the settings popover', async () => {
+  it('saves chat settings from the settings window as soon as they change (F96-8: no 취소 / 저장)', async () => {
     const { source } = await mountPanel()
     await find('conv-settings-btn').trigger('click')
+    expect(find('conv-settings-save').exists()).toBe(false)
     await find('conv-setting-send-action').setValue('copy_mention')
+    // a second change while the first is on its way is sent once that one answers
     await find('conv-setting-context').setValue('all')
-    await find('conv-settings-save').trigger('click')
     await flushPromises()
-    expect(source.saveChatSettings).toHaveBeenCalledWith({ send_action: 'copy_mention', context_mode: 'all' }, { projectId: 'p', groupId: 'p.m.0001' })
-    expect(find('conv-settings').exists()).toBe(false)
+    expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ send_action: 'copy_mention' }), { projectId: 'p', groupId: 'p.m.0001' })
+    expect(source.saveChatSettings).toHaveBeenLastCalledWith({ send_action: 'copy_mention', context_mode: 'all' }, { projectId: 'p', groupId: 'p.m.0001' })
+    expect(find('conv-settings').exists()).toBe(true) // stays open
+  })
+
+  it('puts the confirmed value back and shows the error when a change fails to save (F96-8)', async () => {
+    const { source } = await mountPanel()
+    source.saveChatSettings.mockRejectedValueOnce(new Error('boom'))
+    await find('conv-settings-btn').trigger('click')
+    await find('conv-setting-send-action').setValue('copy_mention')
+    await flushPromises()
+    expect(source.saveChatSettings).toHaveBeenCalledTimes(1)
+    expect((find('conv-setting-send-action').element as HTMLSelectElement).value).toBe('none')
+    expect(find('conv-notice').exists()).toBe(true)
   })
 
   it('saves a typed last-N-turns value from 1 to 999 and keeps the select and input in step', async () => {
@@ -269,7 +282,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     const input = find('conv-setting-turns')
     await input.setValue('999')
     expect(find('conv-setting-turns-error').exists()).toBe(false)
-    await find('conv-settings-save').trigger('click')
+    await input.trigger('change')
     await flushPromises()
     expect(source.saveChatSettings).toHaveBeenCalledWith(
       expect.objectContaining({ context_mode: 'recent', context_turns: 999 }),
@@ -277,11 +290,11 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     )
     // reopened: 사용자 입력 with 999; choosing a preset hides the box and saves the preset
     await find('conv-settings-btn').trigger('click')
+    await find('conv-settings-btn').trigger('click')
     expect((find('conv-setting-context').element as HTMLSelectElement).value).toBe('custom')
     expect((find('conv-setting-turns').element as HTMLInputElement).value).toBe('999')
     await find('conv-setting-context').setValue('10')
     expect(find('conv-setting-turns').exists()).toBe(false)
-    await find('conv-settings-save').trigger('click')
     await flushPromises()
     expect(source.saveChatSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({ context_mode: 'recent', context_turns: 10 }),
@@ -321,16 +334,14 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
   })
 
   it.each(['0', '-3', '1.5', 'abc', '', '  ', '1000', '12345'])(
-    'rejects %j: save is disabled, a short error shows, and nothing is sent or corrected',
+    'rejects %j: a short error shows, and nothing is sent or corrected',
     async (bad) => {
       const { source } = await mountPanel()
       await find('conv-settings-btn').trigger('click')
       await find('conv-setting-context').setValue('custom')
       await find('conv-setting-turns').setValue(bad)
       expect(find('conv-setting-turns-error').exists()).toBe(true)
-      const save = find('conv-settings-save')
-      expect(save.attributes('disabled')).toBeDefined()
-      await save.trigger('click')
+      await find('conv-setting-turns').trigger('change')
       await find('conv-setting-turns').trigger('keydown', { key: 'Enter' })
       await flushPromises()
       expect(source.saveChatSettings).not.toHaveBeenCalled()
@@ -346,8 +357,6 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
     await find('conv-setting-turns').setValue('0')
     await find('conv-setting-context').setValue('all')
     expect(find('conv-setting-turns').exists()).toBe(false)
-    expect(find('conv-settings-save').attributes('disabled')).toBeUndefined()
-    await find('conv-settings-save').trigger('click')
     await flushPromises()
     expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ context_mode: 'all' }), { projectId: 'p', groupId: 'p.m.0001' })
   })
@@ -365,11 +374,17 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       if (!find('conv-settings').exists()) await find('conv-settings-btn').trigger('click')
     }
 
+    // F96-8: the window stays open after a save; closing and opening again redraws the confirmed settings.
+    async function reopenSettings() {
+      if (find('conv-settings').exists()) await find('conv-settings-btn').trigger('click')
+      await find('conv-settings-btn').trigger('click')
+    }
+
     async function saveTyped(text: string) {
       await openSettings()
       await find('conv-setting-context').setValue('custom')
       await find('conv-setting-turns').setValue(text)
-      await find('conv-settings-save').trigger('click')
+      await find('conv-setting-turns').trigger('change')
       await flushPromises()
     }
 
@@ -379,13 +394,12 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       expect(source.saveChatSettings).toHaveBeenCalledTimes(1)
       expect(source.saveChatSettings).toHaveBeenCalledWith(expect.objectContaining({ context_mode: 'recent', context_turns: n }), SCOPE)
       expect(data.settings.contextTurns).toBe(n) // the "server" now holds exactly what was typed
-      expect(find('conv-settings').exists()).toBe(false)
+      expect(find('conv-settings').exists()).toBe(true) // saved in place, the window stays
 
-      await openSettings()
+      await reopenSettings()
       expect(sel().value).toBe('custom') // neither is a preset: reopens as 사용자 입력
       expect(turnsInput().value).toBe(String(n))
       expect(find('conv-setting-turns-error').exists()).toBe(false)
-      expect(find('conv-settings-save').attributes('disabled')).toBeUndefined()
     })
 
     it('keeps preset → typed → all → typed saves in step with the server, and keeps the number through "all"', async () => {
@@ -396,7 +410,6 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       await openSettings()
       await find('conv-setting-context').setValue('10')
       expect(find('conv-setting-turns').exists()).toBe(false)
-      await find('conv-settings-save').trigger('click')
       await flushPromises()
       expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 10 })
       expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 10 })
@@ -407,30 +420,32 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 777 })
 
       // all: the number is not sent, so it is not overwritten
-      await openSettings()
+      await reopenSettings()
       expect(sel().value).toBe('custom')
       expect(turnsInput().value).toBe('777')
       await find('conv-setting-context').setValue('all')
       expect(find('conv-setting-turns').exists()).toBe(false)
-      await find('conv-settings-save').trigger('click')
       await flushPromises()
       expect(lastPatch()).toMatchObject({ context_mode: 'all' })
       expect(lastPatch()).not.toHaveProperty('context_turns')
       expect(data.settings).toMatchObject({ contextMode: 'all', contextTurns: 777 })
-      await openSettings()
+      await reopenSettings()
       expect(sel().value).toBe('all')
       expect(find('conv-setting-turns').exists()).toBe(false)
 
-      // typed again, starting from "all": choose 사용자 입력 to bring the input back
+      // typed again, starting from "all": choosing 사용자 입력 brings the input back with the kept number and saves it
       await find('conv-setting-context').setValue('custom')
       expect(turnsInput().value).toBe('777') // the kept number
+      await flushPromises()
+      expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 777 })
       await find('conv-setting-turns').setValue('250')
-      await find('conv-settings-save').trigger('click')
+      await find('conv-setting-turns').trigger('change')
       await flushPromises()
       expect(lastPatch()).toMatchObject({ context_mode: 'recent', context_turns: 250 })
       expect(data.settings).toMatchObject({ contextMode: 'recent', contextTurns: 250 })
-      expect(source.saveChatSettings).toHaveBeenCalledTimes(4)
-      await openSettings()
+      // preset 10, typed 777, all, 사용자 입력 (777), typed 250 — picking 사용자 입력 on 10 itself sent nothing (no change)
+      expect(source.saveChatSettings).toHaveBeenCalledTimes(5)
+      await reopenSettings()
       expect(sel().value).toBe('custom')
       expect(turnsInput().value).toBe('250')
     })
@@ -466,7 +481,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       await findAll('conv-list-item')[1].trigger('click')
       await flushPromises()
       expect(source.fetchTurns).toHaveBeenCalledWith(B, expect.anything())
-      await openSettings()
+      await reopenSettings()
       expect(sel().value).toBe('custom')
       expect(turnsInput().value).toBe('999')
     })
@@ -478,7 +493,7 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       await w.setProps({ groupId: 'p.m.0002' })
       await flushPromises()
       expect(source.fetchChatSettings).toHaveBeenLastCalledWith({ projectId: 'p', groupId: 'p.m.0002' })
-      await openSettings()
+      await reopenSettings()
       expect(sel().value).toBe('custom')
       expect(turnsInput().value).toBe('1')
     })
@@ -490,9 +505,9 @@ describe('ConversationPanel (flowgate.v02.0031)', () => {
       source.saveChatSettings.mockRejectedValueOnce(new Error('boom'))
       await saveTyped('999')
       expect(data.settings.contextTurns).toBe(40)
-      expect(find('conv-settings').exists()).toBe(true) // not closed as if it had saved
-      await find('conv-settings-btn').trigger('click') // close without saving
-      await openSettings() // reopen redraws the last confirmed settings
+      expect(find('conv-settings').exists()).toBe(true)
+      expect(turnsInput().value).toBe('40') // F96-8: the failed value is replaced by the confirmed one at once
+      await reopenSettings() // reopen redraws the last confirmed settings
       expect(sel().value).toBe('custom')
       expect(turnsInput().value).toBe('40')
     })

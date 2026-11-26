@@ -12,7 +12,7 @@ export { default as RunResultWindow } from './runResult/RunResultWindow.vue'
 export { default as RunResultDetailWindow } from './runResult/RunResultDetailWindow.vue'
 export * from './runResult/runResultWatch'
 export { attachmentPendingLine } from './runResult/runResultView'
-// "내 AI" as a Designer window, opened from the taskbar menu card.
-export { default as MyAiWindow } from './windows/MyAiWindow.vue'
-// "질의 방침" as a Designer window, opened from the taskbar menu card.
-export { default as QuestionPolicyWindow } from './windows/QuestionPolicyWindow.vue'
+// v02test.0096: "AI 관리" as one Designer window (내 AI / 기타 설정 / 방침), opened from the taskbar menu cards.
+export { default as AiManageWindow } from './windows/AiManageWindow.vue'
+export { installAiManageMessages } from './manage/messages'
+export type { AiManageTab, AiWindowTab } from './manage/aiManageTabs'

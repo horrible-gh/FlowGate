@@ -116,7 +116,12 @@ def test_system_only_views_are_unchanged(world):
 
 def test_runtime_provider_list_never_carries_the_command_or_the_agent(world):
     listed = _listed("alice")
-    assert set(listed["providers"][1]) == {"id", "name", "exec_type", "kind", "capabilities"}
+    assert set(listed["providers"][1]) == {"id", "name", "exec_type", "kind", "capabilities", "owner"}
+
+
+def test_runtime_provider_list_says_whose_ai_each_one_is(world):
+    # flowgate.v02test.0096: the AI picker groups 내 AI / 시스템 AI by this field.
+    assert [(p["id"], p["owner"]) for p in _listed("alice")["providers"]] == [("sys_a", "system"), ("alice_remote", "user")]
 
 
 def test_allowlist_exemption_applies_to_the_owner_only(world, monkeypatch):

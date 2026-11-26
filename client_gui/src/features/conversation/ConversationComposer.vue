@@ -128,6 +128,7 @@
       <ComposerModelPicker
         :providers="providers"
         :selected-id="selectedProviderId"
+        :default-id="defaultProviderId"
         :status="providersStatus"
         :disabled="readOnly"
         @select="(id) => emit('select-provider', id)"
@@ -165,7 +166,10 @@
         :saving="savingSettings"
         :has-providers="hasProviders"
         :disabled="readOnly"
+        :providers="providers"
+        :selected-provider-id="selectedProviderId"
         @save="(patch, done) => emit('save-settings', patch, done)"
+        @select-provider="(id) => emit('select-provider', id)"
       />
       <ComposerToolsMenu
         :has-providers="hasProviders"
@@ -221,6 +225,8 @@ const props = withDefaults(defineProps<{
   sourceLocked?: boolean
   providers: readonly ChatProvider[]
   selectedProviderId: string
+  /** my default AI; the AI picker lists it first (v02test.0096). Absent = none. */
+  defaultProviderId?: string | null
   providersStatus: string
   /**
    * whether the open chat's AI is settled ('loading' / 'error': send waits). Absent = 'ready'.
