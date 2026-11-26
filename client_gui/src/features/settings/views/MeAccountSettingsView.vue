@@ -59,6 +59,9 @@
             </div>
           </div>
         </div>
+
+        <!-- v02test.0090: the teams, projects and roles this person holds (nothing is drawn on an older server). -->
+        <MyAccessSection />
       </div>
     </section>
   </component>
@@ -80,6 +83,7 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
+import MyAccessSection from '../components/MyAccessSection.vue'
 import { useMeNav } from '../components/meNav'
 
 defineProps<{ embedded?: boolean }>()
