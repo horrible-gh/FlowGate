@@ -214,8 +214,9 @@ describe('exhausted', () => {
     expect(rows[1].text()).toContain('2번째')
     expect(rows[1].text()).toContain('다시 얹고 AI로 해결')
     expect(rows[2].text()).toContain('다른 AI로 해결')
-    for (const test of ['merge-ai', 'merge-pick-open', 'merge-discard']) expect(q(w, test).exists()).toBe(true)
-    expect(q(w, 'merge-files').exists()).toBe(true)
+    // F84-8 (시안 jvj9ff9t §1): the automatic box is the one box (its files and tries); the buttons sit in the pinned footer.
+    for (const test of ['merge-ai', 'merge-pick-open', 'merge-discard']) expect(q(w, 'merge-foot').find(`[data-test="${test}"]`).exists()).toBe(true)
+    expect(q(w, 'merge-files').exists()).toBe(false)
     expect(api.act).not.toHaveBeenCalled()
   })
 
