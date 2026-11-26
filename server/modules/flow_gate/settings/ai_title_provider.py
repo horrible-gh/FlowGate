@@ -6,14 +6,8 @@ KEY = "ai_title_provider"
 
 
 def default_provider():
-    providers = ai_settings_service.resolve_global().get("providers", [])
-    local = [p for p in providers if p.get("exec_type") == "api" or
-             (p.get("exec_type") == "cli" and p.get("exec_location") != "remote")]
-    for p in local:
-        label = " ".join(str(p.get(k) or "") for k in ("name", "api_model", "cli_command")).lower()
-        if any(word in label for word in ("haiku", "mini", "nano", "flash", "small")):
-            return p["id"]
-    return "off"
+    # F96-10: with no administrator value, titles are written by the AI that replied ("executor").
+    return "executor"
 
 
 def value():

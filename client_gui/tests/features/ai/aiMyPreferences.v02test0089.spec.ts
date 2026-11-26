@@ -121,7 +121,7 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     const save = vi.spyOn(api, 'saveMyAiPreferences').mockResolvedValue({ ...basePrefs, repeat_count_max: null, repeat_count_max_effective: 5 })
     const { wrapper } = await mountPanel({ prefs: { ...basePrefs, repeat_count_max: 2, repeat_count_max_effective: 2 } })
     const reset = wrapper.get('[data-test="my-repeat-reset"]')
-    expect(reset.text()).toBe('기본값(시스템 5)으로')
+    expect(reset.text()).toBe('기본값으로')
     await reset.trigger('click')
     await flushPromises()
     expect(save).toHaveBeenCalledWith({ repeat_count_max: null })

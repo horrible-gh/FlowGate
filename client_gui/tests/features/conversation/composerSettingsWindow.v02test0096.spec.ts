@@ -155,12 +155,33 @@ describe('⚙ settings window (v02test.0096 ④)', () => {
     expect(w.findAll('[data-test="conv-setting-pins"] li').map((li) => li.attributes('data-provider-id'))).toEqual(['p1'])
     await w.get('[data-test="conv-setting-pin-remove"]').trigger('click')
     expect(w.find('[data-test="conv-setting-pins"]').exists()).toBe(false)
-    expect(w.get('[data-test="conv-setting-repeat-system"]').text()).toContain('5')
+    expect(w.find('[data-test="conv-setting-repeat-system"]').exists()).toBe(false)
+    expect(w.get('[data-test="conv-settings"]').text()).not.toContain('시스템')
     await w.get('[data-test="conv-setting-repeat-decrease"]').trigger('click')
     await flushPromises()
     expect(api.saveMyAiPrefs).toHaveBeenCalledWith({ repeat_count_max: 4 })
     expect(w.get('[data-test="conv-setting-repeat-value"]').text()).toBe('4')
     w.unmount()
+  })
+})
+
+describe('⚙ settings › AI › 제목 짓기 AI 자동 label (F96-10)', () => {
+  async function autoLabel(effective: string): Promise<string> {
+    const api = await import('@/features/conversation/api')
+    vi.mocked(api.fetchMyAiPrefs).mockResolvedValueOnce({ ...prefs, title_provider_effective: effective })
+    const w = mountSettings()
+    await w.get('[data-test="conv-settings-btn"]').trigger('click')
+    await w.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    const label = w.get('[data-test="conv-setting-title-ai"] option[value="auto"]').text()
+    w.unmount()
+    return label
+  }
+
+  it('names the AI 자동 resolves to, and shows only 자동 for an id it cannot name', async () => {
+    expect(await autoLabel('executor')).toBe('자동 · 답한 AI 그대로')
+    expect(await autoLabel('p2')).toBe('자동 · Codex GPT 6.1 Sol(AG)')
+    expect(await autoLabel('aip_unknown_internal')).toBe('자동')
   })
 })
 
