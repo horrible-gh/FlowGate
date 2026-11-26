@@ -15,7 +15,12 @@
         <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.check" :options="checkOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.check = $event === 'code' ? 'code' : 'manual'" /></div></div>
         <!-- shown for a code case only. No language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
         <label v-if="draft.check === 'code'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
-          <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" /></span></label>
+          <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" />
+          <!-- F81: [▶ 실행] of a saved code case. FlowGate runs the command and attaches the exit summary; the result and the
+               evidence boxes are read again when it ends. Off while it runs, or while the command shown is not the saved one. -->
+          <span v-if="!adding" class="run"><Button size="sm" variant="secondary" :disabled="!runEnabled" :loading="runningCase" :title="runReason || t(k('run'))" data-test="case-run" @click="runCase">{{ t(k('run')) }}</Button>
+            <span v-if="runReason && !runningCase" class="hint" data-test="case-run-reason">{{ runReason }}</span></span>
+          <InspectorReason v-if="runFailure" tone="danger" :text="runFailure" data-test="case-run-failure" /></span></label>
         <!-- The result is on the window from the start: four buttons, anyone may press one, and who did is shown. -->
         <div class="field" role="group" :aria-label="t(k('result'))"><span>{{ t(k('result')) }}</span><div class="control">
           <InspectorSegment :model-value="skipping ? 'skip' : shownResult" :options="resultOptions" :disabled="!resultEnabled" :aria-label="t(k('result'))" data-test="case-result" @update:model-value="pickResult" />
@@ -62,7 +67,7 @@ import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
-import { caseDraft, newCaseDraft, addedCase, mergeCase, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
+import { caseDraft, newCaseDraft, addedCase, mergeCase, pinMatches, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t, locale } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.case.${key}`
@@ -88,7 +93,7 @@ watch(() => [card.value?.test.status.value, card.value?.view.value, card.value?.
 }, { immediate: true, flush: 'sync' })
 const textFields = ['procedure', 'expected'] as const
 /** The draft's pin must be the very snapshot the draft was shown from (§2.15.3); a pin of another snapshot is a conflict, never a rebase. */
-const pinStale = computed(() => !!draft.value?.pin && draft.value.snapshot !== scenarioSnapshot(draft.value.pin.cases, draft.value.pin.title))
+const pinStale = computed(() => !!draft.value?.pin && !pinMatches(draft.value))
 const pinReady = computed(() => !!draft.value?.pin && !pinStale.value)
 async function ensurePin(d: CaseDraft | null) {
   const c = card.value
@@ -175,6 +180,26 @@ function pickResult(value: string) {
 }
 function recordSkip() { if (skipReason.value.trim()) void record('skip', skipReason.value.trim()) }
 
+// ── [▶ 실행]: the same case run the AI's test run asks for (POST /test-spec/cases/{case_id}/run) ──────────────────────
+const runAvailability = computed(() => adding.value || !state.value?.caseId ? { enabled: false, reason: 'guard.save_first' } : card.value?.can('rerunCase', state.value.caseId) ?? { enabled: false, reason: 'reason.busy' })
+const runningCase = computed(() => card.value?.test.busy.value === 'rerunCase')
+/** A changed command or check is judged by the server on save; the run uses the saved one, so save first. */
+const runUnsaved = computed(() => !!draft.value && !adding.value && runChanged(draft.value))
+const runEnabled = computed(() => runAvailability.value.enabled && !runningCase.value && !runUnsaved.value && !checking.value)
+const runReason = computed(() => { if (runUnsaved.value) return t(k('run_save_first')); const key = runAvailability.value.reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' })
+const runFailure = ref('')
+async function runCase() {
+  const c = card.value, id = state.value?.caseId
+  if (!current() || !c || !id || !runEnabled.value) return
+  runFailure.value = ''
+  const ok = await c.rerunCase(id)
+  if (!current()) return
+  if (!ok) { const key = c.test.failure.value?.operation === 'rerunCase' ? c.test.failure.value.key : null; runFailure.value = key ? t(`gui.inspector.testSpec.${key}`) : t(k('run_failed')) }
+  // The result, the exit summary and the log box: the whole card is read again (the evidence box follows the view).
+  await c.reload()
+}
+watch(() => state.value?.caseId, () => { runFailure.value = '' })
+
 // ── Evidence boxes and the remark line ─────────────────────────────────────────────────────────────
 const remarkTally = computed(() => adding.value || !state.value?.caseId ? { open: 0, resolved: 0 } : card.value?.remarkCounts(state.value.caseId) ?? { open: 0, resolved: 0 })
 const remarkLabel = computed(() => remarkTally.value.open || remarkTally.value.resolved ? t(k('remarks_line'), { open: remarkTally.value.open, resolved: remarkTally.value.resolved }) : t(k('remarks_add')))
@@ -211,6 +236,7 @@ label, .field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 
 .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; } /* The command and, under it, why it cannot run; not a label caption (label > span). */
 .command { display: flex; flex-direction: column; min-width: 0; padding-top: 0; color: inherit; }
 .skip { display: flex; align-items: center; gap: 6px; width: 100%; }
+.run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 /* An evidence box: what it holds, then the add / drop place. */
 .evidence { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 1px dashed var(--fg2-line-strong); border-radius: 8px; box-sizing: border-box; }
 .drop { margin-left: auto; padding: 2px 8px; border: 0; background: none; color: var(--fg2-muted); font: inherit; font-size: 11.5px; }

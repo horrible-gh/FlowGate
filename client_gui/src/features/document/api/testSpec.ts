@@ -665,6 +665,8 @@ export interface TestRemark {
   readonly aiReply: string | null
   readonly createdAt: string | null
   readonly resolvedAt: string | null
+  /** F81: who resolved it — a person's name when a person pressed ✓ 해결 (the server's `resolved_by`), else null. */
+  readonly resolvedBy: string | null
 }
 export interface TestRemarkList {
   readonly docId: string
@@ -681,6 +683,8 @@ export function toTestSpecRemark(raw: unknown): TestRemark | null {
     state: row.state === 'resolved' ? 'resolved' : 'open',
     author: { kind: author.kind === 'ai' ? 'ai' : 'human', name: text(author.name) ?? '' },
     aiReply: written(row.ai_reply), createdAt: text(row.created_at), resolvedAt: text(row.resolved_at),
+    // `resolved_by` is a name, or an author-like object carrying one.
+    resolvedBy: written(row.resolved_by) ?? written(record(row.resolved_by).name),
   }
 }
 /** The same case whatever the id's zero padding (`TC-1` = `TC-001`), as the server's case_id_key. */

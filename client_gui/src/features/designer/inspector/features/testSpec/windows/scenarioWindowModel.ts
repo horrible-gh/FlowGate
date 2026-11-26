@@ -27,6 +27,20 @@ export interface CaseDraft {
 export function scenarioSnapshot(cases: readonly TestSpecCaseDetail[], title: string | null): string {
   return JSON.stringify([title, cases.map(testSpecCasePayload)])
 }
+/**
+ * Whether the draft's pin is the very snapshot the draft was shown from (§2.15.3).
+ * F81 8a: a scenario without a title of its own (the empty scenario before its first case) is shown with the
+ * document's title (the test view falls back to `doc_title`), while the structured read gives no title at all.
+ * That pin is the same snapshot when its cases are; any other difference stays a conflict, never a rebase.
+ */
+export function pinMatches(draft: Pick<CaseDraft, 'snapshot' | 'pin'>): boolean {
+  const pin = draft.pin
+  if (!pin) return false
+  if (draft.snapshot === scenarioSnapshot(pin.cases, pin.title)) return true
+  if (pin.title !== null) return false
+  const shown = JSON.parse(draft.snapshot) as [string | null, unknown]
+  return draft.snapshot === scenarioSnapshot(pin.cases, shown[0])
+}
 
 const LOCATOR = /^([A-Za-z0-9_./-]+)(?:::(\w+(?:::\w+)*))?$/
 /** `path` relative to `from` (both repository-relative POSIX paths), as the server's posixpath.relpath. */
