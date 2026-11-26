@@ -957,12 +957,12 @@ describe('flowgate.v02test.0096 F96-6 — 제목 짓기 AI (ai_title_provider) m
   const options = (w: VueWrapper) => w.findAll('[data-testid="title-ai-value"] option')
   const selected = (w: VueWrapper) => (w.get('[data-testid="title-ai-value"]').element as HTMLSelectElement).value
 
-  it('sits after the repeat card and lists 끄기, 실행한 AI 그대로, a separator, then the enabled system AI in the system order', async () => {
+  it('sits after the repeat card and lists 끄기, 답한 AI 그대로, a separator, then the enabled system AI in the system order', async () => {
     const w = await open('/settings/system/general')
     const cards = w.findAll('[data-card]').map((c) => c.attributes('data-card'))
     expect(cards.indexOf('title-ai')).toBe(cards.indexOf('repeat') + 1)
     expect(w.get('[data-card="title-ai"]').text()).toContain('제목 짓기 AI 기본값(시스템)')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로', '──────────', 'System A', 'System B'])
+    expect(options(w).map((o) => o.text())).toEqual(['끄기', '답한 AI 그대로', '──────────', 'System A', 'System B'])
     expect(options(w).map((o) => o.attributes('value')).slice(0, 2)).toEqual(['off', 'executor'])
     expect((options(w)[2].element as HTMLOptionElement).disabled).toBe(true)
     expect(selected(w)).toBe('executor')
@@ -1009,7 +1009,7 @@ describe('flowgate.v02test.0096 F96-6 — 제목 짓기 AI (ai_title_provider) m
   it('a failing system AI read leaves the fixed choices; a server without the row only disables this card', async () => {
     net.failAiGet = 500
     let w = await open('/settings/system/general')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로'])
+    expect(options(w).map((o) => o.text())).toEqual(['끄기', '답한 AI 그대로'])
     expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     w.unmount()
     net.failAiGet = 0

@@ -602,7 +602,7 @@ const titleValue = ref('')
 const titleSaving = ref(false)
 const titleError = ref('')
 const titleSaved = ref(false)
-// System AI for the choices, in the system order. A failed read leaves only 끄기 / 실행한 AI 그대로 (and the stored value).
+// System AI for the choices, in the system order. A failed read leaves only 끄기 / 답한 AI 그대로 (and the stored value).
 const systemAi = ref<ProviderItem[]>([])
 
 async function loadSystemAi() {
@@ -613,7 +613,7 @@ async function loadSystemAi() {
   }
 }
 
-// 끄기 / 실행한 AI 그대로 / separator / the enabled system AI. An off AI is left out (the server refuses it), except the
+// 끄기 / 답한 AI 그대로 / separator / the enabled system AI. An off AI is left out (the server refuses it), except the
 // stored one, which titleChoices always offers so the select never claims another value.
 const titleOptions = computed<TitleChoice[]>(() => {
   const current = titleConfirmed.value
