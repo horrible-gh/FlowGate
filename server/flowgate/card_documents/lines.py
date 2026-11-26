@@ -122,6 +122,12 @@ def _released(flow_id: str, node_key: str, rows: list[dict], wanted: set) -> lis
     return [r for r in stale if _signature(r) not in kept]
 
 
+def instruction_omitted(flow_id: str, node_key: str, slot: str, doc_type: str) -> bool:
+    """Omitted instruction with no required shared scenario document (TS keeps its document)."""
+    return (slot == cs.INSTRUCTION and doc_type != "TS"
+            and card_settings.values(flow_id, node_key).get("instruction") == "omit")
+
+
 def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, registered: set[str],
                    user_id: Optional[str], locale: Optional[str] = None) -> tuple[Optional[str], bool]:
     """(document of a new line, whether the card owns it); (None, _) = the line stays empty. Only a document made
@@ -131,8 +137,7 @@ def _line_document(group: dict, node: dict, slot: cs.CardSlot, made: dict, regis
         return None, False
     # 0065 #33: preserve the slot, but do not create an omitted instruction draft.
     # TS also owns the scenario, so its shared document remains available.
-    if (slot.slot == cs.INSTRUCTION and slot.doc_type != "TS"
-            and card_settings.values(group["group_id"], node["node_key"]).get("instruction") == "omit"):
+    if instruction_omitted(group["group_id"], node["node_key"], slot.slot, slot.doc_type):
         return None, False
     if slot.shares:
         return made.get(slot.shares), False

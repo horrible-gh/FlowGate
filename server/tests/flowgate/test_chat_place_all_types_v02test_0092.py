@@ -219,3 +219,18 @@ def test_the_tool_schema_and_the_contract_name_every_type():
             assert word in text, (word, text)
     assert "do not place research/design/plan cards" not in tools.GUIDE and "Research and design cards" in tools.GUIDE
     assert "Any placed type" in tools.contract_roles("/flowgate/api/v1", "TOKEN")
+
+
+@pytest.mark.parametrize("doc_type", ALL_TYPES)
+def test_omitted_instructions_skip_start_check_except_shared_ts(env, decided, doc_type):
+    from test_fg_card_settings import setting
+    from flowgate.chat_control import service
+
+    card = _place([{"doc_type": doc_type}])["cards"][0]
+    key = card["node_key"]
+    setting(env, FA, key, "instruction", "omit")
+    assert service.missing_instructions(FA, _draft()) == ([key] if doc_type == "TS" else [])
+    setting(env, FA, key, "instruction", "use")
+    assert service.missing_instructions(FA, _draft()) == [key]
+    err = _refused(lambda: service.start(_group(), "u_kim"), 409, "chat_run_instruction_missing")
+    assert err.params["node_keys"] == [key]

@@ -357,6 +357,8 @@ def missing_instructions(flow_id: str, record: dict) -> list[str]:
             continue
         if (rows.get(node["node_key"]) or {}).get("status") in PROTECTED:
             continue
+        if card_lines.instruction_omitted(flow_id, node["node_key"], cs.INSTRUCTION, node.get("doc_type")):
+            continue
         line = card_lines.line_document(flow_id, node["node_key"], cs.INSTRUCTION, node.get("node_type"),
                                         node.get("doc_type"))
         if line is None:
