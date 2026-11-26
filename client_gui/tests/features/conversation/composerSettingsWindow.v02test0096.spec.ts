@@ -16,8 +16,9 @@ const prefs = {
   title_provider_effective: 'p2',
   repeat_count_max: null,
   repeat_count_max_effective: 5,
-  repeat_count_system_max: 5,
+  repeat_count_default: 5,
   repeat_count_min: 1,
+  repeat_count_hard_max: 30,
 }
 
 vi.mock('@/features/conversation/api', async (importOriginal) => {
@@ -155,11 +156,46 @@ describe('⚙ settings window (v02test.0096 ④)', () => {
     expect(w.findAll('[data-test="conv-setting-pins"] li').map((li) => li.attributes('data-provider-id'))).toEqual(['p1'])
     await w.get('[data-test="conv-setting-pin-remove"]').trigger('click')
     expect(w.find('[data-test="conv-setting-pins"]').exists()).toBe(false)
-    expect(w.get('[data-test="conv-setting-repeat-system"]').text()).toContain('5')
+    expect(w.find('[data-test="conv-setting-repeat-system"]').exists()).toBe(false)
+    expect(w.get('[data-test="conv-settings"]').text()).not.toContain('시스템')
     await w.get('[data-test="conv-setting-repeat-decrease"]').trigger('click')
     await flushPromises()
     expect(api.saveMyAiPrefs).toHaveBeenCalledWith({ repeat_count_max: 4 })
     expect(w.get('[data-test="conv-setting-repeat-value"]').text()).toBe('4')
+    w.unmount()
+  })
+})
+
+describe('⚙ settings › AI › 제목 짓기 AI without 자동 (F96-13)', () => {
+  async function openAiTab(stored: string) {
+    const api = await import('@/features/conversation/api')
+    vi.mocked(api.fetchMyAiPrefs).mockResolvedValueOnce({ ...prefs, title_provider: stored, title_provider_effective: 'executor' })
+    const w = mountSettings()
+    await w.get('[data-test="conv-settings-btn"]').trigger('click')
+    await w.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    return w
+  }
+  const options = (w: Awaited<ReturnType<typeof openAiTab>>) => w.findAll('[data-test="conv-setting-title-ai"] option')
+  const selected = (w: Awaited<ReturnType<typeof openAiTab>>) =>
+    (w.get('[data-test="conv-setting-title-ai"]').element as HTMLSelectElement).value
+
+  it('offers 답한 AI 그대로 (first, the default), 끄기, a separator and the chat AI — no 자동', async () => {
+    const w = await openAiTab('executor')
+    expect(options(w).map((o) => o.text())).toEqual(['답한 AI 그대로', '끄기', '──────────', 'Claude Haiku 5.5 (AG)', 'Codex GPT 6.1 Sol(AG)'])
+    expect(options(w).map((o) => o.attributes('value'))).not.toContain('auto')
+    expect(w.get('[data-test="conv-setting-title-ai"]').text()).not.toContain('자동')
+    expect(selected(w)).toBe('executor')
+    w.unmount()
+  })
+
+  it('shows a stored 자동 (auto) as 답한 AI 그대로 and saves nothing for it', async () => {
+    const api = await import('@/features/conversation/api')
+    vi.mocked(api.saveMyAiPrefs).mockClear()
+    const w = await openAiTab('auto')
+    expect(selected(w)).toBe('executor')
+    expect(options(w).map((o) => o.attributes('value'))).not.toContain('auto')
+    expect(api.saveMyAiPrefs).not.toHaveBeenCalled()
     w.unmount()
   })
 })

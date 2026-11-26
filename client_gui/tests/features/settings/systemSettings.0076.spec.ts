@@ -45,9 +45,6 @@ const net = vi.hoisted(() => ({
   failUsersGet: 0,
   actor: 'u1',
   paused: { review_count: 8, restart_count: 8 },
-  /** v02test.0096 F96-6: the system AI the title AI select offers (GET /system/ai-settings), and a failing read. */
-  systemAi: [] as { id: string; name: string; enabled: boolean }[],
-  failAiGet: 0,
 }))
 
 vi.mock('@shared/api', async (importOriginal) => {
@@ -122,10 +119,6 @@ vi.mock('@shared/api', async (importOriginal) => {
     if (call === 'GET /api/v1/system/settings') {
       if (net.failSettingsGet) throw fail(net.failSettingsGet, { detail: 'boom' })
       return { data: { settings: listRows() } }
-    }
-    if (call === 'GET /api/v1/system/ai-settings') {
-      if (net.failAiGet) throw fail(net.failAiGet, { detail: 'boom' })
-      return { data: { providers: net.systemAi.map((p) => ({ ...p })), default_provider_id: null, updated_at: null } }
     }
     if (call === 'PATCH /api/v1/system/settings') {
       if (net.holdNext) {
@@ -260,12 +253,6 @@ beforeEach(async () => {
   net.actor = 'u1'
   net.failUsersGet = 0
   net.paused = { review_count: 8, restart_count: 8 }
-  net.systemAi = [
-    { id: 'sys-a', name: 'System A', enabled: true },
-    { id: 'sys-off', name: 'System off', enabled: false },
-    { id: 'sys-b', name: 'System B', enabled: true },
-  ]
-  net.failAiGet = 0
   net.users = [
     user('u1', 'admin', { is_admin: true, tfa_enabled: true, workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'owner' }] }),
     user('u2', 'Kim Minseo', { workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'member' }] }),
@@ -288,7 +275,7 @@ afterEach(() => {
   for (const body of patches()) {
     const keys = Object.keys((body as { updates: Record<string, string> }).updates).sort()
     expect(keys).not.toContain('storage_root')
-    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_repeat_count_max'], ['ai_title_provider'], ['attach_read_max_mb']]).toContainEqual(keys)
+    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['attach_read_max_mb']]).toContainEqual(keys)
   }
   wrapper?.unmount()
   wrapper = null
@@ -315,7 +302,7 @@ describe('V01 (시스템 부분) — 일반 joins the menus', () => {
 describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
   it('shows the stored and the effective Root apart, with the FLOWGATE_STORAGE_DIR notice; no Root control', async () => {
     const w = await open('/settings/system/general')
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
     expect(w.get('[data-testid="root-configured"]').text()).toBe('/data/stored-root')
     expect(w.get('[data-testid="root-effective"]').text()).toBe('/env/flowgate')
     expect(w.get('[data-testid="root-source"]').text()).toBe('환경 변수 FLOWGATE_STORAGE_DIR')
@@ -340,7 +327,7 @@ describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
     const w = await open('/settings/system/general')
     expect(w.find('[data-testid="root-error"]').exists()).toBe(true)
     expect(w.find('[data-testid="root-effective"]').exists()).toBe(false)
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
     expect((w.get('[data-testid="scratch-value"]').element as HTMLInputElement).value).toBe('7')
     net.failRoot = 0
     await click(w, '[data-testid="root-error"] button')
@@ -370,7 +357,7 @@ describe('V12 Scratch 정상·검증', () => {
     await click(w, '[data-testid="scratch-save"]')
     expect(patches()).toEqual([{ updates: { scratch_ttl_value: '6', scratch_ttl_unit: 'hour' } }])
     expect(net.requests).toEqual([
-      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings',
+      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings',
       'PATCH /api/v1/system/settings', 'GET /api/v1/system/settings',
     ])
     expect(w.find('[data-testid="scratch-saved"]').exists()).toBe(true)
@@ -463,138 +450,45 @@ describe('V13 Scratch 원자성 (화면 쪽)', () => {
   })
 })
 
-describe('V14 반복 상한 하향', () => {
-  it('10 → 3: the impact notice first; cancel sends nothing; confirm sends ai_repeat_count_max alone; re-read = 3; stored run picks untouched', async () => {
+describe('v02test.0096 F96-11 — AI 반복 상한 is gone from 시스템 › 일반 (max repeat count is a personal setting only)', () => {
+  it('no repeat card, input, save button, lowering notice or modal; the row an older server still answers is ignored', async () => {
     const w = await open('/settings/system/general')
-    expect((w.get('[data-testid="repeat-value"]').element as HTMLInputElement).value).toBe('10')
-    await type(w, '[data-testid="repeat-value"]', '3')
-    expect(w.get('[data-testid="repeat-lower-hint"]').text()).toContain('현재 상한으로 재평가됩니다')
-    await click(w, '[data-testid="repeat-save"]')
-    const modal = w.get('[data-testid="repeat-lower-confirm"]')
-    expect(modal.text()).toContain('반복 상한 10 → 3')
-    expect(modal.text()).toContain('저장·일시정지된 실행의 반복 선택은 이후 실행/재개 시 현재 상한으로 재평가됩니다. 상한을 넘은 기존 선택은 검수 없음 또는 기본 재시작 횟수로 처리될 수 있습니다.')
-    expect(modal.text()).toContain('실행별 저장값을 바꾸거나 실행을 재개하지 않습니다')
-    await click(w, '[data-testid="repeat-lower-cancel"]')
-    expect(w.find('[data-testid="repeat-lower-confirm"]').exists()).toBe(false)
-    expect(patches()).toEqual([])
-
-    await click(w, '[data-testid="repeat-save"]')
-    await click(w, '[data-testid="repeat-lower-ok"]')
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '3' } }])
-    expect(net.requests.slice(-2)).toEqual(['PATCH /api/v1/system/settings', 'GET /api/v1/system/settings'])
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(true)
-    expect(stored('ai_repeat_count_max')).toBe('3')
-    expect(net.paused).toEqual({ review_count: 8, restart_count: 8 })
-    expect(writes()).toEqual(['PATCH /api/v1/system/settings'])
-    expect(net.requests.every((r) => r.includes('/api/v1/system/'))).toBe(true) // no run / resume call
-    expect(w.text()).not.toMatch(/자동 보정|3회로 보정/)
-
-    await go('/settings/system/users')
-    await go('/settings/system/general')
-    expect((wrapper!.get('[data-testid="repeat-value"]').element as HTMLInputElement).value).toBe('3')
+    expect(w.find('[data-card="repeat"]').exists()).toBe(false)
+    expect(w.find('[data-testid^="repeat-"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('AI 반복 상한')
+    expect(w.text()).not.toContain('최대 반복 횟수')
+    expect(w.text()).not.toContain('(시스템)')
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+    expect(writes()).toEqual([])
   })
 
-  it('raising (3 → 5) saves without the lowering notice', async () => {
-    net.rows.ai_repeat_count_max.value = '3'
+  it('a server without the ai_repeat_count_max row loads the screen as before', async () => {
+    delete net.rows.ai_repeat_count_max
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '5')
-    expect(w.find('[data-testid="repeat-lower-hint"]').exists()).toBe(false)
-    await click(w, '[data-testid="repeat-save"]')
-    expect(w.find('[data-testid="repeat-lower-confirm"]').exists()).toBe(false)
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '5' } }])
-    expect(stored('ai_repeat_count_max')).toBe('5')
-  })
-})
-
-describe('V15 반복 경계 / 저장 오류', () => {
-  it('1 and 30 are saved (1 after the lowering confirmation)', async () => {
-    net.rows.ai_repeat_count_max.value = '3'
-    const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '30')
-    await click(w, '[data-testid="repeat-save"]')
-    expect(stored('ai_repeat_count_max')).toBe('30')
-    await type(w, '[data-testid="repeat-value"]', '1')
-    await click(w, '[data-testid="repeat-save"]')
-    await click(w, '[data-testid="repeat-lower-ok"]')
-    expect(stored('ai_repeat_count_max')).toBe('1')
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '30' } }, { updates: { ai_repeat_count_max: '1' } }])
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+    expect((w.get('[data-testid="scratch-value"]').element as HTMLInputElement).value).toBe('7')
   })
 
-  it.each([['0'], ['31'], ['2.5'], ['-1'], ['']])('%j is refused on screen: no PATCH', async (value) => {
-    const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', value)
-    expect(w.get('[data-testid="repeat-invalid"]').text()).toBe('1~30 사이의 정수를 입력하세요.')
-    expect(w.get('[data-testid="repeat-save"]').attributes('disabled')).toBeDefined()
-    await click(w, '[data-testid="repeat-save"]')
-    expect(patches()).toEqual([])
-    expect(stored('ai_repeat_count_max')).toBe('10')
+  it('source check: the screen never sends ai_repeat_count_max and the api module has no save for it', () => {
+    const api = readFileSync(resolve(process.cwd(), 'src/features/settings/api.ts'), 'utf8')
+    const view = readFileSync(resolve(process.cwd(), 'src/features/settings/views/SystemGeneralSettingsView.vue'), 'utf8')
+    expect(view).not.toContain('ai_repeat_count_max')
+    expect(view).not.toContain('settings.general.repeat')
+    expect(api).not.toContain('saveRepeatCountMax')
   })
 
-  it('3 → 5 with a failing answer: input 5 and the error stay, no success notice, no retry', async () => {
-    net.rows.ai_repeat_count_max.value = '3'
-    net.failPatch = 500
+  it('a second click while saving sends no second PATCH (Scratch)', async () => {
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '5')
-    await click(w, '[data-testid="repeat-save"]')
-    expect(w.find('[data-testid="repeat-error"]').exists()).toBe(true)
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(false)
-    expect((w.get('[data-testid="repeat-value"]').element as HTMLInputElement).value).toBe('5')
-    expect(stored('ai_repeat_count_max')).toBe('3')
-    expect(writes()).toEqual(['PATCH /api/v1/system/settings'])
-  })
-
-  it('a server 422 shows the existing ai_repeat_count_out_of_range message and keeps the input', async () => {
-    // A value the screen accepts but the route refuses, answered the way the real route answers 0/31.
-    net.rows.ai_repeat_count_max.value = '3'
-    net.failPatchWith = { status: 422, data: { detail: { code: 'ai_repeat_count_out_of_range', params: { min: 1, max: 30 } } } }
-    const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '5')
-    await click(w, '[data-testid="repeat-save"]')
-    expect(w.get('[data-testid="repeat-error"]').text()).toBe('반복 상한은 1~30 사이의 정수만 저장할 수 있습니다.')
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(false)
-    expect((w.get('[data-testid="repeat-value"]').element as HTMLInputElement).value).toBe('5')
-    expect(stored('ai_repeat_count_max')).toBe('3')
-  })
-
-  it('a second click while saving sends no second PATCH (both editors)', async () => {
-    net.rows.ai_repeat_count_max.value = '3'
-    const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '5')
-    net.holdNext = true
-    await w.get('[data-testid="repeat-save"]').trigger('click')
-    await flushPromises()
-    expect(w.get('[data-testid="repeat-save"]').attributes('disabled')).toBeDefined()
-    await w.get('[data-testid="repeat-save"]').trigger('click')
-    await w.get('[data-testid="repeat-save"]').trigger('click')
-    expect(patches()).toHaveLength(1)
-    net.hold!()
-    await flushPromises()
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '5' } }])
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(true)
-
     await type(w, '[data-testid="scratch-value"]', '2')
     net.holdNext = true
     await w.get('[data-testid="scratch-save"]').trigger('click')
     await flushPromises()
+    expect(w.get('[data-testid="scratch-save"]').attributes('disabled')).toBeDefined()
     await w.get('[data-testid="scratch-save"]').trigger('click')
-    expect(patches()).toHaveLength(2)
+    expect(patches()).toHaveLength(1)
     net.hold!()
     await flushPromises()
-    expect(patches()[1]).toEqual({ updates: { scratch_ttl_value: '2', scratch_ttl_unit: 'day' } })
-  })
-
-  it('Scratch and 반복 상한 are separate saves: changing both sends two PATCHes, each with its own keys only', async () => {
-    const w = await open('/settings/system/general')
-    await type(w, '[data-testid="scratch-value"]', '6')
-    await type(w, '[data-testid="repeat-value"]', '12')
-    await click(w, '[data-testid="repeat-save"]')
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '12' } }])
-    expect(stored('scratch_ttl_value')).toBe('7') // its own input is still pending
-    await click(w, '[data-testid="scratch-save"]')
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '12' } }, { updates: { scratch_ttl_value: '6', scratch_ttl_unit: 'day' } }])
-    expect(stored('log_level')).toBe('INFO')
-    expect(stored('source_mode')).toBe('remote')
-    expect(stored('storage_root')).toBe('/data/stored-root')
+    expect(patches()).toEqual([{ updates: { scratch_ttl_value: '2', scratch_ttl_unit: 'day' } }])
   })
 })
 
@@ -692,16 +586,15 @@ describe('저장 표시 — the success notice belongs to the saved value (D §3
     expect([stored('scratch_ttl_value'), stored('scratch_ttl_unit')]).toEqual(['6', 'hour'])
   })
 
-  it('반복 상한: saved 5, then typing 8 takes the notice away; the server keeps 5', async () => {
-    net.rows.ai_repeat_count_max.value = '3'
+  it('AI 첨부 읽기 상한: saved 5, then typing 8 takes the notice away; the server keeps 5', async () => {
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '5')
-    await click(w, '[data-testid="repeat-save"]')
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(true)
-    await type(w, '[data-testid="repeat-value"]', '8')
-    expect(w.find('[data-testid="repeat-saved"]').exists()).toBe(false)
-    expect(patches()).toEqual([{ updates: { ai_repeat_count_max: '5' } }])
-    expect(stored('ai_repeat_count_max')).toBe('5')
+    await type(w, '[data-testid="attach-read-value"]', '5')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(w.find('[data-testid="attach-read-saved"]').exists()).toBe(true)
+    await type(w, '[data-testid="attach-read-value"]', '8')
+    expect(w.find('[data-testid="attach-read-saved"]').exists()).toBe(false)
+    expect(patches()).toEqual([{ updates: { attach_read_max_mb: '5' } }])
+    expect(stored('attach_read_max_mb')).toBe('5')
   })
 })
 
@@ -724,9 +617,9 @@ describe('미저장 이탈 보호 (D §3.2) — 시스템 › 일반', () => {
     expect([stored('scratch_ttl_value'), stored('scratch_ttl_unit')]).toEqual(['7', 'day'])
   })
 
-  it('반복 상한 edited → 개요: 저장하지 않고 나가기 leaves; nothing is saved', async () => {
+  it('첨부 읽기 상한 edited → 개요: 저장하지 않고 나가기 leaves; nothing is saved', async () => {
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '12')
+    await type(w, '[data-testid="attach-read-value"]', '12')
     const move = await start('/settings')
     expect(w.get('[data-testid="leave-confirm"]').text()).toContain('저장하지 않은 변경이 있습니다')
     await click(w, '[data-testid="leave-discard"]')
@@ -734,15 +627,15 @@ describe('미저장 이탈 보호 (D §3.2) — 시스템 › 일반', () => {
     await flushPromises()
     expect(path()).toBe('/settings')
     expect(patches()).toEqual([])
-    expect(stored('ai_repeat_count_max')).toBe('10')
+    expect(stored('attach_read_max_mb')).toBe('1')
   })
 
   it('after a confirmed save the move goes straight through (no question)', async () => {
     const w = await open('/settings/system/general')
     await type(w, '[data-testid="scratch-value"]', '6')
     await click(w, '[data-testid="scratch-save"]')
-    await type(w, '[data-testid="repeat-value"]', '12')
-    await click(w, '[data-testid="repeat-save"]')
+    await type(w, '[data-testid="attach-read-value"]', '12')
+    await click(w, '[data-testid="attach-read-save"]')
     expect(unloadHeld()).toBe(false)
     await go('/settings/system/users')
     expect(path()).toBe('/settings/system/users')
@@ -758,9 +651,9 @@ describe('미저장 이탈 보호 (D §3.2) — 시스템 › 일반', () => {
 
   it('refresh / tab close: the browser question is asked while unsaved, not once saved', async () => {
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '12')
+    await type(w, '[data-testid="attach-read-value"]', '12')
     expect(unloadHeld()).toBe(true)
-    await click(w, '[data-testid="repeat-save"]')
+    await click(w, '[data-testid="attach-read-save"]')
     expect(unloadHeld()).toBe(false)
     await type(w, '[data-testid="scratch-value"]', '6')
     expect(unloadHeld()).toBe(true)
@@ -800,7 +693,7 @@ describe('미저장 이탈 보호 (D §3.2) — 시스템 › 일반', () => {
 
   it('a question already open gives way when the session ends (signed out): the screen is removed', async () => {
     const w = await open('/settings/system/general')
-    await type(w, '[data-testid="repeat-value"]', '12')
+    await type(w, '[data-testid="attach-read-value"]', '12')
     const move = await start('/settings/system/users')
     expect(w.find('[data-testid="leave-confirm"]').exists()).toBe(true)
     setCurrentUser(null)
@@ -931,7 +824,7 @@ describe('flowgate.v02test.0075 — AI 첨부 읽기 상한 (attach_read_max_mb)
     expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     expect(w.find('[data-testid="attach-read-missing"]').exists()).toBe(true)
     expect(w.find('[data-testid="attach-read-value"]').exists()).toBe(false)
-    expect(w.find('[data-testid="repeat-value"]').exists()).toBe(true)
+    expect(w.find('[data-testid="scratch-value"]').exists()).toBe(true)
   })
 })
 
@@ -953,70 +846,43 @@ describe('flowgate.v02test.0053 0002-CH turn 68 — 검증 is managed per card o
   })
 })
 
-describe('flowgate.v02test.0096 F96-6 — 제목 짓기 AI (ai_title_provider) moved here from AI 관리 › 기타 설정', () => {
-  const options = (w: VueWrapper) => w.findAll('[data-testid="title-ai-value"] option')
-  const selected = (w: VueWrapper) => (w.get('[data-testid="title-ai-value"]').element as HTMLSelectElement).value
-
-  it('sits after the repeat card and lists 끄기, 실행한 AI 그대로, a separator, then the enabled system AI in the system order', async () => {
+describe('flowgate.v02test.0096 F96-13 — 제목 짓기 AI is gone from 시스템 › 환경 설정 (a personal setting only)', () => {
+  it('no title AI card, heading, select or save button; the cards are 저장 Root, Scratch, AI 첨부 읽기 상한 in that order', async () => {
     const w = await open('/settings/system/general')
     const cards = w.findAll('[data-card]').map((c) => c.attributes('data-card'))
-    expect(cards.indexOf('title-ai')).toBe(cards.indexOf('repeat') + 1)
-    expect(w.get('[data-card="title-ai"]').text()).toContain('제목 짓기 AI 기본값(시스템)')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로', '──────────', 'System A', 'System B'])
-    expect(options(w).map((o) => o.attributes('value')).slice(0, 2)).toEqual(['off', 'executor'])
-    expect((options(w)[2].element as HTMLOptionElement).disabled).toBe(true)
-    expect(selected(w)).toBe('executor')
-    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined() // unchanged
+    expect(cards.slice(0, 3)).toEqual(['storage-root', 'scratch', 'attach-read']) // then the shared attachment-requests card
+    expect(cards).not.toContain('title-ai')
+    expect(w.find('[data-card="title-ai"]').exists()).toBe(false)
+    expect(w.find('[data-testid^="title-ai-"]').exists()).toBe(false)
+    expect(w.find('#sys-title-ai').exists()).toBe(false)
+    expect(w.text()).not.toContain('제목 짓기 AI')
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     expect(writes()).toEqual([])
   })
 
-  it('saves ai_title_provider alone, the re-read agrees and Saved shows', async () => {
+  it('the menu description no longer names the title AI (ko / en / ja)', async () => {
     const w = await open('/settings/system/general')
-    await w.get('[data-testid="title-ai-value"]').setValue('sys-b')
-    await flushPromises()
-    await click(w, '[data-testid="title-ai-save"]')
-    expect(patches()).toEqual([{ updates: { ai_title_provider: 'sys-b' } }])
-    expect(net.requests.slice(-2)).toEqual(['PATCH /api/v1/system/settings', 'GET /api/v1/system/settings'])
-    expect(stored('ai_title_provider')).toBe('sys-b')
-    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(false)
-    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined()
+    expect(w.get('.fgs-ptitle p').text()).toBe('서버 전체의 저장 위치, Scratch 보존, AI 첨부')
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      const text = i18n.global.t('gui.settings.page_sub.system_general', {}, { locale })
+      expect(text).not.toMatch(/제목 짓기 AI|title AI|タイトル生成AI/i)
+    }
+    expect(i18n.global.t('gui.settings.page_sub.system_general', {}, { locale: 'en' })).toBe('Server-wide storage location, Scratch retention and AI attachments')
+    expect(i18n.global.t('gui.settings.page_sub.system_general', {}, { locale: 'ja' })).toBe('サーバー全体の保存場所、Scratch の保持、AI 添付')
   })
 
-  it('a failing save keeps the choice and shows the error, no Saved', async () => {
-    net.failPatch = 500
-    const w = await open('/settings/system/general')
-    await w.get('[data-testid="title-ai-value"]').setValue('off')
-    await flushPromises()
-    await click(w, '[data-testid="title-ai-save"]')
-    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(false)
-    expect(selected(w)).toBe('off')
+  it('reads no system AI list and leaves the stored ai_title_provider (executor) untouched; a server without the row loads as before', async () => {
+    let w = await open('/settings/system/general')
+    expect(net.requests.some((r) => r.includes('/system/ai-settings'))).toBe(false)
+    await type(w, '[data-testid="attach-read-value"]', '8')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(patches()).toEqual([{ updates: { attach_read_max_mb: '8' } }])
     expect(stored('ai_title_provider')).toBe('executor')
-  })
-
-  it('keeps a stored AI that is off or no longer listed selectable as the current value', async () => {
-    net.rows.ai_title_provider = { value: 'sys-off', type: 'string' }
-    let w = await open('/settings/system/general')
-    expect(options(w).map((o) => o.text())).toContain('System off')
-    expect(selected(w)).toBe('sys-off')
     w.unmount()
-    net.rows.ai_title_provider = { value: 'gone-id', type: 'string' }
-    w = await open('/settings/system/general')
-    expect(selected(w)).toBe('gone-id')
-  })
-
-  it('a failing system AI read leaves the fixed choices; a server without the row only disables this card', async () => {
-    net.failAiGet = 500
-    let w = await open('/settings/system/general')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '실행한 AI 그대로'])
-    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
-    w.unmount()
-    net.failAiGet = 0
     delete net.rows.ai_title_provider
     w = await open('/settings/system/general')
-    expect(w.find('[data-testid="title-ai-missing"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-value"]').exists()).toBe(false)
-    expect(w.find('[data-testid="repeat-value"]').exists()).toBe(true)
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
+    expect(w.find('[data-testid="scratch-value"]').exists()).toBe(true)
+    expect(w.find('[data-testid="attach-read-value"]').exists()).toBe(true)
   })
 })

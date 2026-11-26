@@ -193,6 +193,6 @@ def test_a_command_requests_every_admitted_card_of_a_flow_again_and_nothing_of_a
     assert one(env, c, "result_review", 2) is None and one(env, c, "result_review", 1) == firsts[c]
     assert len([l for l in ledger(env) if l["attempt_id"] == firsts[c]["attempt_id"]]) == requests_of_c
     assert node_run(env, c)["status"] == "review"
-    assert _wire(env, c)["intervention"] == {"kind": "needs_intervention",
-                                             "reason": "review_not_passed:review_verdict_hold"}
+    held = {k: v for k, v in _wire(env, c)["intervention"].items() if k != "stop_detail"}   # F98-4: an added field
+    assert held == {"kind": "needs_intervention", "reason": "review_not_passed:review_verdict_hold"}
     assert _run()["step_node_keys"] == (sorted([a, b]) if mode == "step" else None)

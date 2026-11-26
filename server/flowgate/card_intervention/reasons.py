@@ -100,3 +100,24 @@ def command_reentry_due(reason: Optional[str]) -> bool:
 def state(reason: Optional[str]) -> dict:
     """``{"kind", "reason"}`` of a card in review nothing completes, its latest recorded reason ``reason``."""
     return {"kind": kind_of(reason), "reason": reason or COMPLETION_MISSING}
+
+
+# F98-4: the added field of an intervention that carries the closed review loop's failure cause (its ``stop_detail``,
+# e.g. ``model_not_found``). Absent when the loop told none, so an intervention without a cause keeps its two fields.
+STOP_DETAIL = "stop_detail"
+STOP_DETAIL_MAX_CHARS = 480                         # as long as a loop's own stop_detail is written (review.py)
+
+
+def loop_stop_reason(reason: Optional[str]) -> Optional[str]:
+    """The review loop's stop reason of ``review_not_passed:<stop reason>``, else None (no closed loop left it)."""
+    if not isinstance(reason, str) or not reason.startswith(REVIEW_NOT_PASSED):
+        return None
+    return reason[len(REVIEW_NOT_PASSED):] or None
+
+
+def stop_detail_text(detail) -> Optional[str]:
+    """A loop's ``stop_detail`` as the intervention carries it: trimmed, bounded, None when empty or not text."""
+    if not isinstance(detail, str):
+        return None
+    text = detail.strip()
+    return text[:STOP_DETAIL_MAX_CHARS] if text else None

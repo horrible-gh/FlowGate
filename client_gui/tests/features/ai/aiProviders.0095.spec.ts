@@ -10,6 +10,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { validateProvider } from '@/features/ai/providers/providerValidation'
 import * as api from '@/features/ai/api'
 import type { ProviderItem } from '@/features/ai/types'
+import { mockCliCatalog } from './cliCatalogMock'
 
 registerAppMessages(i18n)
 const cli = (id: string): ProviderItem => ({ id, name: id, exec_type: 'cli', kind: 'custom', enabled: true, cli_command: 'fake-cli' })
@@ -28,6 +29,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'admin', email: null, isAdmin: true })
+  mockCliCatalog()
 })
 afterEach(() => {
   wrappers.splice(0).forEach(w => w.unmount())
@@ -68,6 +70,12 @@ describe('0095 provider field contract', () => {
   })
   it('prevents an empty command/model from emitting a save and enables valid input', async () => {
     const w = dialog(null)
+    await flushPromises()
+    // 사용자 정의 starts with the command typed by hand (the other kinds compose it).
+    const kind = document.querySelector('#provider-kind') as HTMLSelectElement
+    kind.value = 'custom'
+    kind.dispatchEvent(new Event('change'))
+    input('#provider-command', '')
     input('#provider-name', 'CLI')
     await flushPromises()
     expect(saveButton().disabled).toBe(true)
