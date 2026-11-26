@@ -71,10 +71,12 @@ def add_remark(doc_id: str, case_id: str, payload: dict, *, author_kind: str,
     row = db_remarks.insert(
         doc_id=doc_id, case_id=_known_case_id(doc, case_id), author_kind=remark["author_kind"],
         author_name=remark["author_name"], phase=remark["phase"], body=remark["text"])
+    from modules.flow_gate.services.test_card_changes import reopen
+    reopen(doc, remark["phase"])
     return test_spec_service.shape_remark(row)
 
 
-def update_remark(doc_id: str, remark_id: str, payload: dict) -> dict:
+def update_remark(doc_id: str, remark_id: str, payload: dict, *, resolved_by: str = "") -> dict:
     """Resolve / open again (``state``) and / or set the AI's one-line answer (``ai_reply``)."""
     _ts_document(doc_id)
     current = db_remarks.get(remark_id)
@@ -91,5 +93,10 @@ def update_remark(doc_id: str, remark_id: str, payload: dict) -> dict:
         raise _refuse(422, exc.code, message=exc.detail) from exc
     if reply is not None:
         reply = test_spec_service.normalize_remark_reply(reply)
+    if state == "resolved" and resolved_by:
+        reply = test_spec_service.normalize_remark_reply(resolved_by)
     row = db_remarks.update(remark_id, state=state, ai_reply=reply)
+    if state == "open":
+        from modules.flow_gate.services.test_card_changes import reopen
+        reopen(_ts_document(doc_id), current["phase"])
     return test_spec_service.shape_remark(row or current)

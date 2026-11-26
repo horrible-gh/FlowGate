@@ -368,3 +368,43 @@ class TestServiceHelperDirectly:
         )
 
         assert build_preset_command_for_project("proj_001", "custom", None) is None
+
+def test_cli_model_editor_read_only_contract():
+    client = _make_client(user=_NOBODY_USER)
+    root = "/api/v1/ai-settings"
+    catalog = client.get(root + "/cli-model-catalog")
+    assert catalog.status_code == 200
+    assert set(catalog.json()["catalog"]) == {"claude", "codex", "gemini"}
+    assert catalog.json()["catalog"]["gemini"] == {
+        "versions": ["3.8"],
+        "models": ["flash", "pro"],
+        "efforts": ["low", "medium", "high"],
+        "defaults": {"version": "3.8", "model": "flash", "effort": "medium", "executable": "agy"},
+    }
+
+    request = {"kind": "gemini", "timeout_seconds": 2700}
+    composed = client.post(root + "/cli-preset-compose", json=request)
+    assert composed.status_code == 200
+    assert composed.json() == {
+        "ok": True,
+        "cli_command": (
+            "agy --output-format stream-json --dangerously-skip-permissions "
+            "--model gemini-3.8-flash-medium --print-timeout 45m"
+        ),
+        "name": "Gemini 3.8 Flash",
+        "selection": {"kind": "gemini", **catalog.json()["catalog"]["gemini"]["defaults"]},
+    }
+    command = composed.json()["cli_command"]
+    parsed = client.post(root + "/cli-preset-parse", json={"cli_command": command, "kind": "gemini"})
+    assert parsed.status_code == 200
+    assert parsed.json() == {"ok": True, "kind": "gemini", "selection": composed.json()["selection"]}
+    edited = client.post(root + "/cli-preset-parse", json={"cli_command": command + " --extra"})
+    assert edited.json() == {"ok": True, "kind": "custom", "selection": None}
+
+    invalid = client.post(root + "/cli-preset-compose", json={**request, "executable": "agy|cat"})
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == {
+        "code": "validation_failed",
+        "errors": [{"field": "executable", "reason": "invalid_executable"}],
+    }
+

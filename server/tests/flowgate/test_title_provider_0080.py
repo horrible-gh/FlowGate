@@ -34,15 +34,15 @@ def catalog(monkeypatch):
 
 def test_default_get_and_save_contract(catalog):
     rows, providers = catalog
-    assert settings.get_one(policy.KEY)["setting_value"] == "light"
-    assert next(r for r in settings.get_all() if r["setting_key"] == policy.KEY)["setting_value"] == "light"
+    assert settings.get_one(policy.KEY)["setting_value"] == "executor"
+    assert next(r for r in settings.get_all() if r["setting_key"] == policy.KEY)["setting_value"] == "executor"
     assert policy.KEY not in rows
     routes.update_settings(routes.SettingsPatch(updates={policy.KEY: "remote"}), user={"user_id": "admin"})
     assert settings.get_one(policy.KEY)["setting_value"] == "remote"
     providers.clear()
     assert policy.value() == "remote"
     rows.clear()
-    assert policy.value() == "off"
+    assert policy.value() == "executor"
 
 
 @pytest.mark.parametrize("value", [None, "", "missing", " remote", "disabled"])
@@ -140,8 +140,11 @@ def test_names_are_applied_once_and_human_edit_wins(configured_names):
     assert result["targets"] == {"flow": "done", "root": "done", "chat": "skipped"}
     assert titles(n) == (ALL[0], ALL[1], "Human title")
     assert ledger.load(FA)["names"]["flow"]["candidate"] == ALL[0]
+    calls = n["calls"]  # a parallel human edit may prevent the chat call before it starts
+    assert calls in (2, 3)
     auto_title.generate_flow_names(FA, USER, "remote", TEXT, n["chat"])
-    assert n["calls"] == 3
+    assert n["calls"] == calls
+    assert titles(n) == (ALL[0], ALL[1], "Human title")
 
 
 def test_old_fallback_marker_does_not_block_configured_provider(configured_names):
@@ -170,10 +173,15 @@ def test_flow_prompt_adds_start_document_to_chat_message(configured_names):
     n = configured_names
     n["message"] = "내용 파악하고 이야기 하자"
     assert auto_title.generate_flow_names(FA, USER, "remote", "", n["chat"])["status"] == "done"
-    prompts = dict(zip(n["kinds"], n["prompts"]))
+    # Each prompt carries its kind; separate parallel append lists need not align.
+    prompts = {kind_of(prompt): prompt for prompt in n["prompts"]}
     assert "내용 파악하고 이야기 하자" in prompts["flow"] and "로그인 실패 원인을 찾아 고친다" in prompts["flow"]
     assert "Start document:" in prompts["flow"] and "NO_TITLE" in prompts["flow"]
-    assert "로그인 실패 원인을 찾아 고친다" not in prompts["chat"]
+    # The current chat naming contract uses later conversation, then the start document,
+    # when its first message names no concrete subject. Keep the explicit source boundaries.
+    assert "First message:" in prompts["chat"] and "내용 파악하고 이야기 하자" in prompts["chat"]
+    assert "Start document:" in prompts["chat"] and "로그인 실패 원인을 찾아 고친다" in prompts["chat"]
+    assert "then from the start document" in prompts["chat"]
     assert titles(n) == ALL
 
 

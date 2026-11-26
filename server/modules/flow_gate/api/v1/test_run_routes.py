@@ -238,27 +238,40 @@ def post_spec_case_run(ts_id: str, case_id: str, request: Request):
 
 
 def _post_spec_execution(ts_id: str, case_id: Optional[str], request: Request):
+    with graph_source_hooks.write_session():
+        return _post_spec_execution_in_session(ts_id, case_id, request)
+
+
+def _post_spec_execution_in_session(ts_id: str, case_id: Optional[str], request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
     try:
-        graph_source_hooks.reject_group_source(auth, "test_run")
+        graph_source_hooks.require_writable(auth, "test_run")
     except graph_source_hooks.GraphSourceError as exc:
         return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
-    if not auth.get("_is_user_jwt"):
-        return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(ts_id)
     if doc is None:
         return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not auth.get("_is_user_jwt") and (
+        case_id is None or doc.get("type_code") != "TS"
+        or auth.get("action_scope") != "test_run" or auth.get("doc_ref") != ts_id
+        or not doc.get("group_id") or auth.get("group_id") != doc["group_id"]
+    ):
+        return JSONResponse(status_code=403, content={"error": "test_run_scope_forbidden"})
     if not test_run_service.user_can_run_tests(
         auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
     ):
         return JSONResponse(status_code=403, content={"error": "permission_denied"})
     from modules.flow_gate.services import spec_execution_service
     try:
+        if not auth.get("_is_user_jwt") and graph_source_hooks.binding(auth):
+            graph_source_hooks.source_root(auth)  # fail closed before admission
         result = spec_execution_service.admit(
             ts_id, case_id=case_id, runner_id=auth.get("issued_to") or "system",
             locale=request.headers.get("x-locale") or "ko",
+            triggered_via="ui" if auth.get("_is_user_jwt") else "token",
+            execution_token=auth if not auth.get("_is_user_jwt") else None,
         )
     except Exception as exc:
         if hasattr(exc, "status_code"):
@@ -285,11 +298,15 @@ def _remark_auth(ts_id: str, request: Request, permission: str):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
-    if not auth.get("_is_user_jwt"):
-        return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(ts_id)
     if doc is None:
         return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not auth.get("_is_user_jwt") and (
+        doc.get("type_code") != "TS" or auth.get("doc_ref") != ts_id
+        or not doc.get("group_id") or auth.get("group_id") != doc["group_id"]
+        or auth.get("action_scope") not in {"edit", "test_run"}
+    ):
+        return JSONResponse(status_code=403, content={"error": "remark_scope_forbidden"})
     if not (bool(auth.get("is_admin"))
             or has_permission(auth["issued_to"], doc.get("project_id") or "", permission)):
         return JSONResponse(status_code=403, content={"error": "permission_denied"})
@@ -297,6 +314,11 @@ def _remark_auth(ts_id: str, request: Request, permission: str):
 
 
 def _remark_author_name(auth: dict) -> str:
+    if not auth.get("_is_user_jwt"):
+        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+        provenance = resolve_run_provenance(auth.get("ai_run_id"), doc_id=None,
+                                           allowed_action_scopes=("edit", "test_run"))
+        return str(provenance.get("actual_provider_name") or "AI")
     from modules.flow_gate.db import users as db_users
 
     user = db_users.get_by_id(auth.get("issued_to") or "") or {}
@@ -329,7 +351,7 @@ def post_spec_remark(ts_id: str, case_id: str, body: TestRemarkBody, request: Re
     try:
         remark = test_remark_service.add_remark(
             ts_id, case_id, {"text": body.text, **({"phase": body.phase} if body.phase else {})},
-            author_kind="human", author_name=_remark_author_name(auth))
+            author_kind="human" if auth.get("_is_user_jwt") else "ai", author_name=_remark_author_name(auth))
     except Exception as exc:
         if hasattr(exc, "status_code"):
             return _err(exc)
@@ -346,7 +368,8 @@ def patch_spec_remark(ts_id: str, remark_id: str, body: TestRemarkUpdateBody, re
     from modules.flow_gate.services import test_remark_service
     try:
         remark = test_remark_service.update_remark(
-            ts_id, remark_id, body.model_dump(exclude_none=True))
+            ts_id, remark_id, body.model_dump(exclude_none=True),
+            resolved_by=_remark_author_name(auth))
     except Exception as exc:
         if hasattr(exc, "status_code"):
             return _err(exc)

@@ -29,7 +29,7 @@ Usage:
 
 Environment fallbacks (for unattended installs; CLI flags win):
     FLOWGATE_AI_EXEC_TYPE    cli | api                      (default cli)
-    FLOWGATE_AI_KIND         claude | copilot | codex | custom | openai
+    FLOWGATE_AI_KIND         claude | copilot | codex | gemini | custom | openai
     FLOWGATE_AI_NAME         display name                   (default derived from kind)
     FLOWGATE_AI_CLI_COMMAND  cli command   (default: the catalog example for this host)
     FLOWGATE_AI_API_MODEL    api model id
@@ -100,6 +100,7 @@ _KIND_LABELS = {
     "claude": "Claude Code",
     "codex":  "Codex",
     "copilot": "GitHub Copilot",
+    "gemini": "Gemini",
     "openai": "OpenAI",
     "custom": "Custom",
 }
@@ -130,7 +131,7 @@ def discover_cli_kinds(svc) -> list[tuple[str, str]]:
     for kind in svc.KINDS_CLI:
         if kind == "custom":
             continue
-        path = shutil.which(kind)
+        path = shutil.which("agy" if kind == "gemini" else kind)
         if path:
             found.append((kind, path))
     return found
@@ -430,7 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--list", action="store_true", help="Show the registered providers and exit")
     p.add_argument("--exec-type", choices=("cli", "api"), help="cli (default) or api")
-    p.add_argument("--kind", help="claude / copilot / codex / custom (cli), claude / openai / custom (api)")
+    p.add_argument("--kind", help="claude / copilot / codex / gemini / custom (cli), claude / openai / custom (api)")
     p.add_argument("--name", help="display name (default: derived from the kind)")
     p.add_argument("--command", help="cli command (default: the catalog example for this host)")
     p.add_argument("--api-model", help="model id (api providers)")
