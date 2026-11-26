@@ -61,8 +61,8 @@ from . import card_role_store, placement, placement_roles, run_settings, topolog
 _log = logging.getLogger(__name__)
 # every work card a person can still drop from the Designer palette: work, test, research and the four design cards.
 # The work plan card (WP) is retired: a draft save refuses a new one (422 ``work_plan_retired``,
-# ``graph_service.write_draft``), so a chat cannot place it either. Start (R / B) and confirm cards stay the
-# server's; [+] custom and apply (T2) cards are not placed by a chat.
+# ``graph_service.write_draft``), so a chat cannot place it either. R is placed alone through the
+# requirement path. B, standalone confirm, [+] custom and apply (T2) are not chat-placeable.
 WORK_TYPES = ("T", "TS", "N", "D", "P", "L", "DB")
 MAX_CARDS = 5
 PROTECTED = frozenset({"done", "open", "review"})
@@ -108,12 +108,12 @@ def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[
         if not isinstance(item, dict) or set(item) - {"label", "doc_type", "roles", "settings"}:
             raise _invalid(f"cards[{i}]", "only_label_doc_type_roles_and_settings")
         doc_type = item.get("doc_type", "T")
-        if doc_type not in WORK_TYPES:
-            raise _invalid(f"cards[{i}].doc_type", "not_one_of:" + ",".join(WORK_TYPES))
-        palette = PALETTE_KEY_OF_DOC_TYPE[doc_type]
+        if doc_type not in WORK_TYPES + ("R",):
+            raise _invalid(f"cards[{i}].doc_type", "not_one_of:" + ",".join(WORK_TYPES + ("R",)))
+        palette = ROOT_PALETTE_IDS["R"] if doc_type == "R" else PALETTE_KEY_OF_DOC_TYPE[doc_type]
         label = item.get("label")
         if label is None:
-            label = PALETTE_NAMES[palette][_locale(locale)]
+            label = (ROOT_NAMES["R"] if doc_type == "R" else PALETTE_NAMES[palette])[_locale(locale)]
         if not isinstance(label, str) or not label.strip() or len(label) > LABEL_MAX_LEN:
             raise _invalid(f"cards[{i}].label", "label_length")
         card = {"doc_type": doc_type, "label": label.strip(), "palette_item_id": palette}
@@ -124,6 +124,18 @@ def parse_place(body: Any, locale: Optional[str]) -> tuple[list[dict], Optional[
         if chosen_settings:
             card["settings"] = chosen_settings
         cards.append(card)
+    if any(c["doc_type"] == "R" for c in cards):
+        if len(cards) != 1:
+            raise _invalid("cards", "requirement_must_be_alone")
+        for field in ("roles", "settings"):
+            if field in raw[0]:
+                raise _invalid(f"cards[0].{field}", "not_applicable_to_requirement")
+        for field in ("after", "links", "join"):
+            if field in body:
+                raise _invalid(field, "not_applicable_to_requirement")
+        if "gate" in body and body["gate"] is not False:
+            raise _invalid("gate", "requirement_has_no_gate")
+        return cards, None, False
     after = body.get("after")
     if after is not None and (not isinstance(after, str) or not after):
         raise _invalid("after", "not_a_node_key")
@@ -235,6 +247,9 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     ``owner`` (``authz.owner``): the placing chat, recorded for each new work card."""
     flow_id = group["group_id"]
     cards, after, want_gate = parse_place(body, locale)
+    if cards and cards[0]["doc_type"] == "R":
+        from . import requirement
+        return requirement.place(group, user_id, cards[0], _locale(locale))
     links = topology.parse(body, len(cards))
     placement_roles.precheck(cards, user_id)
     _precheck_settings(cards, user_id)
