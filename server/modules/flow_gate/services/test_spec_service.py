@@ -1215,6 +1215,7 @@ def shape_remark(row: dict) -> dict:
         "state": row.get("state") or "open",
         "author": {"kind": row.get("author_kind"), "name": row.get("author_name") or ""},
         "ai_reply": row.get("ai_reply") or None,
+        "resolved_by": (row.get("ai_reply") or None) if row.get("state") == "resolved" else None,
         "created_at": row.get("created_at"),
         "resolved_at": row.get("resolved_at"),
         "updated_at": row.get("updated_at"),
@@ -1358,7 +1359,7 @@ def _cell(value: Any) -> str:
 
 def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: dict,
                            unmapped: list[dict], conflicts: list[dict], title: str,
-                           locale: str = "ko") -> str:
+                           locale: str = "ko", overall_comment: Optional[str] = None) -> str:
     s = _REPORT_STRINGS.get(locale) or _REPORT_STRINGS["ko"]
     overall = summary.get("overall") or "NOT_RUN"
     lines = [
@@ -1425,6 +1426,9 @@ def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: d
             )
     else:
         lines.append(f"- {s['none']}")
+    if overall_comment:
+        heading = {"ko": "총평", "ja": "総評", "en": "Overall comment"}.get(locale, "총평")
+        lines.extend(["", "## " + heading, "", str(overall_comment).strip()])
     lines.extend(["", s["footer"].format(run_id=run.get("run_id")), ""])
     return "\n".join(lines)
 

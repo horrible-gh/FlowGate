@@ -145,8 +145,11 @@ def upload(doc, case_id, kind, part, user, attempt=None):
         current = attempt_for(doc["doc_id"], case_id)
         if attempt is not None and attempt != current:
             raise HTTPException(409, detail={"error": "evidence_attempt_changed"})
-        return flow.upload(doc["group_id"], part, user, "keep_both", test_evidence={
+        result = flow.upload(doc["group_id"], part, user, "keep_both", test_evidence={
             "ts_doc_id": doc["doc_id"], "case_id": case_id, "kind": kind, "attempt": current})
+        from modules.flow_gate.services.test_card_changes import regenerate
+        regenerate(doc)
+        return result
 
 
 def file_row(doc, key):
@@ -199,6 +202,12 @@ def record_execution(doc, run, case_id, exit_code, duration_ms, stderr):
                 "ts_doc_id": doc["doc_id"], "case_id": case_id, "kind": "log", "attempt": attempt})
         finally:
             part.file.close()
-    attach(f"{case_id}-attempt-{attempt}-exit.txt", summary)
-    if exit_code != 0:
-        attach(f"{case_id}-attempt-{attempt}-error.log", "\n".join(stderr.splitlines()[-200:]))
+    # Attachment failure must not erase the observation or abort the following case.
+    try:
+        attach(f"{case_id}-attempt-{attempt}-exit.txt", summary)
+        if exit_code != 0:
+            attach(f"{case_id}-attempt-{attempt}-error.log", "\n".join(stderr.splitlines()[-200:]))
+    except (AttachmentError, HTTPException) as exc:
+        meta = spec.load_result_meta((test_runs.get_run(run["run_id"]) or run).get("result_meta"))
+        meta.setdefault("evidence_errors", []).append({"case_id": case_id, "error": str(exc)})
+        test_runs.set_run_result_meta(run["run_id"], json.dumps(meta, ensure_ascii=False))
