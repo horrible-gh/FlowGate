@@ -20,7 +20,7 @@
               data-test="my-repeat-reset"
               @click="resetMyRepeat"
             >
-              {{ t('gui.ai.providers.my_repeat_reset', { max: prefs.repeat_count_system_max }) }}
+              {{ t('gui.ai.providers.my_repeat_reset') }}
             </Button>
             <IconButton
               :label="t('gui.ai.providers.repeat_decrease')"

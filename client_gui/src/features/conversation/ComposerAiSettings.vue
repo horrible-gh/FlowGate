@@ -78,7 +78,6 @@
             :disabled="saving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
             @click="stepRepeat(1)"
           >＋</button>
-          <small class="cas-ref" data-test="conv-setting-repeat-system">{{ t('gui.conversation.settings.ai_repeat_system', { max: prefs.repeat_count_system_max }) }}</small>
           <button
             v-if="prefs.repeat_count_max !== null"
             type="button"
@@ -170,10 +169,13 @@ const fixedTitle = computed<TitleChoice[]>(() => [
 ])
 
 // 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use. While 자동 is chosen, the AI it resolves to is
-// named inside that choice ("자동(시스템 기본) · Haiku 5.5") instead of on a line of its own.
+// named inside that choice ("자동 · 답한 AI 그대로") instead of on a line of its own. F96-10: an administrator value
+// whose name is not known here leaves just "자동" (never the internal ID).
 const titleOptions = computed<TitleChoice[]>(() => {
-  const autoInUse = prefs.value?.title_provider === 'auto' && effectiveTitleName.value && effectiveTitleName.value !== titleName('auto')
-  const fixed = fixedTitle.value.map((o) => (o.value === 'auto' && autoInUse ? { ...o, label: `${o.label} · ${effectiveTitleName.value}` } : o))
+  const p = prefs.value
+  const resolved = p?.title_provider === 'auto' ? knownTitleName(p.title_provider_effective || '') : ''
+  const autoInUse = resolved && resolved !== titleName('auto')
+  const fixed = fixedTitle.value.map((o) => (o.value === 'auto' && autoInUse ? { ...o, label: `${o.label} · ${resolved}` } : o))
   return titleChoices(prefs.value?.title_provider, fixed, props.providers.map((p) => ({ value: p.id, label: p.name })))
 })
 
@@ -181,10 +183,15 @@ function titleName(value: string): string {
   return fixedTitle.value.find((o) => o.value === value)?.label ?? nameOf(value)
 }
 
+/** The display name of a title choice, or '' when neither a fixed choice nor an AI of this chat has that id. */
+function knownTitleName(value: string): string {
+  return fixedTitle.value.find((o) => o.value === value)?.label ?? props.providers.find((p) => p.id === value)?.name ?? ''
+}
+
 const effectiveTitleName = computed(() => {
   const p = prefs.value
   if (!p) return ''
-  return titleName(p.title_provider_effective || p.title_provider)
+  return knownTitleName(p.title_provider_effective || p.title_provider) || titleName('auto')
 })
 
 onMounted(() => { void loadPrefs() })
