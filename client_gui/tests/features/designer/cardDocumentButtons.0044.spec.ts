@@ -8,26 +8,53 @@ import { prepareInspectorI18n } from './inspector/support/inspectorSupport'
 const EMPTY_SUFFIX = /(\(비어 있음\)|\(empty\)|（空）)$/
 const line = (slot: string, docId: string | null, docType = 'TS') => ({ slot, docId, docType, title: docId, author: null, status: 'draft', docReviewStatus: null, hasBody: false })
 describe('0044 live document buttons', () => {
-  it('deduplicates shared TS documents and prefers the instruction owner regardless of slot order', () => {
-    const docs = cardDocumentButtons({ cardDocuments: [line('scenario', 'a'), line('instruction', 'a'), line('report', 'b', 'TSR'), line('report', null)], document: null })
-    // flowgate.v02test.0041: the shared TS document keeps one instruction button and gets its own 시나리오 button right after it.
-    expect(docs.map(d => [d.docId, d.ownerSlot, d.report, !!d.scenario])).toEqual([['a', 'instruction', false, false], ['a', 'scenario', false, true], ['b', 'report', true, false]])
+  it('F81-9: a shared TS document is one 시나리오 button, never an instruction button, regardless of slot order', () => {
+    for (const lines of [[line('scenario', 'a'), line('instruction', 'a')], [line('instruction', 'a'), line('scenario', 'a')]]) {
+      const docs = cardDocumentButtons({ cardDocuments: [...lines, line('report', 'b', 'TSR'), line('report', null)], document: null })
+      expect(docs.map(d => [d.docId, d.ownerSlot, d.report, !!d.scenario])).toEqual([['a', 'scenario', false, true], ['b', 'report', true, false]])
+    }
     expect(cardDocumentButtons({ cardDocuments: [], document: null })).toEqual([])
   })
-  it('gives a test card three buttons (지시서 · 시나리오 · 레포트) and opens the pressed one', async () => {
+  it('F81-9: an instruction line the server still sends for a TS card (no 시나리오 line) becomes the 시나리오 button', () => {
+    const docs = cardDocumentButtons({ cardDocuments: [line('instruction', 'a'), line('report', 'b', 'TSR')], document: null })
+    expect(docs.map(d => [d.docId, d.ownerSlot, !!d.scenario, d.report])).toEqual([['a', 'scenario', true, false], ['b', 'report', false, true]])
+    // An omitted, empty instruction of a TS card is still its 시나리오 (the TS is the scenario, not an instruction).
+    const omitted = cardDocumentButtons({ cardDocuments: [{ ...line('instruction', 'a'), instructionOmitted: true, hasBody: false, bodyState: 'readable' }, line('report', 'b', 'TSR')], document: null })
+    expect(omitted.map(d => [d.ownerSlot, !!d.scenario])).toEqual([['scenario', true], ['report', false]])
+  })
+  it('gives a test card the Inspector\'s two buttons (시나리오 · 레포트) and opens the pressed one', async () => {
     const i18n = prepareInspectorI18n()
     const documents = cardDocumentButtons({ cardDocuments: [line('instruction', 'a'), line('scenario', 'a'), line('report', 'b', 'TSR')], document: null })
     const wrapper = mount(FlowNodeCard, { props: { id: 'n', data: { kind: 'test', title: 'Card', selected: false, state: null, documents } }, global: { plugins: [i18n], stubs: { Handle: true } } })
     const buttons = wrapper.findAll('[data-test="designer-canvas-node-document"]')
-    expect(buttons).toHaveLength(3)
-    expect(new Set(buttons.map(b => b.get('path').attributes('d'))).size).toBe(3)
-    expect(buttons.map(b => b.attributes('data-scenario'))).toEqual(['false', 'true', 'false'])
-    await buttons[1].trigger('click')
-    expect(wrapper.emitted('open-document')).toEqual([[{ nodeId: 'n', docId: 'a', scenario: true }]])
+    expect(buttons).toHaveLength(2)
+    expect(new Set(buttons.map(b => b.get('path').attributes('d'))).size).toBe(2)
+    expect(buttons.map(b => b.attributes('data-scenario'))).toEqual(['true', 'false'])
     await buttons[0].trigger('click')
-    expect(wrapper.emitted('open-document')?.[1]).toEqual([{ nodeId: 'n', docId: 'a' }])
+    expect(wrapper.emitted('open-document')).toEqual([[{ nodeId: 'n', docId: 'a', scenario: true }]])
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('open-document')?.[1]).toEqual([{ nodeId: 'n', docId: 'b' }])
     // A card without a scenario line (work, design ...) keeps its two buttons.
     expect(cardDocumentButtons({ cardDocuments: [line('instruction', 'a', 'T'), line('report', 'b', 'TR')], document: null })).toHaveLength(2)
+    wrapper.unmount()
+  })
+  it('F81-9: an explicit 시나리오 line wins over a legacy TS instruction line of another document id', () => {
+    for (const lines of [[line('scenario', 'a'), line('instruction', 'old')], [line('instruction', 'old'), line('scenario', 'a')]]) {
+      const docs = cardDocumentButtons({ cardDocuments: [...lines, line('report', 'b', 'TSR')], document: null })
+      expect(docs.map(d => [d.docId, d.ownerSlot, !!d.scenario, d.report])).toEqual([['a', 'scenario', true, false], ['b', 'report', false, true]])
+    }
+  })
+  it('F81-9: an old card without lines whose document is a TS gets the 시나리오 button, not a document button', () => {
+    const document = { docId: 'ts', typeCode: 'TS', title: 'Card · 테스트 · 지시서', seq: 1, docReviewStatus: null, status: 'draft', supersedes: [] }
+    expect(cardDocumentButtons({ document, cardDocuments: [] }).map(d => [d.docId, d.ownerSlot, !!d.scenario, d.report])).toEqual([['ts', 'scenario', true, false]])
+  })
+  it('F81-9: the 시나리오 button never names a stored 「지시서」 role in its label', () => {
+    const i18n = prepareInspectorI18n()
+    const documents = cardDocumentButtons({ cardDocuments: [{ ...line('instruction', 'a'), title: 'Card · 테스트 · 지시서', hasBody: true }, line('report', 'b', 'TSR')], document: null })
+    const wrapper = mount(FlowNodeCard, { props: { id: 'n', data: { kind: 'test', title: 'Card', selected: false, state: null, documents } }, global: { plugins: [i18n], stubs: { Handle: true } } })
+    const scenario = wrapper.get('[data-scenario="true"]')
+    expect(scenario.attributes('aria-label')).toContain('Card · 테스트 · ')
+    expect(scenario.attributes('aria-label')).not.toMatch(/지시서|Instruction|指示書/)
     wrapper.unmount()
   })
   it('uses a free document only when there are no card slots; null live slots never revive an old document', () => {

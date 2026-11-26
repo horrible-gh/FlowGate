@@ -2227,6 +2227,7 @@ export default {
   },
   document_window: {
     untitled: 'Document',
+    scenario_title: 'Scenario',
     edit: 'Edit',
     editor: 'Document body',
     save: 'Save',

@@ -243,17 +243,19 @@ describe('테스트 card lines (testSpecModel, stage 2)', () => {
     gate: null,
   }
 
-  it('a TS view: 지시서 with its state, 시나리오 (the same TS) with the tally, 레포트 "실행 후"', () => {
-    const [instruction, scenario, report] = testSpecSlots(view, GRAPH_TS)
-    expect(instruction).toMatchObject({ key: 'instruction', id: GRAPH_TS.docId, open: 'enabled' })
-    expect(instruction.state).toMatchObject({ raw: 'approved', tone: 'success' })
+  it('a TS view (F81-9: no 지시서 line): 시나리오 (the TS) with its state and the tally, 레포트 "실행 후"', () => {
+    const slots = testSpecSlots(view, GRAPH_TS)
+    expect(slots.map(slot => slot.key)).toEqual(['scenario', 'report'])
+    const [scenario, report] = slots
     expect(scenario).toMatchObject({ key: 'scenario', id: GRAPH_TS.docId, empty: false, summary: 'tally', open: 'enabled' })
+    expect(scenario.state).toMatchObject({ raw: 'approved', tone: 'success' })
     expect(report).toMatchObject({ key: 'report', kind: 'document', empty: true, emptyKey: 'empty.after_run' })
   })
 
-  it('no view yet: the selected TSR fills the report line; 지시서 and 시나리오 have no document', () => {
-    const [instruction, scenario, report] = testSpecSlots(null, facts(V01_TR, 'TSR'))
-    expect(instruction).toMatchObject({ empty: true, emptyKey: null, open: 'none' })
+  it('no view yet: the selected TSR fills the report line; 시나리오 has no document', () => {
+    const slots = testSpecSlots(null, facts(V01_TR, 'TSR'))
+    expect(slots.map(slot => slot.key)).toEqual(['scenario', 'report'])
+    const [scenario, report] = slots
     expect(scenario).toMatchObject({ empty: true, emptyKey: 'empty.after_run' })
     expect(report).toMatchObject({ id: V01_TR.docId, empty: false, open: 'enabled' })
     expect(report.state).toMatchObject({ raw: 'pending_review', tone: 'warning' })
