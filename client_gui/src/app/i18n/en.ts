@@ -417,6 +417,8 @@ export default {
       graph_loading: 'Loading graph',
       graph_load_failed: 'Could not load the graph',
       draft_action_failed: "The action could not be completed. Check the latest flow and try again. ({code})",
+      default_card_failed: "The new flow's default Requirement card could not be placed. Drag a Requirement card from the palette. ({code})",
+      default_card_save_failed: "The new flow's default Requirement card is not saved yet. It stays on the canvas and saving is retried automatically. ({code})",
       document_storage_unwritable: 'Save failed: document storage error. Your edits are preserved.',
       retry: 'Retry',
       sample_data: 'Sample data',
