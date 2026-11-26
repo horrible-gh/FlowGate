@@ -166,23 +166,37 @@ describe('⚙ settings window (v02test.0096 ④)', () => {
   })
 })
 
-describe('⚙ settings › AI › 제목 짓기 AI 자동 label (F96-10)', () => {
-  async function autoLabel(effective: string): Promise<string> {
+describe('⚙ settings › AI › 제목 짓기 AI without 자동 (F96-13)', () => {
+  async function openAiTab(stored: string) {
     const api = await import('@/features/conversation/api')
-    vi.mocked(api.fetchMyAiPrefs).mockResolvedValueOnce({ ...prefs, title_provider_effective: effective })
+    vi.mocked(api.fetchMyAiPrefs).mockResolvedValueOnce({ ...prefs, title_provider: stored, title_provider_effective: 'executor' })
     const w = mountSettings()
     await w.get('[data-test="conv-settings-btn"]').trigger('click')
     await w.findAll('[role="tab"]')[2].trigger('click')
     await flushPromises()
-    const label = w.get('[data-test="conv-setting-title-ai"] option[value="auto"]').text()
-    w.unmount()
-    return label
+    return w
   }
+  const options = (w: Awaited<ReturnType<typeof openAiTab>>) => w.findAll('[data-test="conv-setting-title-ai"] option')
+  const selected = (w: Awaited<ReturnType<typeof openAiTab>>) =>
+    (w.get('[data-test="conv-setting-title-ai"]').element as HTMLSelectElement).value
 
-  it('names the AI 자동 resolves to, and shows only 자동 for an id it cannot name', async () => {
-    expect(await autoLabel('executor')).toBe('자동 · 답한 AI 그대로')
-    expect(await autoLabel('p2')).toBe('자동 · Codex GPT 6.1 Sol(AG)')
-    expect(await autoLabel('aip_unknown_internal')).toBe('자동')
+  it('offers 답한 AI 그대로 (first, the default), 끄기, a separator and the chat AI — no 자동', async () => {
+    const w = await openAiTab('executor')
+    expect(options(w).map((o) => o.text())).toEqual(['답한 AI 그대로', '끄기', '──────────', 'Claude Haiku 5.5 (AG)', 'Codex GPT 6.1 Sol(AG)'])
+    expect(options(w).map((o) => o.attributes('value'))).not.toContain('auto')
+    expect(w.get('[data-test="conv-setting-title-ai"]').text()).not.toContain('자동')
+    expect(selected(w)).toBe('executor')
+    w.unmount()
+  })
+
+  it('shows a stored 자동 (auto) as 답한 AI 그대로 and saves nothing for it', async () => {
+    const api = await import('@/features/conversation/api')
+    vi.mocked(api.saveMyAiPrefs).mockClear()
+    const w = await openAiTab('auto')
+    expect(selected(w)).toBe('executor')
+    expect(options(w).map((o) => o.attributes('value'))).not.toContain('auto')
+    expect(api.saveMyAiPrefs).not.toHaveBeenCalled()
+    w.unmount()
   })
 })
 

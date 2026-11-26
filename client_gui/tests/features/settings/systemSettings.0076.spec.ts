@@ -45,9 +45,6 @@ const net = vi.hoisted(() => ({
   failUsersGet: 0,
   actor: 'u1',
   paused: { review_count: 8, restart_count: 8 },
-  /** v02test.0096 F96-6: the system AI the title AI select offers (GET /system/ai-settings), and a failing read. */
-  systemAi: [] as { id: string; name: string; enabled: boolean }[],
-  failAiGet: 0,
 }))
 
 vi.mock('@shared/api', async (importOriginal) => {
@@ -122,10 +119,6 @@ vi.mock('@shared/api', async (importOriginal) => {
     if (call === 'GET /api/v1/system/settings') {
       if (net.failSettingsGet) throw fail(net.failSettingsGet, { detail: 'boom' })
       return { data: { settings: listRows() } }
-    }
-    if (call === 'GET /api/v1/system/ai-settings') {
-      if (net.failAiGet) throw fail(net.failAiGet, { detail: 'boom' })
-      return { data: { providers: net.systemAi.map((p) => ({ ...p })), default_provider_id: null, updated_at: null } }
     }
     if (call === 'PATCH /api/v1/system/settings') {
       if (net.holdNext) {
@@ -260,12 +253,6 @@ beforeEach(async () => {
   net.actor = 'u1'
   net.failUsersGet = 0
   net.paused = { review_count: 8, restart_count: 8 }
-  net.systemAi = [
-    { id: 'sys-a', name: 'System A', enabled: true },
-    { id: 'sys-off', name: 'System off', enabled: false },
-    { id: 'sys-b', name: 'System B', enabled: true },
-  ]
-  net.failAiGet = 0
   net.users = [
     user('u1', 'admin', { is_admin: true, tfa_enabled: true, workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'owner' }] }),
     user('u2', 'Kim Minseo', { workspaces: [{ workspace_id: 'ws_default', name: 'FlowGate Workspace', role: 'member' }] }),
@@ -288,7 +275,7 @@ afterEach(() => {
   for (const body of patches()) {
     const keys = Object.keys((body as { updates: Record<string, string> }).updates).sort()
     expect(keys).not.toContain('storage_root')
-    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['ai_title_provider'], ['attach_read_max_mb']]).toContainEqual(keys)
+    expect([['scratch_ttl_unit', 'scratch_ttl_value'], ['attach_read_max_mb']]).toContainEqual(keys)
   }
   wrapper?.unmount()
   wrapper = null
@@ -315,7 +302,7 @@ describe('V01 (시스템 부분) — 일반 joins the menus', () => {
 describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
   it('shows the stored and the effective Root apart, with the FLOWGATE_STORAGE_DIR notice; no Root control', async () => {
     const w = await open('/settings/system/general')
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
     expect(w.get('[data-testid="root-configured"]').text()).toBe('/data/stored-root')
     expect(w.get('[data-testid="root-effective"]').text()).toBe('/env/flowgate')
     expect(w.get('[data-testid="root-source"]').text()).toBe('환경 변수 FLOWGATE_STORAGE_DIR')
@@ -340,7 +327,7 @@ describe('V11 시스템 Root — GET /system/storage-root, read only', () => {
     const w = await open('/settings/system/general')
     expect(w.find('[data-testid="root-error"]').exists()).toBe(true)
     expect(w.find('[data-testid="root-effective"]').exists()).toBe(false)
-    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings'])
+    expect(net.requests).toEqual(['GET /api/v1/system/storage-root', 'GET /api/v1/system/settings'])
     expect((w.get('[data-testid="scratch-value"]').element as HTMLInputElement).value).toBe('7')
     net.failRoot = 0
     await click(w, '[data-testid="root-error"] button')
@@ -370,7 +357,7 @@ describe('V12 Scratch 정상·검증', () => {
     await click(w, '[data-testid="scratch-save"]')
     expect(patches()).toEqual([{ updates: { scratch_ttl_value: '6', scratch_ttl_unit: 'hour' } }])
     expect(net.requests).toEqual([
-      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings', 'GET /api/v1/system/ai-settings',
+      'GET /api/v1/system/storage-root', 'GET /api/v1/system/settings',
       'PATCH /api/v1/system/settings', 'GET /api/v1/system/settings',
     ])
     expect(w.find('[data-testid="scratch-saved"]').exists()).toBe(true)
@@ -859,72 +846,43 @@ describe('flowgate.v02test.0053 0002-CH turn 68 — 검증 is managed per card o
   })
 })
 
-describe('flowgate.v02test.0096 F96-6 — 제목 짓기 AI (ai_title_provider) moved here from AI 관리 › 기타 설정', () => {
-  const options = (w: VueWrapper) => w.findAll('[data-testid="title-ai-value"] option')
-  const selected = (w: VueWrapper) => (w.get('[data-testid="title-ai-value"]').element as HTMLSelectElement).value
-
-  it('sits after the Scratch card (the repeat card is gone) and lists 끄기, 답한 AI 그대로, a separator, then the enabled system AI in the system order', async () => {
+describe('flowgate.v02test.0096 F96-13 — 제목 짓기 AI is gone from 시스템 › 환경 설정 (a personal setting only)', () => {
+  it('no title AI card, heading, select or save button; the cards are 저장 Root, Scratch, AI 첨부 읽기 상한 in that order', async () => {
     const w = await open('/settings/system/general')
     const cards = w.findAll('[data-card]').map((c) => c.attributes('data-card'))
-    expect(cards).not.toContain('repeat')
-    expect(cards.indexOf('title-ai')).toBe(cards.indexOf('scratch') + 1)
-    expect(w.get('[data-card="title-ai"]').text()).toContain('제목 짓기 AI 기본값')
-    expect(w.get('[data-card="title-ai"]').text()).not.toContain('(시스템)')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '답한 AI 그대로', '──────────', 'System A', 'System B'])
-    expect(options(w).map((o) => o.attributes('value')).slice(0, 2)).toEqual(['off', 'executor'])
-    expect((options(w)[2].element as HTMLOptionElement).disabled).toBe(true)
-    expect(selected(w)).toBe('executor')
-    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined() // unchanged
+    expect(cards.slice(0, 3)).toEqual(['storage-root', 'scratch', 'attach-read']) // then the shared attachment-requests card
+    expect(cards).not.toContain('title-ai')
+    expect(w.find('[data-card="title-ai"]').exists()).toBe(false)
+    expect(w.find('[data-testid^="title-ai-"]').exists()).toBe(false)
+    expect(w.find('#sys-title-ai').exists()).toBe(false)
+    expect(w.text()).not.toContain('제목 짓기 AI')
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     expect(writes()).toEqual([])
   })
 
-  it('saves ai_title_provider alone, the re-read agrees and Saved shows', async () => {
+  it('the menu description no longer names the title AI (ko / en / ja)', async () => {
     const w = await open('/settings/system/general')
-    await w.get('[data-testid="title-ai-value"]').setValue('sys-b')
-    await flushPromises()
-    await click(w, '[data-testid="title-ai-save"]')
-    expect(patches()).toEqual([{ updates: { ai_title_provider: 'sys-b' } }])
-    expect(net.requests.slice(-2)).toEqual(['PATCH /api/v1/system/settings', 'GET /api/v1/system/settings'])
-    expect(stored('ai_title_provider')).toBe('sys-b')
-    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(false)
-    expect(w.get('[data-testid="title-ai-save"]').attributes('disabled')).toBeDefined()
+    expect(w.get('.fgs-ptitle p').text()).toBe('서버 전체의 저장 위치, Scratch 보존, AI 첨부')
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      const text = i18n.global.t('gui.settings.page_sub.system_general', {}, { locale })
+      expect(text).not.toMatch(/제목 짓기 AI|title AI|タイトル生成AI/i)
+    }
+    expect(i18n.global.t('gui.settings.page_sub.system_general', {}, { locale: 'en' })).toBe('Server-wide storage location, Scratch retention and AI attachments')
+    expect(i18n.global.t('gui.settings.page_sub.system_general', {}, { locale: 'ja' })).toBe('サーバー全体の保存場所、Scratch の保持、AI 添付')
   })
 
-  it('a failing save keeps the choice and shows the error, no Saved', async () => {
-    net.failPatch = 500
-    const w = await open('/settings/system/general')
-    await w.get('[data-testid="title-ai-value"]').setValue('off')
-    await flushPromises()
-    await click(w, '[data-testid="title-ai-save"]')
-    expect(w.find('[data-testid="title-ai-error"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-saved"]').exists()).toBe(false)
-    expect(selected(w)).toBe('off')
+  it('reads no system AI list and leaves the stored ai_title_provider (executor) untouched; a server without the row loads as before', async () => {
+    let w = await open('/settings/system/general')
+    expect(net.requests.some((r) => r.includes('/system/ai-settings'))).toBe(false)
+    await type(w, '[data-testid="attach-read-value"]', '8')
+    await click(w, '[data-testid="attach-read-save"]')
+    expect(patches()).toEqual([{ updates: { attach_read_max_mb: '8' } }])
     expect(stored('ai_title_provider')).toBe('executor')
-  })
-
-  it('keeps a stored AI that is off or no longer listed selectable as the current value', async () => {
-    net.rows.ai_title_provider = { value: 'sys-off', type: 'string' }
-    let w = await open('/settings/system/general')
-    expect(options(w).map((o) => o.text())).toContain('System off')
-    expect(selected(w)).toBe('sys-off')
     w.unmount()
-    net.rows.ai_title_provider = { value: 'gone-id', type: 'string' }
-    w = await open('/settings/system/general')
-    expect(selected(w)).toBe('gone-id')
-  })
-
-  it('a failing system AI read leaves the fixed choices; a server without the row only disables this card', async () => {
-    net.failAiGet = 500
-    let w = await open('/settings/system/general')
-    expect(options(w).map((o) => o.text())).toEqual(['끄기', '답한 AI 그대로'])
-    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
-    w.unmount()
-    net.failAiGet = 0
     delete net.rows.ai_title_provider
     w = await open('/settings/system/general')
-    expect(w.find('[data-testid="title-ai-missing"]').exists()).toBe(true)
-    expect(w.find('[data-testid="title-ai-value"]').exists()).toBe(false)
+    expect(w.find('[data-testid="settings-error"]').exists()).toBe(false)
     expect(w.find('[data-testid="scratch-value"]').exists()).toBe(true)
+    expect(w.find('[data-testid="attach-read-value"]').exists()).toBe(true)
   })
 })

@@ -101,44 +101,6 @@
             </div>
           </div>
 
-          <!-- Title AI: ai_title_provider only (v02test.0096 F96-6, moved here from AI 관리 › 기타 설정) -->
-          <div class="fgs-sec" data-card="title-ai">
-            <div class="fgs-sec-head"><h3>{{ t('gui.ai.providers.title_ai') }}</h3></div>
-            <div class="fgs-rows">
-              <div v-if="titleConfirmed === null" class="fgs-row sub">
-                <span class="fgs-error" data-testid="title-ai-missing">{{ t('gui.settings.general.errors.bad_response') }}</span>
-              </div>
-              <div v-else class="fgs-row">
-                <div class="fgs-row-label">
-                  <label for="sys-title-ai">{{ t('gui.ai.providers.title_ai_default') }}</label>
-                </div>
-                <div class="fgs-row-ctrl">
-                  <span v-if="titleSaved && !titleDirty && !titleError" class="fgs-muted" data-testid="title-ai-saved">{{ t('gui.settings.saved') }}</span>
-                  <select
-                    id="sys-title-ai"
-                    v-model="titleValue"
-                    class="fgs-input title-ai"
-                    :class="{ dirty: titleDirty }"
-                    :disabled="titleSaving"
-                    data-testid="title-ai-value"
-                  >
-                    <option v-for="opt in titleOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
-                  </select>
-                  <button
-                    type="button"
-                    class="fgs-btn pri"
-                    :disabled="!titleCanSave"
-                    data-testid="title-ai-save"
-                    @click="saveTitle"
-                  >{{ titleSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
-                </div>
-              </div>
-              <div v-if="titleError" class="fgs-row sub">
-                <span class="fgs-error" role="alert" data-testid="title-ai-error">{{ titleError }}</span>
-              </div>
-            </div>
-          </div>
-
           <!-- AI attachment read limit: attach_read_max_mb only (MB, 1~64, applies without a restart) -->
           <div class="fgs-sec" data-card="attach-read">
             <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.attach_read.title') }}</h3></div>
@@ -193,7 +155,7 @@
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
         <div class="conf-who">{{ t('gui.settings.general.leave.title') }}</div>
         <p class="conf-text">{{ t('gui.settings.general.leave.unsaved') }}</p>
-        <p v-if="scratchSaving || attachSaving || titleSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
+        <p v-if="scratchSaving || attachSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
       </div>
       <template #footer>
         <div class="fgs-modal-actions">
@@ -212,16 +174,15 @@
 //   and whether FLOWGATE_STORAGE_DIR overrides it. Read only: no input, no save, no move, and
 //   storage_root never goes into a PATCH. /system/settings/storage-root (a different contract with
 //   other field names) is not used, not even as a fallback.
-// - Scratch retention period, AI attachment read limit and title AI come from the rows of GET /system/settings and
+// - Scratch retention period and AI attachment read limit come from the rows of GET /system/settings and
 //   are separate saves on PATCH /system/settings:
 //   · Scratch: scratch_ttl_value and scratch_ttl_unit together, as strings, in ONE request — the
 //     server validates the pair and writes it in one store transaction (V13 checked the deployment
 //     store rolls both keys back). Never split into two PATCHes, never converted to minutes.
 //   · The AI iteration limit is no longer edited here (v02test.0096 F96-11): the max repeat count is a personal
 //     setting only (⚙ AI tab, /me/ai-preferences, 1~30).
-//   · title AI (v02test.0096 F96-6): ai_title_provider alone — 'off', 'executor' or a system AI id — with the save /
-//     load of the AI screen (features/ai/api saveTitleProvider / fetchTitleProvider). Its PATCH answer carries no
-//     row, so the re-read alone confirms it.
+//   · The title AI is no longer edited here (v02test.0096 F96-13): it is a personal setting only (⚙ settings › AI tab,
+//     /me/ai-preferences). The server's ai_title_provider stays as stored ('executor') and is not touched.
 // A save is complete only when the PATCH answer carries exactly the sent value(s) AND a re-read
 // GET agrees; otherwise the input stays as typed and an error is shown. Invalid input is never sent.
 // The Saved notice belongs to the value that was saved: editing again takes it away.
@@ -232,9 +193,6 @@
 // shared with System Agent since the earlier implementation).
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { fetchSystemAi, fetchTitleProvider, saveTitleProvider } from '@/features/ai/api'
-import type { ProviderItem } from '@/features/ai/types'
-import { TITLE_SEPARATOR, titleChoices, type TitleChoice } from '@shared/myAiPreferences'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
@@ -256,7 +214,6 @@ const MAX_SCRATCH_MINUTES = 999999999n * 1440n + 1439n
 const ATTACH_READ_MIN_MB = 1
 const ATTACH_READ_MAX_MB = 64
 const ATTACH_READ_KEY = 'attach_read_max_mb'
-const TITLE_KEY = 'ai_title_provider'
 
 const { t } = useI18n()
 const systemNav = useSystemNav()
@@ -324,10 +281,6 @@ async function loadSettings() {
     const attach = rowValue(rows, ATTACH_READ_KEY)
     attachConfirmed.value = attach
     attachValue.value = attach ?? ''
-    // Same for the title AI: an empty or missing row only disables its card.
-    const title = rowValue(rows, TITLE_KEY) || null
-    titleConfirmed.value = title
-    titleValue.value = title ?? ''
   } catch (err) {
     settingsError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -453,68 +406,6 @@ async function rereadAttach(): Promise<string | null> {
   }
 }
 
-// ── Title AI (ai_title_provider) ──
-const titleConfirmed = ref<string | null>(null)
-const titleValue = ref('')
-const titleSaving = ref(false)
-const titleError = ref('')
-const titleSaved = ref(false)
-// System AI for the choices, in the system order. A failed read leaves only 끄기 / 답한 AI 그대로 (and the stored value).
-const systemAi = ref<ProviderItem[]>([])
-
-async function loadSystemAi() {
-  try {
-    systemAi.value = (await fetchSystemAi()).providers ?? []
-  } catch {
-    systemAi.value = []
-  }
-}
-
-// 끄기 / 답한 AI 그대로 / separator / the enabled system AI. An off AI is left out (the server refuses it), except the
-// stored one, which titleChoices always offers so the select never claims another value.
-const titleOptions = computed<TitleChoice[]>(() => {
-  const current = titleConfirmed.value
-  const ai = systemAi.value.filter((p) => p.enabled || p.id === current).map((p) => ({ value: p.id, label: p.name }))
-  return titleChoices(current, [
-    { value: 'off', label: t('gui.ai.providers.title_ai_off') },
-    { value: 'executor', label: t('gui.ai.providers.title_ai_executor') },
-  ], ai)
-})
-
-const titleDirty = computed(() => titleConfirmed.value !== null && titleValue.value !== titleConfirmed.value)
-const titleCanSave = computed(() => titleDirty.value && !!titleValue.value && titleValue.value !== TITLE_SEPARATOR && !titleSaving.value)
-
-async function saveTitle() {
-  if (!titleCanSave.value) return
-  const value = titleValue.value
-  titleSaving.value = true
-  titleError.value = ''
-  titleSaved.value = false
-  try {
-    await saveTitleProvider(value)
-    const reread = await rereadTitle()
-    if (reread !== value) {
-      titleError.value = t('gui.settings.general.errors.reread_mismatch')
-      return
-    }
-    titleSaved.value = true
-  } catch (err) {
-    titleError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    titleSaving.value = false
-  }
-}
-
-async function rereadTitle(): Promise<string | null> {
-  try {
-    const value = await fetchTitleProvider()
-    if (value !== null) titleConfirmed.value = value
-    return value
-  } catch {
-    return null
-  }
-}
-
 // A success notice is for the value that was saved, not for what is typed afterwards.
 watch([scratchValue, scratchUnit], () => {
   scratchSaved.value = false
@@ -522,20 +413,15 @@ watch([scratchValue, scratchUnit], () => {
 watch(attachValue, () => {
   attachSaved.value = false
 })
-watch(titleValue, () => {
-  titleSaved.value = false
-})
 
 // ── Unsaved changes guard ──
 const unsaved = computed(() =>
-  scratchDirty.value || attachDirty.value || titleDirty.value
-  || scratchSaving.value || attachSaving.value || titleSaving.value)
+  scratchDirty.value || attachDirty.value || scratchSaving.value || attachSaving.value)
 const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 
 onMounted(() => {
   void loadRoot()
   void loadSettings()
-  void loadSystemAi()
 })
 </script>
 
@@ -546,10 +432,6 @@ onMounted(() => {
 
 .fgs-input.unit {
   width: 100px;
-}
-
-.fgs-input.title-ai {
-  width: 220px;
 }
 
 .confirm {

@@ -3,6 +3,8 @@
 // window's AI tab. Before F96-5 each screen carried its own copy of the shape check, the optimistic save with rollback,
 // the −/＋ bounds, the "back to the default" reset and the title choice; they now share this composable.
 // F96-11: my value ranges over repeat_count_min ~ repeat_count_hard_max (1~30); the system value is only the default.
+// F96-13: the title AI has no '자동' choice any more (no administrator setting to follow); a stored 'auto' is shown and
+// handled as 'executor' (답한 AI 그대로), which is what the server's administrator value resolves it to.
 //
 // Server calls stay in each feature's own api module (feature boundary rules), so the caller passes its fetch / save
 // functions in. The composable keeps no module-wide state: each screen reads the server when it opens, which is how a
@@ -40,8 +42,14 @@ export function isMyAiPreferences(value: unknown): value is MyAiPreferencesShape
     && (p.repeat_count_max === null || p.repeat_count_max === undefined || typeof p.repeat_count_max === 'number')
 }
 
+/** The title AI value an earlier '자동' was saved as; the screens no longer offer it. */
+export const TITLE_AUTO_LEGACY = 'auto'
+/** The default title AI choice: the AI that answered names the chat (답한 AI 그대로). */
+export const TITLE_EXECUTOR = 'executor'
+
 function normalized<T extends MyAiPreferencesShape>(p: T): T {
-  return { ...p, repeat_count_max: p.repeat_count_max ?? null }
+  const title = p.title_provider === TITLE_AUTO_LEGACY ? TITLE_EXECUTOR : p.title_provider
+  return { ...p, title_provider: title, repeat_count_max: p.repeat_count_max ?? null }
 }
 
 export interface MyAiPreferencesOptions<T extends MyAiPreferencesShape> {

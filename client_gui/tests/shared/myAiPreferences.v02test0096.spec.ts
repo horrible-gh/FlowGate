@@ -81,9 +81,26 @@ describe('shared myAiPreferences (v02test.0096 F96-5)', () => {
     c.chooseTitle('off')
     expect(c.prefs.value?.title_provider).toBe('off')
     await flush()
-    expect(c.prefs.value?.title_provider).toBe('auto')
+    expect(c.prefs.value?.title_provider).toBe('executor') // the stored 'auto', shown as 답한 AI 그대로 (F96-13)
     expect(onSaveError).toHaveBeenCalledTimes(1)
     expect(c.saving.value).toBe(false)
+  })
+
+  it('shows and handles a stored auto as executor (F96-13: no 자동 choice); other values stay as stored', async () => {
+    const save = vi.fn(async () => base({ title_provider: 'off' }))
+    const c = useMyAiPreferences({ fetch: async () => base(), save })
+    await c.load()
+    expect(c.prefs.value?.title_provider).toBe('executor')
+    c.chooseTitle('executor') // already the shown value: nothing to save
+    expect(save).not.toHaveBeenCalled()
+    c.chooseTitle('off')
+    await flush()
+    expect(save).toHaveBeenCalledWith({ title_provider: 'off' })
+    expect(c.prefs.value?.title_provider).toBe('off')
+
+    const other = useMyAiPreferences({ fetch: async () => base({ title_provider: 'sys_a' }), save: vi.fn() })
+    await other.load()
+    expect(other.prefs.value?.title_provider).toBe('sys_a')
   })
 
   it('builds title rows: fixed / separator / AI, and always offers the stored value', () => {
