@@ -13,13 +13,17 @@ out after the MirageGlass deck `1jnmunhp` screen ⑩ "Environment Settings" by f
 - Routes: every `/app/settings` screen is a lazily loaded child of `SettingsLayout`
   (`routing.ts`, registered in `app/router/index.ts`). The layout shows a neutral loading state
   while `/auth/me` is still out and mounts no settings view until then.
-- Access (`access.ts`): Project / System screens are shown to system administrators only; anyone
-  else is replaced onto the overview with a notice before the view mounts. The retired
+- Access (`access.ts`): each screen that needs a permission names it (system actions such as `system.user.read`, or
+  `project.settings.read` in some visible project for the project screens) and is shown only when the server's
+  capabilities (`shared/permissions`, from /auth/me and the project list) allow it; anyone else is replaced onto the
+  overview with a "no permission" notice before the view mounts. Nothing reads `is_admin` or a role name
+  (flowgate.v02test.0090). The retired
   `/settings/workspaces[/…]` and `/settings/system/security` URLs, and any `/settings/*` path
   without a registered view, are replaced onto the overview (no query/hash kept). This is a
   GUI exposure rule only — the server's permission checks are unchanged.
 - Menus (`settingsMenu.ts`): the hub cards, the scope headings of `SettingsNav` and the System
-  sub-navigation list a screen only once its route is registered, so nothing is shown as
+  sub-navigation list a screen only once its route is registered and its `requires` (same rule as the route guard,
+  `isSettingsRequirementMet`) is allowed by the server, so nothing is shown as
   "Coming soon" or disabled. Registered today: the overview, My settings › Account / Display / Security / Sessions,
   Project (selection + General information / Storage paths / Git) and System › General / System Agent / Users / All projects.
 - System › General (`SystemGeneralSettingsView`; flowgate.v02.0076 T#3, D §2.5), administrators only:

@@ -12,12 +12,14 @@
 //   delete DELETE …/messages/{id}       -> { detail: 'deleted' }   (404 = already gone)
 //   order  PATCH  …/messages/{id}       { sort_order } for every row whose position changed (a failed save is undone by
 //          writing the old sort_order of every row back, after all requests of the save have finished)
-//   edit?  GET    /rbac/projects/{project_id}/my-permissions -> { permissions: string[], is_admin }
-//          ＋ 추가 / ✎ 편집 / right-click edit are offered only with project.settings.edit (the server checks it too).
+//   edit?  the shared capability store (GET /api/v1/projects/{project_id}/capabilities, shared/permissions) —
+//          ＋ 추가 / ✎ 편집 / right-click edit are offered only when the server allows project.settings.edit for the
+//          project (the server checks it too). The old per-screen /rbac/…/my-permissions + is_admin reading is gone.
 //
 // A blank title / text or a title over 12 characters is refused here before any call (the server answers 422 too).
 
 import { deleteRequest, getRequest, patchRequest, postRequest } from '@shared/api'
+import { loadProjectCapabilities, projectCan } from '@shared/permissions/capabilities'
 
 /** 'sticky' = 계속 (stays on until pressed again, survives F5); 'once' = 1회 (off after one send). */
 export type QuickMessageKind = 'sticky' | 'once'
@@ -138,13 +140,15 @@ export async function restoreChatQuickMessageOrder(projectId: string, before: re
   await settleAll(before.map((item) => patchRequest(messagePath(projectId, item.id), { sort_order: item.sortOrder })))
 }
 
-/** Whether the signed-in user may add / edit / delete quick messages of the project (project.settings.edit). Any failure = no. */
+/**
+ * Whether the signed-in user may add / edit / delete quick messages of the project: the server's own answer for
+ * `project.settings.edit` (shared capability store, read again each time the list is loaded). A screen never works
+ * it out from a role or an `is_admin` flag. Any failure = no.
+ */
 export async function fetchCanEditQuickMessages(projectId: string): Promise<boolean> {
   try {
-    const response = await getRequest<{ permissions?: unknown; is_admin?: unknown }>(`/rbac/projects/${encodeURIComponent(projectId)}/my-permissions`)
-    const body = response?.data
-    if (body?.is_admin === true) return true
-    return Array.isArray(body?.permissions) && body.permissions.includes('project.settings.edit')
+    await loadProjectCapabilities(projectId, { force: true })
+    return projectCan(projectId, 'project.settings.edit')
   } catch {
     return false
   }

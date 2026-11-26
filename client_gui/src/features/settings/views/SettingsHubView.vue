@@ -14,7 +14,7 @@
 
           <div class="fgs-panel-body">
             <Alert
-              v-if="notice === 'admin_only'"
+              v-if="notice === 'no_permission'"
               class="hub-notice"
               tone="warning"
               dismissible

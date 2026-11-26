@@ -36,6 +36,7 @@
 // is read back into the JSON envelope before it is thrown, so documentErrorOf reads its status.
 import { downloadBlobRequest, getRequest } from '@shared/api'
 import { normalizeApiInput } from '@shared/apiErrors'
+import { parseCapabilities, type CapabilityBlock } from '@shared/permissions/capabilities'
 import { documentErrorOf } from '../documentError'
 
 const API = '/api/v1'
@@ -58,6 +59,8 @@ export interface DocumentRecord {
   readonly updatedAt: string | null
   readonly isEditable?: boolean
   readonly groupDisposed?: boolean
+  /** The server's answer for this person and this document (context rules included), when it sent one. */
+  readonly capabilities?: CapabilityBlock
 }
 
 type Raw = Record<string, unknown>
@@ -85,6 +88,7 @@ export function toDocumentRecord(raw: unknown): DocumentRecord {
     updatedAt: text(row.updated_at),
     ...(typeof row.is_editable === 'boolean' ? { isEditable: row.is_editable } : {}),
     ...(typeof row.group_disposed === 'boolean' ? { groupDisposed: row.group_disposed } : {}),
+    ...(parseCapabilities(row.capabilities) ? { capabilities: parseCapabilities(row.capabilities)! } : {}),
   }
 }
 

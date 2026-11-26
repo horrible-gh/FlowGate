@@ -54,7 +54,7 @@
           </span>
         </div>
         <p class="detail-hint order-hint" data-test="ai-order-hint">
-          {{ isAdmin && !mineOnly ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
+          {{ canManageSystem && !mineOnly ? t('gui.ai.owned.order_hint_admin') : t('gui.ai.owned.order_hint') }}
         </p>
 
         <div class="provider-cards">
@@ -209,7 +209,7 @@
 
       <!-- Repeat limit ceiling: system setting ai_repeat_count_max, saved as soon as it changes. Administrators on the
            AI management screen only; the 내 AI window shows my own values below instead (v02test.0089). -->
-      <div v-if="isAdmin && !mineOnly && execPolicy" class="repeat-card" data-test="system-repeat-card">
+      <div v-if="canManageSystem && !mineOnly && execPolicy" class="repeat-card" data-test="system-repeat-card">
         <div class="repeat-info">
           <b>{{ t('gui.ai.providers.repeat_max_system') }}</b>
           <small>{{ t('gui.ai.providers.repeat_max_hint') }}</small>
@@ -239,7 +239,7 @@
 
       <!-- Title AI: system setting ai_title_provider, saved as soon as a choice is made. Name and dropdown only, no hint
            (user decision). Shown once the value is read; the AI list below the separator follows the list above. -->
-      <div v-if="isAdmin && !mineOnly && titleProvider !== null" class="repeat-card title-ai-card" data-test="title-ai-card">
+      <div v-if="canManageSystem && !mineOnly && titleProvider !== null" class="repeat-card title-ai-card" data-test="title-ai-card">
         <div class="repeat-info">
           <b>{{ t('gui.ai.providers.title_ai_system') }}</b>
         </div>
@@ -368,7 +368,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
-import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemCan } from '@shared/permissions/capabilities'
 import {
   AiRequestError,
   fetchMyAi,
@@ -408,8 +408,8 @@ const emit = defineEmits<{ changed: [] }>()
 const props = defineProps<{ mineOnly?: boolean }>()
 
 const { t } = useI18n()
-const { user } = useCurrentUser()
-const isAdmin = computed(() => !!user.value?.isAdmin)
+// System AI is system-scope: the server's `system.settings.manage` (no `is_admin` here).
+const canManageSystem = computed(() => systemCan('system.settings.manage'))
 
 interface Row {
   owner: AiOwnerScope
@@ -459,14 +459,14 @@ const prefs = ref<MyAiPreferences | null>(null)
 const prefsSaving = ref(false)
 // The 내 AI window shows my own values to everyone. On the AI management screen an administrator sees the system
 // values (ceiling and default) instead, and a user who is not an administrator, having none to set, sees their own.
-const showMinePreferences = computed(() => !!props.mineOnly || !isAdmin.value)
+const showMinePreferences = computed(() => !!props.mineOnly || !canManageSystem.value)
 
 function listOf(owner: AiOwnerScope): ProviderItem[] {
   return owner === 'system' ? systemList.value : myList.value
 }
 
 function canEdit(owner: AiOwnerScope): boolean {
-  return owner === 'user' || isAdmin.value
+  return owner === 'user' || canManageSystem.value
 }
 
 async function load(): Promise<void> {
@@ -479,14 +479,14 @@ async function load(): Promise<void> {
     void loadTitleProvider()
     void loadPreferences()
     const [system, mine] = await Promise.all([
-      isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
+      canManageSystem.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
     ])
     systemList.value = system.providers ?? []
     systemDefaultId.value = system.default_provider_id ?? null
     myList.value = mine.providers ?? []
     myDefaultId.value = mine.default_provider_id ?? null
-    execPolicy.value = isAdmin.value ? system.execution_policy ?? null : null
+    execPolicy.value = canManageSystem.value ? system.execution_policy ?? null : null
     repeatMax.value = execPolicy.value?.repeat_count_max ?? 0
     loaded.value = true
   } catch (err: unknown) {
@@ -509,7 +509,7 @@ async function loadOrder(): Promise<void> {
 }
 
 async function loadTitleProvider(): Promise<void> {
-  if (!isAdmin.value || props.mineOnly) return
+  if (!canManageSystem.value || props.mineOnly) return
   try {
     const value = await fetchTitleProvider()
     // A choice saved meanwhile is newer than this read.
@@ -711,7 +711,7 @@ function dismissToast(id: string | number): void {
 
 // Owners the add dialog may pick; each list has its own PROVIDERS_MAX.
 const ownerChoices = computed<AiOwnerScope[]>(() => {
-  const owners: AiOwnerScope[] = isAdmin.value && !props.mineOnly ? ['system', 'user'] : ['user']
+  const owners: AiOwnerScope[] = canManageSystem.value && !props.mineOnly ? ['system', 'user'] : ['user']
   return owners.filter((owner) => listOf(owner).length < PROVIDERS_MAX)
 })
 const addBlocked = computed(() => ownerChoices.value.length === 0)
@@ -783,7 +783,7 @@ function pickMyDefault(row: Row): void {
 }
 
 function setDefaultProvider(providerId: string) {
-  if (saving.value || deleting.value || !isAdmin.value || systemDefaultId.value === providerId) return
+  if (saving.value || deleting.value || !canManageSystem.value || systemDefaultId.value === providerId) return
   void persist('system', systemList.value, providerId)
 }
 
@@ -816,7 +816,7 @@ async function persistOrder(next: string[]): Promise<void> {
     order.value = data.order ?? next
     if (data.system_order_changed) {
       // The fallback order moved with it: read the system list again so its own order is current.
-      const system = await (isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi()).catch(() => null)
+      const system = await (canManageSystem.value ? fetchSystemAi() : fetchVisibleSystemAi()).catch(() => null)
       if (system && !disposed) systemList.value = system.providers ?? systemList.value
       pushToast(t('gui.ai.owned.fallback_order_changed'), 'info', true)
     }

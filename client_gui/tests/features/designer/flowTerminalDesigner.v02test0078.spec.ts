@@ -23,9 +23,10 @@ vi.mock('@/features/designer/flowTerminal/api', async (original) => ({
   openTerminalSession: api.openTerminalSession,
   closeTerminalSession: api.closeTerminalSession,
 }))
-vi.mock('@shared/auth', async (original) => ({
-  ...(await original<typeof import('@shared/auth')>()),
-  isAdminFromToken: () => auth.admin,
+// The terminal is offered when the server's capabilities allow `system.settings.manage` (not by a JWT flag).
+vi.mock('@shared/permissions/capabilities', async (original) => ({
+  ...(await original<typeof import('@shared/permissions/capabilities')>()),
+  systemCan: (action: string) => auth.admin && action === 'system.settings.manage',
 }))
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {

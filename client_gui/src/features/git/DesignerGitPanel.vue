@@ -18,7 +18,7 @@
       />
     </div>
     <GitStatusErrorCard v-if="statusReadFailed" :reason="statusReadReason" @retry="session.refresh()" />
-    <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnly" @connect="openConnect" />
+    <GitUnlinkedCard v-else-if="unlinked" :disabled="readOnlyNow" @connect="openConnect" />
     <GitExceptionList :execution-active="worktree.state.execution?.status === 'running' || worktree.state.execution?.status === 'stopped'" v-if="!statusReadFailed && (!unlinked || gateOperations.operations.value.length)" />
     <GitAbortFailures v-if="!statusReadFailed && !unlinked" />
     <GitWorktreePanel v-if="worktree.gateOpen.value" @settings="openConnect" @station="openStation" />
@@ -26,7 +26,7 @@
       <GitConflictWindow v-if="win.kind === 'conflict'" :win="win" />
       <GitPushErrorWindow v-else :win="win" :operation="win.id.startsWith('gate-job:') ? gateOperations.selected.value : null" />
     </template>
-    <GitStationWindow ref="stationRef" :open="stationOpen" :project-id="projectId" :read-only="readOnly" @close="stationOpen = false" @changed="refreshAll()" />
+    <GitStationWindow ref="stationRef" :open="stationOpen" :project-id="projectId" :read-only="readOnlyNow" @close="stationOpen = false" @changed="refreshAll()" />
     <GitConnectWindow
       v-model:minimized="connectMinimized"
       :open="connectOpen"
@@ -36,7 +36,7 @@
       :message="connectMessage"
       :has-stored-secret="connectHasStoredSecret"
       :retry-provision="connectRetryProvision"
-      :read-only="readOnly"
+      :read-only="readOnlyNow"
       @test="onConnectTest"
       @connect="onConnectSubmit"
       @retry-provision="onRetryProvision"
@@ -83,7 +83,8 @@
 // review / uncommitted Base file) still raise `open-diff`, as before.
 import { computed, onBeforeUnmount, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemCan, useCapabilities } from '@shared/permissions/capabilities'
+import { denialLines } from '@shared/permissions/denial'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import './gitPanel.css'
 import type { FlowRef } from '@/features/project'
@@ -131,7 +132,7 @@ const props = withDefaults(
     source?: GitSource
     /**
      * a system administrator — the forced cleanup of a merge git refuses to abort is theirs only.
-     * Absent = the signed-in person's own flag (`core/auth/currentUser`, from /auth/me); the server checks it again.
+     * Absent = the signed-in person's own `system.settings.manage` answer (`shared/permissions`, from /auth/me); the server checks it again.
      */
     isAdmin?: boolean
     /** Raised by one each time the Designer asks for the Git station window (the taskbar's [Git]). */
@@ -152,9 +153,21 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { user: currentUser } = useCurrentUser()
+// Two server permissions, each with its own answer (no answer yet changes nothing — the server still checks every Git call):
+// `project.git.write` (work-branch commit, work-base changes, update-from-base, fetch) turns the write controls off, and
+// `project.git.merge` (merging into a base branch, Push, conflict handling and review) turns the merge controls off. A
+// developer (write, no merge) and a reviewer (merge, no write) are each read-only only where their own permission says
+// so; a read-only Flow turns both off. The reason line is the Designer's PermissionNote.
+const projectCaps = useCapabilities(() => props.projectId)
+const readOnlyNow = computed(() => props.readOnly || projectCaps.refusal('project.git.write') !== null)
+const mergeRefusal = computed(() => projectCaps.refusal('project.git.merge'))
+const mergeReadOnlyNow = computed(() => props.readOnly || mergeRefusal.value !== null)
+// The server's own sentence for the refused merge permission (shown where a merge / conflict control is off).
+const mergeRefusalText = computed(() => mergeRefusal.value
+  ? denialLines([{ action: 'project.git.merge', decision: mergeRefusal.value }], projectCaps.role.value, (key, params) => t(key, params ?? {}))[0] ?? null
+  : null)
 const session = createGitSession({ source: props.source })
-const gateOperations = useGateOperations(() => props.projectId, () => props.flow?.groupId ?? null, () => props.readOnly)
+const gateOperations = useGateOperations(() => props.projectId, () => props.flow?.groupId ?? null, () => mergeReadOnlyNow.value)
 provide(GATE_OPERATIONS_CONTEXT, gateOperations)
 // The `Diff` tab's one file diff, read through the same kind of GitSource the worktree session uses.
 let diffSource: GitSource | null = props.source ?? null
@@ -288,7 +301,7 @@ function openDiff(origin: GitFileOrigin, path: string, status: GitFileLetter | n
 function openSettings(): void {
   const projectId = session.state.projectId
   const hold = session.holdView.value
-  if (!projectId || !hold || session.state.readOnly || session.state.forbidden) return
+  if (!projectId || !hold || session.state.mergeReadOnly || session.state.forbidden) return
   emit('open-confirm-settings', { projectId, groupId: hold.groupId, acDocId: hold.acDocId })
 }
 
@@ -401,7 +414,8 @@ function refreshAll(): Promise<void> {
 
 provide(GIT_PANEL_CONTEXT, {
   session,
-  isAdmin: () => props.isAdmin ?? currentUser.value?.isAdmin === true,
+  // The forced cleanup is system-scope: the server's `system.settings.manage` (absent prop = the signed-in person's own answer).
+  isAdmin: () => props.isAdmin ?? systemCan('system.settings.manage'),
   openDiff,
   openSettings,
   confirm: (request) => askConfirm(request, null),
@@ -434,8 +448,8 @@ watch(
   { immediate: true },
 )
 watch(
-  () => props.readOnly,
-  (value) => session.setReadOnly(value),
+  () => [readOnlyNow.value, mergeReadOnlyNow.value, mergeRefusalText.value] as const,
+  ([write, merge, reason]) => session.setReadOnly(write, merge, reason),
   { immediate: true },
 )
 // Coming into view reads again (§4.3); hidden, the part stays mounted and keeps its badge.
@@ -552,7 +566,7 @@ function clearConnectFeedback(): void {
 
 function openConnect(): void {
   const projectId = props.projectId
-  if (props.readOnly || !projectId) return
+  if (readOnlyNow.value || !projectId) return
   // Already open: brought back as it is — what was typed, a request running, its outcome.
   if (connectOpen.value) {
     connectMinimized.value = false
@@ -608,7 +622,7 @@ function stopConnect(message: GitConnectMessage): void {
 
 function onConnectTest(form: GitConnectForm): void {
   const projectId = props.projectId
-  if (!projectId || props.readOnly || connectRunning.has(projectId)) return
+  if (!projectId || readOnlyNow.value || connectRunning.has(projectId)) return
   const gen = ++connectGen
   clearConnectFeedback()
   holdConnect(projectId, 'testing', () => runTest(projectId, gen, form))
@@ -628,7 +642,7 @@ async function runTest(projectId: string, gen: number, form: GitConnectForm): Pr
 
 function onConnectSubmit(form: GitConnectForm): void {
   const projectId = props.projectId
-  if (!projectId || props.readOnly || connectRunning.has(projectId)) return
+  if (!projectId || readOnlyNow.value || connectRunning.has(projectId)) return
   const gen = ++connectGen
   clearConnectFeedback()
   holdConnect(projectId, 'connecting', () => runConnect(projectId, gen, toSave(form)))
@@ -661,7 +675,7 @@ async function runConnect(projectId: string, gen: number, input: GitConfigSave):
 
 function onRetryProvision(): void {
   const projectId = props.projectId
-  if (!projectId || props.readOnly || connectRunning.has(projectId) || !connectRetryProvision.value) return
+  if (!projectId || readOnlyNow.value || connectRunning.has(projectId) || !connectRetryProvision.value) return
   const gen = ++connectGen
   clearConnectFeedback()
   holdConnect(projectId, 'provisioning', () => prepareBase(projectId, gen))

@@ -106,7 +106,8 @@
         type="button"
         class="designer-tool"
         :class="{ 'is-running': run.key === 'stopping' }"
-        :disabled="disabled || !run.enabled"
+        :disabled="disabled || !run.enabled || (runRefused && run.command !== 'run.stop')"
+        :title="runRefused && run.command !== 'run.stop' ? runRefusedReason || undefined : undefined"
         data-test="designer-tool-run"
         :data-run="run.key"
         :data-command="run.command"
@@ -237,8 +238,12 @@ const props = withDefaults(
     targets?: DesignerMenuTargets
     /** Retained input contract for run state; the toolbar renders no status area. */
     runBand?: DesignerRunBand | null
+    /** The server refused this person `project.run` here: the run buttons (not ■ 중지) are off. */
+    runRefused?: boolean
+    /** Why (one sentence from the server's refusal), shown as the run buttons' tooltip. */
+    runRefusedReason?: string
   }>(),
-  { disabled: false, canValidate: false, canUndo: true, canRedo: true, selectMode: false, targets: () => ALL_MENU_TARGETS, runBand: null },
+  { disabled: false, canValidate: false, canUndo: true, canRedo: true, selectMode: false, targets: () => ALL_MENU_TARGETS, runBand: null, runRefused: false, runRefusedReason: '' },
 )
 
 const emit = defineEmits<{

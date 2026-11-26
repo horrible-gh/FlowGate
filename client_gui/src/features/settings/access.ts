@@ -1,15 +1,24 @@
 import { readonly, ref } from 'vue'
 import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
 import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core/auth/currentUser'
+import {
+  anyProjectCan,
+  ensureProjectCapabilityList,
+  projectCapabilityListState,
+  systemCan,
+  systemCapabilitiesReady,
+} from '@shared/permissions/capabilities'
 
 // (D): which /app/settings URL may be shown, decided before any
 // settings view mounts. The router guard applies it to every move and SettingsLayout applies
 // it again when the /auth/me answer arrives, so both follow one rule:
 //
 // - Retired screens (/settings/workspaces[/…], /settings/system/security[/…]) → the overview.
-// - "프로젝트" / "시스템" (/settings/project[/…], /settings/system[/…]): wait while /auth/me is still
-//   out; anyone who is not a system administrator goes to the overview with an "관리자 전용"
-//   notice; an administrator gets the page if its view is registered, else the overview.
+// - Screens that need a permission (REQUIREMENTS below: system settings, users, the project screens):
+//   wait while /auth/me — or, for the project screens, the project list's capabilities — is still out;
+//   anyone the server's capabilities do not allow goes to the overview with a "no permission" notice;
+//   a permitted person gets the page if its view is registered, else the overview. Nothing here looks
+//   at `is_admin` or a role name: the screen only reads what the server said (flowgate.v02test.0090).
 // - any other /settings/* path without a registered view → the overview.
 //
 // "The overview" is always a replace of /settings without the query/hash of the refused URL,
@@ -20,7 +29,7 @@ import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core
 /** Route name of the settings catch-all: a /settings/* path no view is registered for. */
 export const SETTINGS_UNKNOWN_ROUTE = 'settings-unknown'
 
-export type SettingsAccessNotice = 'admin_only'
+export type SettingsAccessNotice = 'no_permission'
 
 export type SettingsAccess =
   | { kind: 'allow' }
@@ -35,21 +44,73 @@ export interface SettingsAccessTarget {
   adminOnly: boolean
 }
 
+/** What the server must allow: any ONE of the system actions, or `project` in at least one visible project. */
+export interface SettingsRequirement {
+  system: readonly string[]
+  project?: string
+}
+
+export type SettingsRequirementState = 'allowed' | 'denied' | 'pending'
+
 export interface SettingsAccessAuth {
   status: CurrentUserStatus
-  user: Pick<CurrentUser, 'isAdmin'> | null
+  user: Pick<CurrentUser, 'username'> | null
+  /** The server's answer for a requirement (`pending` while the answer that decides it is still out). */
+  requirement: (requirement: SettingsRequirement) => SettingsRequirementState
 }
 
 const SETTINGS_PATH = /^\/settings(\/|$)/i
-const ADMIN_PATH = /^\/settings\/(system|project)(\/|$)/i
+// Which screens need which permission (first match). A route record marked `meta.settingsAccess: 'admin'`
+// that no row names needs `system.settings.manage`. Card "settings screens" adds its own rows here.
+const REQUIREMENTS: ReadonlyArray<readonly [RegExp, SettingsRequirement]> = [
+  [/^\/settings\/system\/users(\/|$)/i, { system: ['system.user.read'] }],
+  [/^\/settings\/system\/(agents|voice)(\/|$)/i, { system: ['system.settings.manage'] }],
+  [/^\/settings\/system(\/|$)/i, { system: ['system.settings.read'] }],
+  [/^\/settings\/project(\/|$)/i, { system: ['system.settings.read'], project: 'project.settings.read' }],
+]
+const MANAGE_ONLY: SettingsRequirement = { system: ['system.settings.manage'] }
+
+export function settingsRequirementOf(path: string, markedAdmin = false): SettingsRequirement | null {
+  for (const [pattern, requirement] of REQUIREMENTS) if (pattern.test(path)) return requirement
+  return markedAdmin ? MANAGE_ONLY : null
+}
+
+/** The server's answer for a requirement, from the shared capability store. */
+export function settingsRequirementState(requirement: SettingsRequirement): SettingsRequirementState {
+  if (requirement.system.some((action) => systemCan(action))) return 'allowed'
+  if (requirement.project) {
+    const state = projectCapabilityListState()
+    if (state === 'idle') {
+      void ensureProjectCapabilityList()
+      return 'pending'
+    }
+    if (state === 'loading') return 'pending'
+    return anyProjectCan(requirement.project) ? 'allowed' : 'denied'
+  }
+  return 'denied'
+}
+
+/** Menus: only an answer that says yes shows a page (`pending` shows nothing yet). */
+export function isSettingsRequirementMet(requirement: SettingsRequirement): boolean {
+  return settingsRequirementState(requirement) === 'allowed'
+}
+
+/** The system block of /auth/me is in the shared store. */
+export function settingsAccessReady(): boolean {
+  return systemCapabilitiesReady()
+}
 const RETIRED_PATHS = [/^\/settings\/workspaces(\/|$)/i, /^\/settings\/system\/security(\/|$)/i]
 
 export function decideSettingsAccess(target: SettingsAccessTarget, auth: SettingsAccessAuth): SettingsAccess {
   if (!SETTINGS_PATH.test(target.path)) return { kind: 'allow' }
   if (RETIRED_PATHS.some((pattern) => pattern.test(target.path))) return { kind: 'home', notice: null }
-  if (target.adminOnly || ADMIN_PATH.test(target.path)) {
+  const requirement = settingsRequirementOf(target.path, target.adminOnly)
+  if (requirement) {
     if (auth.status === 'loading') return { kind: 'pending' }
-    if (auth.status !== 'ready' || !auth.user?.isAdmin) return { kind: 'home', notice: 'admin_only' }
+    if (auth.status !== 'ready' || !auth.user) return { kind: 'home', notice: 'no_permission' }
+    const state = auth.requirement(requirement)
+    if (state === 'pending') return { kind: 'pending' }
+    if (state === 'denied') return { kind: 'home', notice: 'no_permission' }
   }
   return target.registered ? { kind: 'allow' } : { kind: 'home', notice: null }
 }
@@ -65,7 +126,11 @@ export function settingsAccessTarget(to: RouteLocationNormalized | RouteLocation
 /** The decision for `to` with the signed-in person as known right now. */
 export function currentSettingsAccess(to: RouteLocationNormalized | RouteLocationNormalizedLoaded): SettingsAccess {
   const { user, status } = useCurrentUser()
-  return decideSettingsAccess(settingsAccessTarget(to), { status: status.value, user: user.value })
+  return decideSettingsAccess(settingsAccessTarget(to), {
+    status: status.value,
+    user: user.value,
+    requirement: settingsRequirementState,
+  })
 }
 
 // The overview shows the notice of the last refused move once (SettingsHubView clears it).

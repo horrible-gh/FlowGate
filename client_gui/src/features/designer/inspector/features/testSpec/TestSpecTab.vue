@@ -12,7 +12,7 @@
         </template>
         <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, line.id)" /></template>
         <template v-if="line.key === 'instruction'">
-          <IconButton :label="t('gui.designer.inspector.slot.edit')" :title="canOpen('brief') ? t('gui.designer.inspector.slot.edit') : openReason('brief')" variant="secondary" size="sm" :disabled="!canOpen('brief')" data-test="test-card-brief" @click="openWindow('brief')">✎</IconButton>
+          <IconButton :label="t('gui.designer.inspector.slot.edit')" :title="refusals.update.value ?? (canOpen('brief') ? t('gui.designer.inspector.slot.edit') : openReason('brief'))" variant="secondary" size="sm" :disabled="!canOpen('brief') || refusals.update.value !== null" data-test="test-card-brief" @click="editBrief">✎</IconButton>
         </template>
         <template v-if="line.key === 'scenario'">
           <!-- flowgate.v02.0094: the scenario's AI writing is the line's [AI 호출], as on the other cards' lines: it opens
@@ -63,12 +63,15 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { cardDocumentContext, DocumentIoGroup, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup, openDocument, openDocumentHistory, useDocumentRefusals } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
 import { testCardPresentation, testSpecLiveRun, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
+// flowgate.v02test.0090: ✎ (the instruction's editor window) is a document change — the server's refusal of
+// `project.document.update` turns it off with its sentence.
+const refusals = useDocumentRefusals()
 const decisions = useCardDocumentDecisions(() => props.target)
 const k = (key: string) => `gui.inspector.testSpec.${key}`
 const card = useTestCard(() => props.target)
@@ -87,6 +90,11 @@ function canOpen(kind: TestCardWindowKind) {
 }
 function openReason(kind: TestCardWindowKind) {
   return t(k(canOpen(kind) ? 'open_hint' : card.value?.openReason(kind) ?? 'reason.busy'))
+}
+/** ✎: the instruction's editor window, unless the server refuses changing documents (the line's name still opens it to read). */
+function editBrief() {
+  if (refusals.update.value !== null) return
+  openWindow('brief')
 }
 function openWindow(kind: TestCardWindowKind) {
   if (!canOpen(kind)) return

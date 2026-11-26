@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PROJECT_ACTIONS, resetCapabilities, wireBlock } from '../../helpers/capabilities'
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest: http.get, postRequest: http.post, patchRequest: http.patch, deleteRequest: http.del }))
@@ -15,7 +16,7 @@ import {
 } from '@/features/conversation/quickMessages/api'
 
 // flowgate.v02test.0072 card 3: add / edit / delete / reorder go through the existing project message API.
-beforeEach(() => Object.values(http).forEach((fn) => fn.mockReset()))
+beforeEach(() => { Object.values(http).forEach((fn) => fn.mockReset()); resetCapabilities() })
 
 const row = (id: number, sortOrder: number): QuickMessage => ({ id, title: `t${id}`, message: `m${id}`, kind: 'once', sortOrder })
 
@@ -113,17 +114,31 @@ describe('restoreChatQuickMessageOrder', () => {
 })
 
 describe('fetchCanEditQuickMessages', () => {
-  it('is true with project.settings.edit or as admin, false without it and on any failure', async () => {
-    http.get.mockResolvedValueOnce({ data: { permissions: ['project.settings.read', 'project.settings.edit'], is_admin: false } })
+  const answer = (refused: Record<string, { reason: string; minimum_role?: string }> = {}) => ({ data: { project_id: 'p', capabilities: wireBlock(PROJECT_ACTIONS, 'role_developer', refused) } })
+
+  it('asks the server\'s capabilities for the project (not /rbac/…/my-permissions) and answers project.settings.edit', async () => {
+    http.get.mockResolvedValueOnce(answer())
     expect(await fetchCanEditQuickMessages('p 1')).toBe(true)
-    expect(http.get).toHaveBeenCalledWith('/rbac/projects/p%201/my-permissions')
-    http.get.mockResolvedValueOnce({ data: { permissions: [], is_admin: true } })
-    expect(await fetchCanEditQuickMessages('p')).toBe(true)
-    http.get.mockResolvedValueOnce({ data: { permissions: ['project.settings.read'], is_admin: false } })
-    expect(await fetchCanEditQuickMessages('p')).toBe(false)
+    expect(http.get).toHaveBeenCalledWith('/api/v1/projects/p%201/capabilities')
+    expect(http.get.mock.calls.some(([path]) => String(path).includes('my-permissions'))).toBe(false)
+  })
+
+  it('is false when the server refuses project.settings.edit, whatever the role is called', async () => {
+    http.get.mockResolvedValueOnce(answer({ 'project.settings.edit': { reason: 'role_limit', minimum_role: 'role_admin' } }))
+    expect(await fetchCanEditQuickMessages('p2')).toBe(false)
+  })
+
+  it('reads again on every call (the person may have been given or lost the role)', async () => {
+    http.get.mockResolvedValueOnce(answer({ 'project.settings.edit': { reason: 'role_limit' } }))
+    expect(await fetchCanEditQuickMessages('p3')).toBe(false)
+    http.get.mockResolvedValueOnce(answer())
+    expect(await fetchCanEditQuickMessages('p3')).toBe(true)
+  })
+
+  it('is false on a malformed answer and on any failure', async () => {
     http.get.mockResolvedValueOnce({ data: {} })
-    expect(await fetchCanEditQuickMessages('p')).toBe(false)
+    expect(await fetchCanEditQuickMessages('p4')).toBe(false)
     http.get.mockRejectedValueOnce(new Error('network'))
-    expect(await fetchCanEditQuickMessages('p')).toBe(false)
+    expect(await fetchCanEditQuickMessages('p5')).toBe(false)
   })
 })

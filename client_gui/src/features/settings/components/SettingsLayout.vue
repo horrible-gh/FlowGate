@@ -30,9 +30,11 @@ const { status } = useCurrentUser()
 const access = computed(() => currentSettingsAccess(route))
 const showView = computed(() => status.value !== 'loading' && access.value.kind === 'allow')
 
+// `immediate`: a screen that needs the project list's capabilities is let through while that answer is out
+// (the guard says `pending`); when this layout mounts the answer may already be in and say no.
 watch(access, (next) => {
   if (next.kind === 'home') void router.replace(settingsHome(next))
-})
+}, { immediate: true })
 </script>
 
 <style scoped>

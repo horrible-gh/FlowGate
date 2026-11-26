@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../../helpers/capabilities'
 import * as api from '@/features/settings/api'
 import {
   SettingsHubView,

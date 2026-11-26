@@ -66,7 +66,7 @@ const highlighted = computed(() => wt.state.highlightMergeId !== null && row.val
 
 const pushReason = computed(() => {
   const message = reasonMessage(reasons.value.push)
-  return message ? t(message.key, message.params) : null
+  return message ? message.text ?? t(message.key, message.params) : null
 })
 
 function choiceLabel(candidate: MergeResultRow): string {

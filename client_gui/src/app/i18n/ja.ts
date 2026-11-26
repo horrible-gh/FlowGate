@@ -313,6 +313,42 @@ export default {
     minimize: '最小化',
     restore: '元に戻す',
   },
+  permissions: {
+    role: {
+      role_admin: '管理者',
+      role_developer: '開発者',
+      role_reviewer: 'レビュアー',
+      role_viewer: '閲覧のみ',
+      system_admin: 'システム管理者'
+    },
+    reason: {
+      not_member: 'このプロジェクトのメンバーではないため操作できません。プロジェクト管理者にメンバー追加を依頼してください。',
+      role_limit: 'このプロジェクトでは{role}のため操作できません({minimum}以上が必要)。',
+      role_limit_plain: 'このプロジェクトでは現在のロールでは操作できません。',
+      context_rule: '現在の状態では操作できません。',
+      token_scope: 'このトークンの範囲外のため操作できません。',
+      system_admin_only: 'システム管理者のみ操作できます。',
+      workspace_disabled: 'ワークスペースがオフのため操作できません。',
+      project_archived: 'アーカイブ済みのプロジェクトは閲覧のみです。',
+      account_inactive: 'オフのアカウントのため操作できません。',
+      unknown: '権限を確認できないため操作できません。'
+    },
+    reason_workspace: {
+      not_member: 'このワークスペースのメンバーではないため操作できません。ワークスペース管理者にメンバー追加を依頼してください。',
+      role_limit: 'このワークスペースでは現在のロールでは操作できません。'
+    },
+    rule: {
+      document_editable: '最終承認後など、編集できない状態です。',
+      own_draft: '削除できるのは自分の下書きだけです。'
+    },
+    forbidden: {
+      title: '権限がありません (403)',
+      body: 'この画面や操作の権限がありません。プロジェクト管理者にメンバー追加やロール変更を依頼してください。',
+      detail: 'リクエスト: {path}',
+      back: '自分のプロジェクトへ戻る',
+      close: '閉じる'
+    }
+  },
   topbar: {
     search_placeholder: 'プロジェクト、グループ、ファイル、設定などを検索...',
     search_aria: '検索 (準備中)',
@@ -1594,6 +1630,7 @@ export default {
         load_failed: '競合ファイルを読み込めないため解決できません · 下のエラーを確認してください',
         unavailable: '競合情報を確認できません · Git 状態を更新してください',
         read_only: '読み取り専用のため操作不可',
+        merge_read_only: 'マージの権限がないため操作できません',
         forbidden: '権限なし',
         busy: '他の Git 処理中',
       },
@@ -2023,6 +2060,7 @@ export default {
     },
     reason: {
       read_only: '読み取り専用',
+      merge_read_only: 'マージ権限なし',
       forbidden: '権限なし',
       worktree_unavailable: '作業スペースなし',
       session_open: '競合・更新の処理中 — 上のカードで進めてください',
@@ -2900,7 +2938,7 @@ export default {
     not_ready: '準備中',
     admin_only: 'システム管理者専用',
     loading: '設定を読み込み中…',
-    access_denied: 'システム管理者専用の画面のため、設定の概要に移動しました。',
+    access_denied: 'この画面を開く権限がないため、設定の概要に移動しました。',
     notice_close: '閉じる',
     more: 'その他',
     me: '自分',

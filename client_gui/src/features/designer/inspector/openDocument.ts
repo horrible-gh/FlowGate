@@ -196,7 +196,7 @@ export function forgetWorkPlanOpeners(): void {
  * reads the Flow's Canvas again (the host's refresh-flow); the card's summary also reads the plan again on the
  * server's refresh events.
  */
-export function openWorkPlan(target: InspectorTarget, docId: string, host: InspectorHost | null): void {
+export function openWorkPlan(target: InspectorTarget, docId: string, host: InspectorHost | null, refusal?: () => string | null): void {
   if (!docId) return
   noteWorkPlanOpener(target)
   const flowId = target.flowId
@@ -208,7 +208,7 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
     projectId: target.projectId,
     groupId: flowId,
     title: line?.title || null,
-    ...workPlanOpener(flowId, host),
+    ...workPlanOpener(flowId, host, refusal),
     ...(nodeKey !== null
       ? { card: () => workPlanCardOf(flowId, nodeKey), submitted: () => host?.request({ kind: 'refresh-flow', flowId }) }
       : {}),
@@ -220,10 +220,12 @@ export function openWorkPlan(target: InspectorTarget, docId: string, host: Inspe
  * and, after a save, the host's read of that Flow's Canvas. openWorkPlan and the opener the Frame registers for a window
  * asked for by the document [업로드] (setWorkPlanEditOpener) both hand it.
  */
-export function workPlanOpener(flowId: string, host: InspectorHost | null): Pick<WorkPlanEditRequest, 'external' | 'saved'> {
+export function workPlanOpener(flowId: string, host: InspectorHost | null, refusal?: () => string | null): Pick<WorkPlanEditRequest, 'external' | 'saved' | 'refusal'> {
   return {
     external: () => workPlanFlowLock(flowId),
     saved: () => host?.request({ kind: 'refresh-flow', flowId }),
+    // flowgate.v02test.0090: the server's refusal of `project.document.update` (a view-only person) locks the window with its sentence.
+    ...(refusal ? { refusal } : {}),
   }
 }
 
@@ -339,3 +341,5 @@ export function openDocumentAi(docId: string, target: InspectorTarget, finished:
 
 export { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult, type TsSubmitted } from '@/features/documentWindow'
 export { useCardDocumentDecisions } from './useInspectorResource'
+/** flowgate.v02test.0090 — the server's refusals of changing the card's documents (✎, [작성], memos). */
+export { DOCUMENT_UPDATE, documentRefusalOf, provideDocumentRefusals, useDocumentRefusals, type DocumentRefusals } from './documentRefusals'
