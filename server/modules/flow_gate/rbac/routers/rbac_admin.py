@@ -106,57 +106,132 @@ def get_project_members(
     return list_project_members(project_id)
 
 
-@router.post("/users/{user_id}/roles", status_code=201)
-def assign_user_role(
-    user_id: str,
-    body: RoleAssignRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    """Assign a direct project role to a user.
+def _project_workspace(actor, project_id, action):
+    from modules.flow_gate.settings import workspace_service as ws
 
-    Requires project.member.manage on the target project. Only the four fixed roles (or an old
-    alias, stored as its fixed role) are project roles: anything else is 422 role_invalid.
-    """
-    if not access.can(current_user, body.project_id, "project.member.manage"):
-        raise HTTPException(status_code=403, detail="Permission denied: project.member.manage")
+    if not access.can(actor, project_id, action):
+        raise ws.WorkspaceError(403, "forbidden")
+    if project_id == "__SYSTEM__":
+        raise ws.WorkspaceError(403, "forbidden")
+    workspace_id = ws.workspace_id_of_project(project_id)
+    if not workspace_id:
+        raise ws.WorkspaceError(404, "project_not_found")
+    return workspace_id
 
-    if not db_roles.get_by_id(body.role_id):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid role: {body.role_id}",
-        )
-    if body.project_id != "__SYSTEM__" and permission_service.fixed_role(body.role_id) is None:
-        raise HTTPException(status_code=422, detail={"code": "role_invalid"})
 
-    # a project role is granted through its workspace (membership/exception
-    # and the role row in one transaction), never around it.
-    from modules.flow_gate.settings import workspace_service
+def _write(actor, project_id, operation, subject, prepare_subject, revision, preview):
+    from modules.flow_gate.rbac import mutation
+    from modules.flow_gate.settings import workspace_service as ws
+
+    def prepare():
+        workspace_id = _project_workspace(actor, project_id, "project.member.manage")
+        if ws._require(workspace_id)["status"] != "active":
+            raise ws.WorkspaceError(409, "workspace_disabled")
+        return [project_id], prepare_subject(workspace_id)
 
     try:
-        return workspace_service.assign_direct_project_role(
-            user_id, body.project_id, body.role_id, actor=current_user,
-        )
-    except workspace_service.WorkspaceError as exc:
+        return mutation.change(actor, operation, f"{project_id}/{subject}", prepare,
+                               revision=revision, preview=preview)
+    except ws.WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.delete("/users/{user_id}/roles/{project_id}", status_code=204, response_model=None)
-def revoke_user_role(
-    user_id: str,
-    project_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Revoke a user's direct project role.
+def change_direct_role(actor, project_id, user_id, role_id, revision, preview):
+    from modules.flow_gate.db import workspaces
+    from modules.flow_gate.settings import workspace_service as ws
 
-    Requires project.member.manage on the target project.
-    """
-    if not access.can(current_user, project_id, "project.member.manage"):
-        raise HTTPException(status_code=403, detail="Permission denied: project.member.manage")
-    from modules.flow_gate.settings import workspace_service
+    def prepare(workspace_id):
+        if role_id is None:
+            return lambda: ws.revoke_direct_project_role(user_id, project_id, actor=actor)
+        role = permission_service.fixed_role(role_id)
+        if not role:
+            raise ws.WorkspaceError(422, "role_invalid")
+        if not workspaces.get_member(workspace_id, user_id):
+            raise ws.WorkspaceError(403, "not_workspace_member")
+        return lambda: ws.assign_direct_project_role(user_id, project_id, role, actor=actor)
 
-    workspace_service.revoke_direct_project_role(user_id, project_id, actor=current_user)
+    op = "project_user_revoke" if role_id is None else "project_user_assign"
+    return _write(actor, project_id, op, user_id, prepare, revision, preview)
+
+
+@router.post("/users/{user_id}/roles", status_code=201)
+def assign_user_role(user_id: str, body: RoleAssignRequest, revision: int | None = None,
+                     preview: bool = False, current_user: dict = Depends(get_current_user)):
+    return change_direct_role(current_user, body.project_id, user_id, body.role_id, revision, preview)
+
+
+@router.delete("/users/{user_id}/roles/{project_id}")
+def revoke_user_role(user_id: str, project_id: str, revision: int | None = None,
+                     preview: bool = False, current_user: dict = Depends(get_current_user)):
+    return change_direct_role(current_user, project_id, user_id, None, revision, preview)
+
+
+class TeamRoleRequest(BaseModel):
+    role_id: str
+
+
+def _team_role(actor, project_id, team_id, role_id, revision, preview):
+    from modules.flow_gate.rbac import role_service as roles
+    from modules.flow_gate.settings.routers.teams import _team
+    from modules.flow_gate.settings.workspace_service import WorkspaceError
+
+    def prepare(workspace_id):
+        team = _team(workspace_id, team_id)
+        if role_id is None:
+            return lambda: roles.revoke_team_role(team_id, project_id)
+        if not team["is_active"]:
+            raise WorkspaceError(409, "team_disabled")
+        role = permission_service.fixed_role(role_id)
+        if not role:
+            raise WorkspaceError(422, "role_invalid")
+        return lambda: roles.assign_team_role(team_id, project_id, role, actor["user_id"])
+
+    op = "project_team_revoke" if role_id is None else "project_team_assign"
+    return _write(actor, project_id, op, team_id, prepare, revision, preview)
+
+
+@router.get("/projects/{project_id}/member-candidates")
+def project_member_candidates(project_id: str, actor: dict = Depends(get_current_user)):
+    from modules.flow_gate.db import workspaces
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.settings.workspace_service import WorkspaceError
+
+    try:
+        workspace_id = _project_workspace(actor, project_id, "project.member.manage")
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
+    users = [{"user_id": row["user_id"], "username": row["username"], "role": row["role"]}
+             for row in workspaces.list_members(workspace_id) if row["is_active"]]
+    teams = get_store()._fetch_all(
+        "SELECT team_id, name FROM teams WHERE workspace_id = ? AND is_active = 1 ORDER BY name", [workspace_id],
+    )
+    return {"users": users, "teams": teams}
+
+
+@router.get("/projects/{project_id}/team-roles")
+def project_team_roles(project_id: str, actor: dict = Depends(get_current_user)):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.settings.workspace_service import WorkspaceError
+
+    try:
+        _project_workspace(actor, project_id, "project.member.read")
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
+    return {"teams": get_store()._fetch_all(
+        "SELECT t.team_id, t.name, t.is_active, r.role_id FROM team_project_roles r"
+        " JOIN teams t ON t.team_id = r.team_id WHERE r.project_id = ? ORDER BY t.name", [project_id])}
+
+
+@router.put("/projects/{project_id}/team-roles/{team_id}")
+def assign_team_role(project_id: str, team_id: str, body: TeamRoleRequest, revision: int | None = None,
+                     preview: bool = False, actor: dict = Depends(get_current_user)):
+    return _team_role(actor, project_id, team_id, body.role_id, revision, preview)
+
+
+@router.delete("/projects/{project_id}/team-roles/{team_id}")
+def revoke_team_role(project_id: str, team_id: str, revision: int | None = None,
+                     preview: bool = False, actor: dict = Depends(get_current_user)):
+    return _team_role(actor, project_id, team_id, None, revision, preview)
 
 
 # ── Current user permission query ─────────────────────────────────────────────

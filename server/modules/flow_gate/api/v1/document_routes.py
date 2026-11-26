@@ -240,16 +240,9 @@ _ATTACHMENT_KIND_FORBIDDEN = frozenset({"none"})
 
 
 def _validate_document_scope(auth: dict, document: dict, doc_id: str) -> Optional[JSONResponse]:
-    """Worker document access scope (T0004 s.24) -- the same doc_ref/group_id binding
-    the conversation, workflow-decision and inbox worker surfaces already enforce
-    (conversation_routes._authenticate, workflow_decision_routes, oracle._oracle_doc_id).
-
-    A token may reach a document's attachments if it is bound to that exact document
-    (``doc_ref == doc_id``) or if the document lives inside the token's own group
-    (``group_id`` match, per T0004 s.24's "token/group A -> doc/group A attachments ->
-    allowed" example). Anything else -- an unrelated group's document -- is denied.
-    """
-    if auth.get("doc_ref") == doc_id:
+    if not can_read_project(auth, document.get("project_id")):
+        return _fail(403, "You do not have permission to read this project")
+    if auth.get("_is_user_jwt") or auth.get("doc_ref") == doc_id:
         return None
     group_id = auth.get("group_id")
     if group_id and group_id == document.get("group_id"):
@@ -548,6 +541,9 @@ def get_document_by_path(
     if document is None:
         return _fail(404, f"document not found: {doc_canonical}")
     doc_id = document["doc_id"]
+    scope_error = _validate_document_scope(auth, document, doc_id)
+    if scope_error is not None:
+        return scope_error
 
     file_path = document.get("file_path")
     try:
@@ -615,6 +611,9 @@ def get_document_path(request: Request, doc_id: str):
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error
     return JSONResponse(content={
         "ok": True,
         "doc_id": doc_id,
@@ -634,8 +633,12 @@ def get_document_reviews(request: Request, doc_id: str):
         _validate_outbound_doc_id(doc_id)
     except ValueError as exc:
         return _fail(422, str(exc))
-    if db_docs.get_by_id(doc_id) is None:
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error
 
     latest, history = _load_reviews(doc_id)
     return JSONResponse(content={
@@ -700,8 +703,11 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
         return _fail(422, str(exc)), None, None
 
     doc = db_docs.get_by_id(doc_id)
-    if doc is None or not can_read_project(auth, doc.get("project_id")):
+    if doc is None:
         return _fail(404, f"Document {doc_id} does not exist"), None, None
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error, None, None
 
     try:
         from modules.flow_gate.graph_workflow.services import card_document_ports
@@ -1069,6 +1075,9 @@ def get_document_relations(
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error
     current = int(doc.get("revision_no", 0) or 0)
     if revision_no is not None and int(revision_no) != current:
         return _fail_with(
@@ -1157,14 +1166,9 @@ def download_document(request: Request, doc_id: str):
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
-    if auth.get("_is_user_jwt"):
-        user_id = auth.get("issued_to")
-        if not user_id or not has_permission(user_id, doc.get("project_id"), "project.document.read"):
-            return _fail(403, "Insufficient permissions for this operation (project.document.read required)")
-    else:
-        scope_err = _validate_document_scope(auth, doc, doc_id)
-        if scope_err is not None:
-            return scope_err
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error
     if not _download_available(doc):
         return _fail(404, "This document has no readable Markdown artifact")
     try:
@@ -1210,6 +1214,12 @@ def get_document(request: Request, doc_id: str):
     if doc is None:
         return _fail(404, f"Document {requested} does not exist")
 
+    from modules.flow_gate.services.auth_outbound import _jwt_user
+
+    scope_error = _validate_document_scope(auth, doc, doc_id)
+    if scope_error is not None:
+        return scope_error
+
     file_path = doc.get("file_path")
     try:
         from modules.flow_gate.graph_workflow.services import card_document_ports
@@ -1251,6 +1261,11 @@ def get_document(request: Request, doc_id: str):
             return exc.response()
     else:
         resp["attachments"] = []
+    user = _jwt_user(auth)
+    if user is not None:
+        from modules.flow_gate.rbac import capabilities
+
+        resp["capabilities"] = capabilities.project(user, doc, doc)
     qa_pairs = get_answers_for_document(doc_id)
     if qa_pairs:
         resp["answers"] = qa_pairs

@@ -116,6 +116,7 @@ def _caps(store) -> dict:
     if caps is None:
         caps = {
             "teams": _table_exists(store, "team_project_roles"),
+            "team_status": _table_exists(store, "rbac_change_audit"),
             "workspaces": _table_exists(store, "workspace_members"),
             "versions": _table_exists(store, "rbac_state"),
             "migrations": _table_exists(store, "rbac_migrations"),
@@ -277,7 +278,9 @@ def compute_grants(user_id: str, store=None) -> dict[str, dict[str, str]]:
     if caps["teams"]:
         for row in store._fetch_all(
             "SELECT tpr.project_id, tpr.role_id FROM team_project_roles tpr"
-            " JOIN team_members tm ON tm.team_id = tpr.team_id WHERE tm.user_id = ?",
+            " JOIN team_members tm ON tm.team_id = tpr.team_id"
+            " JOIN teams t ON t.team_id = tpr.team_id WHERE tm.user_id = ?"
+            + (" AND t.is_active = 1" if caps["team_status"] else ""),
             [user_id],
         ):
             _offer(grants, row["project_id"], row["role_id"], SOURCE_TEAM)

@@ -212,6 +212,8 @@ def _revoke_workspace_roles(ws: dict, user_id: str) -> None:
 # ── views ────────────────────────────────────────────────────────────────────
 
 def _summary(ws: dict, user: dict, member_counts: dict, project_counts: dict, owners: dict) -> dict:
+    from modules.flow_gate.rbac import capabilities
+
     owner = owners.get(ws["workspace_id"])
     projects = project_counts.get(ws["workspace_id"], 0)
     if ws.get("is_default"):
@@ -227,6 +229,7 @@ def _summary(ws: dict, user: dict, member_counts: dict, project_counts: dict, ow
         "owner": {"user_id": owner["user_id"], "username": owner["username"], "email": owner.get("email")}
         if owner else None,
         "my_role": member_role(ws["workspace_id"], user.get("user_id")),
+        "capabilities": capabilities.workspace(user, ws),
         "can_manage": can_manage(user, ws),
         "can_admin": can_admin(user, ws),
     }
@@ -247,8 +250,11 @@ def get_detail(user: dict, workspace_id: str) -> dict:
     ws = _require(workspace_id)
     _check(can_view(user, ws))
     summary = _summary(ws, user, _db.member_counts(), _db.project_counts(), _db.owners())
-    projects = _projects_of(ws)
-    active_projects = [p["project_id"] for p in projects if p.get("is_active", 1)]
+    from modules.flow_gate.rbac import access
+
+    all_projects = _projects_of(ws)
+    projects = [p for p in all_projects if access.can(user, p["project_id"], "project.view")]
+    active_projects = [p["project_id"] for p in all_projects if p.get("is_active", 1)]
     exceptions = _db.list_exceptions(workspace_id)
     exc_map = {(e["project_id"], e["user_id"]): e["access"] for e in exceptions}
     members = []

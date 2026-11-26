@@ -237,7 +237,10 @@ def connection_check(current_user:dict=Depends(get_current_user)):
 
 @router.get("/me")
 def me(current_user:dict=Depends(get_current_user)):
-    return {"user_id":current_user["user_id"],"username":current_user.get("username"),"email":current_user.get("email"),"is_admin":bool(current_user.get("is_admin")),"first_login_required":bool(current_user.get("first_login_required")),"roles":_roles(current_user["user_id"])}
+    from modules.flow_gate.rbac import capabilities
+
+    access = capabilities.memberships(current_user["user_id"])
+    return {**access, "capabilities": capabilities.system(current_user), "user_id":current_user["user_id"],"username":current_user.get("username"),"email":current_user.get("email"),"is_admin":bool(current_user.get("is_admin")),"first_login_required":bool(current_user.get("first_login_required")),"roles":_roles(current_user["user_id"])}
 
 # Backward-compatible helper names used by the established authentication tests.
 def _check_totp_lock(user): return _lock(user,"totp")

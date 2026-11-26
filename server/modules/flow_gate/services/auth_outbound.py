@@ -164,7 +164,7 @@ def can_read_project(auth: dict, project_id: str) -> bool:
         from modules.flow_gate.rbac import access
 
         return access.can(user, project_id, _READ)
-    return bool(has_permission(user_id, project_id, _READ))
+    return auth.get("project") == project_id and has_permission(user_id, project_id, _READ)
 
 
 def readable_project_clause(auth: dict, column: str) -> tuple[str, list]:
@@ -187,7 +187,9 @@ def readable_project_clause(auth: dict, column: str) -> tuple[str, list]:
         return access.member_permission_clause(user, _READ, column)
     # Worker token: the owner's current permission on the row's project, the same
     # rule as ``has_permission(user_id, project_id, project.document.read)``.
-    return access.permitted_project_clause(user_id, _READ, column)
+    if can_read_project(auth, auth.get("project")):
+        return f" AND {column} = ?", [auth["project"]]
+    return " AND 1 = 0", []
 
 
 def readable_projects(auth: dict) -> list[str]:

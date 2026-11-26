@@ -22,7 +22,16 @@ def get_flow_canvas(flow_id: str, request: Request, view: Optional[str] = None, 
             raise envelope.invalid(request, [{"field": "view", "reason": "not_one_of:revision,draft,latest"}])
         group = canvas_service.load_flow(flow_id)
         envelope.authorize(user_id, group, "read")
-        return canvas_service.read_canvas(group, user_id, view=view, collapse=collapse, client_id=client_id)
+        from modules.flow_gate.db.users import get_by_id
+        from modules.flow_gate.rbac import capabilities
+
+        canvas = canvas_service.read_canvas(group, user_id, view=view, collapse=collapse, client_id=client_id)
+        user = get_by_id(user_id)
+        if user and group.get("project_id"):
+            canvas["capabilities"] = capabilities.project(user, group)
+            for node in canvas["nodes"]:
+                node.setdefault("capabilities", canvas["capabilities"])
+        return canvas
 
     return envelope.run(request, handle)
 

@@ -561,10 +561,10 @@ class TestOutboundMembership:
         assert auth_outbound.readable_projects(_jwt(OUTSIDER)) == []
         assert {"pa", "pb"} <= set(auth_outbound.readable_projects(_jwt(ADMIN)))
 
-    def test_worker_token_rule_is_unchanged(self):
+    def test_worker_token_is_bound_to_its_project(self):
         from modules.flow_gate.services import auth_outbound
 
-        worker = {"issued_to": MEMBER["user_id"]}
+        worker = _worker(MEMBER)
         assert auth_outbound.readable_projects(worker) == ["pa"]
         assert auth_outbound.can_read_project(worker, "pa")
         assert not auth_outbound.can_read_project(worker, "pb")
@@ -667,7 +667,7 @@ def multi_project_seed(db):
 
 
 def _worker(user: dict) -> dict:
-    return {"issued_to": user["user_id"]}
+    return {"issued_to": user["user_id"], "project": "pa", "group_id": GROUP_A}
 
 
 _CALLERS = [
@@ -699,7 +699,9 @@ class TestPerProjectListJudgment:
         from modules.flow_gate.services import auth_outbound
 
         groups = store._fetch_all("SELECT group_id, project_id FROM groups WHERE module = 'm'")
-        expected = {g["group_id"] for g in groups if auth_outbound.can_read_project(auth, g["project_id"])}
+        expected = {g["group_id"] for g in groups
+                    if auth_outbound.can_read_project(auth, g["project_id"])
+                    and (auth.get("_is_user_jwt") or g["group_id"] == auth.get("group_id"))}
 
         request = Request({"type": "http", "headers": []})
         monkeypatch.setattr(module_routes, "verify_bearer", lambda _request: auth)
