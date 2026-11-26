@@ -17,6 +17,8 @@ from flowgate.card_completion import completion, gates, legacy_adapter as legacy
 
 
 def _document(flow_id, node, slot):
+    if slot == slots.INSTRUCTION:
+        slot = slots.preparation_slot(node.get("node_type"), node.get("doc_type"))
     line = lines.line_document(flow_id, node['node_key'], slot, node.get('node_type'), node.get('doc_type')) or {}
     doc = line.get('document')
     if not doc or doc.get('group_id') != flow_id or not lines.legacy.is_alive(doc, flow_id):
@@ -34,7 +36,8 @@ def instruction_approval(flow_id, node, doc_id):
     doc = _document(flow_id, node, slots.INSTRUCTION)
     if not doc or doc['doc_id'] != doc_id:
         return None
-    approval = decision_repository.valid_approval(flow_id, node['node_key'], slots.INSTRUCTION, doc)
+    approval = decision_repository.valid_approval(flow_id, node['node_key'],
+        slots.preparation_slot(node.get("node_type"), node.get("doc_type")), doc)
     from flowgate.graph_time_machine import rejection_store
     carry = rejection_store.carried(flow_id, node['node_key'], doc)
     if approval or carry:
@@ -47,7 +50,7 @@ def evidence(flow_id, node):
     if not node or node.get('node_type') == 'gate' or node.get('doc_type') in ('R', 'B'):
         return None
     result_slots = [s.slot for s in slots.approval_slots(node.get('node_type'), node.get('doc_type'))
-                    if s.slot != slots.INSTRUCTION]
+                    if s.slot != slots.preparation_slot(node.get("node_type"), node.get("doc_type"))]
     for slot in result_slots:
         doc = _document(flow_id, node, slot)
         decision = decision_repository.valid_approval(flow_id, node['node_key'], slot, doc)
@@ -62,7 +65,8 @@ def evidence(flow_id, node):
                 if not instruction or instruction.get('type_code') != wanted:
                     return None
                 gates.require_gates(instruction)
-                projection = decision_repository.projection(flow_id, node['node_key'], slots.INSTRUCTION, instruction)
+                projection = decision_repository.projection(flow_id, node['node_key'],
+                    slots.preparation_slot(node.get("node_type"), node.get("doc_type")), instruction)
                 if projection.get('doc_review_status', instruction.get('doc_review_status')) not in outputs.APPROVED:
                     return None
             if doc.get('type_code') == 'TR2' and not own_effects._tr2_succeeded(doc['doc_id'], int(doc.get('revision_no') or 0)):

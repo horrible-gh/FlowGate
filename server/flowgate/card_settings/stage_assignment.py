@@ -627,7 +627,7 @@ def instruction_line_document(flow_id: str, node: dict, plan: dict) -> dict:
     counts as none."""
     if not plan.get("instruction_type"):
         return {"doc_id": None, "written": False}
-    line = card_lines.line_document(flow_id, node["node_key"], card_slots.INSTRUCTION, node.get("node_type"),
+    line = card_lines.line_document(flow_id, node["node_key"], card_slots.preparation_slot(node.get("node_type"), node.get("doc_type")), node.get("node_type"),
                                     node.get("doc_type")) or {}
     doc = line.get("document")
     if doc and doc["doc_id"] in legacy.invalidated_documents(flow_id, node["node_key"]):

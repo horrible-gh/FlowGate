@@ -870,7 +870,7 @@ def _ts_env(env, monkeypatch):
     documents.create({"doc_id": TS_ID, "project_id": "flowgate", "module": "v02", "group_id": F, "type_code": "TS",
                       "seq": 3, "title": "TS", "status": "draft", "owner_id": "user",
                       "file_path": paths.to_storage_relative(path, "flowgate")})
-    repository.insert(F, "ts", "instruction", "TS", TS_ID, True, 0, "user")
+    repository.insert(F, "ts", "scenario", "TS", TS_ID, True, 0, "user")
     node = {"node_key": "ts", "node_type": "document", "doc_type": "TS"}
     nodes = {"ts": node, "research": env.node}
     monkeypatch.setattr(target.settings, "card_node", lambda f, k: nodes.get(k) if f == F else None)
@@ -878,7 +878,7 @@ def _ts_env(env, monkeypatch):
 
 
 def _ts_url(kind, save):
-    base = f"/flowgate/api/v2/flows/{F}/nodes/ts/slots/instruction/document/{kind}"
+    base = f"/flowgate/api/v2/flows/{F}/nodes/ts/slots/scenario/document/{kind}"
     return base + ("/revisions" if save else "")
 
 
@@ -912,7 +912,7 @@ def test_structured_ts_revisions_build_in_the_boundary_and_replay_by_command_ide
     assert other.status_code == 409 and other.json()["error"]["code"] == "idempotency_key_reused"
     brief_same_key = _ts_post(env, "test-brief", {"expected_doc_id": TS_ID, "expected_revision": 0, "idempotency_key": "ts-1", "text": "t"})
     assert brief_same_key.status_code == 409 and brief_same_key.json()["error"]["code"] == "idempotency_key_reused"
-    raw_same_key = env.client.post(url(replace(env.req, expected_doc_id=TS_ID, node_key="ts"), True), headers={"Authorization": "Bearer user"},
+    raw_same_key = env.client.post(url(replace(env.req, expected_doc_id=TS_ID, node_key="ts", slot="scenario"), True), headers={"Authorization": "Bearer user"},
                                    json={"expected_doc_id": TS_ID, "expected_revision": 0, "content": "x", "idempotency_key": "ts-1"})
     assert raw_same_key.status_code == 409 and raw_same_key.json()["error"]["code"] == "idempotency_key_reused"
 

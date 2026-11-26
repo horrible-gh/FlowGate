@@ -109,7 +109,7 @@ def required_instruction(flow_id: str, run_row: dict, key: str, row: dict) -> Op
     if not wanted:
         return None
     node = legacy.run_node_row(flow_id, run_row, key) or {"node_key": key}
-    line = card_lines.line_document(flow_id, key, card_slots.INSTRUCTION, node.get("node_type"),
+    line = card_lines.line_document(flow_id, key, card_slots.preparation_slot(node.get("node_type"), node.get("doc_type")), node.get("node_type"),
                                     node.get("doc_type")) or {}
     candidates = [row.get("instruction_doc_id"), line.get("doc_id")]
     candidates += [d["doc_id"] for d in legacy.registered_instructions(flow_id, run_row["run_id"], key, wanted)]
@@ -292,7 +292,7 @@ def instruction_saved(flow_id: str, doc_id: Optional[str], node_key: Optional[st
             if row["status"] != "open" or row.get("stage") != sa.INSTRUCTION:
                 continue
             node = legacy.run_node_row(flow_id, run_row, key) or {"node_key": key}
-            line = card_lines.line_document(flow_id, key, card_slots.INSTRUCTION, node.get("node_type"),
+            line = card_lines.line_document(flow_id, key, card_slots.preparation_slot(node.get("node_type"), node.get("doc_type")), node.get("node_type"),
                                             node.get("doc_type")) or {}
             if doc_id not in (row.get("instruction_doc_id"), line.get("doc_id")) and node_key is None:
                 continue
