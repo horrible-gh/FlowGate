@@ -113,7 +113,8 @@ def test_a_review_that_spent_its_count_leaves_the_card_in_intervention(env, deci
                                 "document_review_loop": {"current_stage": "stopped"}})
     assert _node(env, key) == ("review", result)
     assert _node_run(env, key)["intervention"] == {"kind": "needs_intervention",
-                                                   "reason": "review_not_passed:review_count_exhausted"}
+                                                   "reason": "review_not_passed:review_count_exhausted",
+                                                   "stop_detail": "spent"}       # F98-4: the loop's cause
     _approval_route_gone(env, key)                                       # T-3: no person's approval
     assert (_node(env, key)[0], _review_status(result)) == ("review", "rejected")
 def test_0056_T1_개정_rejected_root_is_input_and_its_card_is_done(env, decided):

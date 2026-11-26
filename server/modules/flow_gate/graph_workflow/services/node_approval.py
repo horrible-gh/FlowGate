@@ -56,6 +56,8 @@ SYSTEM_ERROR = "system_error"                # T-2: its automatic completion pat
 REASONS = (NODE_IS_GATE, NODE_NOT_STARTED, NO_RESULT, AI_RUNNING, ALREADY_APPROVED, NODE_NOT_IN_REVIEW,
            INTEGRATION_WAITING, NEEDS_INTERVENTION, SYSTEM_ERROR)
 INTERVENTION_KINDS = (NEEDS_INTERVENTION, SYSTEM_ERROR)
+# F98-4: the intervention's added field — the closed review loop's failure cause (``flowgate.card_intervention``).
+STOP_DETAIL = "stop_detail"
 
 _BY_STATUS = {"done": ALREADY_APPROVED, "pending": NODE_NOT_STARTED, "open": NO_RESULT}
 
@@ -84,7 +86,13 @@ def _state(flow_id: str, row: dict) -> dict:
     found = card_settings_ports.intervention(flow_id, row)
     found = found if isinstance(found, dict) else {}
     kind = found.get("kind")
-    return {"kind": kind if kind in INTERVENTION_KINDS else NEEDS_INTERVENTION, "reason": found.get("reason")}
+    if kind == "question_pending":
+        return {"kind": "question_pending", "reason": "question_pending"}
+    state = {"kind": kind if kind in INTERVENTION_KINDS else NEEDS_INTERVENTION, "reason": found.get("reason")}
+    detail = found.get(STOP_DETAIL)
+    if isinstance(detail, str) and detail:
+        state[STOP_DETAIL] = detail             # F98-4: the closed review loop's failure cause, only when told
+    return state
 
 
 INSTRUCTION_STAGE = "instruction"
@@ -119,10 +127,13 @@ def intervention(flow_id: str, row: dict, node_type: Optional[str] = None) -> Op
     rework: a card open in its instruction stage whose instruction's automatic path failed is a ``system_error``
     (``_instruction_error``)."""
     if row.get("status") == "open":
+        if node_type != GATE_NODE_TYPE and _state(flow_id, row).get("kind") == "question_pending":
+            return None
         return _instruction_error(flow_id, row, node_type) or _action_required(flow_id, row, node_type)
     if _settled_refusal(flow_id, row, node_type) is not None:
         return None
-    return _state(flow_id, row)
+    found = _state(flow_id, row)
+    return None if found.get("kind") == "question_pending" else found
 
 
 def refusal(flow_id: str, row: dict, node_type: Optional[str] = None) -> str:

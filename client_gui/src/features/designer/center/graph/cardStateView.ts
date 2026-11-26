@@ -1,7 +1,8 @@
 // v0.2 card presentation: automatic completion, intervention and system errors.
 /** The node run facts the state is read from (FlowGraphNodeRun, the Canvas `node_run`). */
 export interface CardRunFacts {
-  readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
+  /** F98-4: `stop_detail` is the closed review loop's failure cause (`model_not_found`, ...), sent only when it told one. */
+  readonly intervention?: { readonly kind: string; readonly reason: string | null; readonly stop_detail?: string | null } | null
   readonly waitReason?: { code: string; detail?: string | null; role?: string | null } | null
   readonly dispatchErrorCode?: string | null
   /** the failed AI call's short cause (`provider_capacity`, ...); absent: none told. */
@@ -41,6 +42,8 @@ export interface CardStateView {
   readonly approvable: boolean
   /** (B-5): why an awaiting card was not approved automatically (tooltip only), else null. */
   readonly reason: string | null
+  /** F98-4: an intervention's failure cause (the closed review loop's `stop_detail`); absent when the server sent none. */
+  readonly cause?: string | null
 }
 
 const view = (key: CardStateKey, phase: CardStatePhase, tone: CardStateTone, reason: string | null = null): CardStateView => ({
@@ -77,13 +80,41 @@ export const CARD_INTERVENTION_REASONS: Readonly<Record<string, string>> = {
   'action_required:new_attempt': 'action_required_new_attempt',
 }
 
+/** F98-4: the failure causes of a closed review loop (an intervention's `stop_detail`) worded by message key
+ * (`gui.designer.center.card_intervention_causes.*`), shown as `<sentence>(<code>)`; any other cause as sent. */
+export const CARD_INTERVENTION_CAUSES = ['model_not_found', 'provider_capacity', 'provider_failed', 'timeout', 'providers_exhausted'] as const
+
+/** F98-4: the shown text of an intervention's cause — a known code (alone, or before `:`) as `<sentence>(<cause>)`,
+ * anything else as sent; null when there is none. */
+export function cardInterventionCauseText(cause: string | null | undefined, t: (key: string) => string): string | null {
+  const raw = cause?.trim()
+  if (!raw) return null
+  // The review checkpoint prefixes terminal remote failures; retain the full raw detail for display.
+  const detail = raw.startsWith('remote final failure:') ? raw.slice('remote final failure:'.length).trim() : raw
+  const code = detail.split(':')[0].trim()
+  return (CARD_INTERVENTION_CAUSES as readonly string[]).includes(code)
+    ? `${t(`gui.designer.center.card_intervention_causes.${code}`)}(${raw})`
+    : raw
+}
+
 /**
  * (rej_01M6FFMXBCPX855V): the shown text of a card state's reason, one rule for every screen that
  * shows a `CardStateView` (the Canvas card title, the Inspector state pill): an `incomplete` card's known cause as its
  * ko / en / ja sentence; any other reason (an intervention's, an approval wait's, a cause this screen does not know) as
- * sent; null when the state has no reason.
+ * sent; null when the state has no reason. F98-4: an intervention's failure cause (`cause`) follows it after ` · `
+ * (`cardInterventionCauseText`); no cause, the same text as before.
  */
 export function cardStateReasonText(
+  state: { readonly key: string; readonly reason?: string | null; readonly cause?: string | null } | null | undefined,
+  t: (key: string) => string,
+): string | null {
+  const reason = reasonText(state, t)
+  const cause = cardInterventionCauseText(state?.cause, t)
+  if (!cause) return reason
+  return reason ? `${reason} · ${cause}` : cause
+}
+
+function reasonText(
   state: { readonly key: string; readonly reason?: string | null } | null | undefined,
   t: (key: string) => string,
 ): string | null {
@@ -107,7 +138,9 @@ function runCardStateView(run: CardRunFacts | null | undefined): CardStateView |
   const wait = run?.waitReason
   if ((status === 'open' || status === 'review') && run?.intervention) {
     const error = run.intervention.kind === 'system_error'
-    return view(error ? 'system_error' : 'needs_intervention', 'other', error ? 'danger' : 'warning', run.intervention.reason)
+    const shown = view(error ? 'system_error' : 'needs_intervention', 'other', error ? 'danger' : 'warning', run.intervention.reason)
+    const cause = typeof run.intervention.stop_detail === 'string' ? run.intervention.stop_detail.trim() : ''
+    return cause ? { ...shown, cause } : shown          // F98-4: no cause, the same view as before
   }
   // 0113 labels override presentation only. A 0105 approval remains available with its raw reason.
   // An absent/null/unknown new wait reason takes the unchanged 0083/0105 branches below.

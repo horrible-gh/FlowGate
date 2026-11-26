@@ -139,7 +139,8 @@ def test_a_step_requests_the_spent_review_again_as_seq_2_with_its_assignment_and
     a, a2, a3, result, first = _spent(env, monkeypatch, starts)
     # §6.1: the reproduced state
     assert (first["stage_state"], first["verdict"]) == ("done", "not_passed:retry_exhausted")
-    assert _wire(env, a)["intervention"] == {"kind": "needs_intervention", "reason": SPENT}
+    held = {k: v for k, v in _wire(env, a)["intervention"].items() if k != "stop_detail"}   # F98-4: an added field
+    assert held == {"kind": "needs_intervention", "reason": SPENT}
     assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "needs_intervention")
     before = dict(first)
     counts = _counts(env)

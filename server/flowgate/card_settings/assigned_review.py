@@ -472,6 +472,9 @@ def rerequest_due(flow_id: str, run_row: dict, row: dict, attempt_id: Optional[s
         return None                              # completion reconciliation and body gates precede any AI
     if review_stage.ai_working(flow_id, key, doc_id) or _attempt_executing(attempt_id) or legacy.node_running(flow_id, key):
         return None
+    from flowgate.card_intervention.judge import question_pending  # noqa: PLC0415
+    if question_pending(flow_id, row):
+        return None  # a stopped loop still owns its unanswered questions
     reason = legacy.approval_wait_reason(flow_id, row)
     if not intervention.command_reentry_due(reason or intervention.COMPLETION_MISSING):
         return None
