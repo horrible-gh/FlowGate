@@ -62,12 +62,12 @@ def test_every_palette_work_type_is_accepted_with_its_palette_item_and_default_n
     assert [(c["doc_type"], c["label"]) for c in cards] == [("T", "Task"), ("N", "Research"), ("D", "Basic design")]
 
 
-@pytest.mark.parametrize("doc_type", ["WP", "T2", "R", "B", "CH", "NR", "n", "", None, 1])
+@pytest.mark.parametrize("doc_type", ["WP", "T2", "B", "CH", "NR", "n", "", None, 1])
 def test_another_type_is_refused_naming_every_allowed_type(doc_type):
     from flowgate.chat_control import service
 
     err = _refused(lambda: service.parse_place({"cards": [{"doc_type": doc_type}]}, "ko"), 422, "invalid_request")
-    assert err.params["errors"] == [{"field": "cards[0].doc_type", "reason": "not_one_of:T,TS,N,D,P,L,DB"}]
+    assert err.params["errors"] == [{"field": "cards[0].doc_type", "reason": "not_one_of:T,TS,N,D,P,L,DB,R"}]
 
 
 # ── R2 / R5: placed cards ────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ def test_the_retired_work_plan_card_is_not_a_placeable_type(env, decided, doc_ty
 
     before = _draft()
     err = _refused(lambda: _place([{"doc_type": "N"}, {"doc_type": doc_type}]), 422, "invalid_request")
-    assert err.params["errors"] == [{"field": "cards[1].doc_type", "reason": "not_one_of:T,TS,N,D,P,L,DB"}]
+    assert err.params["errors"] == [{"field": "cards[1].doc_type", "reason": "not_one_of:T,TS,N,D,P,L,DB,R"}]
     assert _draft() == before and card_role_store.placed_keys(FA, CH1) == []
 
 
@@ -211,7 +211,7 @@ def test_the_tool_schema_and_the_contract_name_every_type():
     from flowgate.chat_control import service, tools
 
     item = tools.PLACE_SCHEMA["properties"]["cards"]["items"]["properties"]
-    assert item["doc_type"]["enum"] == list(service.WORK_TYPES) == list(ALL_TYPES)
+    assert item["doc_type"]["enum"] == list(service.WORK_TYPES) + ["R"] == list(ALL_TYPES) + ["R"]
     assert "WP" not in item["doc_type"]["enum"]
     for text in (item["doc_type"]["description"], tools.PLACE_DESCRIPTION,
                  tools.contract_place("/flowgate/api/v1", "TOKEN")):
