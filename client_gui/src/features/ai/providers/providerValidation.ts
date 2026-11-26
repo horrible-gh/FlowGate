@@ -4,7 +4,7 @@ export const FIELD_MAX: Record<string, number> = {
   name: 100, cli_command: 4000, api_base_url: 500, api_model: 200, api_key: 1000,
 }
 export const KINDS = {
-  cli: ['claude', 'copilot', 'codex', 'custom'],
+  cli: ['claude', 'copilot', 'codex', 'gemini', 'custom'],
   api: ['claude', 'openai', 'custom'],
 }
 export interface ProviderFieldIssue { field: string; reason: string }

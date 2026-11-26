@@ -141,7 +141,7 @@ class TestSystemScope:
         assert result["default_provider_id"] is None
         assert result["updated_at"] is None
         assert result["catalog"]["exec_types"] == ["cli", "api"]
-        assert result["catalog"]["kinds"]["cli"] == ["claude", "copilot", "codex", "custom"]
+        assert result["catalog"]["kinds"]["cli"] == ["claude", "copilot", "codex", "gemini", "custom"]
         assert result["catalog"]["kinds"]["api"] == ["claude", "openai", "custom"]
 
     def test_save_two_providers_issues_ids_and_default(self):

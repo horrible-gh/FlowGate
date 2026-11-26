@@ -506,6 +506,46 @@ class _CliProcess:
             self.owner.close()
 
 
+def _cli_stdin(kind: str, prompt: str) -> str:
+    if kind == "gemini":
+        return json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+    return prompt
+
+
+def _agy_result(stdout_text: str) -> tuple[Optional[str], Optional[str]]:
+    """Read the last terminal event from the agy NDJSON stream."""
+    for line in reversed(stdout_text.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "result":
+            continue
+        result = event.get("result")
+        if not isinstance(result, dict):
+            break
+        status = result.get("status")
+        if status == "SUCCESS":
+            response = result.get("response")
+            if isinstance(response, str):
+                return response.strip() or None, None
+            break
+        error = result.get("error")
+        if isinstance(error, str) and error.strip():
+            return None, error.strip()
+        return None, f"agy result status: {status or 'unknown'}"
+    return None, "agy stream ended without a valid result"
+
+
+def _agy_exit(stdout_text: str, stderr_text: str, exit_code: Optional[int]) -> tuple[Optional[int], str]:
+    _, error = _agy_result(stdout_text)
+    if error:
+        stderr_text = "\n".join(part for part in (stderr_text, error) if part)
+        if exit_code == 0:
+            exit_code = 1
+    return exit_code, stderr_text
+
+
 def _execute_local(exec_id, cwd, prompt, env, *, command, run, decision, started, stopped):
     """Local execution boundary: acquire, Popen/Job Object, cancel handle and exit result.
 
@@ -603,7 +643,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
 
     handle, result = _execute_local(
-        run.get("graph_exec_id"), decision["spawn_cwd"], prompt, env,
+        run.get("graph_exec_id"), decision["spawn_cwd"], _cli_stdin(kind, prompt), env,
         command=eff_cmd, run=run, decision=decision, started=started, stopped=stopped,
     )
     if result is None:
@@ -627,27 +667,29 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     elapsed = time.monotonic() - launched
     out_text = process_runner.safe_decode(stdout)
     err_text = process_runner.safe_decode(stderr)
+    cancelled = run["cancel_event"].is_set()
+    exit_code = proc.returncode
+    if kind == "gemini" and not timed_out and not cancelled:
+        exit_code, err_text = _agy_exit(out_text, err_text, exit_code)
     run["stdout_tail"] = out_text[-OUTPUT_TAIL_BYTES:]
     run["stderr_tail"] = err_text[-OUTPUT_TAIL_BYTES:]
-    run["exit_code"] = proc.returncode if not timed_out else None
+    run["exit_code"] = exit_code if not timed_out else None
     if timed_out:
         run["timed_out"] = True
 
-    cancelled = run["cancel_event"].is_set()
     role_invocations.cli_outcome(run, stdout_full=out_text,
-        exit_code=proc.returncode if not timed_out and not cancelled else None, timed_out=timed_out,
+        exit_code=exit_code if not timed_out and not cancelled else None, timed_out=timed_out,
         process_exited_itself=not timed_out and not cancelled and not run.get("user_paused"))
     # Fast-fail: startup failure ⇒ fallback candidate. A user cancel or timeout is
     # never a provider startup failure.
     if (
         not cancelled
         and not timed_out
-        and proc.returncode is not None
-        and proc.returncode != 0
+        and exit_code not in (None, 0)
         and elapsed < _svc().FAST_FAIL_WINDOW_SEC
         and not oracle._work_landed(run)
     ):
-        detail = (err_text or out_text).strip()[-500:] or f"exit {proc.returncode} within {int(elapsed)}s"
+        detail = (err_text or out_text).strip()[-500:] or f"exit {exit_code} within {int(elapsed)}s"
         return "fast_fail", detail
 
     _recover_cli_last_message(run, kind, out_text, last_message_file)
@@ -717,7 +759,7 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
                 return ProbeOutcome(PROBE_LAUNCH_FAILED)
             if not handle.bind(cli.terminate):
                 return ProbeOutcome(PROBE_CANCELLED)
-            stdout, _stderr, timed_out, error = cli.communicate(prompt.encode("utf-8"), timeout)
+            stdout, _stderr, timed_out, error = cli.communicate(_cli_stdin(kind, prompt).encode("utf-8"), timeout)
             returncode = cli.proc.returncode
         finally:
             cli.close()
@@ -730,8 +772,10 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
         # The whole answer, not the run's front-truncated last_message: a caller parses it
         # (an AI Evaluation judge replies with one JSON object), and cutting the front of a
         # reply past LAST_MESSAGE_MAX_BYTES drops its opening brace.
-        return ProbeOutcome(PROBE_OK, _cli_last_message(
-            kind, process_runner.safe_decode(stdout), last_message_file) or "")
+        out_text = process_runner.safe_decode(stdout)
+        if kind == "gemini" and _agy_result(out_text)[1]:
+            return ProbeOutcome(PROBE_EXECUTION_FAILED)
+        return ProbeOutcome(PROBE_OK, _cli_last_message(kind, out_text, last_message_file) or "")
     finally:
         if owned:
             _mark_scratch_completed(project_id, run_id, scratch, now_iso(), execution_nonce)
@@ -797,7 +841,9 @@ def _cli_last_message(kind: str, stdout_text: str, last_message_file: Path) -> O
             message = None
     elif kind == "copilot":
         message = _copilot_last_message(stdout_text)
-    if message is None and kind not in ("claude", "codex"):
+    elif kind == "gemini":
+        message, _ = _agy_result(stdout_text)
+    if message is None and kind not in ("claude", "codex", "gemini"):
         tail = stdout_text[-OUTPUT_TAIL_BYTES:]
         blocks = [b.strip() for b in re.split(r"\n\s*\n", tail) if b.strip()]
         message = blocks[-1] if blocks else None
