@@ -81,8 +81,14 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
         if kind == "result":
             return render_result(ts, current_run, test_runs.list_cases(current_run["run_id"]), locale)
         meta = old.test_spec_service.load_result_meta(current_run.get("result_meta"))
-        return old._pending_report(ts, current_run, meta.get("spec_cases") or cases or [],
-                                   state=state, reason=reason, locale=locale)
+        text, title = old._pending_report(ts, current_run, meta.get("spec_cases") or cases or [],
+                                         state=state, reason=reason, locale=locale)
+        prior = test_runs.latest_spec_run(ts["doc_id"])
+        comment = meta.get("overall_comment") or old.test_spec_service.load_result_meta((prior or {}).get("result_meta")).get("overall_comment")
+        if comment:
+            heading = {"ko": "총평", "ja": "総評", "en": "Overall comment"}.get(locale, "총평")
+            text += "\n## " + heading + "\n\n" + str(comment).strip() + "\n"
+        return text, title
     def write():
         flow_guard.lock_document_row(ts_id)
         ts = documents.get_by_id(ts_id)
@@ -102,7 +108,7 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
         if active is not None:
             flow_guard.lock_document_row(active["doc_id"])
             active = documents.get_by_id(active["doc_id"])
-            if active.get("doc_review_status") == "approved" or active.get("status") in {"closed", "cancelled", "archived"}:
+            if active.get("status") in {"cancelled", "archived"}:
                 raise old._http_error(409, "tsr_already_approved", tsr_doc_id=active["doc_id"])
             if active.get("target_id") != ts_id or active.get("group_id") != ts.get("group_id"):
                 raise internal_error()
@@ -172,24 +178,18 @@ def render_result(doc, run, cases, locale):
         # a test report — every TS Case ID with its verdict, expected/actual,
         # evidence and source identity, whatever the overall verdict is.
         meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        from modules.flow_gate.services.test_card_changes import current_rows
+        rows = current_rows(doc, run, cases)
         content = test_spec_service.render_report_markdown(
             doc=doc,
             run=run,
-            rows=[
-                test_spec_service.stored_case_to_row(case)
-                for case in cases
-                if (case.get("kind") or "case") == "case"
-            ],
-            summary={
-                "overall": run.get("overall"),
-                "counts": meta.get("counts") or {},
-                "required_counts": meta.get("required_counts") or {},
-                "optional_counts": meta.get("optional_counts") or {},
-            },
+            rows=rows,
+            summary=test_spec_service.compute_overall(rows),
             unmapped=meta.get("unmapped") or [],
             conflicts=meta.get("conflicts") or [],
             title=title,
             locale=locale,
+            overall_comment=meta.get("overall_comment"),
         )
         if meta.get("test_basis") or meta.get("live_verdict"):
             content += _tsr_basis_section(meta, locale)

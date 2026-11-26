@@ -280,7 +280,8 @@ function featureViolations(root: string, key: string): string[] {
       // explicitly owns these five windows and two local helpers.
       // Check every nested file rather than exempting an arbitrary sub-tree.
       if (key === 'testSpec' && name === 'windows') {
-        const allowed = /^(BriefWindow|ScenarioWindow|CaseWindow|ReportWindow|FollowWindow)\.vue$|^(scenarioWindowModel|reportWindowModel)\.ts$/
+        // F81: no instruction (Brief) window; the modeless remark window joins the scenario / case / report / follow ones.
+        const allowed = /^(ScenarioWindow|CaseWindow|RemarkWindow|ReportWindow|FollowWindow)\.vue$|^(scenarioWindowModel|reportWindowModel)\.ts$/
         const rule: ImportRule = { allowed: [/^vue$/, /^vue-i18n$/, /^@\/components\/ui\/[A-Za-z]+(\.vue)?$/,
           /^@\/features\/(document|documentWindow)$/, /^\.\/((scenario|report)WindowModel)$/,
           /^\.\.\/(useTestCard|testCardSession|testSpecModel)$/, /^\.\.\/\.\.\/\.\.\/parts\/[A-Za-z]+(\.vue)?$/,

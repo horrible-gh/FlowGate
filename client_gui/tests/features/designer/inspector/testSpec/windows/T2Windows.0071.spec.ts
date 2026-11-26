@@ -7,18 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BriefWindow from '@/features/designer/inspector/features/testSpec/windows/BriefWindow.vue'
 import ScenarioWindow from '@/features/designer/inspector/features/testSpec/windows/ScenarioWindow.vue'
 import CaseWindow from '@/features/designer/inspector/features/testSpec/windows/CaseWindow.vue'
+import RemarkWindow from '@/features/designer/inspector/features/testSpec/windows/RemarkWindow.vue'
 import { caseDraft, mergeCase, scenarioSnapshot } from '@/features/designer/inspector/features/testSpec/windows/scenarioWindowModel'
 import { useTestCard, type TestCardContext, type TestCardWindowKind } from '@/features/designer/inspector/features/testSpec/useTestCard'
 import { testCardSessionKey } from '@/features/designer/inspector/features/testSpec/testCardSession'
 import type { InspectorTarget } from '@/features/designer/inspector/inspectorTarget'
 import { prepareInspectorI18n, targetOf } from '../../support/inspectorSupport'
-import { TS_DOC, TS_NODE, testSelection, tsDocument, liveRun } from '../testSpecFixtures'
+import { TS_DOC, TS_NODE, testSelection, tsDocument, liveRun, runRow } from '../testSpecFixtures'
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), node: vi.fn(), choices: vi.fn(), setting: vi.fn(), guard: vi.fn(), activity: vi.fn(), save: vi.fn(), rawRead: vi.fn(), rawSave: vi.fn(), ai: vi.fn(), history: vi.fn(), briefRead: vi.fn(), briefSave: vi.fn() }))
+const mocks = vi.hoisted(() => ({ read: vi.fn(), node: vi.fn(), choices: vi.fn(), setting: vi.fn(), guard: vi.fn(), activity: vi.fn(), save: vi.fn(), rawRead: vi.fn(), rawSave: vi.fn(), ai: vi.fn(), history: vi.fn(), briefRead: vi.fn(), briefSave: vi.fn(), retry: vi.fn(), remarks: vi.fn(), remarkUpdate: vi.fn() }))
 vi.mock('@/features/document', async (original) => {
   const actual = await original<typeof import('@/features/document')>()
   return { ...actual, testSpecRead: mocks.read, settingsNodeRead: mocks.node, settingsChoicesRead: mocks.choices, settingsNodeWrite: mocks.setting,
     reviewDocumentRead: mocks.guard, reviewActivityRead: mocks.activity, documentHistoryRead: mocks.history,
+    // F81: the case window's ▶ 실행 and the remark window's ✓ 해결 use these existing calls.
+    testSpecCaseRun: (...args: unknown[]) => mocks.retry(...args), testSpecRemarksRead: (...args: unknown[]) => mocks.remarks(...args), testSpecRemarkUpdate: (...args: unknown[]) => mocks.remarkUpdate(...args),
     // the windows read and save through the card document v2 calls. The bridge below answers them from
     // the spec's own mocks (stored text / revision / case list), so the assertions keep stating what was saved.
     documentContentRead: mocks.rawRead,
@@ -45,7 +48,7 @@ async function reviseBridge(_ctx: unknown, request: { command?: { kind: string; 
   return { ok: true, doc_id: TS_DOC, revision_no: request.expectedRevision + 1, updated_at: 'u', replayed: false, line: {} }
 }
 vi.mock('@/features/designer/inspector/openDocument', async (original) => ({ ...await original<typeof import('@/features/designer/inspector/openDocument')>(), openDocumentAi: (...args: unknown[]) => mocks.ai(...args) }))
-const { toTestSpecView, toReviewDocument, toReviewActivity, toSettingsNode, toSettingsChoices, toDocumentHistory, testSpecCasePayload } = await vi.importActual<typeof import('@/features/document')>('@/features/document')
+const { toTestSpecView, toReviewDocument, toReviewActivity, toSettingsNode, toSettingsChoices, toDocumentHistory, testSpecCasePayload, toTestSpecRemark } = await vi.importActual<typeof import('@/features/document')>('@/features/document')
 const i18n = prepareInspectorI18n()
 const base = targetOf(testSelection('graph', TS_NODE))
 const makeTarget = (key = 'gn_a', id = TS_DOC): InspectorTarget => ({ ...base, nodeId: key, nodeType: 'document', cardDocType: 'TS', docId: null, docType: 'TS',
@@ -90,6 +93,7 @@ beforeEach(() => {
   mocks.rawSave.mockResolvedValue(undefined)
   mocks.briefRead.mockResolvedValue({ text: '', content: rawSource })
   mocks.briefSave.mockImplementation(async (_id: string, text: string) => ({ text, content: rawSource + text }))
+  mocks.remarks.mockResolvedValue({ docId: TS_DOC, remarks: [] })
 })
 afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; vi.useRealTimers() })
 
@@ -548,5 +552,107 @@ describe('0094 test card windows follow the existing window rules', () => {
     for (const file of ['ScenarioWindow.vue', 'ReportWindow.vue', 'FollowWindow.vue', 'CaseWindow.vue']) {
       expect(readFileSync(resolve(WINDOWS, file), 'utf8'), file).not.toMatch(/class="mono id"/)
     }
+  })
+})
+
+/** F81 (0081): several windows of the card at once — the scenario list, the case window and the remark window. */
+async function renderWindows(kinds: Array<'scenario' | 'case' | 'remark'>, caseId = 'TC-1') {
+  const components = { scenario: ScenarioWindow, case: CaseWindow, remark: RemarkWindow }
+  wrapper = mount(defineComponent({ setup: () => () => h('div', [h(Probe), ...kinds.map(kind => contextRef.value?.windows[kind].open ? h(components[kind], { key: `${kind}:${testCardSessionKey(selected.value)}`, target: selected.value }) : null)]) }),
+    { global: { plugins: [i18n, createPinia()], stubs: { teleport: true } }, attachTo: document.body })
+  await flushPromises()
+  for (const kind of kinds) context.openWindow(kind, kind === 'scenario' ? null : caseId)
+  await flushPromises()
+  return wrapper
+}
+
+describe('F81 screen paths (0081-T: first case, edit after approval, ▶ 실행, ✓ 해결)', () => {
+  const persist = () => mocks.save.mockImplementation(async (_id, payload) => { server.cases = payload })
+  it('saves the first case of an empty scenario whose only title is the document title (8a: no Content changed)', async () => {
+    // The empty scenario has no H1: the view shows the document title, the structured pin has none.
+    server = tsDocument({ title: null, doc_title: 'F81 시나리오', intro: null, cases: [], errors: [], latest_result: null, effective_result: null, run_history: [], last_execution: null })
+    persist()
+    const w = await renderWindows(['case'])
+    context.closeWindow('case'); expect(context.openWindow('case', '__new__')).toBe(true); await flushPromises()
+    expect(w.find('[data-test="case-conflict"]').exists()).toBe(false)
+    await w.get('[data-test="case-title"]').setValue('First')
+    await w.get('[data-test="case-procedure"]').setValue('Run it')
+    await w.get('[data-test="case-expected"]').setValue('Works')
+    await w.get('[data-test="case-command"]').setValue('node --test tests/first.test.mjs')
+    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeUndefined()
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save).toHaveBeenCalledTimes(1)
+    expect(mocks.save.mock.calls[0][1]).toHaveLength(1)
+    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ case_id: 'TC-1', title: 'First', procedure: 'Run it', expected: 'Works', run_command: 'node --test tests/first.test.mjs' })
+    expect(mocks.save.mock.calls[0][2]).toBe('F81 시나리오')
+    expect(w.find('[data-test="case-conflict"]').exists()).toBe(false)
+    expect(context.windows.case.open).toBe(false)
+    expect(context.cases.value.map(c => c.caseId)).toEqual(['TC-1'])
+  })
+  it('deletes a case of an approved (not editable) scenario; the scenario list follows the save', async () => {
+    editable = false; persist()
+    const w = await renderWindows(['scenario', 'case'])
+    expect(context.can('caseSave').enabled).toBe(true)
+    expect(w.find('[data-case="TC-1"]').exists()).toBe(true)
+    expect(w.get('[data-test="case-delete"]').attributes('disabled')).toBeUndefined()
+    await w.get('[data-test="case-delete"]').trigger('click')
+    await w.get('[data-test="case-delete-submit"]').trigger('click'); await flushPromises()
+    expect(mocks.save).toHaveBeenCalledWith(TS_DOC, [fullCases()[1]], 'Keep H1')
+    expect(context.windows.case.open).toBe(false)
+    expect(context.cases.value.map(c => c.caseId)).toEqual(['TC-2'])
+    expect(w.find('[data-case="TC-1"]').exists()).toBe(false)
+    expect(w.find('[data-case="TC-2"]').exists()).toBe(true)
+  })
+  it('edits and saves a case of an approved (not editable) scenario', async () => {
+    editable = false; persist()
+    const w = await renderWindows(['case'])
+    await w.get('[data-test="case-title"]').setValue('Edited after approval')
+    expect(w.get('[data-test="case-save"]').attributes('disabled')).toBeUndefined()
+    await w.get('[data-test="case-save"]').trigger('click'); await flushPromises()
+    expect(mocks.save.mock.calls[0][1][0]).toMatchObject({ case_id: 'TC-1', title: 'Edited after approval' })
+  })
+  it('▶ 실행 runs the saved case through the existing case run and reads the card again (result and log box)', async () => {
+    mocks.retry.mockImplementation(async () => { server.last_execution = runRow('retry', { selected_case_ids: ['TC-1'] }); return { runId: 'retry', status: 'running' } })
+    const w = await renderWindows(['case'])
+    const run = w.get('[data-test="case-run"]')
+    expect(run.attributes('disabled')).toBeUndefined()
+    const reads = mocks.read.mock.calls.length
+    await run.trigger('click'); await flushPromises()
+    expect(mocks.retry).toHaveBeenCalledWith(TS_DOC, 'TC-1')
+    expect(mocks.read.mock.calls.length).toBeGreaterThan(reads)
+    expect(w.find('[data-test="case-run-failure"]').exists()).toBe(false)
+  })
+  it('a refused ▶ 실행 shows why in the case window; a changed command is saved before it can run', async () => {
+    mocks.retry.mockRejectedValueOnce(failure(409, 'run_in_progress'))
+    const w = await renderWindows(['case'])
+    await w.get('[data-test="case-run"]').trigger('click'); await flushPromises()
+    expect(w.find('[data-test="case-run-failure"]').exists()).toBe(true)
+    await w.get('[data-test="case-command"]').setValue('node --test tests/changed.test.mjs')
+    expect(w.get('[data-test="case-run"]').attributes('disabled')).toBeDefined()
+    expect(w.find('[data-test="case-run-reason"]').exists()).toBe(true)
+  })
+  it('a new case has no ▶ 실행', async () => {
+    const w = await renderWindows(['case'])
+    context.closeWindow('case'); context.openWindow('case', '__new__'); await flushPromises()
+    expect(w.find('[data-test="case-run"]').exists()).toBe(false)
+  })
+  it('✓ 해결 resolves an open remark; the resolver comes before an older AI answer, an AI resolution shows its answer', async () => {
+    let rows: Record<string, unknown>[] = [
+      { remark_id: 'r1', case_id: 'TC-1', text: 'Check the edge', phase: 'case_write', state: 'open', author: { kind: 'ai', name: 'Reviewer' }, ai_reply: 'Old AI answer', created_at: '2026-11-26T01:00:00Z' },
+      { remark_id: 'r2', case_id: 'TC-1', text: 'Typo', phase: 'case_write', state: 'resolved', author: { kind: 'human', name: 'Lee' }, ai_reply: 'Fixed by AI', created_at: '2026-11-26T00:00:00Z' },
+    ]
+    mocks.remarks.mockImplementation(async () => ({ docId: TS_DOC, remarks: rows.map(row => toTestSpecRemark(row)!) }))
+    mocks.remarkUpdate.mockImplementation(async (_doc: string, id: string, body: { state: string }) => {
+      rows = rows.map(row => row.remark_id === id ? { ...row, state: body.state, resolved_by: 'Kim' } : row)
+      return toTestSpecRemark(rows.find(row => row.remark_id === id))
+    })
+    const w = await renderWindows(['remark'])
+    expect(w.findAll('[data-test="remark-open"]')).toHaveLength(1)
+    expect(w.get('[data-remark="r2"] [data-test="remark-resolved-reply"]').text()).toContain('Fixed by AI')
+    await w.get('[data-test="remark-resolve"]').trigger('click'); await flushPromises()
+    expect(mocks.remarkUpdate).toHaveBeenCalledWith(TS_DOC, 'r1', { state: 'resolved' })
+    expect(w.find('[data-test="remark-open"]').exists()).toBe(false)
+    const reply = w.get('[data-remark="r1"] [data-test="remark-resolved-reply"]').text()
+    expect(reply).toContain('Kim'); expect(reply).not.toContain('Old AI answer')
   })
 })

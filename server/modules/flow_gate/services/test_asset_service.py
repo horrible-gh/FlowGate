@@ -84,9 +84,7 @@ def content(ts_id: str, path: str) -> dict:
 def _preconditions(ts_id: str, doc: dict) -> dict | None:
     """Edit preconditions; returns the active TSR. Checked before and under the lock."""
     paired = test_run_service._active_tsr_for_ts(doc)
-    if paired and paired.get("doc_review_status") == "approved":
-        raise test_run_service._http_error(409, "tsr_already_approved",
-                                          tsr_doc_id=paired["doc_id"])
+    # Report approval is not an edit lock. Source validity is checked independently.
     # a queued or running run is measuring/executing this source.
     running = db_test_runs.get_running_by_doc(ts_id)
     if running:
