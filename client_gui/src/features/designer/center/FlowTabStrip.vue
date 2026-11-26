@@ -580,9 +580,11 @@ onBeforeUnmount(() => {
   resizeObserver = null
 })
 
+/** Scroll the whole tab (name button + ×) into the strip's view, not only its name button, so × never stays hidden behind
+ *  the list button (▾). The strip's scroll-padding-inline keeps the end tab off the ▾ edge. */
 function revealTab(flowId: string | null) {
   if (flowId === null) return
-  nextTick(() => buttonRefs.get(flowId)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
+  nextTick(() => (tabRefs.get(flowId) ?? buttonRefs.get(flowId))?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }))
 }
 
 // A newly active tab is scrolled into view inside the strip.
@@ -713,6 +715,7 @@ function pickFromList(flowId: string, close: () => void) {
   gap: 2px;
   min-width: 0;
   padding: 0 6px;
+  scroll-padding-inline: 6px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
