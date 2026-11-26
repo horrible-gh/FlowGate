@@ -239,7 +239,8 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (documentCommands.includes(operation) && documentDenied.value) return item('reason.forbidden')
     if (documentCommands.includes(operation) || operation === 'rewriteAll' || operation === 'rewriteCase') {
       if (!test.guard.value) return item('reason.busy')
-      if (test.guard.value.editable === false) return item('guard.approved')
+      // F81 (0001-R 3-3): an approval locks nothing. Cases, results and evidence stay editable after the scenario or
+      // the report is approved; the server moves the approval back to working when the change requires it.
     }
     if (['run', 'rerunCase', 'resultEntry'].includes(operation)) {
       if (!test.view.value) return item('reason.busy')

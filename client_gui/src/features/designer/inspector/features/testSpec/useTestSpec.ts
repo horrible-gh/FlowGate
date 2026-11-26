@@ -238,7 +238,9 @@ export function useTestSpec(target: () => InspectorTarget | null, writing: () =>
   function testSpecRunDisabledReasonForCase(): string | null {
     const input = { readOnly: target()?.readOnly ?? null, groupDisposed: guard.data.value?.groupDisposed === true,
       aiRunning: guard.data.value?.aiRunning === true, writing: writing(), denied: denied.value, busy: busy.value !== null,
-      view: view.value ? { ...view.value, kind: 'TSR' } : null }
+      // F81 (0001-R 3-3): an approved report locks no case. A case's run, result and evidence stay possible; the
+      // server sends the report approval back to working when the change alters its tally.
+      view: view.value ? { ...view.value, kind: 'TSR', tsrReviewStatus: null } : null }
     return testSpecRunDisabledReason(input)
   }
 

@@ -3,13 +3,13 @@
     <InspectorPaneState v-if="card?.test.status.value === 'loading' && !view" state="loading" />
     <InspectorPaneState v-if="card?.test.errorKey.value" state="error" :message="t(k(card.test.errorKey.value))" retryable @retry="card?.reload()" />
     <div class="test-card-lines" data-test="inspector-slot-list">
-      <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :decision-layout="decisions.row(line.key, line.id).visible" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
+      <InspectorSlotRow v-for="line in lines" :key="line.key" :name="t(k(`slot.${line.key}`))" :id="line.id" :decision-layout="decisionOf(line).visible" :class="{ 'is-empty': line.blank }" :focus="line.key === 'report' && (stage.stage === 5 || card?.reportRecentlyConfirmed.value)" :data-slot="line.key" :data-doc="line.id" :openable="canOpen(line.kind)" @open="openWindow(line.kind)">
         <template #summary>
           <InspectorStatusChip :label="decisionLabel(line)" :tone="decisionTone(line)" :data-test="line.key === 'report' ? 'test-spec-state' : `test-card-${line.key}-state`" :data-state="line.key === 'report' ? runState.key : undefined" />
           <!-- F81: a line is its name and its state chip, as on every other card: no text button, no pass tally.
                The pass / fail numbers are in the scenario window only. -->
         </template>
-        <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, line.id)" /></template>
+        <template v-if="line.id" #io><DocumentIoGroup :doc-id="line.id" :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, line.id)" :upload-off="line.key === 'report' ? t(k('card.report_upload_off')) : null" /></template>
         <template v-if="line.key === 'scenario'">
           <!-- flowgate.v02.0094: the scenario's AI writing is the line's [AI 호출], as on the other cards' lines: it opens
                the document's AI call window (nothing is written until it runs); the 지시서 window only saves. -->
@@ -33,9 +33,10 @@
         </template>
         <InspectorHistoryButton v-if="line.key !== 'scenario' && line.id" @click="openDocumentHistory(line.id)" />
         <InspectorOpenButton :disabled="!canOpen(line.kind)" :title="openReason(line.kind)" :data-test="line.key === 'report' ? 'test-spec-open' : 'test-card-scenario-open'" @click="openWindow(line.kind)" />
-        <InspectorDocumentDecision v-if="decisions.row(line.key, line.id).visible" :name="t(k(`slot.${line.key}`))"
-          :action="decisions.row(line.key, line.id).action" :disabled="decisions.row(line.key, line.id).disabled"
-          :reason="decisions.row(line.key, line.id).reason" @click="decisions.decide(line.key, line.id)" />
+        <!-- F81: the line's last button, as on every card: ✓ before approval, ✕ after (the scenario line too). -->
+        <InspectorDocumentDecision v-if="decisionOf(line).visible" :name="t(k(`slot.${line.key}`))"
+          :action="decisionOf(line).action" :disabled="decisionOf(line).disabled"
+          :reason="decisionOf(line).reason" @click="decide(line)" />
       </InspectorSlotRow>
     </div>
     <InspectorReason v-if="lines.some(line => line.key === 'report' && line.id) && stage.hasScenario && stage.resultState.key === 'none' && !card?.test.runState.value.active && card?.test.status.value === 'ready'" :text="t(k('missing_case_results'))" data-test="test-spec-missing-results" />
@@ -89,12 +90,23 @@ function openWindow(kind: TestCardWindowKind) {
 }
 // F81: two lines only — the scenario and the report. There is no instruction line.
 interface Line { key: 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone }
+/**
+ * The card's document decision slot of a line. The server keeps a test card's scenario (TS) in its instruction slot
+ * (the document decision API names it `instruction`), so the scenario line decides that slot.
+ */
+const decisionSlot = (line: Line) => (line.key === 'scenario' ? 'instruction' : 'report')
+/** The shared line decision; an empty scenario cannot be approved (✓ off), as an empty document is refused. */
+function decisionOf(line: Line) {
+  const row = decisions.row(decisionSlot(line), line.id)
+  return row.action === 'approve' && line.key === 'scenario' && line.blank && !row.disabled ? { ...row, reason: 'empty', disabled: true } : row
+}
+function decide(line: Line) { if (!decisionOf(line).disabled) void decisions.decide(decisionSlot(line), line.id) }
 function decisionLabel(line: Line) {
-  const row = decisions.row(line.key, line.id)
+  const row = decisions.row(decisionSlot(line), line.id)
   return row.authoritative && row.state ? t(`gui.designer.inspector.review_status.${row.state === 'wf_done' ? 'approved' : row.state}`) : line.label
 }
 function decisionTone(line: Line): TestSpecSlotTone {
-  const row = decisions.row(line.key, line.id)
+  const row = decisions.row(decisionSlot(line), line.id)
   if (!row.authoritative) return line.tone
   return row.state === 'approved' || row.state === 'wf_done' ? 'success'
     : row.state === 'rejected' ? 'danger' : row.state === 'pending_review' ? 'warning' : line.tone

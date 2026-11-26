@@ -11,7 +11,9 @@
       <div class="list">
         <p v-if="!open.length && !resolved.length" class="empty" data-test="remark-empty">{{ t(k('empty')) }}</p>
         <article v-for="remark in open" :key="remark.remarkId" class="remark" data-test="remark-open" :data-remark="remark.remarkId">
-          <header><b>{{ authorOf(remark) }}</b><span class="phase" data-test="remark-phase">{{ t(k(`phase_${remark.phase}`)) }}</span><time>{{ documentHistoryWhen(remark.createdAt) }}</time></header>
+          <header><b>{{ authorOf(remark) }}</b><span class="phase" data-test="remark-phase">{{ t(k(`phase_${remark.phase}`)) }}</span><time>{{ documentHistoryWhen(remark.createdAt) }}</time>
+            <!-- F81: a person resolves a remark too; the server records who did in the AI's answer place (resolved_by). -->
+            <Button size="sm" variant="secondary" :disabled="!writable" :title="reason || t(k('resolve'))" data-test="remark-resolve" @click="card.setRemarkState(remark.remarkId, 'resolved')">{{ t(k('resolve')) }}</Button></header>
           <p>{{ remark.text }}</p>
           <p v-if="remark.aiReply" class="reply" data-test="remark-reply">↳ {{ remark.aiReply }}</p>
         </article>
@@ -21,7 +23,7 @@
             <header><b>{{ authorOf(remark) }}</b><span class="phase">{{ t(k(`phase_${remark.phase}`)) }}</span><span class="done">{{ t(k('state_resolved')) }}</span>
               <Button size="sm" variant="secondary" :disabled="!writable" :title="reason" data-test="remark-reopen" @click="card.setRemarkState(remark.remarkId, 'open')">{{ t(k('reopen')) }}</Button></header>
             <p>{{ remark.text }}</p>
-            <p v-if="remark.aiReply" class="reply">↳ {{ remark.aiReply }}</p>
+            <p v-if="replyOf(remark)" class="reply" data-test="remark-resolved-reply">↳ {{ replyOf(remark) }}</p>
           </article>
         </details>
       </div>
@@ -62,6 +64,13 @@ const draft = computed(() => sessionDraft<{ text: string }>(card.value!.drafts, 
 const writable = computed(() => !!card.value?.can('remark').enabled)
 const reason = computed(() => { const key = card.value?.can('remark').reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' })
 const authorOf = (remark: TestRemark) => remark.author.name || t(k(`author_${remark.author.kind}`))
+/** A resolved remark's answer line (one line). Whoever resolved it (`resolved_by`, F81-6 contract) comes first — even when
+ *  an older AI answer is still stored, e.g. a remark opened again and then resolved by a person. Without `resolved_by` the
+ *  stored one-line answer (`ai_reply`) is shown as before. */
+function replyOf(remark: TestRemark): string | null {
+  if (remark.resolvedBy) return t(k('resolved_by'), { name: remark.resolvedBy })
+  return remark.aiReply
+}
 async function submit() {
   const c = card.value, id = state.value?.caseId, d = draft.value
   if (!current() || !c || !id || !d.text.trim() || !writable.value) return
