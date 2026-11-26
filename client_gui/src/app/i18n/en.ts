@@ -513,6 +513,14 @@ export default {
         
         action_required_new_attempt: 'A Q&A answer requires a new attempt, but none was opened, so the card was not called again. `Next step` or `Run all` reopens it as a new attempt. For a card in review, stop the run first.',
       },
+      // an intervention's failure cause (the closed review loop's stop_detail), shown as `<sentence>(<code>)`; others as sent.
+      card_intervention_causes: {
+        model_not_found: 'Model not supported',
+        provider_capacity: 'Model at capacity',
+        provider_failed: 'AI provider error',
+        timeout: 'Time limit exceeded',
+        providers_exhausted: 'No AI provider could run',
+      },
       // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {

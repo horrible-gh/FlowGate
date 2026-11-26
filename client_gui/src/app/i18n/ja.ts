@@ -513,6 +513,14 @@ export default {
         
         action_required_new_attempt: 'Q&Aの回答で新しい attempt が必要とされましたが、まだ開かれていないためカードを再呼び出ししていません。`次のステップ`または`全体実行`で新しい attempt として開き直します。レビュー中のカードは停止してから実行してください。',
       },
+      // an intervention's failure cause (the closed review loop's stop_detail), shown as `<sentence>(<code>)`; others as sent.
+      card_intervention_causes: {
+        model_not_found: 'モデル非対応',
+        provider_capacity: 'モデルの容量超過',
+        provider_failed: 'AIプロバイダーのエラー',
+        timeout: '制限時間超過',
+        providers_exhausted: '実行できるAIプロバイダーなし',
+      },
       // a Graph card's state on the Canvas and in the Inspector (cardStateView.ts):
       // Working (two kinds while it runs) · 승인 대기 · 승인됨, and the rest.
       card_states: {
