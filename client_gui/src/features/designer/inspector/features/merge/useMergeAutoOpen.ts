@@ -52,6 +52,7 @@ export function useMergeAutoOpen(options: MergeAutoOpenOptions): void {
   const lastSignature = new Map<string, string>()
   /** When this page first saw each card as a conflict candidate (ms, this page's clock), while it stays one. */
   const firstSeen = new Map<string, number>()
+  const lifetimes = new Map<string, object>()
   /** Per card: the sequence of the newest read sent, and of the newest answer applied. */
   const sent = new Map<string, number>()
   const applied = new Map<string, number>()
@@ -105,6 +106,7 @@ export function useMergeAutoOpen(options: MergeAutoOpenOptions): void {
   }
 
   async function check(candidate: MergeAutoCandidate, card: string, seq: number): Promise<void> {
+    const lifetime = lifetimes.get(card)
     let state: CardMergeState
     try {
       state = await read(candidate.flowId, candidate.nodeKey)
@@ -112,7 +114,9 @@ export function useMergeAutoOpen(options: MergeAutoOpenOptions): void {
       if (sent.get(card) === seq) lastSignature.delete(card)
       return
     }
-    if (!alive) return
+    if (!alive || lifetimes.get(card) !== lifetime || !options.candidates().some(item =>
+      cardOf(item.flowId, item.nodeKey) === card && item.attemptId === candidate.attemptId)) return
+    if (candidate.attemptId && state.attemptId && candidate.attemptId !== state.attemptId) return
     take(candidate, card, seq, state)
   }
 
@@ -123,7 +127,10 @@ export function useMergeAutoOpen(options: MergeAutoOpenOptions): void {
       for (const candidate of options.candidates()) {
         const card = cardOf(candidate.flowId, candidate.nodeKey)
         seen.add(card)
-        if (!firstSeen.has(card)) firstSeen.set(card, now())
+        if (!firstSeen.has(card)) {
+          firstSeen.set(card, now())
+          lifetimes.set(card, {})
+        }
         const signature = `${candidate.attemptId ?? ''}\u0001${candidate.signature}`
         if (lastSignature.get(card) === signature) continue
         lastSignature.set(card, signature)
@@ -135,8 +142,10 @@ export function useMergeAutoOpen(options: MergeAutoOpenOptions): void {
       for (const card of [...firstSeen.keys()]) {
         if (seen.has(card)) continue
         firstSeen.delete(card)
+        lifetimes.delete(card)
         lastSignature.delete(card)
         held.delete(card)
+        for (const attempt of live) if (attempt.startsWith(`${card}\u0000`)) live.delete(attempt)
       }
     },
     { immediate: true },

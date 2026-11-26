@@ -94,7 +94,8 @@ def _plan(flow_id: str, assessment: dict, locale: str) -> dict:
         raise _blocked(assessment, [{"code": "integration_commit_shared", "attempts": shared}], locale)
     return {"node_key": assessment["node_key"], "node_keys": impact["node_keys"], "attempt_ids": sorted(attempts),
             "documents": impact["documents"], "commits": commits,
-            "gate_decisions": impact.get("gate_decisions", [])}
+            "gate_decisions": impact.get("gate_decisions", []),
+            "integration_head_inputs": impact.get("integration_head_inputs", [])}
 
 
 def _blocked(assessment: dict, reasons: list[dict], locale: str, **extra) -> GraphApiError:
@@ -128,7 +129,9 @@ def _finish(flow_id: str, run_id: str, operation_id: str, plan: dict, actor: Opt
     """(b) and (c) of one recorded operation. Returns its outcome (``operation_status`` and what it did).
     ``recorded``: on a resume, the reverts of the journal's ``git_applied`` entry (checked against the branch)."""
     outcome = {"operation_id": operation_id, "flow_id": flow_id, "run_id": run_id, "node_key": plan["node_key"]}
-    git = git_revert.apply(flow_id, operation_id, plan["commits"], resume=resume, recorded=recorded or [])
+    git = git_revert.apply(flow_id, operation_id, plan["commits"], resume=resume, recorded=recorded or [],
+                           **({"integration_head_inputs": plan["integration_head_inputs"]}
+                              if plan.get("integration_head_inputs") else {}))
     if git["status"] == git_revert.DEFERRED:
         log.warning("Graph Time Machine recovery waits for the group's Git session flow=%s operation=%s: %s",
                     flow_id, operation_id, git.get("reason"))
