@@ -417,6 +417,8 @@ export default {
       graph_loading: 'グラフを読み込み中',
       graph_load_failed: 'グラフを読み込めませんでした',
       draft_action_failed: "操作を完了できませんでした。最新のフローを確認してから、もう一度お試しください。({code})",
+      default_card_failed: "新しいフローの既定の要件カードを配置できませんでした。パレットから要件カードをドラッグして配置してください。({code})",
+      default_card_save_failed: "新しいフローの既定の要件カードをまだ保存できていません。カードはキャンバスに残り、保存を自動で再試行します。({code})",
       document_storage_unwritable: '保存失敗: 文書ストレージエラー。編集内容は保持されています。',
       retry: '再試行',
       sample_data: 'サンプルデータ',
