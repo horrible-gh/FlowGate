@@ -952,6 +952,10 @@ def _build_spec_result_mention(
         "- POST without `results`/`junit_xml` to hand this step to the server run of the "
         "automated Cases instead (the TS approval already queued it).\n"
         f"{chain_note}\n"
+        "## Code case execution\n"
+        f"POST {api_base_url}/documents/{doc['doc_id']}/test-spec/cases/<case_id>/run\n"
+        "Use this card execution Bearer and an empty body for each code case. "
+        "Only this TS is authorized. The server attaches the exit summary; PASS requires exit 0.\n\n"
         "## Evidence files\n"
         f"GET {api_base_url}/documents/{doc['doc_id']}/test-spec/evidence?case_id=<case_id>\n"
         f"POST {api_base_url}/documents/{doc['doc_id']}/test-spec/cases/<case_id>/evidence\n"
@@ -1233,16 +1237,7 @@ def record_spec_results(
     if basis:
         # server authority outranks a caller's claim
         source_identity = test_basis_service.source_identity(basis)
-    # An approved test report is the record the workflow moved on with. New results would
-    # silently rewrite it under its approval, so they are refused; re-testing goes through
-    # the ordinary reopen (time machine) of the TSR/TS first.
-    active_tsr = _active_tsr_for_ts(doc)
-    if active_tsr is not None and active_tsr.get("doc_review_status") == "approved":
-        raise _http_error(
-            409, "tsr_already_approved", doc_id=doc_id, tsr_doc_id=active_tsr.get("doc_id"),
-            detail="The test report for this TS is already approved; reopen it before "
-                   "recording new results.",
-        )
+    # F81: approved reports remain editable; result changes are handled on regeneration.
     now = now_iso()
     normalized: list[dict] = []
     sources: list[str] = []
@@ -1321,6 +1316,9 @@ def record_spec_results(
         if mapped["unmapped"] and summary["overall"] == "PASS":
             summary = {**summary, "overall": "BLOCKED", "gate_passed": False}
         overall = summary["overall"]
+        if any(row.get("status") == "FAIL" for row in normalized):
+            from modules.flow_gate.services.test_card_changes import reopen
+            reopen(doc)
         meta = {
             "counts": summary["counts"],
             "required_counts": summary["required_counts"],
@@ -1349,6 +1347,9 @@ def record_spec_results(
             meta["ignored_submitted_overall"] = str(submitted_overall)[:32]
         if chain_context:
             meta["chain"] = chain_context
+        if overall_comment is None:
+            comment_run = previous_run or db_test_runs.latest_spec_run(doc_id)
+            overall_comment = test_spec_service.load_result_meta((comment_run or {}).get("result_meta")).get("overall_comment")
         if overall_comment and str(overall_comment).strip():
             # F81: the AI's few lines over the whole run, shown under the scenario list.
             meta["overall_comment"] = str(overall_comment).strip()[:4000]
@@ -1928,6 +1929,13 @@ def scenario_report(ts_doc_id: Optional[str], rows: list[dict], run: Optional[di
     ``test_evidence`` tag.
     """
     from modules.flow_gate.services import test_remark_service
+    if ts_doc_id:
+        from modules.flow_gate.services.test_card_changes import current_rows
+        current_doc = db_docs.get_by_id(ts_doc_id)
+        latest = db_test_runs.latest_spec_run(ts_doc_id)
+        if current_doc and latest:
+            run = latest
+            rows = current_rows(current_doc, latest, db_test_runs.list_cases(latest["run_id"]))
 
     try:
         remarks = test_remark_service.counts_by_case(ts_doc_id) if ts_doc_id else {}
@@ -3137,7 +3145,7 @@ def assemble_tsr(
     today, so callers all pass the "ko" default — the parameter exists so the report body
     is localizable once one does, and so it can be unit-tested directly.
     """
-    if run.get("tsr_doc_id"):
+    if run.get("tsr_doc_id") and run.get("contract_version") != test_spec_service.CONTRACT_SPEC:
         return str(run["tsr_doc_id"])
 
     if not doc.get("group_id") or not doc.get("project_id"):
@@ -3272,6 +3280,9 @@ def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None
     the run's result record (finalize_spec_results) still decides the overall verdict --
     and the report the run opened is rewritten with it unless it is no longer this run's.
     """
+    if any(item.get("status") == "FAIL" for item in items):
+        from modules.flow_gate.services.test_card_changes import reopen
+        reopen(doc)
     stored = {test_spec_service.case_id_key(row["case_no"]): row
               for row in db_test_runs.list_cases(run_id) if (row.get("kind") or "case") == "case"}
     for item in items:
@@ -3294,7 +3305,7 @@ def record_execution_progress(doc: dict, run_id: str, items: list[dict]) -> None
         if latest is None or latest.get("run_id") != run_id:
             return
         tsr = db_docs.get_by_id(tsr_doc_id)
-        if tsr is None or tsr.get("doc_review_status") == "approved":
+        if tsr is None:
             return
         ts_doc = db_docs.get_by_id(doc["doc_id"]) or doc
         _write_tsr(ts_doc, run=run, kind="pending", state="running",
@@ -3324,7 +3335,7 @@ def _settle_execution_tsr(doc: dict, run: dict) -> None:
         if latest is None or latest.get("run_id") != run.get("run_id"):
             return
         tsr = db_docs.get_by_id(tsr_doc_id)
-        if tsr is None or tsr.get("doc_review_status") == "approved":
+        if tsr is None:
             return
         refused = meta.get("prepare_refused") or {}
         if refused:

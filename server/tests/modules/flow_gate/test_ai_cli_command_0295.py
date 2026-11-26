@@ -16,6 +16,7 @@ The copilot fixture below is a trimmed capture of a real
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -139,6 +140,67 @@ class TestRecoverCliLastMessage:
     def test_codex_missing_file_does_not_fall_back_to_the_json_stream(self):
         # The stream is machine output; reporting it as the answer is what the review fixed.
         assert self._recover("codex", '{"type":"turn.completed"}')["last_message"] is None
+
+
+class TestGeminiCli:
+    command = (
+        "agy --output-format stream-json --dangerously-skip-permissions "
+        "--model gemini-3.8-flash-medium --print-timeout 30m"
+    )
+
+    def test_normalizes_stream_flags_and_encodes_one_prompt(self):
+        from modules.flow_gate.services.ai_invoke import provider_cli
+
+        normalized = ai_settings_service.normalize_cli_command("gemini", self.command)
+        assert normalized == self.command + " --input-format stream-json"
+        assert ai_settings_service.normalize_cli_command("gemini", normalized) == normalized
+        prompt = "한국어\n\"quoted\" 🐱"
+        stdin = provider_cli._cli_stdin("gemini", prompt)
+        assert stdin.count("\n") == 1 and stdin.endswith("\n")
+        assert json.loads(stdin) == {"event": "user", "message": {"content": prompt}}
+
+    @pytest.mark.parametrize("shell_kind", ["posix_sh", "windows_cmd", "remote_agent"])
+    def test_model_and_permission_skip(self, shell_kind):
+        from flowgate.ai_roles import model_evidence
+
+        provider = {"kind": "gemini", "exec_type": "cli", "cli_command": self.command}
+        requested = model_evidence.requested(provider, shell_kind=shell_kind)
+        assert requested["value"] == "gemini-3.8-flash-medium"
+        assert model_evidence.capability(provider, requested) == "cli_request_only"
+        assert ai_settings_service.has_permission_skip("gemini", self.command)
+        safe = ai_settings_service.set_permission_skip("gemini", self.command, False)
+        assert not ai_settings_service.has_permission_skip("gemini", safe)
+        opted_in = ai_settings_service.set_permission_skip("gemini", safe, True)
+        assert ai_settings_service.has_permission_skip("gemini", opted_in)
+
+    def test_last_result_response_is_shared_by_local_and_remote(self):
+        from modules.flow_gate.services.ai_invoke import provider_cli, provider_remote
+
+        stream = "\n".join([
+            '{"event":"init","init":{}}',
+            '{"event":"result","result":{"status":"SUCCESS","response":"earlier"}}',
+            '{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"partial"}}',
+            '{"event":"result","result":{"status":"SUCCESS","response":"final answer"}}',
+            'non-JSON diagnostic',
+        ])
+        local, remote = {}, {}
+        provider_cli._recover_cli_last_message(local, "gemini", stream, Path("__missing__"))
+        provider_remote._recover_last_message(remote, "gemini", stream)
+        assert local == remote == {"last_message": "final answer", "last_message_received": True}
+        assert provider_cli._agy_exit(stream, "", 0) == (0, "")
+
+    @pytest.mark.parametrize(("terminal", "detail"), [
+        ('{"event":"result","result":{"status":"ERROR","error":"invalid model"}}', "invalid model"),
+        ('{"event":"result","result":{"status":"INTERRUPTED"}}', "agy result status: INTERRUPTED"),
+        ("", "agy stream ended without a valid result"),
+    ])
+    def test_failure_and_missing_result_are_not_an_answer(self, terminal, detail):
+        from modules.flow_gate.services.ai_invoke import provider_cli
+
+        stream = '{"event":"step_update","step_update":{"text_delta":"partial"}}\n' + terminal
+        assert provider_cli._cli_last_message("gemini", stream, Path("__missing__")) is None
+        assert provider_cli._agy_exit(stream, "stderr", 0) == (1, "stderr\n" + detail)
+        assert provider_cli._agy_exit(stream, "", 3) == (3, detail)
 
 
 class TestSpawnedCommand:

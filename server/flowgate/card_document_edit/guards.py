@@ -64,5 +64,5 @@ def check_writable(flow_id, principal, operation):
 def check_editable(req, doc):
     if doc.get("status") in {"cancelled", "archived"}:
         raise not_editable(req, doc, "terminal_status", status=doc["status"])
-    if document_service.is_final_approved(doc):
+    if doc.get("type_code") not in {"TS", "TSR"} and document_service.is_final_approved(doc):
         raise not_editable(req, doc, "final_approved")

@@ -344,9 +344,11 @@ def execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]
         timeout_seconds = 0
     else:
         timeout_seconds = max(1, int(_absolute_remaining_sec(run)))
+    from .provider_cli import _cli_stdin
+
     try:
         svc.enqueue_remote_cli(
-            command_line=command, stdin_text=_sanitize_prompt(prompt, run),
+            command_line=command, stdin_text=_cli_stdin(kind, _sanitize_prompt(prompt, run)),
             cwd=workdir, timeout_seconds=timeout_seconds,
             job_id=job_id, attempt_id=attempt_id, target_agent_id=target,
             # The requester follows the connection's owner rule (§3-1); the project is the
@@ -582,6 +584,10 @@ def _settle(run, provider, kind, result, launched, role_invocations):
     err_text = result.get("stderr") or ""
     timed_out = status == "TIMED_OUT" or bool(run.get("timed_out"))
     exit_code = result.get("child_exit_code")
+    if kind == "gemini" and not timed_out and not cancelled and status != "CANCELLED":
+        from .provider_cli import _agy_exit
+
+        exit_code, err_text = _agy_exit(out_text, err_text, exit_code)
     run["stdout_tail"] = out_text[-OUTPUT_TAIL_BYTES:]
     run["stderr_tail"] = err_text[-OUTPUT_TAIL_BYTES:]
     run["exit_code"] = exit_code if not timed_out else None
