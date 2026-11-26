@@ -3,7 +3,8 @@
 // WorkPlanEditor's table, read only), the marks of a test verdict and execution mode (the v0.1
 // TestSpecPanel / TestReportPanel badges, as glyph + color with the word in the tooltip) and the Case rows
 // of a test report as its saved text says them.
-import type { TestSpecDocument, TestSpecEvidence, TestSpecRecordRow, TestSpecResultRow, WorkPlanDocument, WorkPlanQuantity } from '@/features/document'
+import type { TestScenarioRow, TestSpecDocument, TestSpecEvidence, TestSpecRecordRow, TestSpecResultRow, WorkPlanDocument, WorkPlanQuantity } from '@/features/document'
+import { testSpecCheckOf, testSpecResultOf } from '@/features/document'
 import { splitDocumentSource } from './documentWindowModel'
 import { PRODUCT_NAME } from '@shared/productName'
 
@@ -183,6 +184,23 @@ export function testGateMark(passed: boolean): TestMark {
 }
 
 /** A test view shows its own way only a specification (contract 2) TS or TSR; anything else is Markdown. */
+/**
+ * F81: the scenario list's rows of a TS / TSR answer. The server's `scenario_report` when the answer has it; an
+ * answer without it (an earlier server) is read from its cases and result rows, so the list is never text-built.
+ */
+export function testScenarioRows(doc: Pick<TestSpecDocument, 'view' | 'cases' | 'rows'>): TestScenarioRow[] {
+  if (doc.view.scenario) return [...doc.view.scenario.rows]
+  const results = new Map(doc.rows.map((row) => [row.caseId, row]))
+  const base = doc.cases.length ? doc.cases.map((item) => ({ caseId: item.caseId, title: item.title, mode: item.executionMode, check: item.check ?? null, checker: item.checker ?? null }))
+    : doc.rows.map((row) => ({ caseId: row.caseId, title: row.title, mode: row.executionMode, check: null, checker: null }))
+  return base.map((item) => {
+    const row = results.get(item.caseId)
+    return { caseId: item.caseId, title: item.title, ...testSpecCheckOf(item.check, item.checker, item.mode),
+      result: testSpecResultOf(row?.status), resultBy: null, resultAt: null, skipReason: null, openRemarks: 0, resolvedRemarks: 0,
+      evidence: { input: 0, log: 0, output: 0, total: 0 } }
+  })
+}
+
 export function testDocumentStructured(doc: Pick<TestSpecDocument, 'view'> | null): boolean {
   return doc !== null && doc.view.contractVersion === 2 && (doc.view.kind === 'TS' || doc.view.kind === 'TSR')
 }

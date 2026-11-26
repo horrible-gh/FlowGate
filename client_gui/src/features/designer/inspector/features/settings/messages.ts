@@ -15,6 +15,7 @@ export default {
       approved: '검수 소진 후 승인',
     },
     "result_check": "결과 확인",
+    "test_zone": {"case_write": "케이스 작성", "test_run": "테스트 실행", "work_ai": "작업 AI"},
     "result_cause": {"label": "원인 판정", "ai": "AI 판단 후 확정", "human": "사람만"},
     "follow_scope": {"label": "후속 전달", "summary": "결함 요약", "full": "요약 + 로그 · 증거"},
     instruction: {
@@ -141,6 +142,7 @@ export default {
       approved: 'Approved after reviews ran out',
     },
     "result_check": "Result confirmation",
+    "test_zone": {"case_write": "Case writing", "test_run": "Test run", "work_ai": "Work AI"},
     "result_cause": {"label": "Cause decision", "ai": "Confirm AI judgment", "human": "Human only"},
     "follow_scope": {"label": "Follow-up", "summary": "Defect summary", "full": "Summary + logs · evidence"},
     instruction: {
@@ -261,6 +263,7 @@ export default {
       approved: '検収回数消化後に承認',
     },
     "result_check": "結果確認",
+    "test_zone": {"case_write": "ケース作成", "test_run": "テスト実行", "work_ai": "作業AI"},
     "result_cause": {"label": "原因判定", "ai": "AI 判断を確認", "human": "人のみ"},
     "follow_scope": {"label": "後続への引継ぎ", "summary": "不具合概要", "full": "概要 + ログ・証拠"},
     instruction: {

@@ -82,7 +82,11 @@ class AgentRule:
                 raise
         else:
             if doc["type_code"] == "TS":
-                reject(inbox._spec_ts_submission_failure(text))
+                from modules.flow_gate.services import test_spec_service
+                errors = test_spec_service.parse_spec(text)["errors"]
+                # Editing may delete the last case. Approval and execution still reject no_cases.
+                if any(e["code"] != "no_cases" for e in errors):
+                    reject(inbox._spec_ts_submission_failure(text))
             # Duplicate and scope checks retain their defensive best-effort lookup contract.
             fingerprints, twin, scope = {}, None, None
             try:

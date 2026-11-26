@@ -152,6 +152,11 @@ def test_spec_validation_reports_each_boundary(mutation, code):
     assert code in {err["code"] for err in parsed["errors"]}, parsed["errors"]
 
 
+def _saved(cases):
+    """What a save stores (F81): the cases written in the new words and read back."""
+    return spec.parse_spec(spec.render_spec_document(cases, title="t"))["cases"]
+
+
 def test_structured_editor_payload_round_trips_through_the_canonical_markdown():
     parsed = spec.parse_spec(SPEC)
     body = spec.render_spec_body(parsed["cases"], title="권한 시험사양", intro="범위: 문서 수정 권한.")
@@ -162,12 +167,85 @@ def test_structured_editor_payload_round_trips_through_the_canonical_markdown():
     assert doc.startswith("---\nproject: flowgate\ntest_contract_version: 2\n---\n")
     assert doc.endswith(body)
     again = spec.parse_spec(doc)
-    assert again["errors"] == [] and again["cases"] == parsed["cases"]
+    assert again["errors"] == []
+    # F81: an earlier case is read as it was written, and saved in the new words -- content
+    # (its requirement and precondition as one), check and checker -- with nothing else lost.
+    assert "- execution_mode:" not in doc and "- requirement:" not in doc and "- precondition:" not in doc
+    for before, after in zip(parsed["cases"], again["cases"], strict=True):
+        assert (before["requirement"] or before["precondition"]) and (after["requirement"], after["precondition"]) == ("", "")
+        assert after["content"] == before["content"] == "\n".join(
+            part for part in (before["requirement"], before["precondition"]) if part)
+        for key in ("case_id", "title", "check", "checker", "execution_mode", "required", "category",
+                    "input", "procedure", "expected", "check_points", "run_command"):
+            assert after[key] == before[key], key
+    assert [(c["check"], c["checker"]) for c in again["cases"]] == [
+        ("code", None), ("manual", "human"), ("manual", "external")]
+    # saving what was saved changes nothing.
+    assert _saved(again["cases"]) == again["cases"]
     assert spec.spec_intro(doc) == "범위: 문서 수정 권한."
     cases, errors = spec.validate_cases_payload([{**parsed["cases"][0], "case_id": "tc-9"}])
     assert errors == [] and cases[0]["case_id"] == "TC-9"
     _cases, errors = spec.validate_cases_payload([{"case_id": "TC-1", "title": "x"}])
-    assert {e["field"] for e in errors} >= {"category", "requirement", "procedure", "expected"}
+    assert {e["field"] for e in errors} == {"procedure", "expected", "check"}
+
+
+def test_f81_case_shape_checks_results_remarks_and_evidence_tags():
+    # a case written in the new words: content / check / checker, no earlier field needed.
+    cases, errors = spec.validate_cases_payload([
+        {"case_id": "TC-1", "title": "코드", "content": "무엇을\n어떤 상태에서", "procedure": "1. 실행",
+         "expected": "exit 0", "check": "code", "run_command": "npm test"},
+        {"case_id": "TC-2", "title": "수동", "procedure": "화면 확인", "expected": "보임",
+         "check": "manual", "run_command": "left over"},
+    ])
+    assert errors == []
+    assert [(c["check"], c["checker"], c["execution_mode"], c["required"]) for c in cases] == [
+        ("code", None, "automated", True), ("manual", None, "ai", True)]
+    assert cases[0]["content"] == "무엇을\n어떤 상태에서" and cases[1]["run_command"] == ""
+    _cases, errors = spec.validate_cases_payload([
+        {"case_id": "TC-1", "title": "x", "procedure": "p", "expected": "e", "check": "robot"},
+        {"case_id": "TC-2", "title": "x", "procedure": "p", "expected": "e", "check": "manual", "checker": "cat"}])
+    assert [e["code"] for e in errors] == ["invalid_check", "invalid_checker"]
+    # earlier words map onto the two checks; blocked reads as skip.
+    assert [spec.check_of_mode(mode) for mode in spec.EXECUTION_MODES] == [
+        ("code", None), ("manual", "ai"), ("manual", "human"), ("manual", "external")]
+    assert [spec.case_result_of(status) for status in spec.STATUSES] == ["pass", "fail", "skip", "not_run"]
+    # the case window's result: the new words, who recorded it, and a skip's reason.
+    rows = spec.normalize_results(
+        [{"case_id": "TC-1", "result": "pass"}, {"case_id": "TC-2", "result": "skip", "skip_reason": "장비 없음"},
+         {"case_id": "TC-3", "status": "BLOCKED"}],
+        submitted_by="kim", now="t", actor_kind="human")
+    assert [(r["status"], r["skip_reason"], r["result_by"]) for r in rows] == [
+        ("PASS", "", {"kind": "human", "name": "kim"}), ("BLOCKED", "장비 없음", {"kind": "human", "name": "kim"}),
+        ("BLOCKED", "", {"kind": "human", "name": "kim"})]
+    with pytest.raises(spec.SpecResultError) as exc:
+        spec.normalize_results([{"case_id": "TC-1", "result": "skip"}, {"case_id": "TC-2", "result": "green"}],
+                               submitted_by="u", now="t")
+    assert {e["code"] for e in exc.value.errors} == {"skip_reason_required", "invalid_status"}
+    mapped = spec.map_results(cases, rows)["cases"]
+    assert [(m["check"], m["skip_reason"], (m["result_by"] or {}).get("kind")) for m in mapped] == [
+        ("code", "", "human"), ("manual", "장비 없음", "human")]
+    assert spec.case_result_counts(mapped) == {"total": 2, "not_run": 0, "pass": 1, "fail": 0, "skip": 1}
+    stored = spec.stored_case_to_row({"case_no": "TC-9", "case_status": "BLOCKED",
+                                      "case_meta": '{"execution_mode": "external", "requirement": "R", "precondition": "P"}'})
+    assert (stored["result"], stored["check"], stored["checker"], stored["content"]) == ("skip", "manual", "external", "R\nP")
+    # remarks and evidence tags: the shapes the other F81 work builds on.
+    remark = spec.normalize_remark({"text": " 기대 결과가 모호함 ", "phase": "test_run"}, author_kind="human", author_name="kim")
+    assert remark == {"text": "기대 결과가 모호함", "phase": "test_run", "author_kind": "human", "author_name": "kim"}
+    assert spec.normalize_remark({"text": "x"}, author_kind="ai", author_name="reviewer")["phase"] == "case_write"
+    for bad in ({"text": ""}, {"text": "x", "phase": "later"}):
+        with pytest.raises(spec.SpecResultError):
+            spec.normalize_remark(bad, author_kind="human", author_name="kim")
+    assert spec.normalize_remark_state("Resolved") == "resolved" and spec.normalize_remark_reply("a\nb") == "a b"
+    shaped = spec.shape_remark({"remark_id": "tcr_1", "case_id": "TC-001", "body": "x", "phase": "case_write",
+                                "state": "open", "author_kind": "ai", "author_name": "reviewer"})
+    assert shaped["author"] == {"kind": "ai", "name": "reviewer"} and shaped["ai_reply"] is None
+    assert spec.remark_counts([shaped, {**shaped, "case_id": "tc-1", "state": "resolved"}]) == {"TC-1": {"open": 1, "resolved": 1}}
+    assert spec.normalize_evidence_tag({"case_id": "tc-1", "kind": "LOG", "attempt": 2}) == {"case_id": "TC-1", "kind": "log", "attempt": 2}
+    with pytest.raises(spec.SpecResultError):
+        spec.normalize_evidence_tag({"case_id": "TC-1", "kind": "video"})
+    tags = [{"case_id": "TC-1", "kind": "output", "attempt": 1}, {"case_id": "TC-1", "kind": "output", "attempt": 2},
+            {"case_id": "TC-1", "kind": "log", "attempt": 2}]
+    assert spec.evidence_counts(tags) == {"TC-1": {"input": 0, "log": 1, "output": 1, "total": 2}}
 
 
 # ── 2. Result model: payload, JUnit XML, mapping, overall ───────────────────────
@@ -1089,7 +1167,7 @@ def test_structured_editor_route_saves_through_the_content_path(env, monkeypatch
     documents_router.save_test_spec(TS_ID, body, current_user={"user_id": "usr_admin"})
     assert saved["doc_id"] == TS_ID
     assert saved["content"].startswith("---\nproject: flowgate\ntype: TS\ntest_contract_version: 2\n---\n")
-    assert spec.parse_spec(saved["content"])["cases"] == cases
+    assert spec.parse_spec(saved["content"])["cases"] == _saved(cases)
 
     bad = documents_router.TestSpecSaveBody(cases=[{**cases[0], "category": "happy"}], title="t")
     with pytest.raises(HTTPException) as exc:
@@ -1950,7 +2028,7 @@ def test_structured_editor_preserves_trailing_sections(env, monkeypatch, source_
     assert saved["content"].rstrip().endswith(latest_suffix)
     assert spec.spec_intro(saved["content"]) == "Original intro."
     assert "custom: kept" in saved["content"] and "# Original" in saved["content"]
-    assert spec.parse_spec(saved["content"])["cases"] == cases[:2]
+    assert spec.parse_spec(saved["content"])["cases"] == _saved(cases[:2])
     assert spec.parse_spec(saved["content"])["errors"] == []
     before = dict(saved)
     with pytest.raises(HTTPException) as exc:

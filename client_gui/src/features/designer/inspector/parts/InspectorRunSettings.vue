@@ -11,7 +11,7 @@
        flowgate.v02.0072 T#3 — `labels`: the caller may name an item its own way (the WP card's 작업 AI); the layout,
        the controls and the fold stay the same. -->
   <InspectorBlock
-    :title="t(k(layout === 'scenario' ? 'scenario_title' : 'title'))"
+    :title="title ?? t(k(layout === 'scenario' ? 'scenario_title' : 'title'))"
     :locked="locked"
     class="inspector-run-settings"
     data-test="inspector-run-settings"
@@ -100,11 +100,13 @@ const props = withDefaults(
     locked?: boolean
     advancedOpen?: boolean
     layout?: 'run' | 'scenario'
+    /** The block's own title (F81: a test card's zone — case writing / test run); absent = the layout's. */
+    title?: string
     /** Item names given by the caller instead of the common ones (absent = the common name). */
     labels?: Partial<Readonly<Record<InspectorRunSettingsField, string>>>
     hideMissing?: boolean
   }>(),
-  { locked: false, advancedOpen: false, layout: 'run', labels: () => ({}), hideMissing: false },
+  { locked: false, advancedOpen: false, layout: 'run', title: undefined, labels: () => ({}), hideMissing: false },
 )
 
 const emit = defineEmits<{ 'update:field': [field: InspectorRunSettingsField, value: string]; 'update:advancedOpen': [open: boolean] }>()

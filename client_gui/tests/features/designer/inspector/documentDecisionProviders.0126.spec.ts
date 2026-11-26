@@ -102,7 +102,7 @@ describe('0126 each provider forwards the selected card to the real decision row
   })
 })
 
-it('TestSpecTab renders decisions only on instruction/report and preserves edit, run, cancel, history and scenario actions', async () => {
+it('TestSpecTab (F81) shows ✓/✕ at the end of the scenario and report lines; the scenario line decides its TS in the instruction slot', async () => {
   const selected = target('TS', ['instruction', 'scenario', 'report'])
   const run = vi.fn(), cancel = vi.fn(), rewriteAll = vi.fn(), openWindow = vi.fn()
   const availability = ref({ cancel: { visible: false, enabled: true, reason: null } })
@@ -114,21 +114,21 @@ it('TestSpecTab renders decisions only on instruction/report and preserves edit,
     can: () => ({ enabled: true, reason: null }), openReason: () => null, openWindow, run, cancel, rewriteAll, reload: vi.fn(), reportRecentlyConfirmed: ref(false),
   }
   await open(TestSpecTab, selected)
-  const instruction = wrapper!.get('[data-slot="instruction"]'), scenario = wrapper!.get('[data-slot="scenario"]'), report = wrapper!.get('[data-slot="report"]')
+  // F81: two lines only (scenario, report); there is no instruction line and no brief button.
+  expect(wrapper!.find('[data-slot="instruction"]').exists()).toBe(false)
+  expect(wrapper!.find('[data-test="test-card-brief"]').exists()).toBe(false)
+  const scenario = wrapper!.get('[data-slot="scenario"]'), report = wrapper!.get('[data-slot="report"]')
   expect(wrapper!.findAll('[data-test="inspector-document-decision"]')).toHaveLength(2)
-  expect(scenario.find('[data-test="inspector-document-decision"]').exists()).toBe(false)
-  expect(instruction.get('[data-test="test-card-brief"]').text()).toBe('✎')
   expect(report.get('[data-test="test-spec-run"]').text()).toBe('▶')
   expect(report.get('[data-test="test-card-run-history"]').text()).toBe('↺')
   expect(scenario.find('[data-test="test-card-review-history"]').exists()).toBe(true)
   expect(scenario.find('[data-test="test-card-scenario-open"]').exists()).toBe(true)
-  await instruction.get('[data-test="test-card-brief"]').trigger('click')
-  expect(openWindow).toHaveBeenCalledWith('brief')
   await scenario.get('[data-test="test-card-scenario-ai"]').trigger('click')
   expect(rewriteAll).toHaveBeenCalledTimes(1)
   await report.get('[data-test="test-spec-run"]').trigger('click')
   expect(run).toHaveBeenCalledTimes(1)
-  for (const [slot, row] of [['instruction', instruction], ['report', report]] as const) {
+  // The scenario line's ✓ goes to the server's instruction slot (the TS), the report line's to the report slot.
+  for (const [slot, row] of [['instruction', scenario], ['report', report]] as const) {
     const b = row.get('[data-test="inspector-document-decision"]')
     expect(b.attributes('disabled')).toBeUndefined()
     expect(b.attributes('title')).toBe(b.attributes('aria-label'))
@@ -143,5 +143,5 @@ it('TestSpecTab renders decisions only on instruction/report and preserves edit,
   await report.get('[data-test="test-spec-cancel"]').trigger('click')
   expect(cancel).toHaveBeenCalledTimes(1)
   expect(report.find('[data-test="test-card-run-history"]').exists()).toBe(true)
-  expect(scenario.find('[data-test="inspector-document-decision"]').exists()).toBe(false)
+  expect(scenario.find('[data-test="inspector-document-decision"]').exists()).toBe(true)
 })

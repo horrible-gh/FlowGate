@@ -20,17 +20,13 @@
       </span>
     </template>
     <div class="scenario" data-test="scenario-window">
-      <h3>{{ t(k('cases')) }} <small>{{ t(k('count'), { n: card.cases.value.length }) }}<template v-if="summary"> · {{ summary }}</template></small></h3>
+      <h3>{{ t(k('cases')) }}</h3>
       <template v-if="card.formatErrors.value.length"><p class="errors">{{ t(k('errors'), { n: card.formatErrors.value.length }) }}</p><ul class="errors" data-test="scenario-errors"><li v-for="(error, i) in card.formatErrors.value" :key="i">{{ error.caseId }} · {{ error.field }} · {{ error.message }}</li></ul></template>
       <InspectorPaneState v-if="card.test.status.value === 'error'" state="error" retryable @retry="card.reload()" />
-      <div class="table-scroll"><table><thead><tr><th v-for="col in columns" :key="col">{{ t(k(col)) }}</th></tr></thead>
-        <tbody v-if="card.writing.value"><tr v-for="i in Math.max(3, card.cases.value.length)" :key="i" class="placeholder" data-test="scenario-writing"><td colspan="7">{{ t(k('writing')) }}</td></tr></tbody>
-        <tbody v-else><tr v-for="item in card.cases.value" :key="item.caseId" :data-case="item.caseId">
-          <td><TestMarkBadge v-if="resultMark(item.caseId)" :mark="resultMark(item.caseId)!" /></td><td class="case-id">{{ item.caseId }}</td><td>{{ item.title }}</td><td>{{ item.fields.requirement }}</td>
-          <td>{{ t(k(modeKey(item.executionMode))) }}<span v-if="item.executionMode === 'automated' && !['case_selectable', 'suite_only'].includes(card.view.value?.caseCapabilities[item.caseId] ?? '')" class="warning"> · {{ t(k('no_code')) }}</span></td>
-          <td :class="{ warning: !item.required }">{{ t(k(item.required ? 'stop' : 'ignore')) }}</td>
-          <td><IconButton :label="t(k('edit'), { id: item.caseId })" :title="t(k('edit'), { id: item.caseId })" variant="ghost" size="sm" data-test="scenario-edit" @click="card.openWindow('case', item.caseId)">✎</IconButton></td>
-        </tr></tbody></table></div>
+      <!-- F81: the list is case id · title · result · remarks (+ evidence count); the pass / fail tally is shown here only. -->
+      <p v-if="card.writing.value" class="placeholder" data-test="scenario-writing">{{ t(k('writing')) }}</p>
+      <TestScenarioList v-else :rows="card.scenarioRows.value" :pending-case-ids="pending" interactive
+        @open="card.openWindow('case', $event)" @remarks="card.openWindow('remark', $event)" />
       <section v-if="raw.open" class="raw" data-test="scenario-raw-overlay">
         <h3>{{ t(k('raw_title')) }}</h3>
         <ul v-if="card.formatErrors.value.length" class="errors" data-test="raw-errors"><li v-for="(error, i) in card.formatErrors.value" :key="i">{{ error.caseId }} · {{ error.field }} · {{ error.message }}</li></ul>
@@ -53,10 +49,9 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Dropdown from '@/components/ui/Dropdown.vue'
-import IconButton from '@/components/ui/IconButton.vue'
 import Textarea from '@/components/ui/Textarea.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
-import { TestMarkBadge, testVerdictMark, TEST_PENDING_MARK, documentHistoryVerdictKey, documentHistoryWhen } from '@/features/documentWindow'
+import { TestScenarioList, documentHistoryVerdictKey, documentHistoryWhen } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorAiButton from '../../../parts/InspectorAiButton.vue'
@@ -72,30 +67,16 @@ const { card, shell, state, close, geometry, current } = useScenarioWindow(() =>
 const reading = ref(false), readError = ref(''), rawConflict = ref(false)
 const toasts = ref<ToastHostItem[]>([])
 const raw = computed(() => sessionDraft<RawDraft>(card.value!.drafts, 't2:raw', () => ({ docId: '', baseline: '', text: '', loaded: false, open: false, tsBase: null, latest: null, latestBase: null })))
-const columns = ['result', 'id', 'case_title', 'requirement', 'mode', 'required', 'edit_column']
 const reviewCount = computed(() => (card.value?.reviewHistory.data.value?.reviews.length ?? 0) + (card.value?.reviewHistory.data.value?.rejections.length ?? 0))
-const summary = computed(() => {
-  const cases = card.value?.cases.value ?? []
-  const counts = { human: cases.filter(c => c.executionMode === 'manual').length,
-    ai: cases.filter(c => c.executionMode === 'ai').length,
-    ignore: cases.filter(c => !c.required).length,
-    noCode: cases.filter(c => c.executionMode === 'automated' && !['case_selectable', 'suite_only'].includes(card.value?.view.value?.caseCapabilities[c.caseId] ?? '')).length }
-  return Object.entries(counts).filter(([, n]) => n > 0).map(([key, n]) => t(k(`summary_${key}`), { n })).join(' · ')
+/** Code cases the live run is running now: shown as running, not as their previous result. */
+const pending = computed(() => {
+  const c = card.value
+  if (!c || !c.test.runState.value.active) return []
+  return c.cases.value.filter(item => item.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(c.view.value?.caseCapabilities[item.caseId] ?? '')
+    && (c.presentation.value.runScope === 'all' || c.presentation.value.retryCaseId === item.caseId)).map(item => item.caseId)
 })
-const modeKey = (mode: string | null) => mode === 'automated' ? 'code' : mode === 'ai' ? 'ai' : mode === 'manual' ? 'human' : 'external'
 const reason = (op: TestCardCommand) => { const key = card.value?.can(op).reason; return key ? t(`gui.inspector.testSpec.${key}`) : '' }
 const refusalText = computed(() => { const r = card.value?.refusal.value; return r ? [t(`gui.inspector.testSpec.${r.key}`), r.message].filter(Boolean).join(' · ') : '' })
-function resultMark(id: string) {
-  const c = card.value
-  if (!c) return null
-  const item = c.cases.value.find(item => item.caseId === id)
-  const runnable = item?.executionMode === 'automated' && ['case_selectable', 'suite_only'].includes(c.view.value?.caseCapabilities[id] ?? '')
-  if (c.test.runState.value.active && runnable && (c.presentation.value.runScope === 'all' || c.presentation.value.retryCaseId === id)) return TEST_PENDING_MARK
-  // Do not disguise a failed read or an obsolete result as a fresh NOT_RUN.
-  if (c.test.status.value !== 'ready' || !['none', 'done', 'unchecked'].includes(c.presentation.value.resultState.key)) return null
-  const status = c.rows.value.find(r => r.caseId === id)?.status
-  return testVerdictMark(status ?? 'NOT_RUN')
-}
 async function rewrite() {
   if (!current() || !card.value?.can('rewriteAll').enabled) return
   await card.value.rewriteAll()

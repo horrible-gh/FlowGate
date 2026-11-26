@@ -34,7 +34,7 @@
 // AI run owns the group. `/test-document` refuses with a FastAPI `detail` (404, 403).
 import { documentErrorOf } from '../documentError'
 import { normalizeApiInput, normalizeApiError } from '@shared/apiErrors'
-import { getRequest, postRequest } from '@shared/api'
+import { getRequest, patchRequest, postRequest, postFormRequest, downloadBlobRequest, deleteRequest } from '@shared/api'
 
 const API = '/api/v1'
 
@@ -54,13 +54,71 @@ export interface TestSpecCounts {
   readonly notRun: number
 }
 
+/** How a case is checked (F81): the server runs its command, or someone checks it by hand. */
+export type TestCaseCheck = 'code' | 'manual'
+/** Who checks a manual case. */
+export type TestCaseChecker = 'ai' | 'human' | 'external'
+/** A case's result as the screens word it; the stored `BLOCKED` reads as `skip`. */
+export type TestCaseResult = 'not_run' | 'pass' | 'fail' | 'skip'
+export const testSpecCaseResults: readonly TestCaseResult[] = ['not_run', 'pass', 'fail', 'skip']
+/** Who recorded a result. */
+export interface TestCaseResultBy { readonly kind: 'ai' | 'human'; readonly name: string }
+/** Evidence files of a case's latest attempt, by kind (the `test_evidence` tag of a flow attachment). */
+export interface TestCaseEvidenceCounts { readonly input: number; readonly log: number; readonly output: number; readonly total: number }
+export type TestEvidenceKind = 'input' | 'log' | 'output'
+/** The tag a flow attachment carries as a case's evidence. */
+export interface TestEvidenceTag { readonly case_id: string; readonly kind: TestEvidenceKind; readonly attempt: number }
+
+/** One line of the scenario list: a case with its recorded result (server `scenario_report.cases`). */
+export interface TestScenarioRow {
+  readonly caseId: string
+  readonly title: string | null
+  readonly check: TestCaseCheck | null
+  readonly checker: TestCaseChecker | null
+  readonly result: TestCaseResult
+  readonly resultBy: TestCaseResultBy | null
+  readonly resultAt: string | null
+  readonly skipReason: string | null
+  readonly openRemarks: number
+  readonly resolvedRemarks: number
+  readonly evidence: TestCaseEvidenceCounts
+}
+export interface TestScenarioCounts { readonly total: number; readonly pass: number; readonly fail: number; readonly skip: number; readonly notRun: number }
+/** The report: the recorded results tallied and the AI's few lines. Never read from the report's text. */
+export interface TestScenarioReport {
+  readonly runId: string | null
+  readonly counts: TestScenarioCounts
+  readonly overallComment: string | null
+  readonly rows: readonly TestScenarioRow[]
+}
+
+const CHECK_BY_MODE: Readonly<Record<string, readonly [TestCaseCheck, TestCaseChecker | null]>> = {
+  automated: ['code', null], ai: ['manual', 'ai'], manual: ['manual', 'human'], external: ['manual', 'external'],
+}
+/** `check` / `checker` of a case in either wording: the F81 fields first, else the earlier execution mode. */
+export function testSpecCheckOf(check: unknown, checker: unknown, mode: unknown): { check: TestCaseCheck | null; checker: TestCaseChecker | null } {
+  const who = checker === 'ai' || checker === 'human' || checker === 'external' ? checker : null
+  if (check === 'code') return { check, checker: null }
+  if (check === 'manual') return { check, checker: who }
+  const [derived, derivedWho] = CHECK_BY_MODE[typeof mode === 'string' ? mode : ''] ?? [null, null]
+  return { check: derived, checker: derived === 'manual' ? who ?? derivedWho : null }
+}
+/** The result word of a stored verdict (`PASS` | `FAIL` | `BLOCKED` | `NOT_RUN`) or of a result word itself. */
+export function testSpecResultOf(value: unknown): TestCaseResult {
+  const word = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  return word === 'PASS' ? 'pass' : word === 'FAIL' ? 'fail' : word === 'BLOCKED' || word === 'SKIP' ? 'skip' : 'not_run'
+}
+
 /** One Case of a specification TS (the parts the section reads). */
 export interface TestSpecCase {
   readonly caseId: string
   readonly title: string | null
-  /** `automated` | `manual` | `external` (open set). */
+  /** `automated` | `ai` | `manual` | `external` (open set). What the runner reads; the screens read `check`. */
   readonly executionMode: string | null
   readonly required: boolean
+  /** F81: `code` | `manual`, read from the earlier execution mode when the case has none. */
+  readonly check?: TestCaseCheck | null
+  readonly checker?: TestCaseChecker | null
 }
 
 /** A run / result record (`shape_run`). */
@@ -132,6 +190,39 @@ export interface TestSpecView {
   readonly progress: { readonly automatedTotal: number; readonly automatedCompleted: number } | null
   /** TSR only: the test gate. */
   readonly gate: { readonly applies: boolean; readonly passed: boolean; readonly overall: string | null } | null
+  /** F81: the scenario list with its recorded results and the AI's comment (null on an answer without it). */
+  readonly scenario?: TestScenarioReport | null
+}
+
+const amount = (value: unknown): number => whole(value) ?? 0
+function toTestSpecScenarioRow(raw: unknown): TestScenarioRow | null {
+  const row = record(raw)
+  const caseId = text(row.case_id)
+  if (caseId === null) return null
+  const by = record(row.result_by)
+  const byKind = by.kind === 'ai' ? 'ai' : by.kind === 'human' ? 'human' : null
+  const evidence = record(row.evidence)
+  const { check, checker } = testSpecCheckOf(row.check, row.checker, null)
+  return {
+    caseId, title: text(row.title), check, checker,
+    result: testSpecResultOf(row.result),
+    resultBy: byKind ? { kind: byKind, name: text(by.name) ?? '' } : null,
+    resultAt: text(row.result_at), skipReason: text(row.skip_reason),
+    openRemarks: amount(row.open_remarks), resolvedRemarks: amount(row.resolved_remarks),
+    evidence: { input: amount(evidence.input), log: amount(evidence.log), output: amount(evidence.output), total: amount(evidence.total) },
+  }
+}
+/** Server `scenario_report` -> TestScenarioReport; null when the answer carries none. */
+export function toTestSpecScenario(raw: unknown): TestScenarioReport | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const data = record(raw), counts = record(data.counts)
+  const rows = list(data.cases).flatMap((item) => toTestSpecScenarioRow(item) ?? [])
+  return {
+    runId: text(data.run_id),
+    counts: { total: whole(counts.total) ?? rows.length, pass: amount(counts.pass), fail: amount(counts.fail), skip: amount(counts.skip), notRun: amount(counts.not_run) },
+    overallComment: typeof data.overall_comment === 'string' && data.overall_comment.trim() ? data.overall_comment : null,
+    rows,
+  }
 }
 
 function toTestSpecCounts(raw: unknown): TestSpecCounts | null {
@@ -171,7 +262,8 @@ function toTestSpecCase(raw: unknown): TestSpecCase | null {
   const row = record(raw)
   const caseId = text(row.case_id)
   if (caseId === null) return null
-  return { caseId, title: text(row.title), executionMode: text(row.execution_mode), required: row.required !== false }
+  return { caseId, title: text(row.title), executionMode: text(row.execution_mode), required: row.required !== false,
+    ...testSpecCheckOf(row.check, row.checker, row.execution_mode) }
 }
 
 /** The `/test-document` response -> TestSpecView. Throws when it carries no doc_id. */
@@ -224,6 +316,7 @@ export function toTestSpecView(raw: unknown): TestSpecView {
     gate: tsr && 'gate' in data && data.gate
       ? { applies: gate.applies === true, passed: gate.passed === true, overall: text(gate.overall) }
       : null,
+    scenario: toTestSpecScenario(data.scenario_report),
   }
 }
 
@@ -343,6 +436,8 @@ export function testSpecMutationErrorOf(error: unknown, rawSave = false) {
 
 /** The written fields of a Case (null when empty). */
 export interface TestSpecCaseFields {
+  /** F81: what is checked and in which state; an earlier case reads its requirement and precondition here. */
+  readonly content?: string | null
   readonly requirement: string | null
   readonly precondition: string | null
   readonly input: string | null
@@ -428,6 +523,7 @@ export function toTestSpecCaseDetail(raw: unknown): TestSpecCaseDetail | null {
     ...base,
     category: text(row.category),
     fields: {
+      content: written(row.content) ?? ([written(row.requirement), written(row.precondition)].filter(Boolean).join('\n') || null),
       requirement: written(row.requirement),
       precondition: written(row.precondition),
       input: written(row.input),
@@ -500,18 +596,23 @@ export interface TestSpecFormatError {
   readonly message: string | null
 }
 
-/** The existing structured editor contract. No client copy of trailing prose is sent. */
+/**
+ * The structured editor contract (F81 case shape). A case is saved with `content` / `check` / `checker`; the
+ * earlier `requirement` / `precondition` / `execution_mode` are read (into `content` / `check`) and not sent
+ * again. The fields below `checker` are not on the case window: they are sent back as stored so a save keeps them.
+ * No client copy of trailing prose is sent.
+ */
 export interface TestSpecCasePayload {
   readonly case_id: string
   readonly title: string
-  readonly category: string | null
-  readonly requirement: string | null
-  readonly execution_mode: string | null
-  readonly required: boolean
-  readonly precondition: string | null
-  readonly input: string | null
+  readonly content: string | null
   readonly procedure: string | null
   readonly expected: string | null
+  readonly check: TestCaseCheck | null
+  readonly checker: TestCaseChecker | null
+  readonly category: string | null
+  readonly required: boolean
+  readonly input: string | null
   readonly check_points: string | null
   readonly automation_ref: string | null
   /** Sent only when written, so a case without an execution command keeps its payload shape. */
@@ -521,10 +622,10 @@ export interface TestSpecCasePayload {
 }
 
 export function testSpecCasePayload(item: TestSpecCaseDetail): TestSpecCasePayload {
-  return { case_id: item.caseId, title: item.title ?? '', category: item.category,
-    requirement: item.fields.requirement, execution_mode: item.executionMode, required: item.required,
-    precondition: item.fields.precondition, input: item.fields.input, procedure: item.fields.procedure,
-    expected: item.fields.expected, check_points: item.fields.checkPoints,
+  const { check, checker } = testSpecCheckOf(item.check, item.checker, item.executionMode)
+  return { case_id: item.caseId, title: item.title ?? '', content: item.fields.content ?? null,
+    procedure: item.fields.procedure, expected: item.fields.expected, check, checker,
+    category: item.category, required: item.required, input: item.fields.input, check_points: item.fields.checkPoints,
     automation_ref: item.fields.automationRef ?? null, test_assets: item.fields.testAssets ?? null,
     ...(item.fields.runCommand ? { run_command: item.fields.runCommand } : {}),
     ...(item.fields.runCwd ? { run_cwd: item.fields.runCwd } : {}) }
@@ -540,9 +641,73 @@ export async function testSpecCaseRun(tsDocId: string, caseId: string): Promise<
 
 export interface TestSpecResultEntry {
   readonly case_id: string
-  readonly status: 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT_RUN'
+  /** The stored verdict; left out when `result` says it. */
+  readonly status?: 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT_RUN'
+  /** F81: the case window's result buttons. `skip` needs `skip_reason`. */
+  readonly result?: TestCaseResult
+  readonly skip_reason?: string
   readonly actual?: string
   readonly evidence?: readonly TestSpecEvidence[]
+}
+
+// F81 remarks: GET /documents/{ts}/test-spec/remarks · POST …/test-spec/cases/{case}/remarks ·
+// PATCH …/test-spec/remarks/{remark}. People and AIs write into the same per-case list.
+export type TestRemarkPhase = 'case_write' | 'test_run'
+export type TestRemarkState = 'open' | 'resolved'
+export interface TestRemark {
+  readonly remarkId: string
+  readonly caseId: string
+  readonly text: string
+  readonly phase: TestRemarkPhase
+  readonly state: TestRemarkState
+  readonly author: { readonly kind: 'ai' | 'human'; readonly name: string }
+  /** The AI's one-line answer, once it handled the remark. */
+  readonly aiReply: string | null
+  readonly createdAt: string | null
+  readonly resolvedAt: string | null
+  /** F81: who resolved it — a person's name when a person pressed ✓ 해결 (the server's `resolved_by`), else null. */
+  readonly resolvedBy: string | null
+}
+export interface TestRemarkList {
+  readonly docId: string
+  readonly remarks: readonly TestRemark[]
+}
+
+export function toTestSpecRemark(raw: unknown): TestRemark | null {
+  const row = record(raw), author = record(row.author)
+  const remarkId = text(row.remark_id), caseId = text(row.case_id)
+  if (remarkId === null || caseId === null) return null
+  return {
+    remarkId, caseId, text: typeof row.text === 'string' ? row.text : '',
+    phase: row.phase === 'test_run' ? 'test_run' : 'case_write',
+    state: row.state === 'resolved' ? 'resolved' : 'open',
+    author: { kind: author.kind === 'ai' ? 'ai' : 'human', name: text(author.name) ?? '' },
+    aiReply: written(row.ai_reply), createdAt: text(row.created_at), resolvedAt: text(row.resolved_at),
+    // `resolved_by` is a name, or an author-like object carrying one.
+    resolvedBy: written(row.resolved_by) ?? written(record(row.resolved_by).name),
+  }
+}
+/** The same case whatever the id's zero padding (`TC-1` = `TC-001`), as the server's case_id_key. */
+export function testSpecCaseKey(caseId: string): string {
+  const id = caseId.trim().toUpperCase().replace(/_/g, '-'), match = /^([A-Z][A-Z0-9]*)-0*(\d+)$/.exec(id)
+  return match ? `${match[1]}-${Number(match[2])}` : id
+}
+export function testSpecRemarkCounts(remarks: readonly TestRemark[], caseId: string): { open: number; resolved: number } {
+  const own = remarks.filter((remark) => testSpecCaseKey(remark.caseId) === testSpecCaseKey(caseId))
+  return { open: own.filter((remark) => remark.state === 'open').length, resolved: own.filter((remark) => remark.state === 'resolved').length }
+}
+export async function testSpecRemarksRead(tsDocId: string): Promise<TestRemarkList> {
+  const response = await getRequest<unknown>(`${API}/documents/${encodeURIComponent(tsDocId)}/test-spec/remarks`)
+  const data = record(response.data)
+  return { docId: text(data.doc_id) ?? tsDocId, remarks: list(data.remarks).flatMap((item) => toTestSpecRemark(item) ?? []) }
+}
+export async function testSpecRemarkAdd(tsDocId: string, caseId: string, body: { text: string; phase?: TestRemarkPhase }): Promise<TestRemark | null> {
+  const response = await postRequest<unknown>(`${API}/documents/${encodeURIComponent(tsDocId)}/test-spec/cases/${encodeURIComponent(caseId)}/remarks`, body)
+  return toTestSpecRemark(record(response.data).remark)
+}
+export async function testSpecRemarkUpdate(tsDocId: string, remarkId: string, body: { state: TestRemarkState }): Promise<TestRemark | null> {
+  const response = await patchRequest<unknown>(`${API}/documents/${encodeURIComponent(tsDocId)}/test-spec/remarks/${encodeURIComponent(remarkId)}`, body)
+  return toTestSpecRemark(record(response.data).remark)
 }
 
 /** A partial rejection is a refusal too; never show it as a successful result entry. */
@@ -551,4 +716,40 @@ export async function testSpecResultEnter(docId: string, result: TestSpecResultE
   if (list(record(response.data).refused_results).length) {
     throw { response: { status: 422, data: { error: 'invalid_spec', refused_results: record(response.data).refused_results } } }
   }
+}
+
+
+export interface TestSpecEvidenceFile {
+  key: string; filename: string; download_url: string; preview_url: string
+  test_evidence: { kind: 'input' | 'log' | 'output'; attempt: number }
+}
+export interface TestSpecEvidencePreview { kind: string; text?: string; src?: string; download?: boolean }
+export interface TestSpecEvidenceListing {
+  attachments: TestSpecEvidenceFile[]
+  cases: Record<string, { attempt: number; pass_reason: string | null }>
+}
+const evidenceBase = (tsId: string) => `${API}/documents/${encodeURIComponent(tsId)}/test-spec`
+export async function testSpecEvidenceList(tsId: string, caseId: string) {
+  return (await getRequest<TestSpecEvidenceListing>(`${evidenceBase(tsId)}/evidence?case_id=${encodeURIComponent(caseId)}`)).data
+}
+export async function testSpecEvidenceUpload(tsId: string, caseId: string, file: File, kind: string, attempt: number) {
+  const form = new FormData(); form.append('file', file); form.append('kind', kind); form.append('attempt', String(attempt))
+  return postFormRequest(`${evidenceBase(tsId)}/cases/${encodeURIComponent(caseId)}/evidence`, form)
+}
+export async function testSpecEvidencePreview(tsId: string, key: string) {
+  return (await getRequest<TestSpecEvidencePreview>(`${evidenceBase(tsId)}/evidence/${encodeURIComponent(key)}/preview`)).data
+}
+export async function testSpecEvidenceDownload(tsId: string, key: string) {
+  return (await downloadBlobRequest(`${evidenceBase(tsId)}/evidence/${encodeURIComponent(key)}/download`)).data
+}
+/**
+ * F81 case window v8: one evidence file removed. Evidence is a tagged Flow attachment (same key in both listings),
+ * so the existing Flow attachment delete removes it, guarded by the file's current sha256 as the Flow file list does.
+ */
+export async function testSpecEvidenceDelete(flowId: string, key: string) {
+  const base = `${API}/flows/${encodeURIComponent(flowId)}/attachments`
+  const rows = (await getRequest<{ attachments: { key: string; content_sha256: string }[] }>(base)).data.attachments
+  const row = rows.find(item => item.key === key)
+  if (!row) throw new Error('evidence_not_found')
+  return deleteRequest(`${base}/${encodeURIComponent(key)}?expected_sha256=${encodeURIComponent(row.content_sha256)}`)
 }
