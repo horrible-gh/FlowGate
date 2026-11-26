@@ -158,8 +158,12 @@ def t358_client(t358_db):
     def _mock_verify(request):
         return {"issued_to": "tester", "user_id": "tester"}
 
+    # The readable-project filter is covered by test_server_access_guard_v02test_0090.
     with patch("modules.flow_gate.api.v1.module_routes.get_store", return_value=store), \
-         patch("modules.flow_gate.api.v1.module_routes.verify_bearer", side_effect=_mock_verify):
+         patch("modules.flow_gate.api.v1.module_routes.verify_bearer", side_effect=_mock_verify), \
+         patch("modules.flow_gate.api.v1.module_routes.can_read_project", return_value=True), \
+         patch("modules.flow_gate.api.v1.module_routes.readable_project_clause",
+               side_effect=lambda auth, column: (f" AND {column} = ?", ["t358"])):
         client = TestClient(app)
         yield client
 

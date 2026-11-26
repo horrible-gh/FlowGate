@@ -46,13 +46,7 @@ from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 
-try:
-    from rbac.decorators import require_permission  # type: ignore[import]
-except ImportError:
-    def require_permission(perm: str):
-        def _decorator(func):
-            return func
-        return _decorator
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 

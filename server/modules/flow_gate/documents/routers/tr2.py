@@ -13,11 +13,7 @@ from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents import tr2_service as tr2
 from modules.flow_gate.documents.tr2_errors import TR2_ERRORS, error_payload
 
-try:
-    from rbac.decorators import require_permission
-except ImportError:
-    def require_permission(_permission):
-        return lambda function: function
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 log = logging.getLogger(__name__)

@@ -96,9 +96,16 @@ def list_projects_endpoint(
     """Project list with an explicit management scope.
 
     General consumers receive active projects by default. Archive/restore
-    management views pass status=all to render both states.
+    management views pass status=all to render both states. A system
+    administrator sees every project; anyone else only the projects they are a
+    member of (filtered in SQL).
     """
-    projects = projects_db.list_projects(is_active=_status_to_is_active(status))
+    from modules.flow_gate.rbac.access import visible_project_clause
+
+    projects = projects_db.list_projects(
+        is_active=_status_to_is_active(status),
+        visible_clause=visible_project_clause(user),
+    )
     _attach_project_modules(projects)
     return {"projects": projects}
 

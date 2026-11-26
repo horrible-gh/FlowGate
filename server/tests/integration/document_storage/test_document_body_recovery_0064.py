@@ -38,8 +38,11 @@ def recovery_routes(env, monkeypatch):
     app.include_router(console.router, prefix="/api/v1")
     app.include_router(token.router, prefix="/flowgate")
     app.add_exception_handler(MutationPolicyError, lambda _request, exc: mutation_error_response(exc))
-    app.dependency_overrides[console.get_current_user] = lambda: {"user_id": "u_kim"}
+    app.dependency_overrides[console.get_current_user] = lambda: {"user_id": "u_kim", "is_admin": True}
     monkeypatch.setattr(token, "verify_bearer", lambda request: {"_is_user_jwt": True})
+    # The faked bearer names no user, so the outbound read check is faked with it;
+    # the project read rule itself is covered by test_server_access_guard_v02test_0090.
+    monkeypatch.setattr(token, "can_read_project", lambda auth, project_id: True)
     refreshed = []
     monkeypatch.setattr(console, "_broadcast_document_refresh", lambda doc: refreshed.append(doc["doc_id"]))
     from flowgate.card_document_edit import contacts

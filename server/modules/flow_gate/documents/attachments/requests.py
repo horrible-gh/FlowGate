@@ -152,13 +152,12 @@ def _emit(row: Optional[dict]) -> None:
 
 
 def has_permission(user: Optional[dict], permission: str, project_id: Optional[str]) -> bool:
+    """The shared judgment on the stored project (membership first, then the permission)."""
     if not user:
         return False
-    try:
-        from modules.flow_gate.rbac.decorators import _has_permission
-    except Exception:
-        return bool(user.get("is_admin"))
-    return bool(_has_permission(user, permission, project_id))
+    from modules.flow_gate.rbac import access
+
+    return access.can(user, project_id, permission)
 
 
 def require_permission(user: Optional[dict], permission: str, project_id: Optional[str]) -> None:

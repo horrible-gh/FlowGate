@@ -39,7 +39,7 @@ from modules.flow_gate.db import documents as db_docs  # noqa: E402
 from modules.flow_gate.db import document_revisions as db_rev  # noqa: E402
 from modules.flow_gate.storage import paths as storage_paths  # noqa: E402
 
-_USER = {"user_id": "tester"}
+_USER = {"user_id": "tester", "is_admin": True}
 
 _DOC = {
     "doc_id": "testprj.default.0109.0001-R",

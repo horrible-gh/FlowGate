@@ -26,7 +26,11 @@ from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
-from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services.auth_outbound import (
+    can_read_project,
+    readable_project_clause,
+    verify_bearer,
+)
 from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["Modules"])
@@ -50,6 +54,21 @@ def _fail(status: int, message: str) -> JSONResponse:
         content={"ok": False, "http_status": status,
                  "error_message": message, "help_url": help_url()},
     )
+
+
+def _readable_clause(auth: dict, column: str) -> tuple[str, list]:
+    """``AND ...`` limited to the projects the caller may read.
+
+    The whole visibility rule (membership and permission) runs in SQL as a
+    condition on ``column``; no project row is loaded to be judged in Python.
+    """
+    return readable_project_clause(auth, column)
+
+
+def _doc_project(doc_id: str) -> Optional[str]:
+    """The stored project of a document (None when it does not exist)."""
+    row = db_docs.get_by_id(doc_id)
+    return (row or {}).get("project_id") or None
 
 
 def _group_code(group_id: str) -> str:
@@ -93,6 +112,9 @@ def list_modules(
 
     store = get_store()
 
+    if project_id and not can_read_project(auth, project_id):
+        return _fail(403, "You do not have permission to read this project")
+
     if project_id:
         count_sql = (
             "SELECT COUNT(*) as cnt FROM project_modules WHERE project_id = ?"
@@ -106,14 +128,15 @@ def list_modules(
         count_row = store._fetch_one(count_sql, [project_id])
         rows = store._fetch_all(data_sql, [project_id, limit, offset])
     else:
-        count_sql = "SELECT COUNT(*) as cnt FROM project_modules"
+        visible_sql, visible_params = _readable_clause(auth, "pm.project_id")
+        count_sql = "SELECT COUNT(*) as cnt FROM project_modules pm WHERE 1 = 1" + visible_sql
         data_sql = (
             "SELECT pm.module_id AS module_id, pm.name AS name, pm.title AS title "
-            "FROM project_modules pm "
+            "FROM project_modules pm WHERE 1 = 1" + visible_sql + " "
             "ORDER BY pm.name LIMIT ? OFFSET ?"
         )
-        count_row = store._fetch_one(count_sql, [])
-        rows = store._fetch_all(data_sql, [limit, offset])
+        count_row = store._fetch_one(count_sql, visible_params)
+        rows = store._fetch_all(data_sql, [*visible_params, limit, offset])
 
     total = count_row["cnt"] if count_row else 0
     items = [
@@ -171,29 +194,39 @@ def list_groups_for_module(
 
     store = get_store()
 
+    if project_id and not can_read_project(auth, project_id):
+        return _fail(403, "You do not have permission to read this project")
+
     module_title_row = store._fetch_one(
         "SELECT title FROM project_modules WHERE project_id = ? AND name = ?",
         [project_id, module],
     )
     module_title = (module_title_row["title"] if module_title_row else None) or module
 
-    base_sql = "SELECT * FROM groups WHERE module = ?"
-    count_sql = "SELECT COUNT(*) as cnt FROM groups WHERE module = ?"
+    # The outer groups row is aliased ``g`` so the visibility condition is tied to
+    # the listed group's own project, in both the data and the count query.
+    base_sql = "SELECT g.* FROM groups g WHERE g.module = ?"
+    count_sql = "SELECT COUNT(*) as cnt FROM groups g WHERE g.module = ?"
     params: list = [module]
 
     if project_id:
-        base_sql += " AND project_id = ?"
-        count_sql += " AND project_id = ?"
+        base_sql += " AND g.project_id = ?"
+        count_sql += " AND g.project_id = ?"
         params.append(project_id)
+    else:
+        visible_sql, visible_params = _readable_clause(auth, "g.project_id")
+        base_sql += visible_sql
+        count_sql += visible_sql
+        params.extend(visible_params)
     if status:
-        base_sql += " AND status = ?"
-        count_sql += " AND status = ?"
+        base_sql += " AND g.status = ?"
+        count_sql += " AND g.status = ?"
         params.append(status.upper())
 
     count_row = store._fetch_one(count_sql, params)
     total = count_row["cnt"] if count_row else 0
 
-    data_sql = base_sql + " ORDER BY group_id LIMIT ? OFFSET ?"
+    data_sql = base_sql + " ORDER BY g.group_id LIMIT ? OFFSET ?"
     rows = store._fetch_all(data_sql, params + [limit, offset])
 
     items = [
@@ -255,6 +288,8 @@ def list_documents_for_group(
     )
     if group_row is None:
         return _fail(404, f"Group {group_id} does not exist")
+    if not can_read_project(auth, group_row.get("project_id")):
+        return _fail(403, "You do not have permission to read this project")
 
     # module match check skipped (if URL param differs from DB value, proceed silently;
     # group_id takes precedence — allowed for development convenience)
@@ -325,6 +360,10 @@ def list_predecessor_docs(request: Request, doc_id: str, limit: int = 2):
 
     if limit < 1 or limit > 10:
         return _fail(400, "limit must be between 1 and 10")
+
+    target_project = _doc_project(doc_id)
+    if target_project is not None and not can_read_project(auth, target_project):
+        return _fail(403, "You do not have permission to read this project")
 
     predecessor_doc_ids: list[str] = []
     seq = db_wfseq.get_sequence_by_doc_id(doc_id)

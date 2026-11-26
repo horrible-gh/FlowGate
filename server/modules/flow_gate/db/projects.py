@@ -29,11 +29,26 @@ def get_by_id(project_id: str) -> Optional[dict]:
     return dict(row) if isinstance(row, dict) else row
 
 
-def list_projects(is_active: int | None = None) -> list[dict]:
+def list_projects(
+    is_active: int | None = None,
+    visible_clause: tuple[str, list] | None = None,
+) -> list[dict]:
+    """Project rows, optionally limited by an ``AND ...`` fragment on ``project_id``.
+
+    ``visible_clause`` comes from ``rbac.access.visible_project_clause`` so the
+    member filter runs in SQL.
+    """
     store = get_store()
+    extra_sql, extra_params = visible_clause or ("", [])
     if is_active is not None:
         return store._fetch_all(
-            "SELECT * FROM projects WHERE is_active = ? ORDER BY project_id", [is_active]
+            "SELECT * FROM projects WHERE is_active = ?" + extra_sql + " ORDER BY project_id",
+            [is_active, *extra_params],
+        )
+    if extra_sql:
+        return store._fetch_all(
+            "SELECT * FROM projects WHERE 1 = 1" + extra_sql + " ORDER BY project_id",
+            list(extra_params),
         )
     return store._fetch_all("SELECT * FROM projects ORDER BY project_id")
 

@@ -82,7 +82,7 @@ def test_next_empty_forwards_reason_options_and_returns_precheck(monkeypatch, tm
     monkeypatch.setattr(q_service, "add_questions", common)
     body = routes.NextEmptyDocumentCreate(project_id="p", group_id=prev["group_id"], prev_doc_id=prev["doc_id"],
         type_code="DS", title="B1 next document", questions=[payload])
-    result = routes.create_next_empty_document(Request({"type": "http", "headers": []}), body, current_user={"user_id": "u1"})
+    result = routes.create_next_empty_document(Request({"type": "http", "headers": []}), body, current_user={"user_id": "u1", "is_admin": True})
     assert seen["questions"] == [{"title": None, **payload}]
     assert seen["document_accompanied"] is True
     assert result["data"]["question_precheck"] == expected

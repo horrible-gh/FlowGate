@@ -243,7 +243,7 @@ class TestProjectsEndpointQueryBudget:
     def _call_endpoint(self):
         from modules.flow_gate.settings.routers import project_settings as mod
 
-        return mod.list_projects_endpoint(status="active", user={"user_id": "tester"})
+        return mod.list_projects_endpoint(status="active", user={"user_id": "tester", "is_admin": True})
 
     def _seed_active_projects(self, tmp_db, count: int) -> list[str]:
         from modules.flow_gate.db import groups, projects

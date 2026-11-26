@@ -18,13 +18,7 @@ from modules.flow_gate.services import (
     conversation_turn_service,
 )
 
-try:
-    from rbac.decorators import require_permission  # type: ignore[import]
-except ImportError:
-    def require_permission(_permission: str):
-        def decorator(func):
-            return func
-        return decorator
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 

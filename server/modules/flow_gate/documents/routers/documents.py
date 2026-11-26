@@ -126,17 +126,8 @@ def _get_project_branch(project_id: str) -> str:
     return "main"
 
 
-# ── RBAC stub ────────────────────────────────────────────────────────────────
-try:
-    from rbac.decorators import require_permission  # type: ignore[import]
-except ImportError:
-    def require_permission(perm: str):
-        """No-op stub until T_rbac is implemented."""
-        def _decorator(func):
-            return func
-        return _decorator
-
-# ─────────────────────────────────────────────────────────────────────────────
+# Checks each call against the target's stored project (rbac.access.can).
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -2806,7 +2797,18 @@ def diagnose_document_bodies(
     ``/{doc_id}``.
     """
     from modules.flow_gate.documents import body_recovery
+    from modules.flow_gate.rbac import access
 
+    # The decorator above cannot see a project for an unknown group, so the scope
+    # is resolved here with the same normalised IDs the diagnosis reads, and the
+    # diagnosis runs only once that stored project passes the member check.
+    group_id = access.normalize_id(group_id) or None
+    project_id = access.normalize_id(project_id) or None
+    if (group_id is None) != (project_id is None) and not access.is_admin(current_user):
+        scope_project = access.project_of_group(group_id) if group_id is not None else project_id
+        if scope_project is None:
+            raise HTTPException(status_code=404, detail=f"Flow not found: {group_id}")
+        access.require(current_user, scope_project, "perm_document_read")
     return body_recovery.diagnose_scope(group_id=group_id, project_id=project_id)
 
 
@@ -3123,21 +3125,22 @@ async def _attachment_permission_refusal(doc_id: str, user: Optional[dict], perm
     top-level ``rbac`` package, see ``# ── RBAC stub``), and the attachment routes carried none
     at all, so any logged-in user could list, download, upload or delete the attachments of a
     document in a project they hold no role in. These routes now check the same per-project
-    permission the v0.2 surfaces check (``rbac.decorators._has_permission``, administrators
-    pass): ``perm_document_read`` to see, ``perm_document_update`` to change. Scoped to the
-    attachment routes only — the rest of the router keeps its behaviour (no RBAC overhaul).
-    A missing document is left to the service, which answers its own 404.
+    permission through the shared judgment ``rbac.access.can`` on the document's stored
+    project (administrators pass, everyone else must be a member of that project; a role on
+    ``__SYSTEM__`` alone is not membership): ``perm_document_read`` to see,
+    ``perm_document_update`` to change. A missing document is left to the service, which
+    answers its own 404.
     """
     import anyio.to_thread
 
     def judge():
         from modules.flow_gate.db import documents as _db_docs
-        from modules.flow_gate.rbac.decorators import _has_permission
+        from modules.flow_gate.rbac import access
 
         doc = _db_docs.get_by_id(doc_id)
         if doc is None:
             return None
-        if _has_permission(user or {}, permission, doc.get("project_id")):
+        if access.can(user, doc.get("project_id"), permission):
             return None
         return attachments.AttachmentError(
             403, "FORBIDDEN", "You do not have permission for this document's attachments.",
