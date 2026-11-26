@@ -6,7 +6,7 @@ const messages = {
     window_title: 'AI 관리 · {tab}',
     tabs: { other: '기타 설정', policy: '방침' },
     other: {
-      repeat_hint: '검수 / 재시작 등 반복형 선택지의 상한',
+      repeat_hint: '검수 / 재시작 등 반복형 선택지의 상한 (1~30)',
       title_hint: '새 플로우·카드·대화의 제목을 지을 AI',
       unavailable: '불러오지 못했습니다',
     },
@@ -18,7 +18,7 @@ const messages = {
     window_title: 'AI management · {tab}',
     tabs: { other: 'Other settings', policy: 'Policies' },
     other: {
-      repeat_hint: 'Upper limit of repeat-type choices such as review and restart',
+      repeat_hint: 'Upper limit of repeat-type choices such as review and restart (1–30)',
       title_hint: 'The AI that names new flows, cards and chats',
       unavailable: 'Could not load',
     },
@@ -30,7 +30,7 @@ const messages = {
     window_title: 'AI 管理 · {tab}',
     tabs: { other: 'その他の設定', policy: '方針' },
     other: {
-      repeat_hint: 'レビュー / 再実行など繰り返し型の選択肢の上限',
+      repeat_hint: 'レビュー / 再実行など繰り返し型の選択肢の上限 (1〜30)',
       title_hint: '新しいフロー・カード・会話のタイトルを付けるAI',
       unavailable: '読み込めませんでした',
     },

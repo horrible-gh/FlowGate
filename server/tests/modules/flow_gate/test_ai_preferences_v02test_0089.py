@@ -59,7 +59,8 @@ def test_defaults_patch_merge_reset_and_user_isolation(prefs):
     url = "/api/v1/me/ai-preferences"
     assert client.get(url).json() == {
         "title_provider": "auto", "title_provider_effective": "system-mini", "repeat_count_max": None,
-        "repeat_count_max_effective": 3, "repeat_count_system_max": 3, "repeat_count_min": 1}
+        "repeat_count_max_effective": 3, "repeat_count_default": 3, "repeat_count_min": 1,
+        "repeat_count_hard_max": 30}
     assert client.patch(url, json={"title_provider": "alice-ai", "repeat_count_max": 2}).status_code == 200
     result = client.patch(url, json={"title_provider": "executor"}).json()
     assert result["repeat_count_max"] == 2
@@ -73,12 +74,12 @@ def test_defaults_patch_merge_reset_and_user_isolation(prefs):
     assert client.patch(url, json={"title_provider": "auto"}).json()["repeat_count_max_effective"] == 3
 
 
-@pytest.mark.parametrize("value", [0, -1, 4, True, 1.5, "2", [], {}])
+@pytest.mark.parametrize("value", [0, -1, 31, True, 1.5, "2", [], {}])
 def test_repeat_errors_are_exact_and_atomic(prefs, value):
     client, _, _, _ = prefs
     response = client.patch("/api/v1/me/ai-preferences", json={"title_provider": "off", "repeat_count_max": value})
     assert response.status_code == 422
-    assert response.json() == {"code": "repeat_count_out_of_range", "max": 3}
+    assert response.json() == {"code": "repeat_count_out_of_range", "max": 30}
     assert repo.get("alice")["title_provider"] == "auto"
 
 
@@ -99,19 +100,28 @@ def test_requires_authentication(prefs):
         assert method("/api/v1/me/ai-preferences").status_code == 401
 
 
-def test_system_lowering_clamps_without_rewriting_and_null_restores(prefs):
+def test_personal_value_uses_full_range_regardless_of_stored_default_and_null_restores(prefs):
+    """v02test.0096 F96-11: the stored system value is only the default; it no longer caps my value."""
     client, _, ceiling, _ = prefs
-    client.patch("/api/v1/me/ai-preferences", json={"repeat_count_max": 3})
+    for value in (1, 4, 30):
+        result = client.patch("/api/v1/me/ai-preferences", json={"repeat_count_max": value})
+        assert result.status_code == 200
+        assert result.json()["repeat_count_max"] == value
+        assert result.json()["repeat_count_max_effective"] == value
+    client.patch("/api/v1/me/ai-preferences", json={"repeat_count_max": 10})
     ceiling["value"] = "1"
     result = client.get("/api/v1/me/ai-preferences").json()
-    assert result["repeat_count_max"] == 3
-    assert result["repeat_count_max_effective"] == 1
-    assert result["repeat_count_system_max"] == 1
+    assert result["repeat_count_max"] == 10
+    assert result["repeat_count_max_effective"] == 10
+    assert result["repeat_count_default"] == 1
+    assert result["repeat_count_hard_max"] == 30
+    assert policy.get_user_repeat_count_max("alice") == 10
+    assert policy.repeat_count_choices(allow_zero=True, user_id="alice") == (-1, 0, *range(1, 11))
     ceiling["value"] = "5"
-    assert policy.get_user_repeat_count_max("alice") == 3
     assert policy.get_repeat_count_max() == 5
     client.patch("/api/v1/me/ai-preferences", json={"repeat_count_max": None})
     assert policy.get_user_repeat_count_max("alice") == 5
+    assert client.get("/api/v1/me/ai-preferences").json()["repeat_count_max_effective"] == 5
 
 
 def test_personal_choices_do_not_demote_stored_gate_values(prefs):
@@ -126,6 +136,19 @@ def test_personal_choices_do_not_demote_stored_gate_values(prefs):
     assert admission._resolve_restart_max_attempts(3) == 4
     assert review.normalize_review_count(3) == 3
     assert policy.repeat_count_choices(allow_zero=True) == (-1, 0, 1, 2, 3)
+
+
+def test_personal_pick_above_the_stored_default_is_kept_on_read(prefs):
+    """A pick written under my ceiling of 10 (default 3) is not demoted when the engine reads it back."""
+    from modules.flow_gate.services.ai_invoke import review, admission
+    from modules.flow_gate.services import workflow_decision_service
+    repo.patch("alice", {"repeat_count_max": 10})
+    assert workflow_decision_service.normalize_continuation_review_count_overrides({"1": 8}, user_id="alice") == {"1": 8}
+    assert review.resolve_review_count({"1": 8}, 1) == 8
+    assert review.normalize_review_count(8) == 8
+    assert admission._resolve_restart_max_attempts(8) == 9
+    assert review.resolve_review_count({"1": 31}, 1) == 0
+    assert admission._resolve_restart_max_attempts(31) == 2
 
 
 @pytest.mark.parametrize("choice,expected", [("off", None), ("executor", "alice-ai"),

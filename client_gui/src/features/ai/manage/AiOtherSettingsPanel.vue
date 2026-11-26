@@ -4,7 +4,7 @@
       <LoadingState :label="t('gui.common.loading')" />
     </div>
     <div v-else class="os-table" role="table" :aria-label="t('gui.aiManage.tabs.other')">
-      <!-- 최대 반복 횟수: my own value (/me/ai-preferences), capped by the system ceiling. -->
+      <!-- 최대 반복 횟수: my own value (/me/ai-preferences), 1~30 (F96-11: no system ceiling). -->
       <div class="os-row" role="row" data-test="repeat-row">
         <div class="os-name repeat-info" role="rowheader">
           <b>{{ t('gui.ai.providers.repeat_max') }}</b>
@@ -37,7 +37,7 @@
               :label="t('gui.ai.providers.repeat_increase')"
               variant="secondary"
               size="sm"
-              :disabled="prefsSaving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
+              :disabled="prefsSaving || prefs.repeat_count_max_effective >= prefs.repeat_count_hard_max"
               data-test="my-repeat-increase"
               @click="stepMyRepeat(1)"
             >
@@ -77,8 +77,8 @@
 
 <script setup lang="ts">
 // v02test.0096 F96-3 "기타 설정": the repeat limit and title AI cards that sat under the AI list, as one table.
-// F96-6: only my own values (내 값) stay here, one column. The system ceiling and the system title AI are set by an
-// administrator in 환경 설정 (SystemGeneralSettingsView); my repeat limit is still capped by that ceiling.
+// F96-6: only my own values (내 값) stay here, one column. F96-13: the title AI is a personal setting only (the
+// administrator's 환경 설정 no longer has it). F96-11: the max repeat count is a personal setting only, 1~30, with no system ceiling.
 // Each value is saved as soon as it changes and a failed save puts the previous value back (v02test.0089).
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -88,7 +88,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import Select, { type SelectOption } from '@/components/ui/Select.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
-import { titleChoices, useMyAiPreferences } from '@shared/myAiPreferences'
+import { TITLE_EXECUTOR, titleChoices, useMyAiPreferences } from '@shared/myAiPreferences'
 import {
   fetchMyAi,
   fetchMyAiOrder,
@@ -165,16 +165,15 @@ const orderedItems = computed<ProviderItem[]>(() => {
   return [...new Set(ids)].map((id) => byId.get(id)!)
 })
 
-// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI I can use (system AI shown to me and my own AI) in the list's order.
-// Off AI are left out (the server refuses them), except the stored one, which titleChoices always offers so the
-// dropdown never claims another value.
+// 답한 AI 그대로 (the default) / 끄기 / separator / the AI I can use (system AI shown to me and my own AI) in the list's
+// order. F96-13: no 자동 — a stored 'auto' arrives as 'executor' from the composable. Off AI are left out (the server
+// refuses them), except the stored one, which titleChoices always offers so the dropdown never claims another value.
 const myTitleProviderOptions = computed<SelectOption[]>(() => {
   const current = prefs.value?.title_provider ?? null
   const ai = orderedItems.value.filter((p) => p.enabled || p.id === current).map((p) => ({ value: p.id, label: p.name }))
   return titleChoices(current, [
-    { value: 'auto', label: t('gui.ai.providers.title_ai_auto') },
+    { value: TITLE_EXECUTOR, label: t('gui.ai.providers.title_ai_answered') },
     { value: 'off', label: t('gui.ai.providers.title_ai_off') },
-    { value: 'executor', label: t('gui.ai.providers.title_ai_answered') },
   ], ai)
 })
 

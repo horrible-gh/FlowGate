@@ -10,16 +10,16 @@ import type { ProviderItem } from '@/features/ai/types'
 
 registerAppMessages(i18n)
 
-// v02test.0080 제목 짓기 AI (system setting ai_title_provider). v02test.0096 F96-6: the system value left AI 관리 ›
-// 기타 설정 for 환경 설정 (SystemGeneralSettingsView, administrators); its screen checks live in
-// tests/features/settings/systemSettings.0076.spec.ts. Here: 기타 설정 no longer shows or reads it, and the contract.
+// v02test.0080 제목 짓기 AI (system setting ai_title_provider). v02test.0096 F96-6 moved the system value out of AI 관리 ›
+// 기타 설정; F96-13 removed it from 환경 설정 too (no screen edits it; tests/features/settings/systemSettings.0076.spec.ts
+// checks it is gone). Here: 기타 설정 neither shows nor reads it, and the api contract that remains.
 const systemAi: ProviderItem[] = [
   { id: 'sys-a', name: 'System A', exec_type: 'api', kind: 'claude', enabled: true, exec_location: 'local' },
 ]
 const policy = { repeat_count_min: 1, repeat_count_max: 5, repeat_count_hard_max: 30 }
 const prefs = {
   title_provider: 'auto', title_provider_effective: 'executor',
-  repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_system_max: 5, repeat_count_min: 1,
+  repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_default: 5, repeat_count_min: 1, repeat_count_hard_max: 30,
 }
 
 async function mountPanel(admin: boolean) {

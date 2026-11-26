@@ -101,86 +101,6 @@
             </div>
           </div>
 
-          <!-- AI iteration limit: ai_repeat_count_max only -->
-          <div class="fgs-sec" data-card="repeat">
-            <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.repeat.title') }}</h3></div>
-            <div class="fgs-rows">
-              <div class="fgs-row">
-                <div class="fgs-row-label">
-                  <label for="sys-repeat-max">{{ t('gui.settings.general.repeat.label') }}</label>
-                  <small>{{ t('gui.settings.general.repeat.hint') }}</small>
-                </div>
-                <div class="fgs-row-ctrl">
-                  <span v-if="repeatSaved && !repeatDirty && !repeatError" class="fgs-muted" data-testid="repeat-saved">{{ t('gui.settings.saved') }}</span>
-                  <input
-                    id="sys-repeat-max"
-                    v-model="repeatValue"
-                    class="fgs-input num"
-                    :class="{ dirty: repeatDirty }"
-                    inputmode="numeric"
-                    autocomplete="off"
-                    :disabled="repeatSaving"
-                    data-testid="repeat-value"
-                  />
-                  <button
-                    type="button"
-                    class="fgs-btn pri"
-                    :disabled="!repeatCanSave"
-                    data-testid="repeat-save"
-                    @click="askRepeat"
-                  >{{ repeatSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
-                </div>
-              </div>
-              <div v-if="repeatDirty && repeatProblem" class="fgs-row sub">
-                <span class="fgs-error" data-testid="repeat-invalid">{{ repeatProblem }}</span>
-              </div>
-              <div v-if="repeatLowering" class="fgs-row sub">
-                <span class="fgs-hint" data-testid="repeat-lower-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.general.repeat.lower_impact') }}</span>
-              </div>
-              <div v-if="repeatError" class="fgs-row sub">
-                <span class="fgs-error" role="alert" data-testid="repeat-error">{{ repeatError }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Title AI: ai_title_provider only (v02test.0096 F96-6, moved here from AI 관리 › 기타 설정) -->
-          <div class="fgs-sec" data-card="title-ai">
-            <div class="fgs-sec-head"><h3>{{ t('gui.ai.providers.title_ai') }}</h3></div>
-            <div class="fgs-rows">
-              <div v-if="titleConfirmed === null" class="fgs-row sub">
-                <span class="fgs-error" data-testid="title-ai-missing">{{ t('gui.settings.general.errors.bad_response') }}</span>
-              </div>
-              <div v-else class="fgs-row">
-                <div class="fgs-row-label">
-                  <label for="sys-title-ai">{{ t('gui.ai.providers.title_ai_system') }}</label>
-                </div>
-                <div class="fgs-row-ctrl">
-                  <span v-if="titleSaved && !titleDirty && !titleError" class="fgs-muted" data-testid="title-ai-saved">{{ t('gui.settings.saved') }}</span>
-                  <select
-                    id="sys-title-ai"
-                    v-model="titleValue"
-                    class="fgs-input title-ai"
-                    :class="{ dirty: titleDirty }"
-                    :disabled="titleSaving"
-                    data-testid="title-ai-value"
-                  >
-                    <option v-for="opt in titleOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
-                  </select>
-                  <button
-                    type="button"
-                    class="fgs-btn pri"
-                    :disabled="!titleCanSave"
-                    data-testid="title-ai-save"
-                    @click="saveTitle"
-                  >{{ titleSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
-                </div>
-              </div>
-              <div v-if="titleError" class="fgs-row sub">
-                <span class="fgs-error" role="alert" data-testid="title-ai-error">{{ titleError }}</span>
-              </div>
-            </div>
-          </div>
-
           <!-- AI attachment read limit: attach_read_max_mb only (MB, 1~64, applies without a restart) -->
           <div class="fgs-sec" data-card="attach-read">
             <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.attach_read.title') }}</h3></div>
@@ -229,29 +149,13 @@
       </div>
     </section>
 
-    <!-- Confirm lowering the iteration limit: cancel sends no requests -->
-    <ModalShell :open="lowerConfirmOpen" size="sm" :aria-label="t('gui.settings.general.repeat.lower_title')" @close="lowerConfirmOpen = false">
-      <div class="confirm" data-testid="repeat-lower-confirm">
-        <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
-        <div class="conf-who">{{ t('gui.settings.general.repeat.lower_title_values', { from: repeatConfirmed, to: repeatValue.trim() }) }}</div>
-        <p class="conf-text">{{ t('gui.settings.general.repeat.lower_impact') }}</p>
-        <p class="conf-text fgs-muted">{{ t('gui.settings.general.repeat.lower_no_rewrite') }}</p>
-      </div>
-      <template #footer>
-        <div class="fgs-modal-actions">
-          <button type="button" class="fgs-btn" data-testid="repeat-lower-cancel" @click="lowerConfirmOpen = false">{{ t('gui.common.cancel') }}</button>
-          <button type="button" class="fgs-btn pri" :disabled="repeatSaving" data-testid="repeat-lower-ok" @click="confirmLower">{{ t('gui.settings.general.save') }}</button>
-        </div>
-      </template>
-    </ModalShell>
-
     <!-- Unsaved changes guard: continuing to edit cancels navigation and sends no requests -->
     <ModalShell :open="leaveOpen" size="sm" :aria-label="t('gui.settings.general.leave.title')" @close="answerLeave(false)">
       <div class="confirm" data-testid="leave-confirm">
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
         <div class="conf-who">{{ t('gui.settings.general.leave.title') }}</div>
         <p class="conf-text">{{ t('gui.settings.general.leave.unsaved') }}</p>
-        <p v-if="scratchSaving || repeatSaving || attachSaving || titleSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
+        <p v-if="scratchSaving || attachSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
       </div>
       <template #footer>
         <div class="fgs-modal-actions">
@@ -270,17 +174,15 @@
 //   and whether FLOWGATE_STORAGE_DIR overrides it. Read only: no input, no save, no move, and
 //   storage_root never goes into a PATCH. /system/settings/storage-root (a different contract with
 //   other field names) is not used, not even as a fallback.
-// - Scratch retention period and AI iteration limit come from the rows of GET /system/settings and are two
-//   separate saves on PATCH /system/settings:
+// - Scratch retention period and AI attachment read limit come from the rows of GET /system/settings and
+//   are separate saves on PATCH /system/settings:
 //   · Scratch: scratch_ttl_value and scratch_ttl_unit together, as strings, in ONE request — the
 //     server validates the pair and writes it in one store transaction (V13 checked the deployment
 //     store rolls both keys back). Never split into two PATCHes, never converted to minutes.
-//   · iteration limit: ai_repeat_count_max alone, 1~30. Lowering it first shows the impact on stored and
-//     paused runs (re-evaluated against the current ceiling on run/resume); this screen never edits
-//     a run or resumes one.
-//   · title AI (v02test.0096 F96-6): ai_title_provider alone — 'off', 'executor' or a system AI id — with the save /
-//     load of the AI screen (features/ai/api saveTitleProvider / fetchTitleProvider). Its PATCH answer carries no
-//     row, so the re-read alone confirms it.
+//   · The AI iteration limit is no longer edited here (v02test.0096 F96-11): the max repeat count is a personal
+//     setting only (⚙ AI tab, /me/ai-preferences, 1~30).
+//   · The title AI is no longer edited here (v02test.0096 F96-13): it is a personal setting only (⚙ settings › AI tab,
+//     /me/ai-preferences). The server's ai_title_provider stays as stored ('executor') and is not touched.
 // A save is complete only when the PATCH answer carries exactly the sent value(s) AND a re-read
 // GET agrees; otherwise the input stays as typed and an error is shown. Invalid input is never sent.
 // The Saved notice belongs to the value that was saved: editing again takes it away.
@@ -291,9 +193,6 @@
 // shared with System Agent since the earlier implementation).
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { fetchSystemAi, fetchTitleProvider, saveTitleProvider } from '@/features/ai/api'
-import type { ProviderItem } from '@/features/ai/types'
-import { TITLE_SEPARATOR, titleChoices, type TitleChoice } from '@shared/myAiPreferences'
 import Button from '@/components/ui/Button.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
@@ -304,7 +203,7 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSystemNav } from '../components/systemNav'
 import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
-import { getSystemSettings, getSystemStorageRoot, saveAttachReadMaxMb, saveRepeatCountMax, saveScratchRetention } from '../api'
+import { getSystemSettings, getSystemStorageRoot, saveAttachReadMaxMb, saveScratchRetention } from '../api'
 import type { ScratchUnit, SystemSettingRow, SystemStorageRoot } from '../types'
 
 const SCRATCH_UNITS: readonly ScratchUnit[] = ['minute', 'hour', 'day']
@@ -312,12 +211,9 @@ const MINUTES_PER_UNIT: Record<ScratchUnit, bigint> = { minute: 1n, hour: 60n, d
 // The server turns the pair into a Python timedelta(minutes=…); beyond 999999999 days it overflows
 // and answers 422 "too large". The same bound here keeps such a pair from being sent at all.
 const MAX_SCRATCH_MINUTES = 999999999n * 1440n + 1439n
-const REPEAT_MIN = 1
-const REPEAT_MAX = 30
 const ATTACH_READ_MIN_MB = 1
 const ATTACH_READ_MAX_MB = 64
 const ATTACH_READ_KEY = 'attach_read_max_mb'
-const TITLE_KEY = 'ai_title_provider'
 
 const { t } = useI18n()
 const systemNav = useSystemNav()
@@ -370,28 +266,21 @@ function scratchIn(rows: SystemSettingRow[] | undefined): Pair | null {
   return value === null || unit === null ? null : { value, unit }
 }
 
-/** Load both editors from one GET; a missing row is a failed load, not a default. */
+/** Load the editors from one GET; a missing scratch row is a failed load, not a default. */
 async function loadSettings() {
   settingsLoading.value = true
   settingsError.value = ''
   try {
     const rows = await getSystemSettings()
     const scratch = scratchIn(rows)
-    const repeat = rowValue(rows, 'ai_repeat_count_max')
-    if (!scratch || repeat === null) throw new Error(t('gui.settings.general.errors.bad_response'))
+    if (!scratch) throw new Error(t('gui.settings.general.errors.bad_response'))
     scratchConfirmed.value = scratch
     scratchValue.value = scratch.value
     scratchUnit.value = scratch.unit
-    repeatConfirmed.value = repeat
-    repeatValue.value = repeat
-    // Its own editor: a server without this row only disables this card, not the other two.
+    // Its own editor: a server without this row only disables this card, not the others.
     const attach = rowValue(rows, ATTACH_READ_KEY)
     attachConfirmed.value = attach
     attachValue.value = attach ?? ''
-    // Same for the title AI: an empty or missing row only disables its card.
-    const title = rowValue(rows, TITLE_KEY) || null
-    titleConfirmed.value = title
-    titleValue.value = title ?? ''
   } catch (err) {
     settingsError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -462,85 +351,6 @@ async function rereadScratch(): Promise<Pair | null> {
   }
 }
 
-// ── AI iteration limit ──
-const repeatConfirmed = ref<string | null>(null)
-const repeatValue = ref('')
-const repeatSaving = ref(false)
-const repeatError = ref('')
-const repeatSaved = ref(false)
-const lowerConfirmOpen = ref(false)
-
-const repeatDirty = computed(() => repeatConfirmed.value !== null && repeatValue.value.trim() !== repeatConfirmed.value)
-
-const repeatProblem = computed(() => {
-  const value = repeatValue.value.trim()
-  const n = /^[0-9]+$/.test(value) ? Number(value) : NaN
-  return Number.isInteger(n) && n >= REPEAT_MIN && n <= REPEAT_MAX
-    ? ''
-    : t('gui.settings.general.repeat.invalid', { min: REPEAT_MIN, max: REPEAT_MAX })
-})
-
-const repeatCanSave = computed(() => repeatDirty.value && !repeatProblem.value && !repeatSaving.value)
-
-/** A valid new ceiling below the confirmed one (a confirmed value that is not a number counts as no). */
-const repeatLowering = computed(() => {
-  if (!repeatDirty.value || repeatProblem.value) return false
-  const before = Number(repeatConfirmed.value)
-  return Number.isInteger(before) && Number(repeatValue.value.trim()) < before
-})
-
-function askRepeat() {
-  if (!repeatCanSave.value) return
-  if (repeatLowering.value) {
-    lowerConfirmOpen.value = true
-    return
-  }
-  void saveRepeat()
-}
-
-function confirmLower() {
-  if (repeatSaving.value) return
-  void saveRepeat()
-}
-
-async function saveRepeat() {
-  if (!repeatCanSave.value) return
-  const value = String(Number(repeatValue.value.trim()))
-  repeatSaving.value = true
-  repeatError.value = ''
-  repeatSaved.value = false
-  try {
-    const answered = rowValue(await saveRepeatCountMax(value), 'ai_repeat_count_max')
-    lowerConfirmOpen.value = false
-    if (answered !== value) {
-      repeatError.value = t('gui.settings.general.errors.unconfirmed')
-      await rereadRepeat()
-      return
-    }
-    const reread = await rereadRepeat()
-    if (reread !== value) {
-      repeatError.value = t('gui.settings.general.errors.reread_mismatch')
-      return
-    }
-    repeatSaved.value = true
-  } catch (err) {
-    lowerConfirmOpen.value = false
-    repeatError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    repeatSaving.value = false
-  }
-}
-
-async function rereadRepeat(): Promise<string | null> {
-  try {
-    const value = rowValue(await getSystemSettings(), 'ai_repeat_count_max')
-    if (value !== null) repeatConfirmed.value = value
-    return value
-  } catch {
-    return null
-  }
-}
-
 // ── AI attachment read limit (MB) ──
 const attachConfirmed = ref<string | null>(null)
 const attachValue = ref('')
@@ -596,92 +406,22 @@ async function rereadAttach(): Promise<string | null> {
   }
 }
 
-// ── Title AI (ai_title_provider) ──
-const titleConfirmed = ref<string | null>(null)
-const titleValue = ref('')
-const titleSaving = ref(false)
-const titleError = ref('')
-const titleSaved = ref(false)
-// System AI for the choices, in the system order. A failed read leaves only 끄기 / 답한 AI 그대로 (and the stored value).
-const systemAi = ref<ProviderItem[]>([])
-
-async function loadSystemAi() {
-  try {
-    systemAi.value = (await fetchSystemAi()).providers ?? []
-  } catch {
-    systemAi.value = []
-  }
-}
-
-// 끄기 / 답한 AI 그대로 / separator / the enabled system AI. An off AI is left out (the server refuses it), except the
-// stored one, which titleChoices always offers so the select never claims another value.
-const titleOptions = computed<TitleChoice[]>(() => {
-  const current = titleConfirmed.value
-  const ai = systemAi.value.filter((p) => p.enabled || p.id === current).map((p) => ({ value: p.id, label: p.name }))
-  return titleChoices(current, [
-    { value: 'off', label: t('gui.ai.providers.title_ai_off') },
-    { value: 'executor', label: t('gui.ai.providers.title_ai_executor') },
-  ], ai)
-})
-
-const titleDirty = computed(() => titleConfirmed.value !== null && titleValue.value !== titleConfirmed.value)
-const titleCanSave = computed(() => titleDirty.value && !!titleValue.value && titleValue.value !== TITLE_SEPARATOR && !titleSaving.value)
-
-async function saveTitle() {
-  if (!titleCanSave.value) return
-  const value = titleValue.value
-  titleSaving.value = true
-  titleError.value = ''
-  titleSaved.value = false
-  try {
-    await saveTitleProvider(value)
-    const reread = await rereadTitle()
-    if (reread !== value) {
-      titleError.value = t('gui.settings.general.errors.reread_mismatch')
-      return
-    }
-    titleSaved.value = true
-  } catch (err) {
-    titleError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    titleSaving.value = false
-  }
-}
-
-async function rereadTitle(): Promise<string | null> {
-  try {
-    const value = await fetchTitleProvider()
-    if (value !== null) titleConfirmed.value = value
-    return value
-  } catch {
-    return null
-  }
-}
-
 // A success notice is for the value that was saved, not for what is typed afterwards.
 watch([scratchValue, scratchUnit], () => {
   scratchSaved.value = false
 })
-watch(repeatValue, () => {
-  repeatSaved.value = false
-})
 watch(attachValue, () => {
   attachSaved.value = false
-})
-watch(titleValue, () => {
-  titleSaved.value = false
 })
 
 // ── Unsaved changes guard ──
 const unsaved = computed(() =>
-  scratchDirty.value || repeatDirty.value || attachDirty.value || titleDirty.value
-  || scratchSaving.value || repeatSaving.value || attachSaving.value || titleSaving.value)
+  scratchDirty.value || attachDirty.value || scratchSaving.value || attachSaving.value)
 const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 
 onMounted(() => {
   void loadRoot()
   void loadSettings()
-  void loadSystemAi()
 })
 </script>
 
@@ -692,10 +432,6 @@ onMounted(() => {
 
 .fgs-input.unit {
   width: 100px;
-}
-
-.fgs-input.title-ai {
-  width: 220px;
 }
 
 .confirm {

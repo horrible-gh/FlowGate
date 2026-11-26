@@ -63,7 +63,7 @@ class TestResolveRestartMaxAttempts:
     def test_every_dialog_option_converts_to_total_attempts(self, restart_count, expected_total):
         assert svc._resolve_restart_max_attempts(restart_count) == expected_total
 
-    @pytest.mark.parametrize("bogus", [4, -2, 99, "1"])
+    @pytest.mark.parametrize("bogus", [31, -2, 99, "1"])
     def test_unrecognized_value_falls_back_to_default(self, bogus):
         assert svc._resolve_restart_max_attempts(bogus) == 2
 

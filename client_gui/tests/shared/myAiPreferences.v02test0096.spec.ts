@@ -14,8 +14,9 @@ const base = (over: Partial<MyAiPreferencesShape> = {}): MyAiPreferencesShape =>
   title_provider_effective: 'sys_a',
   repeat_count_max: null,
   repeat_count_max_effective: 5,
-  repeat_count_system_max: 5,
+  repeat_count_default: 5,
   repeat_count_min: 1,
+  repeat_count_hard_max: 30,
   ...over,
 })
 
@@ -40,15 +41,13 @@ describe('shared myAiPreferences (v02test.0096 F96-5)', () => {
     expect(bad.prefs.value).toBeNull()
   })
 
-  it('steps within min ~ system max, resets to the system value and saves a title choice', async () => {
-    const save = vi.fn(async () => base({ repeat_count_max: 4, repeat_count_max_effective: 4 }))
+  it('steps above the default (no system ceiling, F96-11), resets to the default and saves a title choice', async () => {
+    const save = vi.fn(async () => base({ repeat_count_max: 6, repeat_count_max_effective: 6 }))
     const c = useMyAiPreferences({ fetch: async () => base(), save })
     await c.load()
-    c.stepRepeat(1) // 6 > system max 5: refused
-    expect(save).not.toHaveBeenCalled()
-    c.stepRepeat(-1)
-    expect(c.prefs.value?.repeat_count_max_effective).toBe(4) // shown at once
-    expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 4 })
+    c.stepRepeat(1) // 6 > default 5: allowed
+    expect(c.prefs.value?.repeat_count_max_effective).toBe(6) // shown at once
+    expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 6 })
     await flush()
     c.resetRepeat()
     expect(save).toHaveBeenLastCalledWith({ repeat_count_max: null })
@@ -56,6 +55,19 @@ describe('shared myAiPreferences (v02test.0096 F96-5)', () => {
     await flush()
     c.chooseTitle(TITLE_SEPARATOR)
     expect(save).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a step past 30 or below 1', async () => {
+    const save = vi.fn(async () => base())
+    const top = useMyAiPreferences({ fetch: async () => base({ repeat_count_max: 30, repeat_count_max_effective: 30 }), save })
+    await top.load()
+    top.stepRepeat(1)
+    const bottom = useMyAiPreferences({ fetch: async () => base({ repeat_count_max: 1, repeat_count_max_effective: 1 }), save })
+    await bottom.load()
+    bottom.stepRepeat(-1)
+    expect(save).not.toHaveBeenCalled()
+    top.stepRepeat(-1)
+    expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 29 })
   })
 
   it('puts the previous value back and reports a failed save', async () => {
@@ -69,9 +81,26 @@ describe('shared myAiPreferences (v02test.0096 F96-5)', () => {
     c.chooseTitle('off')
     expect(c.prefs.value?.title_provider).toBe('off')
     await flush()
-    expect(c.prefs.value?.title_provider).toBe('auto')
+    expect(c.prefs.value?.title_provider).toBe('executor') // the stored 'auto', shown as 답한 AI 그대로 (F96-13)
     expect(onSaveError).toHaveBeenCalledTimes(1)
     expect(c.saving.value).toBe(false)
+  })
+
+  it('shows and handles a stored auto as executor (F96-13: no 자동 choice); other values stay as stored', async () => {
+    const save = vi.fn(async () => base({ title_provider: 'off' }))
+    const c = useMyAiPreferences({ fetch: async () => base(), save })
+    await c.load()
+    expect(c.prefs.value?.title_provider).toBe('executor')
+    c.chooseTitle('executor') // already the shown value: nothing to save
+    expect(save).not.toHaveBeenCalled()
+    c.chooseTitle('off')
+    await flush()
+    expect(save).toHaveBeenCalledWith({ title_provider: 'off' })
+    expect(c.prefs.value?.title_provider).toBe('off')
+
+    const other = useMyAiPreferences({ fetch: async () => base({ title_provider: 'sys_a' }), save: vi.fn() })
+    await other.load()
+    expect(other.prefs.value?.title_provider).toBe('sys_a')
   })
 
   it('builds title rows: fixed / separator / AI, and always offers the stored value', () => {

@@ -154,9 +154,10 @@ export const resetTfa = (id: string) =>
 
 // ── System › "일반" (flowgate.v02.0076 T#3, D §2.5) ─────────────────────────────
 // Two read contracts — the Root of GET /system/storage-root (never /system/settings/storage-root)
-// and the rows of GET /system/settings — and two separate saves on PATCH /system/settings: the
+// and the rows of GET /system/settings — and separate saves on PATCH /system/settings: the
 // Scratch value/unit pair together in one request (the server writes it in one transaction), and
-// ai_repeat_count_max alone. Nothing else rides along; storage_root is never in `updates`.
+// attach_read_max_mb alone. Nothing else rides along; storage_root is never in `updates`.
+// (v02test.0096 F96-11: ai_repeat_count_max is no longer edited from this screen.)
 
 export const getSystemStorageRoot = () =>
   call(() => getRequest<SystemStorageRoot>(`${API}/system/storage-root`), 'load_failed')
@@ -170,12 +171,6 @@ export const saveScratchRetention = async (value: string, unit: ScratchUnit) =>
     () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, {
       updates: { scratch_ttl_value: value, scratch_ttl_unit: unit },
     }),
-    'save_failed',
-  )).updated
-
-export const saveRepeatCountMax = async (value: string) =>
-  (await call(
-    () => patchRequest<{ updated?: SystemSettingRow[] }>(`${API}/system/settings`, { updates: { ai_repeat_count_max: value } }),
     'save_failed',
   )).updated
 
