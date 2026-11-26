@@ -9,7 +9,7 @@
        (check state pill · Git state and branch as its summary · "Git 패널 열기 ↗" · ↗), built from the
        common slot list part; the Git notes and the running-job line stay below. -->
   <section class="inspector-check" data-test="inspector-check" :data-review="reviewStatus ?? ''" :data-git="git?.status ?? ''">
-    <InspectorSlotList :slots="lines" :editable="!target.readOnly" @open="open" @nav="openGit" @edit="edit" @history="history">
+    <InspectorSlotList :edit-refusal="refusals.update.value" :write-refusal="refusals.update.value ?? refusals.create.value" :slots="lines" :editable="!target.readOnly" @open="open" @nav="openGit" @edit="edit" @history="history">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
       <template #summary>
@@ -39,7 +39,7 @@ import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import InspectorSlotList, { type InspectorSlotView } from '../../parts/InspectorSlotList.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { cardDocumentContext, DocumentIoGroup, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup, openDocument, openDocumentHistory, useDocumentRefusals } from '../../openDocument'
 import { checkGitLine, checkGitNotes, checkJobLine, checkReviewKey, checkReviewTone } from './checkModel'
 import { useCheck } from './useCheck'
 
@@ -48,6 +48,8 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+// The server's refusals of editing the card's documents: ✎ and the row actions go off with the reason as their tooltip.
+const refusals = useDocumentRefusals()
 
 const k = (key: string) => `gui.inspector.check.${key}`
 

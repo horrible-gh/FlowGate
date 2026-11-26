@@ -127,6 +127,9 @@ import {
   forgetDocumentIo,
   leaveDocumentIo,
   noteWorkPlanOpener,
+  provideDocumentRefusals,
+  documentRefusalOf,
+  DOCUMENT_UPDATE,
   provideWorkPlanCardRun,
   provideWorkPlanFlowRunLock,
   setWorkPlanEditOpener,
@@ -191,6 +194,8 @@ provide(INSPECTOR_BODY, { element: bodyElement })
 // shows its document; every read shown settles them (and opens a document a refused [작성] waits for).
 const readTarget = computed(() => toInspectorTarget(props.selection))
 const target = computed(() => withWrittenCardLines(readTarget.value, cardLinesWritten(readTarget.value)))
+// The server's refusals of the card's document permissions, shared with every editing entry point below (documentRefusals.ts).
+provideDocumentRefusals(() => props.selection?.projectId ?? null)
 // T-b (rej_01M6R14HCES8QJJ5): the shown target for the parts, also between their tabs; null once
 // the Frame ends. The Frame still knows no feature: a part decides what the selection means for it.
 const frameAlive = ref(true)
@@ -238,7 +243,11 @@ onBeforeUnmount(
 )
 // flowgate.v02.0074 T#2: a work plan window the document [업로드] asks for (its JSON import) gets the same opener as the
 // 작업계획 line's: the Flow's verdict and, after a save, this host's read of the Flow's Canvas.
-onBeforeUnmount(setWorkPlanEditOpener((_docId, flowId) => workPlanOpener(flowId, host)))
+// flowgate.v02test.0090 (rejection): and the server's refusal of `project.document.update` for THE DOCUMENT'S project (the one
+// the upload asked with, not the selected card's), so a view-only person's window is locked with the reason from here too.
+onBeforeUnmount(setWorkPlanEditOpener((_docId, flowId, projectId) =>
+  workPlanOpener(flowId, host, () => documentRefusalOf(projectId, DOCUMENT_UPDATE, (key, params) => t(key, params ?? {}))),
+))
 
 /** Server events after which the header (the selected Flow's Canvas read) may be out of date. */
 const HEADER_REFRESH_EVENTS = ['doc_review_status_changed', 'ai_invoke_finished', 'document_explorer_refresh'] as const

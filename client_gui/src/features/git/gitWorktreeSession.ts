@@ -466,9 +466,11 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     () => pushCandidates.value.find((r) => r.mergeId === state.pushChoice) ?? pushCandidates.value[0] ?? null,
   )
 
-  const reasons = computed(() =>
+  // The merge and Push buttons refused by `project.git.merge` carry the server's own sentence for it.
+  const reasons = computed(() => withMergeText(
     worktreeReasons({
       readOnly: git.state.readOnly,
+      mergeReadOnly: git.state.mergeReadOnly,
       forbidden: state.forbidden,
       busy: !!state.busy || !!git.state.busy,
       status: state.status as WorktreeStatus | null,
@@ -485,7 +487,14 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
       },
       push: { results: state.results as MergeResultsView | null, row: pushRow.value as MergeResultRow | null },
     }),
-  )
+  ))
+
+  function withMergeText(all: Record<WorktreeButton, WorktreeReason>): Record<WorktreeButton, WorktreeReason> {
+    const text = git.state.mergeReason
+    if (!text || !git.state.mergeReadOnly) return all
+    const mark = (r: WorktreeReason): WorktreeReason => (r.code === 'merge_read_only' || r.code === 'read_only' ? { ...r, text } : r)
+    return { ...all, merge: mark(all.merge), push: mark(all.push) }
+  }
 
   // §3-4(1), first rule that hits. Only the E8 judgment of the chosen target gives the number;
   // the display-only committed range never does.
@@ -856,7 +865,8 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   async function execute(scope: GitExecutionScope, selection: WorktreeSelection = { all: true }, resume = false, commitRemaining = false): Promise<void> {
     const held = ticket()
     const api = wsrc()
-    if (!held || !api || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+    // The run commits and updates (project.git.write); a run that goes on to merge / Push also needs project.git.merge.
+    if (!held || !api || git.state.readOnly || (scope !== 'commit' && git.state.mergeReadOnly) || state.forbidden || state.busy || git.state.busy) return
     if (SESSION_CARDS.includes(git.groupCard.value ?? '')) return
     if (api.startExecution) {
       if (state.execution?.status === 'running') return
@@ -903,7 +913,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     const api = wsrc()
     const row = git.pendingRow.value
     if (!held || !api?.reconstruct || !row || typeof row.mergeId !== 'number' || row.finalApprovalBound || git.state.conflict?.graphMerge
-      || !git.conflictActionable.value || git.state.readOnly || state.forbidden || state.busy || git.state.busy) return
+      || !git.conflictActionable.value || git.state.readOnly || git.state.mergeReadOnly || state.forbidden || state.busy || git.state.busy) return
     state.busy = 'execution'
     ++e1Seq
     let resume = false

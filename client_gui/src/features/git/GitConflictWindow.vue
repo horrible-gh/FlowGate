@@ -143,11 +143,11 @@ const oursLabel = computed(() => conflict.value?.targetBranch ?? conflict.value?
 const theirsLabel = computed(() => conflict.value?.branch ?? t('gui.git.resolver.incoming'))
 
 const resolving = computed(() => session.groupCard.value === 'ai')
-const locked = computed(() => !session.canAct.value || !session.conflictActionable.value || resolving.value)
+const locked = computed(() => !session.canMerge.value || !session.conflictActionable.value || resolving.value)
 const lockedText = computed(() => {
   if (!file.value || file.value.conflictCount === 0) return null
   if (resolving.value) return t('gui.git.resolver.ai_running')
-  if (session.state.readOnly) return t('gui.git.conflict.blocked.read_only')
+  if (session.state.mergeReadOnly) return session.state.mergeReason ?? t(session.state.readOnly ? 'gui.git.conflict.blocked.read_only' : 'gui.git.conflict.blocked.merge_read_only')
   if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
   return null
 })

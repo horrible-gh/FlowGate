@@ -48,9 +48,9 @@ const reasonText = computed(() => {
   const key = `gui.git.reapprove.reason.${code}`
   return te(key) ? t(key) : code
 })
-const locked = computed(() => !session.canAct.value || !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)
+const locked = computed(() => !session.canMerge.value || !!gateJobs?.busy.value || gateJobs?.readOnly() !== false)
 const lockedText = computed(() => {
-  if (session.state.readOnly || gateJobs?.readOnly()) return t('gui.git.conflict.blocked.read_only')
+  if (session.state.mergeReadOnly || gateJobs?.readOnly()) return session.state.mergeReason ?? t(session.state.readOnly ? 'gui.git.conflict.blocked.read_only' : 'gui.git.conflict.blocked.merge_read_only')
   if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
   return t('gui.git.conflict.blocked.busy')
 })

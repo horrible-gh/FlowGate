@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '@/features/project/types'
 import { setTestLocale } from './projectI18n'
+import { grantNewProject, resetCapabilities } from '../../helpers/capabilities'
 
 const fetchActiveProjects = vi.hoisted(() => vi.fn())
 const createProjectApi = vi.hoisted(() => vi.fn())
@@ -14,8 +15,6 @@ vi.mock('@/features/project/api', () => ({
   suggestProjectSlug,
 }))
 
-const currentUser = vi.hoisted(() => ({ value: null as { username: string; email: string | null; isAdmin: boolean } | null }))
-vi.mock('@/core/auth/currentUser', () => ({ useCurrentUser: () => ({ user: currentUser }) }))
 
 import ProjectDialog from '@/features/project/ProjectDialog.vue'
 import { useProjectStore } from '@/features/project/store'
@@ -45,7 +44,7 @@ describe('features/project/ProjectDialog', () => {
     fetchActiveProjects.mockReset().mockResolvedValue([])
     createProjectApi.mockReset()
     suggestProjectSlug.mockReset().mockResolvedValue(null)
-    currentUser.value = { username: 'member', email: null, isAdmin: false }
+    grantNewProject(false)
     localStorage.clear()
     setActivePinia(createPinia())
   })
@@ -296,18 +295,20 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  it('hides the + 새 프로젝트 entry point for a non-admin user', async () => {
-    currentUser.value = { username: 'member', email: null, isAdmin: false }
+  it('turns the + 새 프로젝트 entry point off with the server\'s reason when the workspace refuses creating a project', async () => {
+    grantNewProject(false)
     const wrapper = mountDialog()
     useProjectStore().openDialog()
     await wrapper.vm.$nextTick()
-    const newButton = Array.from(document.querySelectorAll('.pd-intro .ui-btn')).find((el) => el.textContent?.includes('새 프로젝트'))
-    expect(newButton).toBeUndefined()
+    const newButton = Array.from(document.querySelectorAll('.pd-intro .ui-btn')).find((el) => el.textContent?.includes('새 프로젝트')) as HTMLButtonElement | undefined
+    expect(newButton).toBeTruthy()
+    expect(newButton!.disabled).toBe(true)
+    expect(newButton!.getAttribute('title')).toContain('워크스페이스')
     wrapper.unmount()
   })
 
   it('shows the + 새 프로젝트 entry point for an admin user, opening the create child Modal', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     const wrapper = mountDialog()
     useProjectStore().openDialog()
     await wrapper.vm.$nextTick()
@@ -322,7 +323,7 @@ describe('features/project/ProjectDialog', () => {
   })
 
   it('places + 새 프로젝트 as an intro-area action, and search as its own row below (MirageGlass 02-project-dialog.html parity), not a search toolbar', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
@@ -336,7 +337,7 @@ describe('features/project/ProjectDialog', () => {
   })
 
   it('after a successful create: closes the child Modal, refreshes the list, selects the new Project, keeps the parent open and current unchanged', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValueOnce([project('a')]).mockResolvedValueOnce([project('a'), project('new-project', { name: 'New Project' })])
     createProjectApi.mockResolvedValue(project('new-project', { name: 'New Project' }))
 
@@ -359,7 +360,7 @@ describe('features/project/ProjectDialog', () => {
     await flushPromises()
     await wrapper.vm.$nextTick()
 
-    expect(document.querySelector('.pcd-title')).toBeNull()
+    expect(document.querySelector('.pcd-title')?.textContent ?? '').not.toBe('새 프로젝트')
     expect(store.projects.map((p) => p.id)).toEqual(['a', 'new-project'])
     expect(store.currentProject?.id).toBe(priorCurrentId)
     expect(document.querySelector('.ui-modal-overlay')).not.toBeNull()
@@ -371,7 +372,7 @@ describe('features/project/ProjectDialog', () => {
   // the body no longer repeats the header guidance; the header title /
   // subtitle, search, list and the admin "+ 새 프로젝트" button stay, and no new text is added.
   it('has no duplicate body guidance, keeping the header guidance, search, list and + 새 프로젝트', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
@@ -392,7 +393,8 @@ describe('features/project/ProjectDialog', () => {
     wrapper.unmount()
   })
 
-  it('renders no empty intro row for a non-admin: search follows the header directly', async () => {
+  it('renders no intro row until the server has answered who may create a project: search follows the header directly', async () => {
+    resetCapabilities()
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
@@ -404,7 +406,7 @@ describe('features/project/ProjectDialog', () => {
   })
 
   it('closing the parent Dialog also closes the create child Modal — no orphan Modal, no stale session on reopen', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     const store = useProjectStore()
@@ -423,7 +425,7 @@ describe('features/project/ProjectDialog', () => {
     await wrapper.vm.$nextTick()
 
     expect(document.querySelector('.ui-modal-overlay')).toBeNull()
-    expect(document.querySelector('.pcd-title')).toBeNull()
+    expect(document.querySelector('.pcd-title')?.textContent ?? '').not.toBe('새 프로젝트')
 
     fetchActiveProjects.mockResolvedValueOnce([project('a')])
     store.openDialog()
@@ -431,12 +433,12 @@ describe('features/project/ProjectDialog', () => {
     await wrapper.vm.$nextTick()
 
     // The reopened parent must not resurrect the previous create session.
-    expect(document.querySelector('.pcd-title')).toBeNull()
+    expect(document.querySelector('.pcd-title')?.textContent ?? '').not.toBe('새 프로젝트')
     wrapper.unmount()
   })
 
   it('a create still in flight when the parent Dialog closes and reopens does not leak into the new session', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     let resolveCreate: (value: Project) => void = () => {}
     createProjectApi.mockImplementationOnce(() => new Promise<Project>((resolve) => { resolveCreate = resolve }))
@@ -461,7 +463,7 @@ describe('features/project/ProjectDialog', () => {
     // Parent closes (cascading the child closed) while the create request is still pending.
     store.closeDialog()
     await wrapper.vm.$nextTick()
-    expect(document.querySelector('.pcd-title')).toBeNull()
+    expect(document.querySelector('.pcd-title')?.textContent ?? '').not.toBe('새 프로젝트')
 
     fetchActiveProjects.mockResolvedValueOnce([project('a')])
     store.openDialog()
@@ -474,7 +476,7 @@ describe('features/project/ProjectDialog', () => {
 
     // The stale create's success must not reopen the old child session or select a Project
     // the new session never created.
-    expect(document.querySelector('.pcd-title')).toBeNull()
+    expect(document.querySelector('.pcd-title')?.textContent ?? '').not.toBe('새 프로젝트')
     const selected = Array.from(document.querySelectorAll('.project-row')).find((el) => el.querySelector('.project-row-main')?.getAttribute('aria-pressed') === 'true')
     expect(selected?.getAttribute('data-project-id')).not.toBe('pending')
     wrapper.unmount()
@@ -596,7 +598,7 @@ describe('features/project/ProjectDialog', () => {
   })
 
   it('the "/" shortcut focuses search without hijacking a literal "/" typed into another field', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
@@ -626,7 +628,7 @@ describe('features/project/ProjectDialog', () => {
   })
 
   it('the "/" shortcut does nothing while the create child Modal is open (this Dialog is not topmost)', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValue([project('a')])
     const wrapper = mountDialog()
     useProjectStore().openDialog()
@@ -652,7 +654,7 @@ describe('features/project/ProjectDialog', () => {
   // named with gui.common.close.
   it('shows its words in ja and keeps a created toast in the language of the moment', async () => {
     setTestLocale('ja')
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     fetchActiveProjects.mockResolvedValueOnce([]).mockResolvedValueOnce([project('np', { name: '새 프로젝트 가' })])
     createProjectApi.mockResolvedValue(project('np', { name: '새 프로젝트 가' }))
     const wrapper = mountDialog()

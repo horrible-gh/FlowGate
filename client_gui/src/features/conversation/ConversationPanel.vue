@@ -49,10 +49,10 @@
       :deciding="state.deciding"
       :empty-text="emptyText"
       :chat-id="state.activeChatId"
-      :read-only="readOnly"
+      :read-only="inputReadOnly"
       :checkpoint-seq="checkpointMode ? state.checkpointSeq : null"
       :checkpoint-kind="checkpointMode ? state.checkpointKind : null"
-      :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !readOnly && !!state.activeChatId"
+      :can-checkpoint="checkpointMode && session.supportsChatDocSettings && !inputReadOnly && !!state.activeChatId"
       :checkpoint-busy="state.savingCheckpoint"
       :my-participant-key="state.myParticipantKey"
       :reply-now="replyNowView"
@@ -81,6 +81,9 @@
       :load-diff="source.fetchRunFileDiff"
       @close="closeChange(view.key)"
     />
+    <!-- Sending, editing and deleting a message are the server's project.document.update: when it says no, the input and the
+         message menus are off and one line says why (flowgate.v02test.0090). -->
+    <PermissionNote v-if="editRefused" :project-id="projectId" :actions="['project.document.update']" data-test="conv-permission-note" />
     <ConversationComposer
       ref="composerEl"
       :chat-id="state.activeChatId"
@@ -88,7 +91,7 @@
       :group-id="state.scope?.groupId ?? null"
       :draft-intent-id="start.draftIntentId.value"
       :disabled="composerDisabled"
-      :read-only="readOnly"
+      :read-only="inputReadOnly"
       :settings="state.settings"
       :saving-settings="state.savingSettings"
       :pending-source-mode="state.pendingSourceMode"
@@ -138,6 +141,8 @@ import { connectionLost } from '@shared/connectionStatus'
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Alert from '../../components/ui/Alert.vue'
+import PermissionNote from '../../components/ui/PermissionNote.vue'
+import { useCapabilities } from '@shared/permissions/capabilities'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { createChatStart } from './chatStart'
 import ConversationComposer from './ConversationComposer.vue'
@@ -181,6 +186,12 @@ const props = withDefaults(
   }>(),
   { source: undefined, readOnly: false, sourceLocked: false, flowRunning: false, subscribeEvents: undefined, active: true, attachmentRequestRow: undefined, attachmentRequestBulk: undefined, attachmentsOpen: false, attachmentsPending: 0, focusAttachment: undefined },
 )
+
+// The server's "no" for changing this project's documents (a chat is one): the input, send and the message menus go off
+// with it. No answer yet changes nothing — the server still checks every send and its 403 shows the common box.
+const projectCaps = useCapabilities(() => props.projectId)
+const editRefused = computed(() => projectCaps.refusal('project.document.update') !== null)
+const inputReadOnly = computed(() => props.readOnly || editRefused.value)
 
 const emit = defineEmits<{
   'open-change': [activity: WorkChangeActivity]
@@ -344,7 +355,7 @@ const stopState = computed(() => {
 // flowgate.v02test.0067 card 3: [지금 멈추고 다시 답하기] sits on the follow-up line, only while a message waits.
 const replyNowView = computed(() => {
   const view = session.followUp.value
-  return view && view.reason === 'run' && !props.readOnly ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
+  return view && view.reason === 'run' && !inputReadOnly.value ? { stopping: view.stopping, editsFiles: view.editsFiles } : undefined
 })
 // flowgate.v02test.0067 #2: the Designer saw the Flow's run lock go off — a call waiting for the Flow looks again now.
 watch(() => props.sourceLocked, (locked, was) => {

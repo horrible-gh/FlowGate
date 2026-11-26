@@ -25,11 +25,15 @@ import { notifyGetRetry } from './requestRecovery'
 import { createConnectionRecovery } from './connectionRecovery'
 import { connectionLost, setConnectionLost } from './connectionStatus'
 import { createConnectionGate } from './connectionGate'
+import { SUPPRESS_FORBIDDEN_FLAG, isQuietForbiddenPath, reportForbidden } from './permissions/forbidden'
+import { reportRequestLeaving } from './permissions/requestSignal'
 
 interface RetryableRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean
   /** B4: how many times this GET was already re-sent after a transient failure. */
   _getRetryCount?: number
+  /** This call shows its own refusal: the common "no permission" box is not raised for its 403. */
+  fgSuppressForbidden?: boolean
 }
 
 export const getBaseUrl = (): string =>
@@ -374,6 +378,8 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 })
 
 function prepareRequest(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
+  // The next request after the permission answers have grown old asks for them again (shared/permissions/capabilities).
+  try { reportRequestLeaving(config.url || "") } catch { /* a listener must never hold a request back */ }
   const match = /^\/api\/v1\/projects\/([^/?]+)\/(groups\/tree|git\/groups\/[^/?]+\/tree)$/.exec((config.url || '').split('?')[0]!)
   try {
   if (config.method?.toLowerCase() === 'get' && match) {
@@ -837,6 +843,17 @@ api.interceptors.response.use(
     }
 
     if (isRecoveryFailure(error)) connectionRecovery.start()
+
+    // A 403 is the server saying "not you": the permission answers this screen holds may be stale, and the
+    // person must see that instead of an empty list or a spinner. Raised once here for every caller; a call
+    // that words its own refusal sets `fgSuppressForbidden`, and a few probes are quiet by nature.
+    if (error.response?.status === 403) {
+      const path = originalRequest?.url ?? ''
+      const body = error.response.data as { detail?: unknown } | undefined
+      reportForbidden(path, body?.detail, {
+        silent: originalRequest?.[SUPPRESS_FORBIDDEN_FLAG] === true || isQuietForbiddenPath(path),
+      })
+    }
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry) {
       return Promise.reject(error)

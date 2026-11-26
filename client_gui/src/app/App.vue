@@ -15,6 +15,7 @@
     <MergeWindows />
   <LicenseInfoWindow />
   <ConnectionBanner />
+  <ForbiddenNotice />
 </template>
 
 <script setup lang="ts">
@@ -46,12 +47,15 @@
 // `openLicenseWindow` from that feature's public surface.
 //
 // 0060: one connection banner for the whole app (ConnectionBanner) while the server cannot be reached.
+//
+// 0090: one "no permission" box for the whole app (ForbiddenNotice) for any 403 (shared/permissions/forbidden.ts).
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { MergeWindows } from '@/features/designer'
 import { DocumentWindows } from '@/features/documentWindow'
 import { LicenseInfoWindow } from '@/features/licenses'
 import { ProjectDialog, useProjectStore } from '@/features/project'
 import ConnectionBanner from './components/ConnectionBanner.vue'
+import ForbiddenNotice from './components/ForbiddenNotice.vue'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
 

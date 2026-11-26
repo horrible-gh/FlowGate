@@ -313,6 +313,42 @@ export default {
     minimize: 'Minimize',
     restore: 'Restore',
   },
+  permissions: {
+    role: {
+      role_admin: 'Administrator',
+      role_developer: 'Developer',
+      role_reviewer: 'Reviewer',
+      role_viewer: 'View only',
+      system_admin: 'System administrator'
+    },
+    reason: {
+      not_member: 'You are not a member of this project. Ask a project administrator to add you.',
+      role_limit: 'Not allowed: your role in this project is {role} ({minimum} or higher is required).',
+      role_limit_plain: 'Not allowed with your current role in this project.',
+      context_rule: 'Not allowed in the current state.',
+      token_scope: 'Outside the scope of this token.',
+      system_admin_only: 'Only a system administrator can do this.',
+      workspace_disabled: 'The workspace is turned off.',
+      project_archived: 'The project is archived: view only.',
+      account_inactive: 'This account is turned off.',
+      unknown: 'Not allowed: your permission could not be confirmed.'
+    },
+    reason_workspace: {
+      not_member: 'You are not a member of this workspace. Ask a workspace administrator to add you.',
+      role_limit: 'Not allowed with your current role in this workspace.'
+    },
+    rule: {
+      document_editable: 'The document cannot be edited in this state, for example after final approval.',
+      own_draft: 'Only your own drafts can be deleted.'
+    },
+    forbidden: {
+      title: 'No permission (403)',
+      body: 'You do not have permission to open this screen or do this. Ask a project administrator to add you or change your role.',
+      detail: 'Request: {path}',
+      back: 'Back to my projects',
+      close: 'Close'
+    }
+  },
   topbar: {
     search_placeholder: 'Search projects, groups, files, settings...',
     search_aria: 'Search (coming soon)',
@@ -1594,6 +1630,7 @@ export default {
         load_failed: 'Cannot resolve because conflict files could not be loaded · see the error below',
         unavailable: 'Conflict details unavailable · refresh Git status',
         read_only: 'Read only',
+        merge_read_only: 'You have no permission to merge, so this cannot be used',
         forbidden: 'No permission',
         busy: 'Another Git action is running',
       },
@@ -2023,6 +2060,7 @@ export default {
     },
     reason: {
       read_only: 'Read-only',
+      merge_read_only: 'No merge permission',
       forbidden: 'No permission',
       worktree_unavailable: 'No workspace',
       session_open: 'Conflict / update in progress — continue in the card above',

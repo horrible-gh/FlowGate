@@ -5,7 +5,8 @@ import { RouterView } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
-import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
+import { loadCurrentUser } from '@/core/auth/currentUser'
+import { SYSTEM_ACTIONS, setCurrentUserWithCaps as setCurrentUser, wireBlock } from '../../helpers/capabilities'
 import { decideSettingsAccess } from '@/features/settings/access'
 import type { SystemUsersResponse } from '@/features/settings/types'
 
@@ -27,6 +28,8 @@ vi.mock('@shared/api', async (importOriginal) => {
   const record = (method: string) =>
     vi.fn(async (path: string, params?: Record<string, string>) => {
       const query = method === 'GET' && params && Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : ''
+      // The settings menu asks which projects the person can see (capabilities) — not a settings request.
+      if (method === 'GET' && path === '/api/v1/projects' && query === '?status=active') return { data: { projects: [] } }
       net.requests.push(`${method} ${path}${query}`)
       if (method === 'GET' && path === '/auth/me') {
         return new Promise((resolve, reject) => {
@@ -61,8 +64,15 @@ registerAppMessages(i18n)
 const Host = defineComponent({ render: () => h(RouterView) })
 
 const ADMIN = { username: 'admin', email: 'admin@flowgate.local', isAdmin: true }
+// What the server sends in /auth/me for each kind of person (rbac/capabilities.py system block).
+const ME_ADMIN = { username: 'admin', email: 'admin@flowgate.local', is_admin: true, capabilities: wireBlock(SYSTEM_ACTIONS, 'system_admin') }
+const ME_P = {
+  username: 'p-admin', email: null, is_admin: false,
+  capabilities: wireBlock(SYSTEM_ACTIONS, null, Object.fromEntries(SYSTEM_ACTIONS.map((a) => [a, { reason: 'system_admin_only' }]))),
+}
 // P / M / N / D: project admin, member, non-member and an account with delegated system
-// permissions. The GUI only ever sees /auth/me's is_admin, which is false for all four.
+// permissions. For all four the server's answer holds no system action and no project the person may open the
+// settings of (the project list probe answers empty).
 const NON_ADMINS = [
   ['P', { username: 'p-admin', email: null, isAdmin: false }],
   ['M', { username: 'member', email: null, isAdmin: false }],
@@ -219,7 +229,7 @@ describe('V02 비관리자 direct URL — replaced by the overview before any vi
       const w = await enterDirectly(url)
       expect(router.currentRoute.value.fullPath).toBe('/settings')
       expect(location()).toBe('/app/settings')
-      expect(w.get('[data-testid="settings-access-notice"]').text()).toContain('시스템 관리자만 열 수 있는 화면')
+      expect(w.get('[data-testid="settings-access-notice"]').text()).toContain('이 화면을 열 권한이 없어')
       expectNoManagementDom(w)
       expect(net.requests).toEqual([])
     })
@@ -266,7 +276,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
 
   it.each(LOADING_URLS)('%s, answer P → overview with notice; no system/project request', async (url) => {
     const w = await enterWhileLoading(url)
-    net.me!.resolve({ data: { username: 'p-admin', email: null, is_admin: false } })
+    net.me!.resolve({ data: ME_P })
     await waitForRoute('/settings')
     expect(location()).toBe('/app/settings')
     expect(w.find('[data-testid="settings-loading"]').exists()).toBe(false)
@@ -277,7 +287,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
 
   it('system/users, answer A → the view mounts only now and starts its GET', async () => {
     const w = await enterWhileLoading('/settings/system/users')
-    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    net.me!.resolve({ data: ME_ADMIN })
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/settings/system/users')
     expect(w.find('[data-panel="users"]').exists()).toBe(true)
@@ -286,7 +296,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
 
   it('system/general, answer A → the view mounts only now and starts its two GETs', async () => {
     const w = await enterWhileLoading('/settings/system/general')
-    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    net.me!.resolve({ data: ME_ADMIN })
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/settings/system/general')
     expect(w.find('[data-panel="system-general"]').exists()).toBe(true)
@@ -295,7 +305,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
 
   it('system/agents, answer A → the view mounts only now and starts its one GET', async () => {
     const w = await enterWhileLoading('/settings/system/agents')
-    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    net.me!.resolve({ data: ME_ADMIN })
     await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe('/settings/system/agents')
     expect(w.find('[data-panel="system-agents"]').exists()).toBe(true)
@@ -308,7 +318,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
     ['/settings/project/p1/git', '[data-panel="project-git"]', ['GET /api/v1/projects?status=all', 'GET /api/v1/projects/p1/git/config']],
   ])('%s, answer A → the view mounts only now: the list GET, then the one GET of that project', async (url, panel, calls) => {
     const w = await enterWhileLoading(url)
-    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    net.me!.resolve({ data: ME_ADMIN })
     for (let i = 0; i < 50 && !w.find(panel).exists(); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10))
       await flushPromises()
@@ -320,7 +330,7 @@ describe('V03 권한 로딩 — neutral loading only until /auth/me answers', ()
 
   it('/settings/project/p1 (no section), answer A → not a screen, so the overview; no request', async () => {
     const w = await enterWhileLoading('/settings/project/p1')
-    net.me!.resolve({ data: { username: 'admin', email: 'admin@flowgate.local', is_admin: true } })
+    net.me!.resolve({ data: ME_ADMIN })
     await waitForRoute('/settings')
     expect(w.find('.settings-hub').exists()).toBe(true)
     expect(w.find('[data-testid="settings-access-notice"]').exists()).toBe(false)
@@ -401,21 +411,48 @@ describe('V04 폐지 URL — replaced by the overview, no old screen, Back does 
 })
 
 describe('decideSettingsAccess', () => {
-  const ready = (isAdmin: boolean) => ({ status: 'ready' as const, user: { isAdmin } })
+  // The server's answer is handed in: `allowed` holds the system actions it said yes to, `project` whether some
+  // visible project allows `project.settings.read` (undefined = that answer is still out).
+  const person = (allowed: readonly string[], project?: boolean) => ({
+    status: 'ready' as const,
+    user: { username: 'x' },
+    requirement: (req: { system: readonly string[]; project?: string }) => {
+      if (req.system.some((a) => allowed.includes(a))) return 'allowed' as const
+      if (req.project) return project === undefined ? ('pending' as const) : project ? ('allowed' as const) : ('denied' as const)
+      return 'denied' as const
+    },
+  })
+  const admin = person(['system.settings.read', 'system.settings.manage', 'system.user.read'])
+  const nobody = person([], false)
   const target = (path: string, registered = true, adminOnly = false) => ({ path, registered, adminOnly })
 
-  it('follows D §1.2', () => {
-    expect(decideSettingsAccess(target('/projects/x'), ready(false))).toEqual({ kind: 'allow' })
-    expect(decideSettingsAccess(target('/settings'), ready(false))).toEqual({ kind: 'allow' })
-    expect(decideSettingsAccess(target('/settings/workspaces/w1', false), ready(true))).toEqual({ kind: 'home', notice: null })
-    expect(decideSettingsAccess(target('/settings/system/security', false), ready(false))).toEqual({ kind: 'home', notice: null })
-    expect(decideSettingsAccess(target('/settings/system/users', true, true), { status: 'loading', user: null })).toEqual({ kind: 'pending' })
-    expect(decideSettingsAccess(target('/settings/system/users', true, true), ready(false))).toEqual({ kind: 'home', notice: 'admin_only' })
-    expect(decideSettingsAccess(target('/settings/system/users', true, true), ready(true))).toEqual({ kind: 'allow' })
-    expect(decideSettingsAccess(target('/settings/project/p1/git', false), ready(true))).toEqual({ kind: 'home', notice: null })
-    expect(decideSettingsAccess(target('/settings/PROJECT', false), ready(false))).toEqual({ kind: 'home', notice: 'admin_only' })
-    expect(decideSettingsAccess(target('/settings/system/users', true, true), { status: 'failed', user: null })).toEqual({ kind: 'home', notice: 'admin_only' })
-    expect(decideSettingsAccess(target('/settings/system/users', true, true), { status: 'idle', user: null })).toEqual({ kind: 'home', notice: 'admin_only' })
-    expect(decideSettingsAccess(target('/settings/me/account', false), ready(false))).toEqual({ kind: 'home', notice: null })
+  it('follows D §1.2 with the server\'s capabilities', () => {
+    expect(decideSettingsAccess(target('/projects/x'), nobody)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings'), nobody)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings/workspaces/w1', false), admin)).toEqual({ kind: 'home', notice: null })
+    expect(decideSettingsAccess(target('/settings/system/security', false), nobody)).toEqual({ kind: 'home', notice: null })
+    expect(decideSettingsAccess(target('/settings/system/users', true, true), { ...nobody, status: 'loading', user: null })).toEqual({ kind: 'pending' })
+    expect(decideSettingsAccess(target('/settings/system/users', true, true), nobody)).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/system/users', true, true), admin)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings/project/p1/git', false), admin)).toEqual({ kind: 'home', notice: null })
+    expect(decideSettingsAccess(target('/settings/PROJECT', false), nobody)).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/system/users', true, true), { ...nobody, status: 'failed', user: null })).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/system/users', true, true), { ...nobody, status: 'idle', user: null })).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/me/account', false), nobody)).toEqual({ kind: 'home', notice: null })
+  })
+
+  it('each screen needs its own action — a person with only system.user.read gets Users but not Agents', () => {
+    const usersOnly = person(['system.user.read'], false)
+    expect(decideSettingsAccess(target('/settings/system/users'), usersOnly)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings/system/agents', true, true), usersOnly)).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/system/general'), usersOnly)).toEqual({ kind: 'home', notice: 'no_permission' })
+  })
+
+  it('a project administrator (no system action) opens the project screens, and waits while that answer is out', () => {
+    const projectAdmin = person([], true)
+    expect(decideSettingsAccess(target('/settings/project'), projectAdmin)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings/project/p1/git'), projectAdmin)).toEqual({ kind: 'allow' })
+    expect(decideSettingsAccess(target('/settings/system/users'), projectAdmin)).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/project'), person([], undefined))).toEqual({ kind: 'pending' })
   })
 })

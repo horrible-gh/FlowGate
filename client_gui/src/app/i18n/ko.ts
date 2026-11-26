@@ -316,6 +316,42 @@ export default {
     minimize: '최소화',
     restore: '복원',
   },
+  permissions: {
+    role: {
+      role_admin: '관리자',
+      role_developer: '개발자',
+      role_reviewer: '리뷰어',
+      role_viewer: '보기 전용',
+      system_admin: '시스템 관리자'
+    },
+    reason: {
+      not_member: '이 프로젝트의 멤버가 아니라 할 수 없습니다. 프로젝트 관리자에게 멤버 추가를 요청하세요.',
+      role_limit: '이 프로젝트에서 {role} 역할이라 할 수 없습니다({minimum} 이상 필요).',
+      role_limit_plain: '이 프로젝트에서 지금 역할로는 할 수 없습니다.',
+      context_rule: '지금 상태에서는 할 수 없습니다.',
+      token_scope: '이 토큰의 범위 밖이라 할 수 없습니다.',
+      system_admin_only: '시스템 관리자만 할 수 있습니다.',
+      workspace_disabled: '워크스페이스가 꺼져 있어 할 수 없습니다.',
+      project_archived: '보관된 프로젝트라 보기만 할 수 있습니다.',
+      account_inactive: '꺼진 계정이라 할 수 없습니다.',
+      unknown: '권한을 확인하지 못해 할 수 없습니다.'
+    },
+    reason_workspace: {
+      not_member: '이 워크스페이스의 멤버가 아니라 할 수 없습니다. 워크스페이스 관리자에게 멤버 추가를 요청하세요.',
+      role_limit: '이 워크스페이스에서 지금 역할로는 할 수 없습니다.'
+    },
+    rule: {
+      document_editable: '최종 승인된 문서처럼 고칠 수 없는 상태입니다.',
+      own_draft: '내 초안만 지울 수 있습니다.'
+    },
+    forbidden: {
+      title: '권한 없음 (403)',
+      body: '이 화면이나 작업을 할 권한이 없습니다. 프로젝트 관리자에게 멤버 추가나 역할 변경을 요청하세요.',
+      detail: '요청: {path}',
+      back: '내 프로젝트로 돌아가기',
+      close: '닫기'
+    }
+  },
   topbar: {
     search_placeholder: '프로젝트, 그룹, 파일, 설정 등을 검색하세요...',
     search_aria: '검색 (준비 중)',
@@ -1607,6 +1643,7 @@ export default {
         load_failed: '충돌 파일을 불러오지 못해 해결할 수 없음 · 아래 오류를 확인하세요',
         unavailable: '충돌 정보를 확인할 수 없음 · Git 상태를 새로고침하세요',
         read_only: '읽기 전용이라 조작할 수 없음',
+        merge_read_only: '합치기 권한이 없어 조작할 수 없음',
         forbidden: '권한 없음',
         busy: '다른 Git 작업 처리 중',
       },
@@ -2036,6 +2073,7 @@ export default {
     },
     reason: {
       read_only: '읽기 전용',
+      merge_read_only: '합치기 권한 없음',
       forbidden: '권한 없음',
       worktree_unavailable: '작업 공간 없음',
       session_open: '충돌·갱신 처리 중 — 위 카드에서 진행',

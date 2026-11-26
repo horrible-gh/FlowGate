@@ -6,7 +6,7 @@
       <button
         type="button"
         class="gx-btn primary"
-        :disabled="!session.canAct.value || !!hold.blockReason"
+        :disabled="!session.canMerge.value || !!hold.blockReason"
         data-test="git-hold-apply"
         @click="askApply"
       >
@@ -36,7 +36,7 @@ const session = ctx.session
 
 const hold = computed(() => session.holdView.value)
 // `설정` sends no request, so a busy session leaves it on; readOnly / 403 turn it off (§5.1).
-const canOpenSettings = computed(() => !session.state.readOnly && !session.state.forbidden)
+const canOpenSettings = computed(() => !session.state.mergeReadOnly && !session.state.forbidden)
 const target = computed(() => hold.value?.targetBranch || t('gui.git.header.base_unset'))
 const actionLabel = computed(() => {
   const view = hold.value
