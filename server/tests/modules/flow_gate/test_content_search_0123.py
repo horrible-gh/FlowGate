@@ -727,7 +727,7 @@ def test_flow_discovery_target_project_permission(seed_data, tmp_path, monkeypat
     allowed = {"testprj", "otherprj"} if allow_other else {"testprj"}
     monkeypatch.setattr(auth_outbound, "has_permission",
                         lambda user, project, perm: user == "usr_test_001" and project in allowed
-                        and perm == "perm_document_read")
+                        and perm == "project.document.read")
     gid = "otherprj.test.0041"
     if groups.get_by_id(gid) is None:
         groups.create(dict(group_id=gid, project_id="otherprj", module="test", title="Other Flow"))

@@ -121,7 +121,7 @@ def revise(req):
     check_input_complete(req)
     flow = legacy.load_flow(req.flow_id)
     node, spec = target.check_card(flow, req.node_key, req.slot)
-    guards.authorize(req.actor, flow["project_id"], "perm_document_update", flow_id=req.flow_id)
+    guards.authorize(req.actor, flow["project_id"], "project.document.update", flow_id=req.flow_id)
     lock_doc = documents.get_by_id(req.expected_doc_id) or {"doc_id": req.expected_doc_id, "group_id": req.flow_id}
     holder, restore_log = ContactHolder(), RestoreLog()
     try:

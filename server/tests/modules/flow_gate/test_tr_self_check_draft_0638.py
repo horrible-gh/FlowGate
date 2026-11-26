@@ -621,5 +621,5 @@ def test_rest_user_read_and_cancel_check_the_runs_project(monkeypatch):
     client = _client(monkeypatch, user)
     assert client.get(DRAFT_RUNS + "/scr_d").json()["status"] == "running"
     assert client.post(DRAFT_RUNS + "/scr_d/cancel").json()["status"] == "cancelled"
-    assert perms == [(P, "perm_document_read"), (P, "perm_document_update")]
+    assert perms == [(P, "project.document.read"), (P, "project.document.update")]
     assert client.get(DRAFT_RUNS + "/scr_missing").status_code == 404

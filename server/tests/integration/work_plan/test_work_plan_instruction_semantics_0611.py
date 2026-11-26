@@ -220,7 +220,7 @@ def _wire_world(monkeypatch, tmp_path, wfseq) -> _InstructionWorld:
     monkeypatch.setattr(db_users, "get_by_id", lambda uid: {"user_id": uid, "is_admin": 1})
     monkeypatch.setattr(
         workflow_router, "_get_user_permissions",
-        lambda _user: {"document.approve", "document.update", "perm_document_create"},
+        lambda _user: {"document.approve", "document.update", "project.document.create"},
     )
     for name in ("get_sequence_for_member_doc", "get_sequence_by_doc_id", "get_sequence_items",
                  "get_effective_head", "get_item_by_result_doc_id"):

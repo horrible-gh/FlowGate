@@ -1,7 +1,7 @@
 """settings mockups 11–14: workspaces, system users, system security.
 
 Covers the migration 136 data carry-over, the workspace service (membership, project access
-materialised into user_project_roles, policy, AI allowlist enforcement), the system user service
+computed as the workspace value of the role calculator, policy, AI allowlist enforcement), the system user service
 (invitations, last-admin guard) and the security policy (2FA enrolment, lockout, password length,
 idle sign-out, sign-out when the 2FA scope widens), plus the HTTP routes.
 """
@@ -29,14 +29,6 @@ INSERT OR IGNORE INTO roles(role_id,role_name,is_system,created_at,updated_at) V
  ('role_manager','Manager',1,datetime('now'),datetime('now')),
  ('role_worker','Worker',1,datetime('now'),datetime('now')),
  ('role_viewer','Viewer',1,datetime('now'),datetime('now'));
-INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at) VALUES
- ('system.settings.manage','Manage',datetime('now')),
- ('system.user.read','Read',datetime('now')),
- ('system.user.create','Create',datetime('now')),
- ('system.user.update','Update',datetime('now'));
-INSERT OR IGNORE INTO role_permissions(role_id,permission_id) VALUES
- ('role_admin','system.settings.manage'),('role_admin','system.user.read'),
- ('role_admin','system.user.create'),('role_admin','system.user.update');
 INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at) VALUES
  ('__SYSTEM__','[System]',1,datetime('now'),datetime('now')),
  ('alpha','Alpha',1,datetime('now'),datetime('now')),
@@ -115,6 +107,13 @@ class _SqliteStore:
             conn.execute(sql, params or [])
             conn.commit()
 
+    def _execute_affected(self, sql, params=None):
+        """One write and its affected-row count (FlowGateStore's compare-and-swap contract)."""
+        if self._txn is not None:
+            return self._txn.execute(sql, params or []).rowcount
+        with self.transaction():
+            return self._txn.execute(sql, params or []).rowcount
+
     def _fetch_one(self, sql, params=None):
         rows = self._fetch_all(sql, params)
         return rows[0] if rows else None
@@ -146,6 +145,10 @@ def store(tmp_path):
         fn = getattr(meta_cache, name, None)
         if callable(fn):
             fn()
+    # an upgraded install: the server's start runs the one-time grant migration
+    from modules.flow_gate.rbac import migration_0090
+
+    assert migration_0090.run()["status"] == "completed"
     try:
         yield db
     finally:
@@ -163,8 +166,14 @@ def _user(uid):
 
 
 def _role(store, uid, pid):
-    row = store._fetch_one("SELECT role_id FROM user_project_roles WHERE user_id=? AND project_id=?", [uid, pid])
-    return row["role_id"] if row else None
+    """The person's effective project role (direct, team and workspace value); the stored row on
+    __SYSTEM__ (which no judgment reads)."""
+    from modules.flow_gate.rbac import permission_service
+
+    if pid == "__SYSTEM__":
+        row = store._fetch_one("SELECT role_id FROM user_project_roles WHERE user_id=? AND project_id=?", [uid, pid])
+        return row["role_id"] if row else None
+    return permission_service.effective_role(uid, pid)
 
 
 # ── migration 136 ────────────────────────────────────────────────────────────
@@ -191,9 +200,9 @@ class TestMigration:
         from modules.flow_gate.settings import workspace_service as ws
 
         ws.sync("ws_default")
-        assert _role(store, "u_dev", "alpha") == "role_worker"
-        assert _role(store, "u_view", "alpha") == "role_viewer"
-        assert _role(store, "u_admin2", "beta") == "role_manager"
+        assert _role(store, "u_dev", "alpha") == "role_developer"
+        assert _role(store, "u_view", "alpha") == "role_reviewer"  # workspace value review
+        assert _role(store, "u_admin2", "beta") == "role_admin"
         assert _role(store, "u_view", "beta") is None
 
 
@@ -230,16 +239,16 @@ class TestWorkspaces:
         ws.add_member(ADMIN, "ws_default", "u_free", "member")
         assert _role(store, "u_free", "alpha") is None  # member default: none
         ws.set_default_access(ADMIN, "ws_default", {"member": "review"})
-        assert _role(store, "u_free", "alpha") == "role_viewer"
-        assert _role(store, "u_free", "beta") == "role_viewer"
+        assert _role(store, "u_free", "alpha") == "role_reviewer"
+        assert _role(store, "u_free", "beta") == "role_reviewer"
         detail = ws.set_project_access(ADMIN, "ws_default", "beta", "u_free", "none")
         assert _role(store, "u_free", "beta") is None
         assert {"project_id": "beta", "user_id": "u_free", "access": "none"} in detail["access"]["exceptions"]
         assert next(m for m in detail["members"] if m["user_id"] == "u_free")["project_count"] == 1
         ws.change_member_role(ADMIN, "ws_default", "u_free", "admin")
-        assert _role(store, "u_free", "alpha") == "role_worker"  # admin default: dev
+        assert _role(store, "u_free", "alpha") == "role_developer"  # admin default: dev
         ws.set_project_access(ADMIN, "ws_default", "beta", "u_free", "default")
-        assert _role(store, "u_free", "beta") == "role_worker"
+        assert _role(store, "u_free", "beta") == "role_developer"
 
 
 

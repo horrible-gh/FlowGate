@@ -47,7 +47,7 @@ def compose_get_body(current, body, line):
 def read_card(flow_id, node_key, slot, actor, origin=None):
     flow = legacy.load_flow(flow_id)
     node, spec = target.check_card(flow, node_key, slot)
-    guards.authorize(actor, flow["project_id"], "perm_document_read", flow_id=flow_id)
+    guards.authorize(actor, flow["project_id"], "project.document.read", flow_id=flow_id)
     for _ in range(READ_RESOLVE_RETRY + 1):
         node, spec = target.check_card(flow, node_key, slot)
         line = target.resolve_current(flow_id, node, spec)

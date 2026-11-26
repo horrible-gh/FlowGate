@@ -12,6 +12,11 @@ The fix adds `_require_settings_edit` (system.settings.manage, matching the same
 System edit/manage policy already used by ai_settings.py / system.py /
 project_settings.py's global-mode routes) and applies it to every mutating route,
 while list/get/resolve keep the original read-only dependency.
+
+With the fixed roles both checks are system-scope decisions: a page without a project is for
+system administrators (system.* and a project permission without a project are never granted
+to anyone else), and a role delegated on __SYSTEM__ grants nothing. The users READER and EDITOR
+below keep such delegations and are refused everywhere; the positive cases run as ADMIN.
 """
 from __future__ import annotations
 
@@ -136,11 +141,12 @@ NONE_USER = {"user_id": "usr_none_0009", "is_admin": 0}
 
 
 class TestEnvVarPermissions:
-    def test_reader_can_list(self, mock_db):
+    def test_delegated_reader_cannot_list(self, mock_db):
         client = _make_client(READER)
         resp = client.get("/api/v1/env-vars")
-        assert resp.status_code == 200
-        assert resp.json() == {"env_vars": []}
+        assert resp.status_code == 403
+        admin = _make_client(ADMIN).get("/api/v1/env-vars")
+        assert admin.status_code == 200 and "env_vars" in admin.json()
 
     def test_no_permission_user_cannot_list(self, mock_db):
         client = _make_client(NONE_USER)
@@ -152,8 +158,8 @@ class TestEnvVarPermissions:
         resp = client.post("/api/v1/env-vars", json={"kind": "user", "name": "FOO", "value": "1"})
         assert resp.status_code == 403
 
-    def test_editor_can_create_user_kind(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_admin_can_create_user_kind(self, mock_db):
+        client = _make_client(ADMIN)
         resp = client.post("/api/v1/env-vars", json={"kind": "user", "name": "FOO", "value": "1"})
         assert resp.status_code == 201
         body = resp.json()
@@ -161,12 +167,12 @@ class TestEnvVarPermissions:
         assert body["kind"] == "user"
         assert body["value"] == "1"
 
-    def test_editor_cannot_create_system_kind(self, mock_db):
-        """system-kind mutation still needs is_admin, on top of the new edit gate."""
+    def test_delegated_editor_cannot_create_any_kind(self, mock_db):
+        """A role delegated on __SYSTEM__ grants no system permission any more."""
         client = _make_client(EDITOR)
-        resp = client.post("/api/v1/env-vars", json={"kind": "system", "name": "BAR", "value": "1"})
-        assert resp.status_code == 403
-        assert "admins" in resp.json()["detail"].lower()
+        for kind in ("system", "user"):
+            resp = client.post("/api/v1/env-vars", json={"kind": kind, "name": "BAR", "value": "1"})
+            assert resp.status_code == 403
 
     def test_admin_can_create_system_kind(self, mock_db):
         client = _make_client(ADMIN)
@@ -175,7 +181,7 @@ class TestEnvVarPermissions:
         assert resp.json()["kind"] == "system"
 
     def test_reader_cannot_update(self, mock_db):
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/env-vars", json={"kind": "user", "name": "UPDATABLE", "value": "orig"}
         ).json()
@@ -185,11 +191,11 @@ class TestEnvVarPermissions:
         assert resp.status_code == 403
 
         # unchanged despite the rejected attempt
-        row = reader_client.get("/api/v1/env-vars").json()["env_vars"]
+        row = editor_client.get("/api/v1/env-vars").json()["env_vars"]
         assert next(r for r in row if r["var_id"] == created["var_id"])["value"] == "orig"
 
-    def test_editor_can_update(self, mock_db):
-        editor_client = _make_client(EDITOR)
+    def test_admin_can_update_user_kind(self, mock_db):
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/env-vars", json={"kind": "user", "name": "UPDATABLE2", "value": "orig"}
         ).json()
@@ -199,7 +205,7 @@ class TestEnvVarPermissions:
         assert resp.json()["value"] == "changed"
 
     def test_reader_cannot_delete(self, mock_db):
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/env-vars", json={"kind": "user", "name": "DELETABLE", "value": "x"}
         ).json()
@@ -208,11 +214,11 @@ class TestEnvVarPermissions:
         resp = reader_client.delete(f"/api/v1/env-vars/{created['var_id']}")
         assert resp.status_code == 403
 
-        rows = reader_client.get("/api/v1/env-vars").json()["env_vars"]
+        rows = editor_client.get("/api/v1/env-vars").json()["env_vars"]
         assert any(r["var_id"] == created["var_id"] for r in rows)
 
-    def test_editor_can_delete(self, mock_db):
-        editor_client = _make_client(EDITOR)
+    def test_admin_can_delete_user_kind(self, mock_db):
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/env-vars", json={"kind": "user", "name": "DELETABLE2", "value": "x"}
         ).json()
@@ -221,15 +227,15 @@ class TestEnvVarPermissions:
         assert resp.status_code == 200
         assert resp.json() == {"detail": "deleted"}
 
-    def test_create_duplicate_name_still_returns_409_for_editor(self, mock_db):
+    def test_create_duplicate_name_still_returns_409_for_admin(self, mock_db):
         """Business-error semantics (duplicate name) must not change with the permission fix."""
-        client = _make_client(EDITOR)
+        client = _make_client(ADMIN)
         client.post("/api/v1/env-vars", json={"kind": "user", "name": "DUPTEST", "value": "1"})
         resp = client.post("/api/v1/env-vars", json={"kind": "user", "name": "DUPTEST", "value": "2"})
         assert resp.status_code == 409
 
-    def test_update_missing_var_still_returns_404_for_editor(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_update_missing_var_still_returns_404_for_admin(self, mock_db):
+        client = _make_client(ADMIN)
         resp = client.put("/api/v1/env-vars/does-not-exist", json={"value": "x"})
         assert resp.status_code == 404
 
@@ -255,17 +261,17 @@ class TestEnvVarPermissions:
 
 
 class TestCommandPermissions:
-    def test_reader_can_list_and_resolve(self, mock_db):
-        editor_client = _make_client(EDITOR)
+    def test_delegated_reader_cannot_list_or_resolve(self, mock_db):
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/commands", json={"kind": "user", "name": "greet", "template": "echo hi"}
         ).json()
 
         reader_client = _make_client(READER)
-        list_resp = reader_client.get("/api/v1/commands")
-        assert list_resp.status_code == 200
+        assert reader_client.get("/api/v1/commands").status_code == 403
+        assert reader_client.post(f"/api/v1/commands/{created['command_id']}/resolve").status_code == 403
 
-        resolve_resp = reader_client.post(f"/api/v1/commands/{created['command_id']}/resolve")
+        resolve_resp = editor_client.post(f"/api/v1/commands/{created['command_id']}/resolve")
         assert resolve_resp.status_code == 200
         assert resolve_resp.json()["resolved"] == "echo hi"
 
@@ -274,8 +280,8 @@ class TestCommandPermissions:
         resp = client.post("/api/v1/commands", json={"kind": "user", "name": "blocked", "template": "echo no"})
         assert resp.status_code == 403
 
-    def test_editor_can_create_update_delete(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_admin_can_create_update_delete_user_kind(self, mock_db):
+        client = _make_client(ADMIN)
         created = client.post(
             "/api/v1/commands", json={"kind": "user", "name": "cmdcrud", "template": "echo one"}
         )
@@ -290,13 +296,14 @@ class TestCommandPermissions:
         assert deleted.status_code == 200
         assert deleted.json() == {"detail": "deleted"}
 
-    def test_editor_cannot_create_system_kind(self, mock_db):
+    def test_delegated_editor_cannot_create_any_kind(self, mock_db):
         client = _make_client(EDITOR)
-        resp = client.post("/api/v1/commands", json={"kind": "system", "name": "syscmd", "template": "echo sys"})
-        assert resp.status_code == 403
+        for kind in ("system", "user"):
+            resp = client.post("/api/v1/commands", json={"kind": kind, "name": "syscmd", "template": "echo sys"})
+            assert resp.status_code == 403
 
     def test_reader_cannot_update(self, mock_db):
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/commands", json={"kind": "user", "name": "cmd_updatable", "template": "echo orig"}
         ).json()
@@ -306,11 +313,11 @@ class TestCommandPermissions:
         assert resp.status_code == 403
 
         # unchanged despite the rejected attempt
-        rows = reader_client.get("/api/v1/commands").json()["commands"]
+        rows = editor_client.get("/api/v1/commands").json()["commands"]
         assert next(r for r in rows if r["command_id"] == created["command_id"])["template"] == "echo orig"
 
     def test_reader_cannot_delete(self, mock_db):
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/commands", json={"kind": "user", "name": "cmd_deletable", "template": "echo x"}
         ).json()
@@ -319,7 +326,7 @@ class TestCommandPermissions:
         resp = reader_client.delete(f"/api/v1/commands/{created['command_id']}")
         assert resp.status_code == 403
 
-        rows = reader_client.get("/api/v1/commands").json()["commands"]
+        rows = editor_client.get("/api/v1/commands").json()["commands"]
         assert any(r["command_id"] == created["command_id"] for r in rows)
 
     def test_admin_can_create_update_delete_system_kind(self, mock_db):
@@ -346,7 +353,7 @@ class TestCommandPermissions:
         """The core regression this fix closes: running a saved command is a mutation
         (subprocess.run with shell=True), not a read — it must not succeed on read
         permission alone."""
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/commands", json={"kind": "user", "name": "exec_guard", "template": "echo hi"}
         ).json()
@@ -356,7 +363,7 @@ class TestCommandPermissions:
         assert resp.status_code == 403
 
     def test_no_permission_user_cannot_execute(self, mock_db):
-        editor_client = _make_client(EDITOR)
+        editor_client = _make_client(ADMIN)
         created = editor_client.post(
             "/api/v1/commands", json={"kind": "user", "name": "exec_guard2", "template": "echo hi"}
         ).json()
@@ -365,8 +372,8 @@ class TestCommandPermissions:
         resp = none_client.post(f"/api/v1/commands/{created['command_id']}/execute")
         assert resp.status_code == 403
 
-    def test_editor_can_execute(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_admin_can_execute_user_kind(self, mock_db):
+        client = _make_client(ADMIN)
         created = client.post(
             "/api/v1/commands", json={"kind": "user", "name": "exec_ok", "template": "echo hi"}
         ).json()
@@ -382,7 +389,7 @@ class TestCommandPermissions:
         }
 
     def test_admin_can_execute(self, mock_db):
-        client = _make_client(EDITOR)
+        client = _make_client(ADMIN)
         created = client.post(
             "/api/v1/commands", json={"kind": "user", "name": "exec_admin", "template": "echo hi"}
         ).json()
@@ -403,13 +410,13 @@ class TestCommandPermissions:
         assert resp.status_code == 200
         assert "hi" in resp.json()["stdout"].lower()
 
-    def test_execute_missing_command_still_returns_404_for_editor(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_execute_missing_command_still_returns_404_for_admin(self, mock_db):
+        client = _make_client(ADMIN)
         resp = client.post("/api/v1/commands/does-not-exist/execute")
         assert resp.status_code == 404
 
-    def test_create_duplicate_name_still_returns_409_for_editor(self, mock_db):
-        client = _make_client(EDITOR)
+    def test_create_duplicate_name_still_returns_409_for_admin(self, mock_db):
+        client = _make_client(ADMIN)
         client.post("/api/v1/commands", json={"kind": "user", "name": "DUPCMD", "template": "echo a"})
         resp = client.post("/api/v1/commands", json={"kind": "user", "name": "DUPCMD", "template": "echo b"})
         assert resp.status_code == 409

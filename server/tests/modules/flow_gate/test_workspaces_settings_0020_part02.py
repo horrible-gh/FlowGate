@@ -54,11 +54,11 @@ class TestWorkspaces:
         lab = ws.create_workspace(ADMIN, "Archive Team", "u_admin")
         store._execute("UPDATE projects SET workspace_id=? WHERE project_id='beta'", [lab["workspace_id"]])
         ws.add_member(ADMIN, lab["workspace_id"], "u_view", "admin")
-        assert _role(store, "u_view", "beta") == "role_worker"
+        assert _role(store, "u_view", "beta") == "role_developer"
         ws.update_workspace(ADMIN, lab["workspace_id"], status="disabled")
         assert _role(store, "u_view", "beta") is None
         ws.update_workspace(ADMIN, lab["workspace_id"], status="active")
-        assert _role(store, "u_view", "beta") == "role_worker"
+        assert _role(store, "u_view", "beta") == "role_developer"
         with pytest.raises(ws.WorkspaceError) as locked:
             ws.update_workspace(ADMIN, "ws_default", status="disabled")
         assert locked.value.code == "default_workspace_locked"
@@ -98,5 +98,5 @@ class TestWorkspaces:
                        "VALUES ('gamma','Gamma',1,datetime('now'),datetime('now'))")
         ws.on_project_created(_user("u_dev"), "gamma", "ws_default")
         assert store._fetch_one("SELECT workspace_id FROM projects WHERE project_id='gamma'")["workspace_id"] == "ws_default"
-        assert _role(store, "u_dev", "gamma") == "role_manager"
-        assert _role(store, "u_admin2", "gamma") == "role_worker"  # admin default: dev
+        assert _role(store, "u_dev", "gamma") == "role_admin"
+        assert _role(store, "u_admin2", "gamma") == "role_developer"  # admin default: dev

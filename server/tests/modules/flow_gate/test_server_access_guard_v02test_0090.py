@@ -194,26 +194,26 @@ class TestCan:
     def test_admin_may_do_everything(self):
         from modules.flow_gate.rbac import access
 
-        assert access.can(ADMIN, "pb", "perm_document_delete")
+        assert access.can(ADMIN, "pb", "project.document.delete")
 
     def test_member_only_on_own_project(self):
         from modules.flow_gate.rbac import access
 
-        assert access.can(MEMBER, "pa", "perm_document_read")
-        assert access.can(MEMBER, "pa", "perm_document_update")
-        assert not access.can(MEMBER, "pb", "perm_document_read")
+        assert access.can(MEMBER, "pa", "project.document.read")
+        assert access.can(MEMBER, "pa", "project.document.update")
+        assert not access.can(MEMBER, "pb", "project.document.read")
 
     def test_role_limits_the_member(self):
         from modules.flow_gate.rbac import access
 
-        assert access.can(VIEWER, "pa", "perm_document_read")
-        assert not access.can(VIEWER, "pa", "perm_document_update")
+        assert access.can(VIEWER, "pa", "project.document.read")
+        assert not access.can(VIEWER, "pa", "project.document.update")
 
     def test_system_role_alone_is_not_membership(self):
         from modules.flow_gate.rbac import access
 
-        assert not access.can(SYSTEM_ONLY, "pa", "perm_document_read")
-        assert not access.can(OUTSIDER, "pa", "perm_document_read")
+        assert not access.can(SYSTEM_ONLY, "pa", "project.document.read")
+        assert not access.can(OUTSIDER, "pa", "project.document.read")
 
     def test_visible_projects_come_from_sql(self, store):
         from modules.flow_gate.rbac import access
@@ -303,12 +303,12 @@ def _guarded_app(user: dict) -> TestClient:
     router = APIRouter()
 
     @router.post("/next")
-    @require_target_permission("perm_document_create")
+    @require_target_permission("project.document.create")
     def create_next(body: _Body, current_user: dict = Depends(get_current_user)):
         return {"ok": True, "project_id": body.project_id}
 
     @router.get("/doc/{doc_id}")
-    @require_target_permission("perm_document_read")
+    @require_target_permission("project.document.read")
     async def read_doc(doc_id: str, current_user: dict = Depends(get_current_user)):
         return {"doc_id": doc_id}
 
@@ -456,7 +456,7 @@ def _jwt(user: dict) -> dict:
 
 
 class TestMemberPermissionClause:
-    def _ids(self, store, user, permission="perm_document_read"):
+    def _ids(self, store, user, permission="project.document.read"):
         from modules.flow_gate.rbac import access
 
         sql, params = access.member_permission_clause(user, permission, "p.project_id")
@@ -468,11 +468,11 @@ class TestMemberPermissionClause:
 
         assert self._ids(store, MEMBER) == {"pa"}
         assert self._ids(store, VIEWER) == {"pa"}
-        assert self._ids(store, VIEWER, "perm_document_update") == set()
-        # role_admin on __SYSTEM__ holds perm_document_read but is not membership.
+        assert self._ids(store, VIEWER, "project.document.update") == set()
+        # role_admin on __SYSTEM__ holds project.document.read but is not membership.
         assert self._ids(store, SYSTEM_ONLY) == set()
         assert self._ids(store, OUTSIDER) == set()
-        assert access.member_permission_clause(ADMIN, "perm_document_read", "p.project_id") == ("", [])
+        assert access.member_permission_clause(ADMIN, "project.document.read", "p.project_id") == ("", [])
 
 
 class TestBodyDiagnosisScope:
@@ -518,7 +518,7 @@ class TestBodyDiagnosisScope:
 
 
 class TestAttachmentGuard:
-    def _refusal(self, user, doc_id=DOC_A, permission="perm_document_read"):
+    def _refusal(self, user, doc_id=DOC_A, permission="project.document.read"):
         import anyio
 
         from modules.flow_gate.documents.routers import documents as routes
@@ -527,17 +527,17 @@ class TestAttachmentGuard:
 
     def test_route_guard_uses_membership(self):
         assert self._refusal(MEMBER) is None
-        assert self._refusal(ADMIN, DOC_B, "perm_document_update") is None
+        assert self._refusal(ADMIN, DOC_B, "project.document.update") is None
         assert self._refusal(SYSTEM_ONLY).status_code == 403
         assert self._refusal(OUTSIDER).status_code == 403
-        assert self._refusal(VIEWER, permission="perm_document_update").status_code == 403
+        assert self._refusal(VIEWER, permission="project.document.update").status_code == 403
 
     def test_attachment_request_judgment_uses_membership(self):
         from modules.flow_gate.documents.attachments import requests as att_requests
 
-        assert att_requests.has_permission(MEMBER, "perm_document_read", "pa")
-        assert not att_requests.has_permission(SYSTEM_ONLY, "perm_document_read", "pa")
-        assert not att_requests.has_permission(MEMBER, "perm_document_read", "pb")
+        assert att_requests.has_permission(MEMBER, "project.document.read", "pa")
+        assert not att_requests.has_permission(SYSTEM_ONLY, "project.document.read", "pa")
+        assert not att_requests.has_permission(MEMBER, "project.document.read", "pb")
 
 
 class TestOutboundMembership:
@@ -757,7 +757,7 @@ class TestPerProjectListJudgment:
             with pytest.raises(ValueError):
                 auth_outbound.readable_project_clause(_worker(MULTI), column)
             with pytest.raises(ValueError):
-                access.member_permission_clause(MULTI, "perm_document_read", column)
+                access.member_permission_clause(MULTI, "project.document.read", column)
 
 
 class TestProjectListQuery:

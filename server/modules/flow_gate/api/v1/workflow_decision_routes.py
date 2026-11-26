@@ -808,8 +808,8 @@ def post_workflow_decision_request(body: WorkflowDecisionRequestBody, request: R
             content={"error": "doc_not_found", "doc_id": body.doc_id},
         )
     project_id = target_doc.get("project_id") or ""
-    can_read = has_permission(auth["issued_to"], project_id, "perm_document_read")
-    can_update = has_permission(auth["issued_to"], project_id, "perm_document_update")
+    can_read = has_permission(auth["issued_to"], project_id, "project.document.read")
+    can_update = has_permission(auth["issued_to"], project_id, "project.document.update")
     if not can_read or not can_update:
         return JSONResponse(
             status_code=403,
@@ -873,8 +873,8 @@ def post_workflow_sequence_edit_request(body: SequenceEditRequestBody, request: 
             content={"error": "doc_not_found", "doc_id": body.doc_id},
         )
     project_id = target_doc.get("project_id") or ""
-    can_read = has_permission(auth["issued_to"], project_id, "perm_document_read")
-    can_update = has_permission(auth["issued_to"], project_id, "perm_document_update")
+    can_read = has_permission(auth["issued_to"], project_id, "project.document.read")
+    can_update = has_permission(auth["issued_to"], project_id, "project.document.update")
     if not can_read or not can_update:
         return JSONResponse(
             status_code=403,

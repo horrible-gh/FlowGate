@@ -16,8 +16,8 @@ __all__ = ["GraphApiError", "with_flow_guard", "authenticate", "authorize", "inv
            "require_writable", "PERMISSIONS"]
 
 # A memo follows the document permissions (CH O3: the existing document authoring rights).
-PERMISSIONS = {"read": "perm_document_read", "create": "perm_document_create",
-               "update": "perm_document_update", "delete": "perm_document_delete"}
+PERMISSIONS = {"read": "project.document.read", "create": "project.document.create",
+               "update": "project.document.update", "delete": "project.document.delete"}
 
 
 def authenticate(request) -> str:

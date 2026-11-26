@@ -327,7 +327,7 @@ _CHAT_COMMAND_DECISION_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands/
 _CHAT_COMMAND_WORKER_PATH = re.compile(r"^(?:/flowgate)?/api/v1/chat-commands(?:/[^/]+)?/?$")
 # AI attachment upload requests. A person's decision is how the
 # user answers a request while (or after) the AI that made it works in the same group, so the
-# AI-run lease must never refuse it -- the handler checks perm_document_update, the archived /
+# AI-run lease must never refuse it -- the handler checks project.document.update, the archived /
 # disposed group and the document guard itself. The AI's own intake only stages a file in a
 # server-owned area (no document, no group state changes) and authenticates its live run
 # token itself, so it is not held up by another run's lease either: a request is never what

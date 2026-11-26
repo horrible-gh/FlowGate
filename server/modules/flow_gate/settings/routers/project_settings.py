@@ -345,7 +345,7 @@ class DocTypeCreate(BaseModel):
 def create_doc_type(
     project_id: str,
     body: DocTypeCreate,
-    user=Depends(require_permission("project.document_type.create", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     resolved_code = body.code or body.type_code
     resolved_name = body.label or body.type_name
@@ -387,7 +387,7 @@ def update_doc_type(
     project_id: str,
     type_id: int,
     body: DocTypePatch,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     updates: dict = {}
     resolved_name = body.label if body.label is not None else body.type_name
@@ -410,7 +410,7 @@ def update_doc_type(
 def delete_doc_type(
     project_id: str,
     type_id: int,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     try:
         if not delete_document_type(project_id, type_id):
@@ -700,7 +700,7 @@ class TemplateContentBody(BaseModel):
 def register_tpl(
     project_id: str,
     body: TemplateContentBody,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E4 — JSON body registration: ensure registry (is_active=0) + first body."""
     try:
@@ -749,7 +749,7 @@ def put_tpl_content(
     template_id: int,
     locale: str,
     body: TemplateContentPut,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E5 — register/replace a locale body (no redeploy, idempotent)."""
     try:
@@ -768,7 +768,7 @@ def delete_tpl_content(
     project_id: str,
     template_id: int,
     locale: str,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E6 — delete a locale body (ko-fallback protected)."""
     try:
@@ -791,7 +791,7 @@ def update_tpl(
     project_id: str,
     template_id: int,
     body: TemplatePatch,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E7 — activation toggle (existing contract)."""
     row = update_template(project_id, template_id, body.model_dump())
@@ -804,7 +804,7 @@ def update_tpl(
 def delete_tpl(
     project_id: str,
     template_id: int,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     if not delete_template(project_id, template_id):
         raise HTTPException(status_code=404, detail="Template not found")

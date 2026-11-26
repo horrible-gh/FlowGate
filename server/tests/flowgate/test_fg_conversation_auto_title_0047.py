@@ -51,7 +51,7 @@ def env(monkeypatch):
         "turns": [{"seq": 1, "speaker": "user", "body": "로그인 오류 원인을 찾아 줘"},
                   {"seq": 2, "speaker": "ai", "body": "확인하겠습니다"}],
         "answer": ("로그인 오류 원인 조사", None),
-        "perms": {"perm_document_read", "perm_document_update"},
+        "perms": {"project.document.read", "project.document.update"},
         "disposed": False,
         "prompts": [],
         "renames": [],
@@ -229,9 +229,9 @@ def test_invalid_input(env, body):
 
 def test_permissions_and_group_state(env):
     assert _post(BODY, doc_id="fgp.v02.0001.0099-CH").status_code == 404
-    env["perms"] = {"perm_document_read"}
+    env["perms"] = {"project.document.read"}
     assert _post(BODY).status_code == 403
-    env["perms"] = {"perm_document_read", "perm_document_update"}
+    env["perms"] = {"project.document.read", "project.document.update"}
     env["disposed"] = True
     res = _post(BODY)
     assert res.status_code == 409 and _code(res) == "conversation_group_disposed"

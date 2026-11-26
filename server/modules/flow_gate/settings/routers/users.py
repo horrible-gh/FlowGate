@@ -120,7 +120,7 @@ def update_user_endpoint(
 
 
 @router.delete("/users/{uid}", status_code=200)
-def delete_user_endpoint(uid: str, user: dict = Depends(require_permission("system.user.delete"))):
+def delete_user_endpoint(uid: str, user: dict = Depends(require_permission("system.user.disable"))):
     row = deactivate_user(uid)
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
@@ -166,7 +166,7 @@ def get_roles(uid: str, user: dict = Depends(require_permission("system.user.rea
 def assign_role(
     uid: str,
     body: AssignRoleBody,
-    user: dict = Depends(require_permission("system.user.assign_role")),
+    user: dict = Depends(require_permission("system.user.assign_admin")),
 ):
     try:
         return assign_project_role(uid, body.project_id, body.role_id, granted_by=user.get("user_id"))
@@ -178,7 +178,7 @@ def assign_role(
 def revoke_role(
     uid: str,
     project_id: str,
-    user: dict = Depends(require_permission("system.user.assign_role")),
+    user: dict = Depends(require_permission("system.user.assign_admin")),
 ):
     revoke_project_role(uid, project_id)
     return {"detail": "revoked"}

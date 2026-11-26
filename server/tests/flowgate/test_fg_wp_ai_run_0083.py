@@ -169,7 +169,7 @@ def _grant_document_create():
     store, now = get_store(), now_iso()
     store._execute("INSERT OR IGNORE INTO roles (role_id, role_name, created_at, updated_at) VALUES (?,?,?,?)",
                    ["role_wp_0083", "WP writer", now, now])
-    for perm in ("perm_document_create", "perm_document_read"):
+    for perm in ("project.document.create", "project.document.read"):
         store._execute("INSERT OR IGNORE INTO permissions (permission_id, permission_name, created_at) VALUES (?,?,?)",
                        [perm, perm, now])
         store._execute("INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?,?)",

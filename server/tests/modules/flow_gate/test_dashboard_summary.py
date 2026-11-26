@@ -466,7 +466,7 @@ def test_dashboard_route_enforces_permission(monkeypatch):
     response = client.get("/api/v1/projects/flowgate/dashboard/summary")
 
     assert response.status_code == 403
-    assert "perm_document_read" in response.json()["error_message"]
+    assert "project.document.read" in response.json()["error_message"]
 
 
 def test_dashboard_route_auth_error_is_not_cached():

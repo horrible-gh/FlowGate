@@ -10,7 +10,7 @@ The card's core checks (items 5, 6, 7):
    and from a recovery_incomplete one (``retry_recovery_incomplete``);
 2. a console user's re-verification of a recovery_incomplete run is refused while the proof
    fails (``selfcheck_ownership_unknown`` / ``selfcheck_tree_unproven``, nothing released),
-   is closed to worker tokens and to users without perm_document_update, and releases the
+   is closed to worker tokens and to users without project.document.update, and releases the
    run when the proof holds;
 3. after a lost heartbeat the holder's G is renewed when its row is still there, protected
    when the renewal fails (``release()`` then leaves it; the holder's recovery release
@@ -127,9 +127,9 @@ def test_a_reverify_is_refused_without_proof(world, monkeypatch, case):
     _hold_incomplete(store, rid, reason)
     path = f"/api/v1/self-check/recovery/runs/{rid}/reverify"
 
-    # Worker tokens never reach it; a user needs perm_document_update.
+    # Worker tokens never reach it; a user needs project.document.update.
     assert client.post(path, headers=_as(RAW["new"])).status_code == 403
-    monkeypatch.setattr(routes, "has_permission", lambda _user, _project, perm: perm != "perm_document_update")
+    monkeypatch.setattr(routes, "has_permission", lambda _user, _project, perm: perm != "project.document.update")
     assert client.post(path, headers=_as(USER_JWT)).status_code == 403
     monkeypatch.setattr(routes, "has_permission", lambda *_: True)
     assert _row(store, rid)["recovery_state"] == "incomplete"

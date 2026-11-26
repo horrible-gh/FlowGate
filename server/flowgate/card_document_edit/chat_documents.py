@@ -150,7 +150,7 @@ def chat_read_document(via, *, token_raw=None, run_hint=None, doc_id=None, ctx=N
     with _input(via, run, READ_DOC_TOOL, READ_FIELDS, None, path, ctx) as (inp, record):
         doc = _document(run, inp.get("doc_id"))
         actor, _origin = _identity(run, token, record)
-        guards.authorize(actor, doc["project_id"], "perm_document_read", flow_id=doc.get("group_id"))
+        guards.authorize(actor, doc["project_id"], "project.document.read", flow_id=doc.get("group_id"))
         fresh, body = read._snapshot_parts(doc["doc_id"])
         result = success_body(_read_payload(fresh, body, target.classify_card_slot(fresh)))
         if via == chat_authz.API:
@@ -302,7 +302,7 @@ def chat_revise_document(via, *, token_raw=None, run_hint=None, doc_id=None, req
         key = _idempotency_key(run, inp, record)
         _require_write_mode(run, token)
         doc = _document(run, inp["doc_id"])
-        guards.authorize(actor, doc["project_id"], "perm_document_update", flow_id=doc.get("group_id"))
+        guards.authorize(actor, doc["project_id"], "project.document.update", flow_id=doc.get("group_id"))
         if _split_frontmatter(content)[0] is None:
             _current, current_body = read._snapshot_parts(doc["doc_id"])
             content = with_current_frontmatter(content, current_body.text)
@@ -416,8 +416,8 @@ def chat_create_document(via, *, token_raw=None, run_hint=None, request_body=Non
         priority = _optional_text(inp, "priority") or "medium"
         key = _idempotency_key(run, inp, record)
         _require_write_mode(run, token)
-        if not has_permission(actor.user_id, run["project_id"], "perm_document_create"):
-            raise GraphApiError(403, "permission_denied", {"required": "perm_document_create"})
+        if not has_permission(actor.user_id, run["project_id"], "project.document.create"):
+            raise GraphApiError(403, "permission_denied", {"required": "project.document.create"})
         memo = _created_memo(run)
         with memo["lock"]:
             done = memo["results"].get(key)
@@ -426,8 +426,8 @@ def chat_create_document(via, *, token_raw=None, run_hint=None, request_body=Non
             holder = chat_gate.TicketHolder()
             try:
                 chat_authz.chat_recheck(run, token, holder)
-                if not has_permission(actor.user_id, run["project_id"], "perm_document_create"):
-                    raise GraphApiError(403, "permission_denied", {"required": "perm_document_create"})
+                if not has_permission(actor.user_id, run["project_id"], "project.document.create"):
+                    raise GraphApiError(403, "permission_denied", {"required": "project.document.create"})
                 result = process_service.create_workflow_root(
                     project=str(run["project_id"]), module=module, title=title.strip(), slug="",
                     priority=priority, body=content, owner=actor.user_id, doc_type=doc_type, locale=locale)

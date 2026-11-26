@@ -55,11 +55,9 @@ def active(env, decided, wired, monkeypatch, starts):
                         else auth_outbound.verify_bearer(req))
     monkeypatch.setattr(guards, "has_permission", lambda *a: True)
     from modules.flow_gate.rbac import permission_service
-    monkeypatch.setattr(permission_service, "_cache", {})
-    _sql(env["db"], "INSERT INTO roles(role_id,role_name,created_at,updated_at) VALUES (\'read0145\',\'read0145\',\'t\',\'t\')")
-    _sql(env["db"], "INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at) VALUES (\'perm_document_read\',\'perm_document_read\',\'t\')")
-    _sql(env["db"], "INSERT INTO role_permissions(role_id,permission_id) VALUES (\'read0145\',\'perm_document_read\')")
-    _sql(env["db"], "INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'read0145\',\'t\')")
+    permission_service.clear_all_cache()
+    # a fixed role that reads documents (project roles are the four fixed roles)
+    _sql(env["db"], "INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'role_viewer\',\'t\')")
     key = flow(env, doc_type="N", extra_settings=(("instruction","omit"),("review_count",1)))
     roles(key, "not_used", X, B)
     graph = start(env)
@@ -160,12 +158,21 @@ def test_real_worker_fences_and_revocation(active):
         assert digest(env)==before
         _sql(env["db"],restore,values)
     from modules.flow_gate.rbac import permission_service
-    _sql(env["db"],"DELETE FROM user_project_roles WHERE user_id=\'u_kim\' AND role_id=\'read0145\'")
+    _sql(env["db"],"DELETE FROM user_project_roles WHERE user_id=\'u_kim\' AND role_id=\'role_viewer\'")
+    # the token owner is a system administrator (who holds everything): take the flag and any
+    # workspace value away as well, so the owner really holds no read on the project
+    _sql(env["db"],"UPDATE users SET is_admin=0, authz_version=authz_version+1 WHERE user_id=\'u_kim\'")
+    members=_sql(env["db"],"SELECT workspace_id, role FROM workspace_members WHERE user_id=\'u_kim\'")
+    _sql(env["db"],"DELETE FROM workspace_members WHERE user_id=\'u_kim\'")
     permission_service.invalidate_cache("u_kim","flowgate")
     before=digest(env)
     assert get(env,chat).status_code==get(env,worker).status_code==403
     assert digest(env)==before
-    _sql(env["db"],"INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'read0145\',\'t\')")
+    _sql(env["db"],"INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'role_viewer\',\'t\')")
+    for member in members or []:
+        _sql(env["db"],"INSERT INTO workspace_members(workspace_id,user_id,role,created_at,updated_at) VALUES (?,\'u_kim\',?,\'t\',\'t\')",
+             (member["workspace_id"], member["role"]))
+    _sql(env["db"],"UPDATE users SET is_admin=1, authz_version=authz_version+1 WHERE user_id=\'u_kim\'")
     permission_service.invalidate_cache("u_kim","flowgate")
     live["ai-read-chat"]["status"]="cancelling"
     assert get(env,chat).status_code == 409

@@ -27,7 +27,7 @@ def read_card(request: Request, flow_id: str, node_key: str):
     def handle():
         user_id = _access(request, flow_id)
         return {'verification': service.status(flow_id, node_key,
-            lambda project_id: has_permission(user_id, project_id, 'perm_document_read'))}
+            lambda project_id: has_permission(user_id, project_id, 'project.document.read'))}
     return envelope.run(request, handle)
 
 

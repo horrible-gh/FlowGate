@@ -98,7 +98,7 @@ def _verify_user_jwt(raw: str):
 def verify_bearer(request: Request):
     """Verify Bearer token.
 
-    - Worker token: token_service.verify + perm_document_read check
+    - Worker token: token_service.verify + project.document.read check
     - User JWT: pass after access/totp/blacklist verification
 
     Success: returns token_rec dict
@@ -126,14 +126,13 @@ def verify_bearer(request: Request):
     user_id: str = token_rec["issued_to"]
     project: str = token_rec["project"]
 
-    if not has_permission(user_id, project, "perm_document_read"):
+    if not has_permission(user_id, project, "project.document.read"):
         return _fail(403, "You do not have permission to perform this action")
 
     return token_rec
 
 
-_READ = "perm_document_read"
-_SYSTEM_PROJECT = "__SYSTEM__"
+_READ = "project.document.read"
 
 
 def _jwt_user(auth: dict) -> Optional[dict]:
@@ -154,7 +153,7 @@ def can_read_project(auth: dict, project_id: str) -> bool:
 
     A user JWT goes through the one judgment ``rbac.access.can``: administrators
     pass, anyone else must be a member of that project (a role on ``__SYSTEM__``
-    alone is not membership) and hold ``perm_document_read``. A worker token keeps
+    alone is not membership) and hold ``project.document.read``. A worker token keeps
     its existing rule, the owner's permission on the target project.
     """
     user_id = auth.get("issued_to")
@@ -173,9 +172,9 @@ def readable_project_clause(auth: dict, column: str) -> tuple[str, list]:
 
     The same rule as ``can_read_project`` evaluated by the database, so lists never
     load every project to filter it in Python. ``column`` must be qualified with
-    the outer table alias (for example ``g.project_id``); a bare name would bind
-    to the role row inside the ``EXISTS`` subquery and detach the permission from
-    the listed row's project, so it is refused.
+    the outer table alias (for example ``g.project_id``); a bare name could bind to
+    another joined table and detach the permission from the listed row's project,
+    so it is refused.
     """
     from modules.flow_gate.rbac import access
 
@@ -186,12 +185,9 @@ def readable_project_clause(auth: dict, column: str) -> tuple[str, list]:
     user = _jwt_user(auth)
     if user is not None:
         return access.member_permission_clause(user, _READ, column)
-    # Worker token: the owner's permission on the row's project, the same rule
-    # as ``has_permission(user_id, project_id, perm_document_read)``.
-    return (
-        " AND" + access.role_permission_exists(column),
-        [user_id, _SYSTEM_PROJECT, _READ],
-    )
+    # Worker token: the owner's current permission on the row's project, the same
+    # rule as ``has_permission(user_id, project_id, project.document.read)``.
+    return access.permitted_project_clause(user_id, _READ, column)
 
 
 def readable_projects(auth: dict) -> list[str]:

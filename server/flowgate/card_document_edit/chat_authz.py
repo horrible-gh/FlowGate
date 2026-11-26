@@ -193,7 +193,7 @@ def chat_recheck_alive(run: dict, token_row: dict, holder: chat_gate.TicketHolde
     """Gate first, then one token read: the run is still alive and its current token is still this one.
 
     No edit mode and no one-shot claim are asked: a question's answer is judged by the user's
-    ``perm_document_create`` alone (Q#600), in reading mode too. The gate ticket keeps the answer ahead of the
+    ``project.document.create`` alone (Q#600), in reading mode too. The gate ticket keeps the answer ahead of the
     run's finalize, so the run-end follow-up sees it (``question_wait.follow``)."""
     holder.ticket = chat_gate.enter(run.get("run_id"))
     if run.get("status") == "cancelling" or _cancel_event_set(run):

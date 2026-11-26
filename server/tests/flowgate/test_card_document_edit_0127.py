@@ -212,7 +212,7 @@ def test_permission_precedes_current_document_and_does_not_disclose_it(env, monk
     monkeypatch.setattr(guards, "has_permission", lambda *a: False)
     res = post(env, replace(env.req, expected_doc_id="foreign"))
     assert res.status_code == 403
-    assert res.json()["error"]["params"] == {"flow_id": F, "required": "perm_document_update"}
+    assert res.json()["error"]["params"] == {"flow_id": F, "required": "project.document.update"}
 
 
 def test_slot_and_node_checks(env, monkeypatch):

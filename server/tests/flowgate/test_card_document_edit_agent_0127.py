@@ -175,7 +175,7 @@ def test_permissions_precede_current_slot_and_no_current_information(agent,monke
     monkeypatch.setattr(target,"resolve_current",lambda *a:{**old(*a),"document":{**agent.env.doc,"doc_id":"private"}})
     monkeypatch.setattr(guards,"has_permission",lambda *a:False)
     value=assert_failure(agent.post(payload()),403,"permission_denied")
-    assert value["error"]["params"] == {"flow_id":F,"required":"perm_document_update"}
+    assert value["error"]["params"] == {"flow_id":F,"required":"project.document.update"}
     assert_failure(agent.post(payload(expected_revision=None)),422,"expected_revision_missing")
     monkeypatch.setattr(guards,"has_permission",lambda *a:True)
     assert_failure(agent.post(payload()),409,"slot_document_changed")

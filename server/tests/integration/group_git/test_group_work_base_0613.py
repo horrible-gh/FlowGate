@@ -828,11 +828,11 @@ def _git_routes_client(user: dict):
 
 
 def test_requirement_author_reads_options_but_not_the_branch_manager_catalog(monkeypatch):
-    """The defect: a worker-role author (perm_document_create, no project.settings.read)
+    """The defect: a worker-role author (project.document.create, no project.settings.read)
     got 403 from /git/branches and the Git-project dialog could not create at all."""
     from modules.flow_gate.api.v1 import git_routes
 
-    granted = {("p", "perm_document_create")}
+    granted = {("p", "project.document.create")}
     checked = []
 
     def has_permission(user_id, project_id, permission):
@@ -856,7 +856,7 @@ def test_requirement_author_reads_options_but_not_the_branch_manager_catalog(mon
     ok = client.get("/api/v1/projects/p/git/work-base-options")
     assert ok.status_code == 200
     assert ok.json()["pid"] == "p"
-    assert ("worker", "p", "perm_document_create") in checked
+    assert ("worker", "p", "project.document.create") in checked
     assert client.get("/api/v1/projects/p/git/branches").status_code == 403
     # an unrelated project where the user holds no role exposes nothing.
     assert client.get("/api/v1/projects/secret/git/work-base-options").status_code == 403
@@ -942,17 +942,18 @@ def test_diff_call_sites_use_the_pinned_group_work_base_not_project_base(repo, m
 
 
 def test_seeded_author_role_contract_matches_the_options_permission(migrated_sqlite_db):
-    """role_worker is the seeded requirement author: it creates documents but does not
-    read project settings, which is exactly why the dialog cannot use the catalog."""
+    """role_worker, the seeded requirement author, reads as the fixed role role_developer: it
+    creates documents, which the options route checks, and with the fixed roles it also reads
+    the Git branch catalog (project.git.read) but does not manage the repository settings."""
     with sqlite3.connect(migrated_sqlite_db("rbac-seed-0613.db")) as conn:
-        worker = {
+        developer = {
             row[0] for row in conn.execute(
-                "SELECT permission_id FROM role_permissions WHERE role_id = 'role_worker'"
+                "SELECT permission_id FROM role_permissions WHERE role_id = 'role_developer'"
             )
         }
-    assert "perm_document_create" in worker
-    assert "project.settings.read" not in worker
-    assert "perm_project_settings_read" not in worker
+    assert "project.document.create" in developer
+    assert "project.git.read" in developer
+    assert "project.settings.edit" not in developer
 
 
 @pytest.mark.parametrize("branch_count", [0, 1, 60])

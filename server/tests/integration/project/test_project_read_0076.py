@@ -348,18 +348,19 @@ def test_v24_a_storage_root_contract_with_shadowed_override(env):
 #   status=active answers every active project (__SYSTEM__, p1 — p2 is inactive, so not there) and
 #   status=all every project, inactive p2 included. Projects outside the account's membership are in
 #   both: the unresolved 0075 defect, reproduced.
-# - P (role_admin on p1) and M (role_worker on p1) get 403 on p1's own storage-root / git config: the
-#   migration roles carry no ``project.settings.read`` (the 0075 permission-ID mismatch), so this is
-#   NOT a correct per-project restriction either.
-# - D reads p1 (not a member) through the delegated system permission: the existing system-role path.
+# - With the fixed roles (deploy SQL 214) every project role holds ``project.settings.read``: P (role_admin
+#   on p1, read as the administrator role) and M (role_worker on p1, read as the developer role) read
+#   p1's own storage-root / git config. N and R hold no role on p1 and are refused.
+# - D is refused too: a role on __SYSTEM__ (the delegation) is never added to a project.
 _LISTS = [("list_active", 200, ["__SYSTEM__", P1]), ("list_all", 200, ["__SYSTEM__", P1, P2])]
 _DENIED = [("p1_root", 403, None), ("p1_git", 403, None)]
+_ALLOWED = [("p1_root", 200, P1_OVERRIDE), ("p1_git", 200, True)]
 OBSERVED: dict[str, list] = {
-    "P": _LISTS + _DENIED,
-    "M": _LISTS + _DENIED,
+    "P": _LISTS + _ALLOWED,
+    "M": _LISTS + _ALLOWED,
     "N": _LISTS + _DENIED,
     "R": _LISTS + _DENIED,
-    "D": _LISTS + [("p1_root", 200, P1_OVERRIDE), ("p1_git", 200, True)],
+    "D": _LISTS + _DENIED,
 }
 
 

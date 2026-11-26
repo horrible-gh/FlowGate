@@ -297,8 +297,8 @@ def test_real_project_rbac_read_and_upload(env, role, can_write):
     permission_service.invalidate_cache(USER)
     client.app.dependency_overrides[get_current_user] = lambda: user
     try:
-        assert images.attachments.has_permission(user, "perm_document_read", PROJECT)
-        assert images.attachments.has_permission(user, "perm_document_update", PROJECT) is can_write
+        assert images.attachments.has_permission(user, "project.document.read", PROJECT)
+        assert images.attachments.has_permission(user, "project.document.update", PROJECT) is can_write
         image = upload()
         assert client.get(image["url"]).status_code == 200
         response = client.post(f"/api/v1/flows/{GROUP}/message-images",
