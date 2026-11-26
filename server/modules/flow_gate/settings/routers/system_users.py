@@ -65,18 +65,23 @@ def list_system_users(user: dict = Depends(require_permission("system.user.read"
     return svc.list_users()
 
 
+@router.get("/users/{user_id}")
+def get_system_user(user_id: str, user: dict = Depends(require_permission("system.user.read"))):
+    return _run(lambda: svc.get_user_view(user_id))
+
+
 @router.post("/users", status_code=201)
 def create_system_user(body: UserCreate, user: dict = Depends(require_permission("system.user.create"))):
     return _run(lambda: svc.create_user(user, body.name, body.email, body.start, body.is_admin, body.workspace_id))
 
 
 @router.put("/users/{user_id}/admin")
-def set_system_admin(user_id: str, body: AdminPatch, user: dict = Depends(require_permission("system.user.update"))):
+def set_system_admin(user_id: str, body: AdminPatch, user: dict = Depends(require_permission("system.user.assign_admin"))):
     return _run(lambda: svc.set_admin(user, user_id, body.is_admin))
 
 
 @router.post("/users/{user_id}/disable")
-def disable_system_user(user_id: str, user: dict = Depends(require_permission("system.user.update"))):
+def disable_system_user(user_id: str, user: dict = Depends(require_permission("system.user.disable"))):
     return _run(lambda: svc.disable_user(user, user_id))
 
 

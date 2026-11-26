@@ -218,6 +218,10 @@ def list_groups_for_module(
         base_sql += visible_sql
         count_sql += visible_sql
         params.extend(visible_params)
+    if not auth.get("_is_user_jwt"):
+        base_sql += " AND g.group_id = ?"
+        count_sql += " AND g.group_id = ?"
+        params.append(auth.get("group_id"))
     if status:
         base_sql += " AND g.status = ?"
         count_sql += " AND g.status = ?"
@@ -290,6 +294,9 @@ def list_documents_for_group(
         return _fail(404, f"Group {group_id} does not exist")
     if not can_read_project(auth, group_row.get("project_id")):
         return _fail(403, "You do not have permission to read this project")
+
+    if not auth.get("_is_user_jwt") and auth.get("group_id") != group_id:
+        return _fail(403, "This token is not scoped to this group")
 
     # module match check skipped (if URL param differs from DB value, proceed silently;
     # group_id takes precedence — allowed for development convenience)

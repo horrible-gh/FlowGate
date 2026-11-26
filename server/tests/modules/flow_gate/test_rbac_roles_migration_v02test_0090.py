@@ -892,8 +892,12 @@ class TestMigration:
         assert migration_0090.run(retry=True)["status"] == "completed"
         assert call(member, "GET", "/api/v1/workspaces/ws_default").status_code == 200
         assert [w["workspace_id"] for w in call(member, "GET", "/api/v1/workspaces").json()["workspaces"]] == ["ws_default"]
-        assert call(ws_admin, "POST", "/api/v1/workspaces/ws_default/members",
-                    json={"user_id": "m_d", "role": "member"}).status_code == 201
+        member_url = "/api/v1/workspaces/ws_default/members"
+        payload = {"user_id": "m_d", "role": "member"}
+        plan = call(ws_admin, "POST", member_url, params={"preview": True}, json=payload)
+        assert plan.status_code == 201
+        assert call(ws_admin, "POST", member_url, params={"revision": plan.json()["revision"]},
+                    json=payload).status_code == 201
         response = call(member, "POST", "/api/v1/workspaces/ws_default/members", json={"user_id": "m_h", "role": "member"})
         assert response.status_code == 403 and response.json()["detail"]["code"] == "forbidden"
 
@@ -1198,3 +1202,170 @@ class TestMigration:
         after = _versions(store)
         assert all(after[u] == before[u] + 1 for u in before), (before, after)
         other_db.close()
+
+
+class TestManagementApi:
+    def test_invite_team_access_revision_and_role_matrix(self, fresh, monkeypatch):
+        from modules.flow_gate.api.v1 import module_routes
+        from modules.flow_gate.auth import auth_api
+        from modules.flow_gate.auth.jwt_service import create_access_token
+        from modules.flow_gate.rbac.routers import rbac_admin
+        from modules.flow_gate.settings.routers import project_settings, system_users, users, workspaces
+
+        db, store = fresh
+        execute = db._conn.execute
+        _workspace(execute, "ws_card5")
+        _workspace(execute, "ws_other_card5")
+        _project(execute, "p_card5", "ws_card5")
+        _project(execute, "p_other_card5", "ws_other_card5")
+        for group_id, project_id in (("bound", "p_card5"), ("another", "p_card5"), ("outside", "p_other_card5")):
+            execute("INSERT INTO groups (group_id, project_id, module, title, created_at, updated_at)"
+                    " VALUES (?, ?, 'm', ?, ?, ?)", [group_id, project_id, group_id, NOW, NOW])
+        _member(execute, "ws_card5", P_ADMIN["user_id"], "member")
+        _grant(execute, P_ADMIN["user_id"], "p_card5", "role_admin")
+        db._conn.commit()
+
+        app = FastAPI()
+        for router in (workspaces.router, system_users.router, rbac_admin.router, project_settings.router):
+            app.include_router(router)
+        app.include_router(auth_api.router, prefix="/auth")
+        app.include_router(module_routes.router)
+        app.include_router(users.router, prefix="/api/v1")
+        client = TestClient(app)
+
+        def call(person, method, url, **kwargs):
+            token, _ = create_access_token(person["user_id"], person["user_id"], [])
+            return client.request(method, url, headers={"Authorization": f"Bearer {token}"}, **kwargs)
+
+        def preview(person, method, path, **kwargs):
+            response = call(person, method, path, params={"preview": "true"}, **kwargs)
+            assert response.is_success, response.text
+            return response.json()
+
+        def apply(person, method, path, **kwargs):
+            plan = preview(person, method, path, **kwargs)
+            response = call(person, method, path, params={"revision": plan["revision"]}, **kwargs)
+            assert response.is_success, response.text
+            return plan, response.json()["result"]
+
+        ws_prefix = workspaces.router.prefix
+        users_url = system_users.router.prefix + "/users"
+        rbac_prefix = rbac_admin.router.prefix
+        projects_prefix = project_settings.router.prefix
+        teams_url = ws_prefix + "/workspaces/ws_card5/teams"
+        grant_url = rbac_prefix + "/projects/p_card5/team-roles"
+        caps_url = projects_prefix + "/projects/p_card5/capabilities"
+        invite = call(SYSADMIN, "POST", users_url, json={
+            "name": "Card Five Invite", "email": "card5@example.test", "workspace_id": "ws_card5",
+        })
+        assert invite.status_code == 201, invite.text
+        invitation = invite.json()
+        target = invitation["user"]
+        assert target["state"] == "invited"
+        target_id = target["user_id"]
+        accepted = client.post("/auth/invite/accept", json={
+            "token": invitation["invite_path"].split("?invite=", 1)[1], "password": "Secure-Card5-Password1!",
+        })
+        assert accepted.status_code == 200, accepted.text
+
+        _, team = apply(SYSADMIN, "POST", teams_url, json={"name": "Card Five Team"})
+        team_id = team["team_id"]
+        membership_url = f'{teams_url}/{team_id}/members/{target_id}'
+        apply(SYSADMIN, "PUT", membership_url)
+        candidate_path = rbac_prefix + "/projects/p_card5/member-candidates"
+        assert call(P_ADMIN, "GET", candidate_path).json()["teams"] == [{"team_id": team_id, "name": "Card Five Team"}]
+        team_role_url = f"{grant_url}/{team_id}"
+        plan, _ = apply(P_ADMIN, "PUT", team_role_url, json={"role_id": "role_developer"})
+        assert plan["impact"][0]["user_id"] == target_id
+        assert "project.document.update" in plan["impact"][0]["gained"]
+        project = call(target, "GET", caps_url)
+        assert project.status_code == 200, project.text
+        caps = project.json()["capabilities"]
+        assert caps["actions"]["project.document.update"] == {"allowed": True}
+        assert caps["actions"]["project.document.approve"]["allowed"] is False
+        assert caps["sources"][0]["team_id"] == team_id
+        print("CAPABILITIES_EXAMPLE", {"project_id": project.json()["project_id"], "role": caps["role"],
+              "actions": {key: caps["actions"][key] for key in ("project.document.update", "project.document.approve")}})
+        assert call(target, "GET", "/auth/me").json()["teams"][0]["team_id"] == team_id
+        projects = call(target, "GET", projects_prefix + "/projects").json()["projects"]
+        assert [row["project_id"] for row in projects] == ["p_card5"]
+        assert call(P_ADMIN, "GET", ws_prefix + "/workspaces/ws_other_card5").status_code == 403
+        assert call(P_ADMIN, "GET", rbac_prefix + "/projects/p_other_card5/team-roles").status_code == 403
+        assert call(P_ADMIN, "PUT", rbac_prefix + "/projects/p_other_card5/team-roles/" + team_id,
+                    params={"preview": True}, json={"role_id": "role_developer"}).status_code == 403
+
+        stale = preview(P_ADMIN, "PUT", team_role_url, json={"role_id": "role_reviewer"})
+        apply(P_ADMIN, "PUT", team_role_url, json={"role_id": "role_viewer"})
+        conflict = call(P_ADMIN, "PUT", team_role_url, params={"revision": stale["revision"]},
+                        json={"role_id": "role_reviewer"})
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"]["code"] == "revision_conflict"
+        caps = call(target, "GET", caps_url).json()["capabilities"]
+        assert caps["actions"]["project.document.update"]["allowed"] is False
+        from modules.flow_gate.rbac import access
+        assert not access.can(target, "p_card5", "project.document.update")
+
+        current = preview(P_ADMIN, "PUT", team_role_url, json={"role_id": "role_viewer"})
+        last = call(P_ADMIN, "POST", f"{rbac_prefix}/users/{P_ADMIN['user_id']}/roles",
+                    params={"revision": current["revision"]}, json={"project_id": "p_card5", "role_id": "role_viewer"})
+        assert last.status_code == 409
+        assert last.json()["detail"]["code"] == "last_project_admin"
+        legacy_revoke = f"/api/v1/users/{P_ADMIN['user_id']}/project-roles/p_card5"
+        legacy_last = call(SYSADMIN, "DELETE", legacy_revoke, params={"revision": current["revision"]})
+        assert legacy_last.status_code == 409
+        assert legacy_last.json()["detail"]["code"] == "last_project_admin"
+        assert store._fetch_one("SELECT COUNT(*) AS qty FROM rbac_change_audit")["qty"] >= 5
+
+        matrix_cases = [
+            (SYSADMIN, 200, 200, 200), (P_ADMIN, 403, 403, 200),
+            (DEVELOPER, 403, 403, 200), (REVIEWER, 403, 403, 200), (VIEWER, 403, 403, 200),
+            (OUTSIDER, 403, 403, 403), (DISABLED, 401, 401, 401),
+        ]
+        for person, users_status, teams_status, members_status in matrix_cases:
+            assert call(person, "GET", users_url).status_code == users_status
+            assert call(person, "GET", teams_url).status_code == teams_status
+            members_url = rbac_prefix + "/projects/pr1/members"
+            assert call(person, "GET", members_url).status_code == members_status
+            expected_change = 201 if person in (SYSADMIN, P_ADMIN) else 401 if person is DISABLED else 403
+            role_change = call(person, "POST", f"{rbac_prefix}/users/{target_id}/roles",
+                               params={"preview": True}, json={"project_id": "p_card5", "role_id": "role_viewer"})
+            assert role_change.status_code == expected_change
+            expected_workspaces = 401 if person is DISABLED else 200
+            assert call(person, "GET", ws_prefix + "/workspaces").status_code == expected_workspaces
+        for bearer in ("ai-work-token", "remote-agent-token"):
+            assert client.get(users_url, headers={"Authorization": f"Bearer {bearer}"}).status_code == 401
+            assert client.put(team_role_url, headers={"Authorization": f"Bearer {bearer}"},
+                              json={"role_id": "role_admin"}).status_code == 401
+
+        from modules.flow_gate.services import auth_outbound, token_service
+        for kind in ("ai", "agent"):
+            bound = {"kind": kind, "issued_to": SYSADMIN["user_id"], "project": "p_card5", "group_id": "bound"}
+            assert auth_outbound.can_read_project(bound, "p_card5")
+            assert not auth_outbound.can_read_project(bound, "p_other_card5")
+            monkeypatch.setattr(token_service, "verify", lambda _raw, bound=bound: bound)
+            headers = {"Authorization": f"Bearer {kind}-fixture-token"}
+            group_root = "/api/v1/modules/m/groups/"
+            assert client.get(group_root + "bound/documents", headers=headers).status_code == 200
+            assert client.get(group_root + "another/documents", headers=headers).status_code == 403
+            assert client.get(group_root + "outside/documents", headers=headers).status_code == 403
+
+        from modules.flow_gate.auth.session_store import create_session, get_session
+        sid = create_session(target_id)
+        version = _version(db.path, target_id)
+        from modules.flow_gate.rbac import mutation
+
+        def reject_audit(*args, **kwargs):
+            raise RuntimeError("forced audit failure")
+
+        with monkeypatch.context() as failure:
+            failure.setattr(mutation, "audit", reject_audit)
+            with pytest.raises(RuntimeError, match="forced audit failure"):
+                call(SYSADMIN, "POST", f"{users_url}/{target_id}/disable")
+        assert get_session(sid)["revoked_at"] is None
+        assert _version(db.path, target_id) == version
+        assert store._fetch_one("SELECT is_active FROM users WHERE user_id = ?", [target_id])["is_active"]
+
+        disabled = call(SYSADMIN, "POST", f"{users_url}/{target_id}/disable")
+        assert disabled.status_code == 200, disabled.text
+        assert get_session(sid)["revoked_at"]
+        assert _version(db.path, target_id) > version

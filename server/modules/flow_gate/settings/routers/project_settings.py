@@ -47,7 +47,6 @@ from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate import template_provision as _tp
 from modules.flow_gate.db import projects as projects_db
 from modules.flow_gate.db import messages as messages_db
-from modules.flow_gate.utils.slug import project_name_to_slug
 from modules.flow_gate.utils.id_validators import validate_project_id
 from modules.flow_gate.storage.migration import apply_storage_change
 from modules.flow_gate.storage.paths import describe_storage_root
@@ -106,8 +105,24 @@ def list_projects_endpoint(
         is_active=_status_to_is_active(status),
         visible_clause=visible_project_clause(user),
     )
+    from modules.flow_gate.rbac import capabilities
+
     _attach_project_modules(projects)
+    for project in projects:
+        project["capabilities"] = capabilities.project(user, project)
     return {"projects": projects}
+
+
+@router.get("/projects/{project_id}/capabilities")
+def get_project_capabilities(project_id: str, user=Depends(get_current_user)):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.rbac import access, capabilities
+
+    access.require(user, project_id, "project.view")
+    row = get_store()._fetch_one("SELECT * FROM projects WHERE project_id = ?", [project_id])
+    if not row or project_id == "__SYSTEM__":
+        raise HTTPException(status_code=404, detail="project_not_found")
+    return {"project_id": project_id, "capabilities": capabilities.project(user, row)}
 
 
 class ProjectCreate(BaseModel):
@@ -236,6 +251,8 @@ def create_project_endpoint(
             raise HTTPException(status_code=422, detail=str(exc))
     else:
         try:
+            from modules.flow_gate.utils.slug import project_name_to_slug
+
             project_id = project_name_to_slug(body.project_name)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Failed to convert project name: {e}")

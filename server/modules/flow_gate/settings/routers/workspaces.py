@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.settings import workspace_service as svc
+from modules.flow_gate.settings.routers import teams
 
 router = APIRouter(tags=["Workspaces"])
 
@@ -90,6 +91,18 @@ class AllowEntry(BaseModel):
     resource_id: str
 
 
+def _record(user, operation, workspace_id, apply):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.rbac import mutation, permission_service
+
+    store = get_store()
+    with store.transaction():
+        permission_service.bump_global_version(store)
+        result = apply()
+        mutation.audit(store, user, operation, workspace_id or result["workspace_id"])
+        return result
+
+
 @router.get("/workspaces")
 def list_workspaces(user: dict = Depends(get_current_user)):
     return _run(lambda: svc.list_workspaces(user))
@@ -97,7 +110,8 @@ def list_workspaces(user: dict = Depends(get_current_user)):
 
 @router.post("/workspaces", status_code=201)
 def create_workspace(body: WorkspaceCreate, user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.create_workspace(user, body.name, body.owner_user_id))
+    return _run(lambda: _record(user, "workspace_create", None,
+                                lambda: svc.create_workspace(user, body.name, body.owner_user_id)))
 
 
 @router.get("/workspaces/{workspace_id}")
@@ -107,12 +121,14 @@ def get_workspace(workspace_id: str, user: dict = Depends(get_current_user)):
 
 @router.patch("/workspaces/{workspace_id}")
 def update_workspace(workspace_id: str, body: WorkspacePatch, user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.update_workspace(user, workspace_id, name=body.name, status=body.status))
+    return _run(lambda: _record(user, "workspace_update", workspace_id,
+                                lambda: svc.update_workspace(user, workspace_id, name=body.name, status=body.status)))
 
 
 @router.delete("/workspaces/{workspace_id}")
 def delete_workspace(workspace_id: str, user: dict = Depends(get_current_user)):
-    _run(lambda: svc.delete_workspace(user, workspace_id))
+    _run(lambda: _record(user, "workspace_delete", workspace_id,
+                         lambda: svc.delete_workspace(user, workspace_id)))
     return {"ok": True, "workspace_id": workspace_id}
 
 
@@ -121,31 +137,54 @@ def member_candidates(workspace_id: str, q: Optional[str] = Query(None), user: d
     return {"users": _run(lambda: svc.list_member_candidates(user, workspace_id, q))}
 
 
+def _change(user, workspace_id, operation, target, apply, revision, preview, *, project_id=None):
+    from modules.flow_gate.rbac import mutation
+
+    def prepare():
+        workspace = svc._require(workspace_id)
+        svc._check(svc.can_manage(user, workspace))
+        if project_id is not None and svc.workspace_id_of_project(project_id) != workspace_id:
+            raise svc.WorkspaceError(403, "project_outside_workspace")
+        return [project["project_id"] for project in svc._projects_of(workspace)], apply
+
+    return _run(lambda: mutation.change(user, operation, target, prepare,
+                                       revision=revision, preview=preview))
+
+
 @router.post("/workspaces/{workspace_id}/members", status_code=201)
-def add_member(workspace_id: str, body: MemberAdd, user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.add_member(user, workspace_id, body.user_id, body.role))
+def add_member(workspace_id: str, body: MemberAdd,
+                revision: int | None = None, preview: bool = False, user: dict = Depends(get_current_user)):
+    return _change(user, workspace_id, "workspace_member_add", body.user_id, lambda: svc.add_member(user, workspace_id, body.user_id, body.role),
+                   revision, preview)
 
 
 @router.patch("/workspaces/{workspace_id}/members/{member_user_id}")
 def change_member(workspace_id: str, member_user_id: str, body: MemberPatch,
-                  user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.change_member_role(user, workspace_id, member_user_id, body.role))
+                revision: int | None = None, preview: bool = False, user: dict = Depends(get_current_user)):
+    return _change(user, workspace_id, "workspace_member_update", member_user_id, lambda: svc.change_member_role(user, workspace_id, member_user_id, body.role),
+                   revision, preview)
 
 
 @router.delete("/workspaces/{workspace_id}/members/{member_user_id}")
-def remove_member(workspace_id: str, member_user_id: str, user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.remove_member(user, workspace_id, member_user_id))
+def remove_member(workspace_id: str, member_user_id: str,
+                revision: int | None = None, preview: bool = False, user: dict = Depends(get_current_user)):
+    return _change(user, workspace_id, "workspace_member_remove", member_user_id, lambda: svc.remove_member(user, workspace_id, member_user_id),
+                   revision, preview)
 
 
 @router.put("/workspaces/{workspace_id}/access/defaults")
-def set_access_defaults(workspace_id: str, body: AccessDefaults, user: dict = Depends(get_current_user)):
+def set_access_defaults(workspace_id: str, body: AccessDefaults,
+                revision: int | None = None, preview: bool = False, user: dict = Depends(get_current_user)):
     defaults = {k: v for k, v in body.model_dump().items() if v is not None}
-    return _run(lambda: svc.set_default_access(user, workspace_id, defaults))
+    return _change(user, workspace_id, "workspace_access_defaults", workspace_id, lambda: svc.set_default_access(user, workspace_id, defaults),
+                   revision, preview)
 
 
 @router.put("/workspaces/{workspace_id}/access/exceptions")
-def set_access_exception(workspace_id: str, body: AccessException, user: dict = Depends(get_current_user)):
-    return _run(lambda: svc.set_project_access(user, workspace_id, body.project_id, body.user_id, body.access))
+def set_access_exception(workspace_id: str, body: AccessException,
+                revision: int | None = None, preview: bool = False, user: dict = Depends(get_current_user)):
+    return _change(user, workspace_id, "workspace_access_exception", body.user_id, lambda: svc.set_project_access(user, workspace_id, body.project_id, body.user_id, body.access),
+                   revision, preview, project_id=body.project_id)
 
 
 @router.put("/workspaces/{workspace_id}/policy")
@@ -167,3 +206,6 @@ def allow_resource(workspace_id: str, body: AllowEntry, user: dict = Depends(get
 def revoke_resource(workspace_id: str, resource_type: str, resource_id: str,
                     user: dict = Depends(get_current_user)):
     return _run(lambda: svc.revoke_resource(user, workspace_id, resource_type, resource_id))
+
+
+teams.install(router, _run)
