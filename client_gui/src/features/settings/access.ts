@@ -1,15 +1,20 @@
 import { readonly, ref } from 'vue'
 import type { RouteLocationNormalized, RouteLocationNormalizedLoaded, RouteLocationRaw, Router } from 'vue-router'
 import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core/auth/currentUser'
+import { currentAccessLists, evaluateRequirement, type AccessLists, type Requirement } from './capabilities'
 
 // (D): which /app/settings URL may be shown, decided before any
 // settings view mounts. The router guard applies it to every move and SettingsLayout applies
 // it again when the /auth/me answer arrives, so both follow one rule:
 //
-// - Retired screens (/settings/workspaces[/…], /settings/system/security[/…]) → the overview.
-// - "프로젝트" / "시스템" (/settings/project[/…], /settings/system[/…]): wait while /auth/me is still
-//   out; anyone who is not a system administrator goes to the overview with an "관리자 전용"
-//   notice; an administrator gets the page if its view is registered, else the overview.
+// - Retired screen (/settings/system/security[/…]) → the overview.
+// - A screen that needs a server action (system settings / users, workspace settings, teams,
+//   project settings / members): wait while /auth/me is still out (and, for a workspace or project
+//   screen, while the capabilities of the workspaces / projects are being read); anyone the server
+//   does not allow goes to the overview with a notice; someone allowed gets the page if its view is
+//   registered, else the overview. v02test.0090: the allowance is the server's capabilities — before,
+//   it was "system administrator or not". A server that sends no capabilities (older) keeps the old
+//   rule: administrators only, and the Workspace screens stay retired.
 // - any other /settings/* path without a registered view → the overview.
 //
 // "The overview" is always a replace of /settings without the query/hash of the refused URL,
@@ -20,7 +25,7 @@ import { useCurrentUser, type CurrentUser, type CurrentUserStatus } from '@/core
 /** Route name of the settings catch-all: a /settings/* path no view is registered for. */
 export const SETTINGS_UNKNOWN_ROUTE = 'settings-unknown'
 
-export type SettingsAccessNotice = 'admin_only'
+export type SettingsAccessNotice = 'admin_only' | 'no_permission'
 
 export type SettingsAccess =
   | { kind: 'allow' }
@@ -33,23 +38,53 @@ export interface SettingsAccessTarget {
   registered: boolean
   /** A matched route record is marked `meta.settingsAccess: 'admin'`. */
   adminOnly: boolean
+  /** The action(s) the screen needs; when absent the path decides (see PATH_REQUIREMENTS). */
+  requires?: Requirement | null
 }
 
 export interface SettingsAccessAuth {
   status: CurrentUserStatus
-  user: Pick<CurrentUser, 'isAdmin'> | null
+  user: Pick<CurrentUser, 'isAdmin' | 'capabilities'> | null
+  /** What was read of the workspaces / projects capabilities; absent = not read yet. */
+  lists?: AccessLists
 }
 
 const SETTINGS_PATH = /^\/settings(\/|$)/i
-const ADMIN_PATH = /^\/settings\/(system|project)(\/|$)/i
-const RETIRED_PATHS = [/^\/settings\/workspaces(\/|$)/i, /^\/settings\/system\/security(\/|$)/i]
+const RETIRED_PATHS = [/^\/settings\/system\/security(\/|$)/i]
+const WORKSPACE_PATH = /^\/settings\/workspaces(\/|$)/i
+// Screens that need the new server API (teams, workspace changes, project members): an older server has none.
+const MODERN_ONLY_PATHS = [WORKSPACE_PATH, /^\/settings\/manage(\/|$)/i, /^\/settings\/project\/[^/]+\/members(\/|$)/i]
+const SYSTEM_SETTINGS_READ: Requirement = { scope: 'system', actions: ['system.settings.read'] }
+
+// First match wins. Case-insensitive like the router itself.
+const PATH_REQUIREMENTS: { pattern: RegExp; requires: Requirement }[] = [
+  { pattern: /^\/settings\/system\/users(\/|$)/i, requires: { scope: 'system', actions: ['system.user.read'] } },
+  { pattern: /^\/settings\/system(\/|$)/i, requires: SYSTEM_SETTINGS_READ },
+  { pattern: /^\/settings\/manage\/teams(\/|$)/i, requires: { scope: 'workspace', actions: ['workspace.team.manage'] } },
+  { pattern: WORKSPACE_PATH, requires: { scope: 'workspace', actions: ['workspace.view'] } },
+  { pattern: /^\/settings\/project(\/|$)/i, requires: { scope: 'project', actions: ['project.settings.read', 'project.member.read'] } },
+]
+
+/** The notice for a refusal: system screens are "administrators only", the rest "no permission". */
+function refusalNotice(requires: Requirement, user: SettingsAccessAuth['user']): SettingsAccessNotice {
+  return user?.capabilities && requires.scope !== 'system' ? 'no_permission' : 'admin_only'
+}
 
 export function decideSettingsAccess(target: SettingsAccessTarget, auth: SettingsAccessAuth): SettingsAccess {
   if (!SETTINGS_PATH.test(target.path)) return { kind: 'allow' }
   if (RETIRED_PATHS.some((pattern) => pattern.test(target.path))) return { kind: 'home', notice: null }
-  if (target.adminOnly || ADMIN_PATH.test(target.path)) {
+  // An older server has no teams / workspace / member API for these screens: they stay closed.
+  if (MODERN_ONLY_PATHS.some((pattern) => pattern.test(target.path)) && auth.status === 'ready' && !auth.user?.capabilities) {
+    return { kind: 'home', notice: null }
+  }
+  const requires =
+    target.requires ?? PATH_REQUIREMENTS.find((entry) => entry.pattern.test(target.path))?.requires ?? (target.adminOnly ? SYSTEM_SETTINGS_READ : null)
+  if (requires) {
     if (auth.status === 'loading') return { kind: 'pending' }
-    if (auth.status !== 'ready' || !auth.user?.isAdmin) return { kind: 'home', notice: 'admin_only' }
+    if (auth.status !== 'ready' || !auth.user) return { kind: 'home', notice: 'admin_only' }
+    const verdict = evaluateRequirement(requires, auth.user, auth.lists)
+    if (verdict === 'pending') return { kind: 'pending' }
+    if (verdict === 'deny') return { kind: 'home', notice: refusalNotice(requires, auth.user) }
   }
   return target.registered ? { kind: 'allow' } : { kind: 'home', notice: null }
 }
@@ -65,7 +100,7 @@ export function settingsAccessTarget(to: RouteLocationNormalized | RouteLocation
 /** The decision for `to` with the signed-in person as known right now. */
 export function currentSettingsAccess(to: RouteLocationNormalized | RouteLocationNormalizedLoaded): SettingsAccess {
   const { user, status } = useCurrentUser()
-  return decideSettingsAccess(settingsAccessTarget(to), { status: status.value, user: user.value })
+  return decideSettingsAccess(settingsAccessTarget(to), { status: status.value, user: user.value, lists: currentAccessLists() })
 }
 
 // The overview shows the notice of the last refused move once (SettingsHubView clears it).

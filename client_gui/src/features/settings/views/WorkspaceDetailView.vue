@@ -1,11 +1,11 @@
 <template>
-  <SettingsShell scope="workspace">
+  <SettingsShell scope="manage">
     <template #nav>
       <SettingsSubnav
         :title="detail?.name ?? ''"
         :items="tabItems"
         :active="tab"
-        :back="{ to: '/settings/workspaces', label: t('gui.settings.workspaces.list') }"
+        :back="showBack ? { to: '/settings/workspaces', label: t('gui.settings.workspaces.list') } : null"
         @select="selectTab"
       >
         <template #mark><div class="workspace-mark">{{ initials(detail?.name) }}</div></template>
@@ -20,13 +20,16 @@
     </ErrorState>
 
     <template v-else-if="detail">
+      <!-- Why the controls are off: the server's own reason, one line. -->
+      <p v-if="!canManage" class="fgs-hintline readonly-reason" data-testid="ws-readonly-reason">{{ readonlyReason }}</p>
+
       <!-- ── Members ── -->
       <section v-if="tab === 'members'" class="fgs-panel" data-panel="members">
         <div class="fgs-phead">
           <span class="fgs-tico teal"><SettingsIcon name="users" size="lg" /></span>
           <h2>{{ t('gui.settings.detail.members') }}</h2>
           <div class="fgs-push">
-            <button v-if="detail.can_manage" type="button" class="fgs-btn pri" data-testid="member-add" @click="openAdd">
+            <button v-if="canManage" type="button" class="fgs-btn pri" data-testid="member-add" @click="openAdd">
               <SettingsIcon name="plus" />{{ t('gui.settings.detail.add_member') }}
             </button>
           </div>
@@ -114,7 +117,7 @@
               v-for="member in filteredMembers"
               :key="member.user_id"
               class="fgs-dtr row"
-              :class="{ static: !detail.can_manage, dim: member.state === 'disabled' }"
+              :class="{ static: !canManage, dim: member.state === 'disabled' }"
               :data-member="member.user_id"
               @click="openMember(member)"
             >
@@ -133,7 +136,7 @@
                 </span>
               </div>
               <div class="fgs-muted">{{ relativeTime(member.last_login_at, locale) }}</div>
-              <div class="fgs-chev"><SettingsIcon v-if="detail.can_manage" name="chev" /></div>
+              <div class="fgs-chev"><SettingsIcon v-if="canManage" name="chev" /></div>
             </div>
             <div v-if="!filteredMembers.length" class="fgs-empty">{{ t('gui.settings.no_match') }}</div>
           </div>
@@ -146,9 +149,6 @@
         <div class="fgs-phead">
           <span class="fgs-tico"><SettingsIcon name="folder" size="lg" /></span>
           <h2>{{ t('gui.settings.detail.project_access') }}</h2>
-          <div class="fgs-push">
-            <span class="fgs-autosave" :class="autosave.state.value"><span class="fgs-dot" />{{ autosaveLabel }}</span>
-          </div>
         </div>
         <div class="fgs-panel-body">
           <div class="fgs-card">
@@ -163,7 +163,7 @@
                     type="button"
                     :class="{ on: detail.access.defaults[role] === level }"
                     :title="t(`gui.settings.access_title.${level}`)"
-                    :disabled="!detail.can_manage || busy"
+                    :disabled="!canManage || busy"
                     :data-access="level"
                     @click="saveDefault(role, level)"
                   >
@@ -207,7 +207,7 @@
                     type="button"
                     :class="{ on: !exceptionOf(member.user_id) }"
                     :title="t('gui.settings.detail.role_default')"
-                    :disabled="!detail.can_manage || busy"
+                    :disabled="!canManage || busy"
                     data-access="default"
                     @click="saveException(member.user_id, 'default')"
                   >
@@ -219,86 +219,13 @@
                     type="button"
                     :class="{ on: exceptionOf(member.user_id) === level }"
                     :title="t(`gui.settings.access_title.${level}`)"
-                    :disabled="!detail.can_manage || busy"
+                    :disabled="!canManage || busy"
                     :data-access="level"
                     @click="saveException(member.user_id, level)"
                   >
                     <SettingsIcon :name="accessIcon(level)" size="sm" />{{ t(`gui.settings.access.${level}`) }}
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ── Shared policy ── -->
-      <section v-else class="fgs-panel" data-panel="policy">
-        <div class="fgs-phead">
-          <span class="fgs-tico"><SettingsIcon name="shield" size="lg" /></span>
-          <h2>{{ t('gui.settings.detail.policy') }}</h2>
-          <div class="fgs-push">
-            <span class="fgs-autosave" :class="autosave.state.value"><span class="fgs-dot" />{{ autosaveLabel }}</span>
-          </div>
-        </div>
-        <div class="fgs-panel-body">
-          <div class="fgs-card">
-            <div class="fgs-card-h">
-              <span class="fgs-tico sm"><SettingsIcon name="bot" /></span>
-              <b>{{ t('gui.settings.detail.ai_usable') }}</b>
-              <div class="fgs-push">
-                <div class="fgs-segment" role="radiogroup">
-                  <button type="button" :class="{ on: detail.policy.ai_mode === 'all' }" :disabled="!detail.can_manage || busy" data-ai-mode="all" @click="savePolicy({ ai_mode: 'all' })">
-                    <SettingsIcon name="globe" size="sm" />{{ t('gui.settings.detail.ai_all') }}
-                  </button>
-                  <button type="button" :class="{ on: detail.policy.ai_mode === 'allow' }" :disabled="!detail.can_manage || busy" data-ai-mode="allow" @click="savePolicy({ ai_mode: 'allow' })">
-                    <SettingsIcon name="check" size="sm" />{{ t('gui.settings.detail.ai_selected') }}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <template v-if="detail.policy.ai_mode === 'allow'">
-              <div v-for="kind in RESOURCE_KINDS" :key="kind.type" class="fgs-line" :data-allow-kind="kind.type">
-                <div class="k"><SettingsIcon :name="kind.icon" />{{ kind.label }}</div>
-                <div class="v">
-                  <span v-for="entry in allowOf(kind.type)" :key="entry.resource_id" class="allowchip" :class="{ unavailable: !entry.available }">
-                    {{ entry.name }}
-                    <button
-                      v-if="detail.can_manage"
-                      type="button"
-                      :title="t('gui.settings.detail.remove_chip')"
-                      :aria-label="t('gui.settings.detail.remove_chip')"
-                      :disabled="busy"
-                      @click="revoke(entry.resource_type, entry.resource_id)"
-                    ><SettingsIcon name="x" size="sm" /></button>
-                  </span>
-                  <span v-if="!allowOf(kind.type).length" class="fgs-muted">{{ t('gui.settings.detail.none_allowed') }}</span>
-                  <button v-if="detail.can_manage" type="button" class="addchip" :disabled="busy" :data-add-kind="kind.type" @click="openPicker(kind.type)">
-                    <SettingsIcon name="plus" size="sm" />{{ t('gui.settings.detail.add') }}
-                  </button>
-                </div>
-              </div>
-            </template>
-            <p v-else class="policy-note fgs-muted">{{ t('gui.settings.detail.ai_all_note') }}</p>
-          </div>
-
-          <div class="fgs-card">
-            <div class="fgs-card-h"><span class="fgs-tico sm"><SettingsIcon name="folder" /></span><b>{{ t('gui.settings.detail.project_creators') }}</b></div>
-            <div class="fgs-line">
-              <div class="fgs-choice-grid" role="radiogroup">
-                <button
-                  v-for="choice in CREATE_CHOICES"
-                  :key="choice.value"
-                  type="button"
-                  class="fgs-choice"
-                  :class="{ on: detail.policy.project_create === choice.value }"
-                  :disabled="!detail.can_manage || busy"
-                  :data-project-create="choice.value"
-                  @click="savePolicy({ project_create: choice.value })"
-                >
-                  <span class="fgs-mini"><i v-for="n in 4" :key="n" :class="{ t: n <= choice.bars }" /></span>
-                  <b>{{ t(`gui.settings.detail.create.${choice.value}`) }}</b>
-                </button>
               </div>
             </div>
           </div>
@@ -410,29 +337,7 @@
       @cancel="confirmRemove = false"
     />
 
-    <!-- Add AI / Agent -->
-    <ModalShell :open="!!pickerKind" size="sm" :aria-label="t('gui.settings.detail.add')" @close="pickerKind = null">
-      <template #header><h2 class="fgs-modal-title">{{ pickerKind === 'agent' ? 'Agent' : 'AI' }} · {{ t('gui.settings.detail.add') }}</h2></template>
-      <p class="fgs-muted">{{ t('gui.settings.detail.picker_hint') }}</p>
-      <div class="candidates">
-        <button
-          v-for="resource in pickerOptions"
-          :key="resource.resource_id"
-          type="button"
-          class="candidate"
-          :disabled="busy"
-          :data-resource="resource.resource_id"
-          @click="allow(resource.resource_type, resource.resource_id)"
-        >
-          <SettingsIcon :name="resource.resource_type === 'agent' ? 'agent' : 'bot'" />
-          <span><b>{{ resource.name }}</b><small v-if="!resource.enabled">{{ t('gui.settings.detail.resource_disabled') }}</small></span>
-        </button>
-        <p v-if="!pickerOptions.length" class="fgs-muted">{{ t('gui.settings.detail.no_resources') }}</p>
-      </div>
-      <template #footer>
-        <div class="fgs-modal-actions"><button type="button" class="fgs-btn" @click="pickerKind = null">{{ t('gui.common.close') }}</button></div>
-      </template>
-    </ModalShell>
+    <ChangeImpactDialog :state="dialog" :busy="changing" :user-name="userName" :project-name="projectName" @confirm="confirm" @cancel="cancel" />
 
     <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </SettingsShell>
@@ -441,9 +346,16 @@
 <script setup lang="ts">
 // mockup 12 Workspace details. 멤버: role/state/project counts, add (existing users), change role,
 // remove (also leaves every project of the workspace). 프로젝트 접근: role default access and
-// per-person exceptions per project — saved at once and materialised by the server into the
-// project roles. 공용 정책: AI usable in the workspace (모두 / 선택한 것만 + allowlist) and who may
-// create projects. Plain members see everything read-only.
+// per-person exceptions per project, materialised by the server into the project roles. Plain members
+// see everything read-only.
+//
+// v02test.0090: reopened as 설정 › 워크스페이스 (with one workspace, "워크스페이스 설정" with no list in
+// between). The five changes — member add / role / remove, default access, per-project exception — go
+// through the server's common change path: each is previewed ("누가 무엇을 얻고 잃는지"), applied with
+// the revision of that preview, and the answer's `result` is the new detail (./components/useChangeFlow).
+// A 409 revision_conflict re-reads the preview; nothing is applied silently. Whether the controls are on
+// is the workspace's capability workspace.member.manage. The AI / Agent allow-list tab is not part of
+// this screen (requirement 5).
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -455,70 +367,79 @@ import ModalShell from '@/components/ui/ModalShell.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import SettingsIcon from '../SettingsIcon.vue'
+import ChangeImpactDialog from '../components/ChangeImpactDialog.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav, { type SubnavItem } from '../components/SettingsSubnav.vue'
-import { useAutosave, useSettingsToasts } from '../components/useSettingsToasts'
+import { useChangeFlow, type ChangeSpec } from '../components/useChangeFlow'
+import { useSettingsToasts } from '../components/useSettingsToasts'
+import { allows, refusalReason, reportsCapabilities, useAccessLists } from '../capabilities'
 import type { SettingsIconName } from '../icons'
 import {
   addMember,
-  allowResource,
   changeMemberRole,
   getWorkspace,
   listMemberCandidates,
-  listPolicyResources,
   removeMember,
-  revokeResource,
   setDefaultAccess,
   setProjectAccess,
-  setWorkspacePolicy,
 } from '../api'
 import { downloadCsv, initials, relativeTime, toCsv } from '../format'
 import type {
   MemberCandidate,
-  PolicyResource,
   ProjectAccess,
-  ProjectCreatePolicy,
-  ResourceType,
   UserState,
   WorkspaceDetail,
   WorkspaceMember,
   WorkspaceRole,
 } from '../types'
 
-type DetailTab = 'members' | 'projects' | 'policy'
+type DetailTab = 'members' | 'projects'
 
 const ROLES: WorkspaceRole[] = ['owner', 'admin', 'member']
 const ACCESS: ProjectAccess[] = ['admin', 'dev', 'review', 'none']
-const CREATE_CHOICES: { value: ProjectCreatePolicy; bars: number }[] = [
-  { value: 'owner', bars: 1 },
-  { value: 'owner_admin', bars: 2 },
-  { value: 'all', bars: 4 },
-]
 
 const props = defineProps<{ workspaceId: string }>()
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { user } = useCurrentUser()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
-const autosave = useAutosave()
 
 const detail = ref<WorkspaceDetail | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const busy = ref(false)
 const formError = ref<string | null>(null)
-
-const tab = computed<DetailTab>(() => {
-  const value = route.query.tab
-  return value === 'projects' || value === 'policy' ? value : 'members'
+const { dialog, busy: changing, run, confirm, cancel } = useChangeFlow((message) => {
+  formError.value = message
+  pushToast(message, 'danger')
 })
+const busy = computed(() => changing.value)
+
+const tab = computed<DetailTab>(() => (route.query.tab === 'projects' ? 'projects' : 'members'))
 
 const tabItems = computed<SubnavItem[]>(() => [
   { key: 'members', label: t('gui.settings.detail.members'), icon: 'users' },
   { key: 'projects', label: t('gui.settings.detail.project_access'), icon: 'folder' },
-  { key: 'policy', label: t('gui.settings.detail.policy'), icon: 'shield' },
 ])
+
+// Controls follow the capability the server sent for this workspace; an older server's flag stands in.
+const canManage = computed(() => {
+  const d = detail.value
+  if (!d) return false
+  return d.capabilities ? allows(d.capabilities, 'workspace.member.manage') : d.can_manage
+})
+const readonlyReason = computed(() => {
+  const reason = (detail.value?.capabilities && refusalReason(detail.value.capabilities, 'workspace.member.manage')) || 'forbidden'
+  return te(`gui.settings.refusal.${reason}`) ? t(`gui.settings.refusal.${reason}`) : t('gui.settings.refusal.forbidden')
+})
+// With one workspace the list is skipped; the way back to it is shown only when there is something to pick or create.
+const lists = useAccessLists()
+const showBack = computed(
+  () => !(reportsCapabilities(user.value) && lists.workspaces.value.length === 1 && !allows(user.value?.capabilities, 'system.workspace.create')),
+)
+
+const userName = (userId: string) => detail.value?.members.find((m) => m.user_id === userId)?.username ?? userId
+const projectName = (projectId: string) => detail.value?.projects.find((p) => p.project_id === projectId)?.project_name ?? projectId
 
 function selectTab(key: string) {
   void router.replace({ query: { ...route.query, tab: key === 'members' ? undefined : key } })
@@ -536,29 +457,15 @@ async function load() {
   }
 }
 
-/** Run a mutation that answers the fresh detail; errors become a toast. */
-async function apply(task: () => Promise<WorkspaceDetail>, message?: string, withAutosave = false): Promise<boolean> {
-  busy.value = true
+/** Run one access change (preview → impact dialog → apply); the answer's result is the fresh detail. */
+async function apply(spec: ChangeSpec<WorkspaceDetail>, message?: string): Promise<boolean> {
   formError.value = null
-  try {
-    detail.value = withAutosave ? await autosave.run(task) : await task()
-    if (message) pushToast(message)
-    return true
-  } catch (err) {
-    const text = err instanceof Error ? err.message : String(err)
-    formError.value = text
-    pushToast(text, 'danger')
-    return false
-  } finally {
-    busy.value = false
-  }
+  const applied = await run(spec)
+  if (!applied) return false
+  detail.value = applied.result
+  if (message) pushToast(message)
+  return true
 }
-
-const autosaveLabel = computed(() => {
-  if (autosave.state.value === 'saving') return t('gui.settings.saving')
-  if (autosave.state.value === 'error') return t('gui.settings.save_failed')
-  return t('gui.settings.autosave')
-})
 
 // ── labels ──
 const roleLabel = (role: WorkspaceRole) => t(`gui.settings.roles.${role}`)
@@ -651,7 +558,7 @@ function openAdd() {
 async function submitAdd() {
   const picked = candidates.value.find((c) => c.user_id === pickedCandidate.value)
   if (!picked) return
-  if (await apply(() => addMember(props.workspaceId, picked.user_id, addRole.value), t('gui.settings.detail.added', { name: picked.username }))) {
+  if (await apply({ title: t('gui.settings.ws_change.add', { name: picked.username }), request: addMember(props.workspaceId, picked.user_id, addRole.value) }, t('gui.settings.detail.added', { name: picked.username }))) {
     addOpen.value = false
   }
 }
@@ -661,7 +568,7 @@ const memberMenu = ref<WorkspaceMember | null>(null)
 const confirmRemove = ref(false)
 
 function openMember(member: WorkspaceMember) {
-  if (!detail.value?.can_manage) return
+  if (!canManage.value) return
   formError.value = null
   memberMenu.value = member
 }
@@ -669,7 +576,7 @@ function openMember(member: WorkspaceMember) {
 async function changeRole(role: 'admin' | 'member') {
   const member = memberMenu.value
   if (!member || member.role === role) return
-  if (await apply(() => changeMemberRole(props.workspaceId, member.user_id, role), t('gui.settings.detail.role_changed'))) {
+  if (await apply({ title: t('gui.settings.ws_change.role', { name: member.username, role: roleLabel(role) }), request: changeMemberRole(props.workspaceId, member.user_id, role) }, t('gui.settings.detail.role_changed'))) {
     memberMenu.value = detail.value?.members.find((m) => m.user_id === member.user_id) ?? null
   }
 }
@@ -678,7 +585,7 @@ async function submitRemove() {
   confirmRemove.value = false
   const member = memberMenu.value
   if (!member) return
-  if (await apply(() => removeMember(props.workspaceId, member.user_id), t('gui.settings.detail.removed', { name: member.username }))) {
+  if (await apply({ title: t('gui.settings.ws_change.remove', { name: member.username }), request: removeMember(props.workspaceId, member.user_id), label: t('gui.settings.detail.remove_short') }, t('gui.settings.detail.removed', { name: member.username }))) {
     memberMenu.value = null
   }
 }
@@ -703,7 +610,7 @@ function exceptionOf(userId: string): ProjectAccess | null {
 
 function saveDefault(role: WorkspaceRole, level: ProjectAccess) {
   if (detail.value?.access.defaults[role] === level) return
-  void apply(() => setDefaultAccess(props.workspaceId, { [role]: level }), undefined, true)
+  void apply({ title: t('gui.settings.ws_change.default', { role: roleLabel(role), access: t(`gui.settings.access.${level}`) }), request: setDefaultAccess(props.workspaceId, { [role]: level }), confirmEmpty: true })
 }
 
 function saveException(userId: string, level: ProjectAccess | 'default') {
@@ -711,49 +618,7 @@ function saveException(userId: string, level: ProjectAccess | 'default') {
   if (!project) return
   const current = exceptionOf(userId)
   if ((level === 'default' && !current) || current === level) return
-  void apply(() => setProjectAccess(props.workspaceId, project, userId, level), undefined, true)
-}
-
-// ── policy ──
-const RESOURCE_KINDS = computed(() => [
-  { type: 'provider' as ResourceType, label: 'AI', icon: 'bot' as SettingsIconName },
-  { type: 'agent' as ResourceType, label: 'Agent', icon: 'agent' as SettingsIconName },
-])
-
-const allowOf = (type: ResourceType) => (detail.value?.policy.allowlist ?? []).filter((e) => e.resource_type === type)
-
-function savePolicy(patch: { ai_mode?: 'all' | 'allow'; project_create?: ProjectCreatePolicy }) {
-  const policy = detail.value?.policy
-  if (!policy) return
-  if ((patch.ai_mode && patch.ai_mode === policy.ai_mode) || (patch.project_create && patch.project_create === policy.project_create)) return
-  void apply(() => setWorkspacePolicy(props.workspaceId, patch), undefined, true)
-}
-
-const pickerKind = ref<ResourceType | null>(null)
-const resources = ref<{ providers: PolicyResource[]; agents: PolicyResource[] }>({ providers: [], agents: [] })
-
-const pickerOptions = computed(() => {
-  if (!pickerKind.value) return []
-  const allowed = new Set(allowOf(pickerKind.value).map((e) => e.resource_id))
-  const list = pickerKind.value === 'agent' ? resources.value.agents : resources.value.providers
-  return list.filter((r) => !allowed.has(r.resource_id))
-})
-
-async function openPicker(kind: ResourceType) {
-  pickerKind.value = kind
-  try {
-    resources.value = await listPolicyResources(props.workspaceId)
-  } catch (err) {
-    pushToast(err instanceof Error ? err.message : String(err), 'danger')
-  }
-}
-
-async function allow(type: ResourceType, id: string) {
-  if (await apply(() => allowResource(props.workspaceId, type, id), undefined, true)) pickerKind.value = null
-}
-
-function revoke(type: ResourceType, id: string) {
-  void apply(() => revokeResource(props.workspaceId, type, id), undefined, true)
+  void apply({ title: t('gui.settings.ws_change.exception', { name: userName(userId), project: projectName(project) }), request: setProjectAccess(props.workspaceId, project, userId, level), confirmEmpty: true })
 }
 
 watch(() => props.workspaceId, () => void load())

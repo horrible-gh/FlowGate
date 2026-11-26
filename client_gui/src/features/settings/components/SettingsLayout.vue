@@ -14,12 +14,13 @@
 // administrator screen and none of its requests) is mounted. When the answer arrives — or the
 // signed-in person changes — the current URL is judged again by the router guard's rule
 // (../access) and a refused URL is replaced by the overview before its view can render.
-import { computed, watch } from 'vue'
+import { computed, watch, watchEffect } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { currentSettingsAccess, settingsHome } from '../access'
+import { loadSettingsAccess } from '../capabilities'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -32,6 +33,12 @@ const showView = computed(() => status.value !== 'loading' && access.value.kind 
 
 watch(access, (next) => {
   if (next.kind === 'home') void router.replace(settingsHome(next))
+})
+
+// A workspace / project screen waits for the capabilities of the workspaces / projects (the server's
+// own answer): read them now. Nothing of the screen mounts, and no screen request is sent, until then.
+watchEffect(() => {
+  if (access.value.kind === 'pending' && status.value === 'ready') void loadSettingsAccess()
 })
 </script>
 

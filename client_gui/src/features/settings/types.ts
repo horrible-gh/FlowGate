@@ -1,6 +1,8 @@
 // Environment Settings (환경 설정) domain types — mirrors the server's
 // /api/v1/workspaces and /api/v1/system/{users,security} payloads.
 
+import type { CapabilityBlock, MyProject, MyTeam } from '@/core/auth/currentUser'
+
 export type WorkspaceRole = 'owner' | 'admin' | 'member'
 export type ProjectAccess = 'admin' | 'dev' | 'review' | 'none'
 export type UserState = 'active' | 'invited' | 'disabled'
@@ -27,6 +29,8 @@ export interface WorkspaceSummary {
   my_role: WorkspaceRole | null
   can_manage: boolean
   can_admin: boolean
+  /** The server's own per-action answer for this workspace (current servers). */
+  capabilities?: CapabilityBlock
 }
 
 export interface WorkspaceListResponse {
@@ -114,6 +118,12 @@ export interface SystemUser {
   workspaces: SystemUserWorkspace[]
   last_login_at: string | null
   created_at: string | null
+}
+
+/** GET /system/users/{id}: the row plus the teams the person is in and the final role on each project. */
+export interface SystemUserDetail extends SystemUser {
+  teams: MyTeam[]
+  projects: MyProject[]
 }
 
 export interface SystemUsersSummary {
@@ -317,3 +327,73 @@ export interface ProjectGitConfig {
 export type ProjectGitConfigView =
   | { configured: true; config: ProjectGitConfig }
   | { configured: false; config: null }
+
+// ── v02test.0090 card 5: teams, project members and the change protocol ─────────────
+
+/** The four fixed project roles (the server stores nothing else). */
+export type ProjectRoleId = 'role_admin' | 'role_developer' | 'role_reviewer' | 'role_viewer'
+export const PROJECT_ROLE_IDS: readonly ProjectRoleId[] = ['role_admin', 'role_developer', 'role_reviewer', 'role_viewer']
+
+export interface Team {
+  team_id: string
+  workspace_id: string
+  name: string
+  is_active: boolean | number
+  created_at?: string | null
+}
+
+/** GET /workspaces/{id}/teams/{team}: `members` are user IDs, `project_roles` the roles the team holds. */
+export interface TeamDetail extends Team {
+  members: string[]
+  project_roles: { project_id: string; role_id: string }[]
+}
+
+/** One person whose role on one project would change (preview of any access change). */
+export interface ChangeImpactRow {
+  user_id: string
+  project_id: string
+  before: string | null
+  after: string | null
+  gained: string[]
+  lost: string[]
+}
+
+/** `?preview=true`: nothing is written; `revision` is what the apply call must send back. */
+export interface ChangePreview {
+  revision: number
+  impact: ChangeImpactRow[]
+}
+
+/** `?revision=N`: applied; `result` is the changed object (null for a revoke). */
+export interface ChangeApplied<T = unknown> {
+  revision: number
+  result: T
+}
+
+export type ChangeAnswer<T = unknown> = ChangePreview | ChangeApplied<T>
+export type ChangeMode = { preview: true } | { revision: number }
+/** One access change, sent as a preview first and then applied with the revision the preview gave. */
+export type ChangeRequest<T = unknown> = (mode: ChangeMode) => Promise<ChangeAnswer<T>>
+
+export interface ProjectDirectMember {
+  user_id: string
+  project_id: string
+  role_id: string
+  granted_at?: string | null
+  granted_by?: string | null
+  username: string
+  email: string | null
+  role_name?: string
+}
+
+export interface ProjectMemberCandidates {
+  users: { user_id: string; username: string; role: string }[]
+  teams: { team_id: string; name: string }[]
+}
+
+export interface ProjectTeamRole {
+  team_id: string
+  name: string
+  is_active: boolean | number
+  role_id: string
+}
