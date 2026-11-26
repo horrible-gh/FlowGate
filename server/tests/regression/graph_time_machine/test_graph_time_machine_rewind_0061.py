@@ -35,10 +35,22 @@ def _run(repo, *args):
 def branch(tmp_path, monkeypatch):
     """base -> merge A -> merge B -> merge J (J started from the group HEAD: the join of A and B)."""
     repo = tmp_path / "group"
+    # No document database exists in this Git fixture. Supply the required write
+    # port only for paths in this disposable repository; all Git work stays real.
+    def temporary_paths(operation, paths, *args, **kwargs):
+        assert operation in ("paths_scope", "paths")
+        assert not kwargs.get("trees")
+        assert all(repo.resolve() in path.resolve().parents for path in paths)
+        return nullcontext() if operation == "paths_scope" else args[0]()
+    monkeypatch.setitem(git_revert.document_write_ports._handlers,
+                        git_revert.document_write_ports.DOCUMENT_WRITE_GATE, temporary_paths)
     repo.mkdir()
     g = lambda *a: _run(repo, *a)  # noqa: E731
     g("init", "-q")
     g("config", "core.autocrlf", "false")
+    # Reverts and crash injections invoke Git directly, without _run's -c flags.
+    g("config", "user.name", "t")
+    g("config", "user.email", "t@example.com")
     g("checkout", "-q", "-b", "group")
     for name in ("a", "b", "j"):
         (repo / f"{name}.txt").write_bytes(b"base\n")
@@ -737,3 +749,89 @@ def test_route_takes_no_body_fields():
     assert routes.parse_body([]) == [{"field": "body", "reason": "not_an_object"}]
     assert any(getattr(r, "path", "") == "/api/v1/runs/{run_id}/nodes/{node_key}/time-machine"
                for r in routes.router.routes)
+
+
+# F84: an integrated conflict join must not make merge undo impossible.
+def test_resolved_conflict_and_integrated_join_rewind_preserves_parallel_work(branch, monkeypatch):
+    from flowgate.graph_time_machine import impact
+    from modules.flow_gate.graph_workflow.domain.graph_model import Graph, GraphEdge, GraphNode
+
+    g, repo = branch.g, branch.repo
+    base = branch.head
+    results = {}
+    for key in ("L", "R"):
+        g("checkout", "-q", "-b", "conflict_" + key, base)
+        (repo / "a.txt").write_text(key + "\n", encoding="utf-8")
+        g("commit", "-qam", "result " + key)
+        results[key] = g("rev-parse", "HEAD")
+    g("checkout", "-q", "group")
+    g("merge", "--no-ff", "-q", "-m", "merge L", results["L"])
+    left_merge = g("rev-parse", "HEAD")
+    conflict = subprocess.run(["git", "merge", "--no-ff", "--no-commit", results["R"]],
+                              cwd=repo, capture_output=True)
+    assert conflict.returncode == 1 and "UU a.txt" in g("status", "--porcelain")
+    (repo / "a.txt").write_text("resolved L+R\n", encoding="utf-8")
+    g("add", "a.txt")
+    g("commit", "-qm", "resolve parallel conflict")
+    resolved_merge = g("rev-parse", "HEAD")
+    g("checkout", "-q", "-b", "conflict_join", resolved_merge)
+    (repo / "j.txt").write_text("joined result\n", encoding="utf-8")
+    g("commit", "-qam", "join result")
+    joined = g("rev-parse", "HEAD")
+    g("checkout", "-q", "group")
+    g("merge", "--no-ff", "-q", "-m", "merge join", joined)
+    join_merge = g("rev-parse", "HEAD")
+    attempts = [
+        {"attempt_id": key.lower(), "run_id": "run", "node_key": key, "revision_no": 1,
+         "status": "ended", "integration_status": "integrated", "input_source": source,
+         "input_commit": start, "input_attempt_ids": inputs, "result_commit": result,
+         "integrated_commit": merged}
+        for key, source, start, inputs, result, merged in (
+            ("L", "run_base", base, [], results["L"], left_merge),
+            ("R", "run_base", base, [], results["R"], resolved_merge),
+            ("J", "integration_head", resolved_merge, ["l", "r"], joined, join_merge))]
+    graph = Graph(nodes=tuple(GraphNode(k, "document", "R" if k == "root" else "T", k)
+                              for k in ("root", "L", "R", "J")),
+                  edges=tuple(GraphEdge(str(i), a, b) for i, (a, b) in enumerate(
+                      (("root", "L"), ("root", "R"), ("L", "J"), ("R", "J")))))
+    snapshot = impact.Snapshot(
+        flow_id="flow", run={"run_id": "run", "revision_no": 1, "status": "idle"},
+        nodes=[{"node_key": k, "status": "done", "root_bound": k == "root"}
+               for k in ("root", "L", "R", "J")], attempts=attempts, revisions={1: graph},
+        ledger_rows=[{"id": i, "group_id": "flow", "attempt_id": a["attempt_id"],
+                      "node_key": a["node_key"], "state": "live", "commit_sha": a["result_commit"]}
+                     for i, a in enumerate(attempts)])
+    assessed = impact.calculate(snapshot, "R")
+    assert assessed["allowed"] and assessed["impact"]["node_keys"] == ["J", "R"]
+    monkeypatch.setattr(run_store, "_all", lambda *args: [])
+    plan = operation._plan("flow", assessed, "en")
+    out = git_revert.apply("flow", "gtm_conflict_join", plan["commits"],
+                           integration_head_inputs=plan["integration_head_inputs"])
+    assert out["status"] == git_revert.OK
+    assert [r["node_key"] for r in out["reverts"]] == ["J", "R"]
+    assert (text(branch, "a.txt"), text(branch, "b.txt"), text(branch, "j.txt")) == ("L", "B", "J")
+    assert g("status", "--porcelain") == ""
+    # Recovery consumes the same journaled evidence and never undoes it twice.
+    head = g("rev-parse", "HEAD")
+    again = git_revert.apply("flow", "gtm_conflict_join", plan["commits"], resume=True,
+                             recorded=out["reverts"], integration_head_inputs=plan["integration_head_inputs"])
+    assert again["status"] == git_revert.OK and g("rev-parse", "HEAD") == head
+
+
+@pytest.mark.parametrize("consumed,expected", [("a", "integration_head_dependency"),
+                                               (None, "integration_head_input_missing")])
+def test_unselected_integrated_consumer_cannot_be_left_valid(branch, consumed, expected):
+    out = git_revert.apply("flow", "gtm_hidden_consumer", [branch.a], integration_head_inputs=[
+        {"attempt_id": "outside", "input_commit": branch.a["commit_sha"] if consumed else None,
+         "selected": False}])
+    assert out["status"] == git_revert.BLOCKED and out["reason"] == expected
+    assert branch.g("rev-parse", "HEAD") == branch.head
+    assert branch.g("status", "--porcelain") == ""
+
+
+def test_earlier_integrated_consumer_does_not_block_later_merge_undo(branch):
+    out = git_revert.apply("flow", "gtm_earlier_consumer", [branch.b, branch.j], integration_head_inputs=[
+        {"attempt_id": "outside", "input_commit": branch.a["commit_sha"], "selected": False},
+        {"attempt_id": "j", "input_commit": branch.b["commit_sha"], "selected": True}])
+    assert out["status"] == git_revert.OK
+    assert (text(branch, "a.txt"), text(branch, "b.txt"), text(branch, "j.txt")) == ("A", "base", "base")

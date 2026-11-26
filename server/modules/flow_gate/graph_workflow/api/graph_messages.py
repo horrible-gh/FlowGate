@@ -210,9 +210,9 @@ TIME_MACHINE_REASONS = {
         "Graph attempt 병합 충돌 세션이 열려 있습니다.", "A Graph attempt merge conflict session is open.",
         "Graph attempt のマージ競合セッションが開いています。"),
     "integration_head_input": (
-        "통합 브랜치 HEAD를 입력으로 사용한 attempt가 대상에 있습니다.",
-        "A target attempt used the integration branch HEAD as its input.",
-        "統合ブランチの HEAD を入力に使った attempt が対象に含まれています。"),
+        "통합 결과를 입력으로 사용한 카드의 입력 기록이 불완전합니다.",
+        "A card that consumed the integrated result has incomplete input history.",
+        "統合結果を入力に使ったカードの入力履歴が不完全です。"),
     "commit_attribution_missing": (
         "대상의 커밋 귀속 기록이 없습니다.", "Commit attribution is missing for a target.",
         "対象のコミット帰属記録がありません。"),
