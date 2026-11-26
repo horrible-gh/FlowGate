@@ -16,7 +16,7 @@
         <span v-if="autoResolve.state === 'running'" class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>
         <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.conflict" /></svg>{{ autoTitle }}
       </h4>
-      <p class="mz-text" data-test="merge-auto-text">{{ autoText }}</p>
+      <p v-if="autoText" class="mz-text" data-test="merge-auto-text">{{ autoText }}</p>
       <MergeAutoResolve :auto="autoResolve" :show-unresolved="autoResolve.state === 'exhausted'" />
     </div>
     <p v-else-if="autoNote" class="mz-note" role="status" data-test="merge-auto-note">{{ autoNote }}</p>
@@ -220,9 +220,8 @@
       <template #message="{ descriptionId }">
         <ul :id="descriptionId" class="mz-undo-list" data-test="merge-undo-confirm">
           <li class="is-back" data-test="merge-undo-back">{{ t('gui.inspector.merge.undo.back', { cards: undoImpact.back.join(', ') }) }}</li>
-          <li v-if="undoImpact.keep.length" class="is-keep" data-test="merge-undo-keep">{{ t('gui.inspector.merge.undo.keep', { cards: undoImpact.keep.join(', '), title: props.target.title }) }}</li>
-          <li>{{ t('gui.inspector.merge.undo.revert_note') }}</li>
-          <li>{{ t('gui.inspector.merge.undo.chat_note') }}</li>
+          <li v-if="undoImpact.keep.length" class="is-keep" data-test="merge-undo-keep">{{ t('gui.inspector.merge.undo.keep', { cards: undoImpact.keep.join(', ') }) }}</li>
+          <li>{{ t('gui.inspector.merge.undo.note') }}</li>
         </ul>
       </template>
     </ConfirmDialog>
@@ -311,9 +310,10 @@ const autoTitle = computed(() => {
   if (auto.state === 'running') return t('gui.inspector.merge.auto.running_title', mergeAutoProgress(auto))
   return tc('gui.inspector.merge.auto.exhausted_title', auto.attempts.length || auto.maxAttempts)
 })
+/** Out of tries: no sentence; the buttons right below tell what to do. */
 const autoText = computed(() => (autoResolve.value?.state === 'running'
   ? t('gui.inspector.merge.auto.running_text', { ai: autoAiName.value })
-  : t('gui.inspector.merge.auto.exhausted_text')))
+  : ''))
 /** Every automatic try failed and nothing is settled yet: the automatic box is the window's one box (its files and tries). */
 const exhaustedBox = computed(() => autoDetail.value && autoResolve.value?.state === 'exhausted' && screen.value === 'needs_choice' && !allResolved.value)
 /** The other states are one short line. */

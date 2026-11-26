@@ -201,7 +201,8 @@ describe('exhausted', () => {
     expect(w.find('[data-test="merge-window"]').attributes('data-screen')).toBe('needs_choice')
     const box = q(w, 'merge-auto-box')
     expect(box.attributes('data-auto-state')).toBe('exhausted')
-    expect(box.find('h4').text()).toBe('자동 해결 실패 · 3번 시도해도 풀지 못했습니다')
+    expect(box.find('h4').text()).toBe('자동 해결 실패 (3회)')
+    expect(box.find('[data-test="merge-auto-text"]').exists()).toBe(false)
     expect(box.find('h4').classes()).toContain('is-danger')
     expect(w.findAll('[data-test="merge-auto-file"]').map((row) => row.find('code').text())).toEqual(['src/queue.ts', 'src/other.ts'])
     expect(w.findAll('[data-test="merge-auto-hunks"]').map((row) => row.text())).toEqual(['12–18, 40행'])
@@ -234,7 +235,7 @@ describe('exhausted', () => {
     i18n.global.locale.value = 'en'
     api.read.mockResolvedValue(await state({ auto_resolve: exhausted() }))
     const w = await mountTab()
-    expect(q(w, 'merge-auto-box').find('h4').text()).toBe('Automatic resolution failed · not solved in 3 tries')
+    expect(q(w, 'merge-auto-box').find('h4').text()).toBe('Automatic resolution failed (3 tries)')
     expect(w.find('[data-test="merge-auto-hunks"]').text()).toBe('lines 12–18, 40')
   })
 
