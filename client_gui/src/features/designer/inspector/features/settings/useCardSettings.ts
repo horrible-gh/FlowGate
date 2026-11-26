@@ -66,12 +66,23 @@ export interface CardSettingsState {
   reload(): Promise<void>
 }
 
+/** The Host a card's settings ask to read the Canvas again (`refresh-flow`). */
+export type CardSettingsHost = InspectorHost
+
+/**
+ * The Host injected in the calling component's setup, or null (called outside setup, or no Frame above). A session that is
+ * made later outside setup (a watch callback) takes the Host from its consumer's setup through this and passes it on as `host`.
+ */
+export function injectCardSettingsHost(): CardSettingsHost | null {
+  return getCurrentInstance() ? inject(INSPECTOR_HOST, null) : null
+}
+
 /**
  * `host`: the Host a taken change asks to read the Canvas again. Omitted = the one injected here (component setup);
  * a session created outside setup (useSharedCardSettings) passes the one its consumers injected.
  */
 export function useCardSettings(target: () => InspectorTarget | null, host?: () => InspectorHost | null): CardSettingsState {
-  const injectedHost = host ? null : getCurrentInstance() ? inject(INSPECTOR_HOST, null) : null
+  const injectedHost = host ? null : injectCardSettingsHost()
   const hostOf = host ?? (() => injectedHost)
   const scope = (): InspectorEventScope | null => {
     const current = target()
@@ -207,7 +218,7 @@ export function useSharedCardSettings(target: () => InspectorTarget | null): Car
   if (provided) return provided
   const app = getCurrentInstance()?.appContext ?? fallbackCardSettingsApp
   const inResourceContext = captureInspectorResourceContext()
-  const host = getCurrentInstance() ? inject(INSPECTOR_HOST, null) : null
+  const host = injectCardSettingsHost()
   let sessions = cardSettingsApps.get(app)
   if (!sessions) { sessions = new Map(); cardSettingsApps.set(app, sessions) }
   const current = shallowRef<CardSettingsSession | null>(null)
