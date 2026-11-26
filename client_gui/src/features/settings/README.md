@@ -26,11 +26,11 @@ out after the MirageGlass deck `1jnmunhp` screen ⑩ "Environment Settings" by f
   - Storage Root: GET `/api/v1/system/storage-root` (configured_value / effective_value /
     effective_source / env_override), read only — no input, save or move, and `storage_root` is
     never sent. `/system/settings/storage-root` is a different contract and is not used.
-  - Scratch retention and AI repeat limit from the rows of GET `/api/v1/system/settings`, saved
-    separately on PATCH `/api/v1/system/settings`: `scratch_ttl_value` + `scratch_ttl_unit`
+  - Scratch retention, AI attachment read limit and title AI from the rows of GET `/api/v1/system/settings`,
+    saved separately on PATCH `/api/v1/system/settings`: `scratch_ttl_value` + `scratch_ttl_unit`
     together in one request (strings, never minutes; the server writes the pair in one
-    transaction), `ai_repeat_count_max` alone (1~30; lowering it shows the re-evaluation impact
-    first). A save counts only when `updated` and a re-read GET both match; invalid input is never
+    transaction), `attach_read_max_mb` alone. The AI repeat limit is not on this screen (v02test.0096 F96-11):
+    the max repeat count is a personal setting only (⚙ AI tab, 1~30). A save counts only when `updated` and a re-read GET both match; invalid input is never
     sent, a failure keeps the input. The Saved notice is for the saved value only: editing
     again takes it away.
   - Unsaved-change navigation guard (D §3.2): with an unsaved input or a save still out, a move to another route

@@ -13,13 +13,15 @@ class InvalidPreference(ValueError):
 def payload(user_id):
     saved = repo.get(user_id)
     title = saved["title_provider"]
-    system_max = policy.get_repeat_count_max()
+    default = policy.get_repeat_count_max()
     own = saved["repeat_count_max"]
+    # v02test.0096 F96-11: my value applies as saved (1..30); the stored system value is only the default.
     return {"title_provider": title,
             "title_provider_effective": ai_title_provider.value() if title == "auto" else title,
             "repeat_count_max": own,
-            "repeat_count_max_effective": min(own if own is not None else system_max, system_max),
-            "repeat_count_system_max": system_max, "repeat_count_min": policy.REPEAT_COUNT_MIN_MAX}
+            "repeat_count_max_effective": own if policy.valid_user_repeat_count_max(own) else default,
+            "repeat_count_default": default, "repeat_count_min": policy.REPEAT_COUNT_MIN_MAX,
+            "repeat_count_hard_max": policy.REPEAT_COUNT_HARD_MAX}
 
 
 def patch(user_id, values):
@@ -30,8 +32,8 @@ def patch(user_id, values):
                     and ai_settings_service.selectable_provider(None, title, user_id) is None)):
             raise InvalidPreference("invalid_title_provider")
     if "repeat_count_max" in values:
-        own, maximum = values["repeat_count_max"], policy.get_repeat_count_max()
-        if own is not None and (type(own) is not int or not policy.REPEAT_COUNT_MIN_MAX <= own <= maximum):
-            raise InvalidPreference("repeat_count_out_of_range", max=maximum)
+        own = values["repeat_count_max"]
+        if own is not None and not policy.valid_user_repeat_count_max(own):
+            raise InvalidPreference("repeat_count_out_of_range", max=policy.REPEAT_COUNT_HARD_MAX)
     repo.patch(user_id, values)
     return payload(user_id)

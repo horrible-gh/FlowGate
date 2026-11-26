@@ -1,7 +1,8 @@
 // 내 최대 반복 횟수 / 내 제목 짓기 AI (flowgate.v02test.0096 F96-5): the one load / save logic behind both places that
 // edit my own values of GET/PATCH /api/v1/me/ai-preferences — AI 관리 › 기타 설정 (내 값 column) and the ⚙ settings
 // window's AI tab. Before F96-5 each screen carried its own copy of the shape check, the optimistic save with rollback,
-// the −/＋ bounds, the "back to the system value" reset and the title choice; they now share this composable.
+// the −/＋ bounds, the "back to the default" reset and the title choice; they now share this composable.
+// F96-11: my value ranges over repeat_count_min ~ repeat_count_hard_max (1~30); the system value is only the default.
 //
 // Server calls stay in each feature's own api module (feature boundary rules), so the caller passes its fetch / save
 // functions in. The composable keeps no module-wide state: each screen reads the server when it opens, which is how a
@@ -14,8 +15,9 @@ export interface MyAiPreferencesShape {
   title_provider_effective: string
   repeat_count_max: number | null
   repeat_count_max_effective: number
-  repeat_count_system_max: number
+  repeat_count_default: number
   repeat_count_min: number
+  repeat_count_hard_max: number
 }
 
 export interface MyAiPreferencesPatch {
@@ -32,8 +34,9 @@ export function isMyAiPreferences(value: unknown): value is MyAiPreferencesShape
   const p = value as Record<string, unknown>
   return typeof p.title_provider === 'string'
     && typeof p.repeat_count_max_effective === 'number'
-    && typeof p.repeat_count_system_max === 'number'
+    && typeof p.repeat_count_default === 'number'
     && typeof p.repeat_count_min === 'number'
+    && typeof p.repeat_count_hard_max === 'number'
     && (p.repeat_count_max === null || p.repeat_count_max === undefined || typeof p.repeat_count_max === 'number')
 }
 
@@ -54,9 +57,9 @@ export interface MyAiPreferencesControl<T extends MyAiPreferencesShape> {
   state: Ref<'loading' | 'ready' | 'error'>
   saving: Ref<boolean>
   load: () => Promise<void>
-  /** −/＋: moves my value from the effective one, within repeat_count_min ~ the system ceiling. */
+  /** −/＋: moves my value from the effective one, within repeat_count_min ~ repeat_count_hard_max. */
   stepRepeat: (delta: number) => void
-  /** Back to "not set": the system value applies again. */
+  /** Back to "not set": the default applies again. */
   resetRepeat: () => void
   chooseTitle: (value: string) => void
   /** Call from onBeforeUnmount: answers that arrive later are ignored. */
@@ -105,14 +108,14 @@ export function useMyAiPreferences<T extends MyAiPreferencesShape>(options: MyAi
     const p = prefs.value
     if (!p || saving.value) return
     const next = p.repeat_count_max_effective + delta
-    if (next < p.repeat_count_min || next > p.repeat_count_system_max) return
+    if (next < p.repeat_count_min || next > p.repeat_count_hard_max) return
     void save({ repeat_count_max: next }, { ...p, repeat_count_max: next, repeat_count_max_effective: next })
   }
 
   function resetRepeat(): void {
     const p = prefs.value
     if (!p || saving.value || p.repeat_count_max === null) return
-    void save({ repeat_count_max: null }, { ...p, repeat_count_max: null, repeat_count_max_effective: p.repeat_count_system_max })
+    void save({ repeat_count_max: null }, { ...p, repeat_count_max: null, repeat_count_max_effective: p.repeat_count_default })
   }
 
   function chooseTitle(value: string): void {

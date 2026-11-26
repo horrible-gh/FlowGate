@@ -16,8 +16,9 @@ const prefs = {
   title_provider_effective: 'p2',
   repeat_count_max: null,
   repeat_count_max_effective: 5,
-  repeat_count_system_max: 5,
+  repeat_count_default: 5,
   repeat_count_min: 1,
+  repeat_count_hard_max: 30,
 }
 
 vi.mock('@/features/conversation/api', async (importOriginal) => {

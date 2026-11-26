@@ -101,48 +101,6 @@
             </div>
           </div>
 
-          <!-- AI iteration limit: ai_repeat_count_max only -->
-          <div class="fgs-sec" data-card="repeat">
-            <div class="fgs-sec-head"><h3>{{ t('gui.settings.general.repeat.title') }}</h3></div>
-            <div class="fgs-rows">
-              <div class="fgs-row">
-                <div class="fgs-row-label">
-                  <label for="sys-repeat-max">{{ t('gui.settings.general.repeat.label') }}</label>
-                  <small>{{ t('gui.settings.general.repeat.hint') }}</small>
-                </div>
-                <div class="fgs-row-ctrl">
-                  <span v-if="repeatSaved && !repeatDirty && !repeatError" class="fgs-muted" data-testid="repeat-saved">{{ t('gui.settings.saved') }}</span>
-                  <input
-                    id="sys-repeat-max"
-                    v-model="repeatValue"
-                    class="fgs-input num"
-                    :class="{ dirty: repeatDirty }"
-                    inputmode="numeric"
-                    autocomplete="off"
-                    :disabled="repeatSaving"
-                    data-testid="repeat-value"
-                  />
-                  <button
-                    type="button"
-                    class="fgs-btn pri"
-                    :disabled="!repeatCanSave"
-                    data-testid="repeat-save"
-                    @click="askRepeat"
-                  >{{ repeatSaving ? t('gui.settings.saving') : t('gui.settings.general.save') }}</button>
-                </div>
-              </div>
-              <div v-if="repeatDirty && repeatProblem" class="fgs-row sub">
-                <span class="fgs-error" data-testid="repeat-invalid">{{ repeatProblem }}</span>
-              </div>
-              <div v-if="repeatLowering" class="fgs-row sub">
-                <span class="fgs-hint" data-testid="repeat-lower-hint"><SettingsIcon name="alert" size="sm" />{{ t('gui.settings.general.repeat.lower_impact') }}</span>
-              </div>
-              <div v-if="repeatError" class="fgs-row sub">
-                <span class="fgs-error" role="alert" data-testid="repeat-error">{{ repeatError }}</span>
-              </div>
-            </div>
-          </div>
-
           <!-- Title AI: ai_title_provider only (v02test.0096 F96-6, moved here from AI 관리 › 기타 설정) -->
           <div class="fgs-sec" data-card="title-ai">
             <div class="fgs-sec-head"><h3>{{ t('gui.ai.providers.title_ai') }}</h3></div>
@@ -152,7 +110,7 @@
               </div>
               <div v-else class="fgs-row">
                 <div class="fgs-row-label">
-                  <label for="sys-title-ai">{{ t('gui.ai.providers.title_ai_system') }}</label>
+                  <label for="sys-title-ai">{{ t('gui.ai.providers.title_ai_default') }}</label>
                 </div>
                 <div class="fgs-row-ctrl">
                   <span v-if="titleSaved && !titleDirty && !titleError" class="fgs-muted" data-testid="title-ai-saved">{{ t('gui.settings.saved') }}</span>
@@ -229,29 +187,13 @@
       </div>
     </section>
 
-    <!-- Confirm lowering the iteration limit: cancel sends no requests -->
-    <ModalShell :open="lowerConfirmOpen" size="sm" :aria-label="t('gui.settings.general.repeat.lower_title')" @close="lowerConfirmOpen = false">
-      <div class="confirm" data-testid="repeat-lower-confirm">
-        <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
-        <div class="conf-who">{{ t('gui.settings.general.repeat.lower_title_values', { from: repeatConfirmed, to: repeatValue.trim() }) }}</div>
-        <p class="conf-text">{{ t('gui.settings.general.repeat.lower_impact') }}</p>
-        <p class="conf-text fgs-muted">{{ t('gui.settings.general.repeat.lower_no_rewrite') }}</p>
-      </div>
-      <template #footer>
-        <div class="fgs-modal-actions">
-          <button type="button" class="fgs-btn" data-testid="repeat-lower-cancel" @click="lowerConfirmOpen = false">{{ t('gui.common.cancel') }}</button>
-          <button type="button" class="fgs-btn pri" :disabled="repeatSaving" data-testid="repeat-lower-ok" @click="confirmLower">{{ t('gui.settings.general.save') }}</button>
-        </div>
-      </template>
-    </ModalShell>
-
     <!-- Unsaved changes guard: continuing to edit cancels navigation and sends no requests -->
     <ModalShell :open="leaveOpen" size="sm" :aria-label="t('gui.settings.general.leave.title')" @close="answerLeave(false)">
       <div class="confirm" data-testid="leave-confirm">
         <div class="conf-ico warn"><SettingsIcon name="alert" size="xl" /></div>
         <div class="conf-who">{{ t('gui.settings.general.leave.title') }}</div>
         <p class="conf-text">{{ t('gui.settings.general.leave.unsaved') }}</p>
-        <p v-if="scratchSaving || repeatSaving || attachSaving || titleSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
+        <p v-if="scratchSaving || attachSaving || titleSaving" class="conf-text fgs-muted" data-testid="leave-saving">{{ t('gui.settings.general.leave.saving') }}</p>
       </div>
       <template #footer>
         <div class="fgs-modal-actions">
@@ -270,14 +212,13 @@
 //   and whether FLOWGATE_STORAGE_DIR overrides it. Read only: no input, no save, no move, and
 //   storage_root never goes into a PATCH. /system/settings/storage-root (a different contract with
 //   other field names) is not used, not even as a fallback.
-// - Scratch retention period and AI iteration limit come from the rows of GET /system/settings and are two
-//   separate saves on PATCH /system/settings:
+// - Scratch retention period, AI attachment read limit and title AI come from the rows of GET /system/settings and
+//   are separate saves on PATCH /system/settings:
 //   · Scratch: scratch_ttl_value and scratch_ttl_unit together, as strings, in ONE request — the
 //     server validates the pair and writes it in one store transaction (V13 checked the deployment
 //     store rolls both keys back). Never split into two PATCHes, never converted to minutes.
-//   · iteration limit: ai_repeat_count_max alone, 1~30. Lowering it first shows the impact on stored and
-//     paused runs (re-evaluated against the current ceiling on run/resume); this screen never edits
-//     a run or resumes one.
+//   · The AI iteration limit is no longer edited here (v02test.0096 F96-11): the max repeat count is a personal
+//     setting only (⚙ AI tab, /me/ai-preferences, 1~30).
 //   · title AI (v02test.0096 F96-6): ai_title_provider alone — 'off', 'executor' or a system AI id — with the save /
 //     load of the AI screen (features/ai/api saveTitleProvider / fetchTitleProvider). Its PATCH answer carries no
 //     row, so the re-read alone confirms it.
@@ -304,7 +245,7 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSystemNav } from '../components/systemNav'
 import { useUnsavedLeaveGuard } from '../components/useUnsavedLeaveGuard'
-import { getSystemSettings, getSystemStorageRoot, saveAttachReadMaxMb, saveRepeatCountMax, saveScratchRetention } from '../api'
+import { getSystemSettings, getSystemStorageRoot, saveAttachReadMaxMb, saveScratchRetention } from '../api'
 import type { ScratchUnit, SystemSettingRow, SystemStorageRoot } from '../types'
 
 const SCRATCH_UNITS: readonly ScratchUnit[] = ['minute', 'hour', 'day']
@@ -312,8 +253,6 @@ const MINUTES_PER_UNIT: Record<ScratchUnit, bigint> = { minute: 1n, hour: 60n, d
 // The server turns the pair into a Python timedelta(minutes=…); beyond 999999999 days it overflows
 // and answers 422 "too large". The same bound here keeps such a pair from being sent at all.
 const MAX_SCRATCH_MINUTES = 999999999n * 1440n + 1439n
-const REPEAT_MIN = 1
-const REPEAT_MAX = 30
 const ATTACH_READ_MIN_MB = 1
 const ATTACH_READ_MAX_MB = 64
 const ATTACH_READ_KEY = 'attach_read_max_mb'
@@ -370,21 +309,18 @@ function scratchIn(rows: SystemSettingRow[] | undefined): Pair | null {
   return value === null || unit === null ? null : { value, unit }
 }
 
-/** Load both editors from one GET; a missing row is a failed load, not a default. */
+/** Load the editors from one GET; a missing scratch row is a failed load, not a default. */
 async function loadSettings() {
   settingsLoading.value = true
   settingsError.value = ''
   try {
     const rows = await getSystemSettings()
     const scratch = scratchIn(rows)
-    const repeat = rowValue(rows, 'ai_repeat_count_max')
-    if (!scratch || repeat === null) throw new Error(t('gui.settings.general.errors.bad_response'))
+    if (!scratch) throw new Error(t('gui.settings.general.errors.bad_response'))
     scratchConfirmed.value = scratch
     scratchValue.value = scratch.value
     scratchUnit.value = scratch.unit
-    repeatConfirmed.value = repeat
-    repeatValue.value = repeat
-    // Its own editor: a server without this row only disables this card, not the other two.
+    // Its own editor: a server without this row only disables this card, not the others.
     const attach = rowValue(rows, ATTACH_READ_KEY)
     attachConfirmed.value = attach
     attachValue.value = attach ?? ''
@@ -457,85 +393,6 @@ async function rereadScratch(): Promise<Pair | null> {
     const pair = scratchIn(await getSystemSettings())
     if (pair) scratchConfirmed.value = pair
     return pair
-  } catch {
-    return null
-  }
-}
-
-// ── AI iteration limit ──
-const repeatConfirmed = ref<string | null>(null)
-const repeatValue = ref('')
-const repeatSaving = ref(false)
-const repeatError = ref('')
-const repeatSaved = ref(false)
-const lowerConfirmOpen = ref(false)
-
-const repeatDirty = computed(() => repeatConfirmed.value !== null && repeatValue.value.trim() !== repeatConfirmed.value)
-
-const repeatProblem = computed(() => {
-  const value = repeatValue.value.trim()
-  const n = /^[0-9]+$/.test(value) ? Number(value) : NaN
-  return Number.isInteger(n) && n >= REPEAT_MIN && n <= REPEAT_MAX
-    ? ''
-    : t('gui.settings.general.repeat.invalid', { min: REPEAT_MIN, max: REPEAT_MAX })
-})
-
-const repeatCanSave = computed(() => repeatDirty.value && !repeatProblem.value && !repeatSaving.value)
-
-/** A valid new ceiling below the confirmed one (a confirmed value that is not a number counts as no). */
-const repeatLowering = computed(() => {
-  if (!repeatDirty.value || repeatProblem.value) return false
-  const before = Number(repeatConfirmed.value)
-  return Number.isInteger(before) && Number(repeatValue.value.trim()) < before
-})
-
-function askRepeat() {
-  if (!repeatCanSave.value) return
-  if (repeatLowering.value) {
-    lowerConfirmOpen.value = true
-    return
-  }
-  void saveRepeat()
-}
-
-function confirmLower() {
-  if (repeatSaving.value) return
-  void saveRepeat()
-}
-
-async function saveRepeat() {
-  if (!repeatCanSave.value) return
-  const value = String(Number(repeatValue.value.trim()))
-  repeatSaving.value = true
-  repeatError.value = ''
-  repeatSaved.value = false
-  try {
-    const answered = rowValue(await saveRepeatCountMax(value), 'ai_repeat_count_max')
-    lowerConfirmOpen.value = false
-    if (answered !== value) {
-      repeatError.value = t('gui.settings.general.errors.unconfirmed')
-      await rereadRepeat()
-      return
-    }
-    const reread = await rereadRepeat()
-    if (reread !== value) {
-      repeatError.value = t('gui.settings.general.errors.reread_mismatch')
-      return
-    }
-    repeatSaved.value = true
-  } catch (err) {
-    lowerConfirmOpen.value = false
-    repeatError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    repeatSaving.value = false
-  }
-}
-
-async function rereadRepeat(): Promise<string | null> {
-  try {
-    const value = rowValue(await getSystemSettings(), 'ai_repeat_count_max')
-    if (value !== null) repeatConfirmed.value = value
-    return value
   } catch {
     return null
   }
@@ -662,9 +519,6 @@ async function rereadTitle(): Promise<string | null> {
 watch([scratchValue, scratchUnit], () => {
   scratchSaved.value = false
 })
-watch(repeatValue, () => {
-  repeatSaved.value = false
-})
 watch(attachValue, () => {
   attachSaved.value = false
 })
@@ -674,8 +528,8 @@ watch(titleValue, () => {
 
 // ── Unsaved changes guard ──
 const unsaved = computed(() =>
-  scratchDirty.value || repeatDirty.value || attachDirty.value || titleDirty.value
-  || scratchSaving.value || repeatSaving.value || attachSaving.value || titleSaving.value)
+  scratchDirty.value || attachDirty.value || titleDirty.value
+  || scratchSaving.value || attachSaving.value || titleSaving.value)
 const { open: leaveOpen, answer: answerLeave } = useUnsavedLeaveGuard(() => unsaved.value)
 
 onMounted(() => {

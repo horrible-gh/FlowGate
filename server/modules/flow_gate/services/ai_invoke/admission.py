@@ -2779,7 +2779,7 @@ def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[in
     also widens what a read accepts — the earlier change the earlier implementation
     """
     restart_count = continuation_restart_max_attempts
-    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    choices = ai_execution_policy_service.stored_repeat_count_choices(allow_zero=True)
     if isinstance(restart_count, bool) or restart_count not in choices:
         restart_count = RESTART_MAX_ATTEMPTS_DEFAULT
     if restart_count == -1:

@@ -210,7 +210,7 @@ def normalize_review_count(raw) -> int:
     ``reviewer_provider_id = null`` — "use the project default reviewer" — which
     :func:`resolve_reviewer` already honours by falling back to the project default.
     """
-    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    choices = ai_execution_policy_service.stored_repeat_count_choices(allow_zero=True)
     if isinstance(raw, bool) or not isinstance(raw, int) or raw not in choices:
         return REVIEW_COUNT_DEFAULT
     return raw
@@ -251,7 +251,7 @@ def resolve_review_count(
         raw, _reviewer = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if isinstance(raw, bool) or not isinstance(raw, int):
         return REVIEW_COUNT_DEFAULT
-    if raw not in ai_execution_policy_service.repeat_count_choices(allow_zero=True):
+    if raw not in ai_execution_policy_service.stored_repeat_count_choices(allow_zero=True):
         logger.warning("review gate: ignoring out-of-range review count %r for item_seq %s",
                        raw, item_seq)
         return REVIEW_COUNT_DEFAULT

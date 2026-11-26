@@ -75,7 +75,7 @@
             class="cas-icon"
             data-test="conv-setting-repeat-increase"
             :aria-label="t('gui.conversation.settings.ai_repeat_increase')"
-            :disabled="saving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
+            :disabled="saving || prefs.repeat_count_max_effective >= prefs.repeat_count_hard_max"
             @click="stepRepeat(1)"
           >＋</button>
           <button

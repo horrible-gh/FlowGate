@@ -817,7 +817,7 @@ class TestValueResolution:
     def test_a_hand_edited_out_of_range_count_reads_as_no_review(self):
         """The write path is 422-guarded, so this can only come from an edited row; it must
         degrade rather than crash an unmanned chain."""
-        assert svc.resolve_review_count({"5": 4}, 5) == 0
+        assert svc.resolve_review_count({"5": 31}, 5) == 0
         assert svc.resolve_review_count({"5": True}, 5) == 0
 
     def test_round_limit_marks_minus_one_unbounded(self):

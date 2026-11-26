@@ -34,6 +34,11 @@ module existed — a deliberate, documented trade-off, not an oversight. Both he
 are called at hop-decision points (gate resolution), not inside a tight per-token
 engine loop, so the extra settings read is the same order of cost as the existing
 write-path check.
+
+v02test.0096 F96-11 changed two things: the administrator screen no longer edits the ceiling (the
+stored value is now only the default for a user without a personal value), and a personal value is
+no longer capped by it (1..30). The read helpers therefore use `stored_repeat_count_choices()`
+(1..30) so a pick written under a personal ceiling above the default is not demoted on read.
 """
 from __future__ import annotations
 
@@ -46,14 +51,26 @@ REPEAT_COUNT_HARD_MAX = 30
 
 
 def get_user_repeat_count_max(user_id) -> int:
-    """System ceiling by default; personal finite ceiling only with an explicit user."""
-    maximum = get_repeat_count_max()
+    """The personal finite ceiling: my own value (1..REPEAT_COUNT_HARD_MAX) when set, else the stored default.
+
+    v02test.0096 F96-11: the administrator screen no longer edits ai_repeat_count_max, so it is no
+    longer a hidden cap on the personal value — it only supplies the default for a user who has not
+    set one. A personal value is accepted in the full 1..30 range (`valid_user_repeat_count_max`).
+    """
     if user_id:
-        from modules.flow_gate.db import user_ai_preferences
-        own = user_ai_preferences.get(user_id)["repeat_count_max"]
-        if type(own) is int and own >= REPEAT_COUNT_MIN_MAX:
-            return min(own, maximum)
-    return maximum
+        try:
+            from modules.flow_gate.db import user_ai_preferences
+            own = user_ai_preferences.get(user_id)["repeat_count_max"]
+        except Exception:  # noqa: BLE001 — like get_repeat_count_max, this getter must never fail a caller
+            own = None
+        if valid_user_repeat_count_max(own):
+            return own
+    return get_repeat_count_max()
+
+
+def valid_user_repeat_count_max(value: object) -> bool:
+    """Is `value` an acceptable personal max repeat count? An int in 1..REPEAT_COUNT_HARD_MAX (bool excluded)."""
+    return type(value) is int and REPEAT_COUNT_MIN_MAX <= value <= REPEAT_COUNT_HARD_MAX
 
 
 def get_repeat_count_max() -> int:
@@ -115,6 +132,23 @@ def repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True, user
     if allow_zero:
         values.append(0)
     values.extend(range(1, (get_user_repeat_count_max(user_id) if user_id else get_repeat_count_max()) + 1))
+    return tuple(values)
+
+
+def stored_repeat_count_choices(*, allow_zero: bool, allow_unlimited: bool = True) -> tuple[int, ...]:
+    """The set a STORED pick is read back against: -1, 0, then 1..REPEAT_COUNT_HARD_MAX.
+
+    v02test.0096 F96-11: a pick is validated when it is written (against the requester's own ceiling,
+    up to 30). Reading it back against the system default instead would silently demote a personal
+    pick above that default (e.g. 10 under a default of 3) to "not reviewed" — exactly the hidden cap
+    the personal setting must not have. Values outside 1..30 still degrade on read.
+    """
+    values: list[int] = []
+    if allow_unlimited:
+        values.append(-1)
+    if allow_zero:
+        values.append(0)
+    values.extend(range(1, REPEAT_COUNT_HARD_MAX + 1))
     return tuple(values)
 
 

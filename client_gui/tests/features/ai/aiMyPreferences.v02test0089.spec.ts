@@ -20,7 +20,7 @@ const myAi: ProviderItem[] = [{ id: 'my-a', name: 'My A', exec_type: 'cli', kind
 const policy = { repeat_count_min: 1, repeat_count_max: 5, repeat_count_hard_max: 30 }
 const basePrefs: MyAiPreferences = {
   title_provider: 'auto', title_provider_effective: 'executor',
-  repeat_count_max: null, repeat_count_max_effective: 3, repeat_count_system_max: 5, repeat_count_min: 1,
+  repeat_count_max: null, repeat_count_max_effective: 3, repeat_count_default: 5, repeat_count_min: 1, repeat_count_hard_max: 30,
 }
 
 async function mountPanel({ admin = false, prefs = basePrefs as MyAiPreferences | Error } = {}) {
@@ -100,20 +100,31 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     wrapper.unmount()
   })
 
-  it('steps my repeat limit within 1 ~ the system ceiling and saves each change at once', async () => {
+  it('steps my repeat limit within 1 ~ 30 (no system ceiling, v02test.0096 F96-11) and saves each change at once', async () => {
     const save = vi.spyOn(api, 'saveMyAiPreferences').mockImplementation(async (update) => ({
       ...basePrefs, repeat_count_max: update.repeat_count_max ?? null, repeat_count_max_effective: update.repeat_count_max ?? 5,
     }))
-    const { wrapper } = await mountPanel({ prefs: { ...basePrefs, repeat_count_max: 4, repeat_count_max_effective: 4 } })
+    const { wrapper } = await mountPanel({ prefs: { ...basePrefs, repeat_count_max: 5, repeat_count_max_effective: 5 } })
     await wrapper.get('[data-test="my-repeat-increase"]').trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 6 }) // above the default 5
+    expect(value(wrapper)).toBe('6')
+    expect((wrapper.get('[data-test="my-repeat-increase"]').element as HTMLButtonElement).disabled).toBe(false)
+    await wrapper.get('[data-test="my-repeat-decrease"]').trigger('click')
     await flushPromises()
     expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 5 })
     expect(value(wrapper)).toBe('5')
+    wrapper.unmount()
+  })
+
+  it('stops at 30', async () => {
+    const save = vi.spyOn(api, 'saveMyAiPreferences')
+    const { wrapper } = await mountPanel({ prefs: { ...basePrefs, repeat_count_max: 30, repeat_count_max_effective: 30 } })
     expect((wrapper.get('[data-test="my-repeat-increase"]').element as HTMLButtonElement).disabled).toBe(true)
-    await wrapper.get('[data-test="my-repeat-decrease"]').trigger('click')
+    await wrapper.get('[data-test="my-repeat-increase"]').trigger('click')
     await flushPromises()
-    expect(save).toHaveBeenLastCalledWith({ repeat_count_max: 4 })
-    expect(value(wrapper)).toBe('4')
+    expect(save).not.toHaveBeenCalled()
+    expect(value(wrapper)).toBe('30')
     wrapper.unmount()
   })
 
