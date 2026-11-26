@@ -260,6 +260,7 @@ import { documentIoGuarded, documentIoHasUnresolved, registerDocumentEditEntry, 
 import {
   documentDot,
   documentReadErrorKey,
+  documentTitleShown,
   documentViewerActions,
 } from './documentWindowModel'
 import {
@@ -319,7 +320,9 @@ const canReenter = computed(
 )
 const liveDocId = computed(() => chain.value[chain.value.length - 1]?.docId ?? null)
 
-const title = computed(() => record.value?.title || t(k('untitled')))
+// F81-9: a TS document never shows a stored 「지시서」 role in its title (documentTitleShown), whoever opened it.
+const shownTitle = computed(() => documentTitleShown(record.value?.title, record.value?.typeCode, t(k('scenario_title'))))
+const title = computed(() => shownTitle.value || t(k('untitled')))
 const dot = computed(() => documentDot(record.value))
 
 // --- Editing ---------------------------------------------------------------------------------------

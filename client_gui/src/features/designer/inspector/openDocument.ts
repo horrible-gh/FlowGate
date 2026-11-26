@@ -49,6 +49,7 @@ import {
   type DocumentWindowMode,
   type WorkPlanEditRequest,
 } from '@/features/documentWindow'
+import { isTestCardLines, testScenarioStorageSlot } from '../center/graph/testCardLines'
 import QnaTab from './features/qna/QnaTab.vue'
 import type { InspectorHost } from './inspectorHost'
 import { inspectorCardNodeKey, type InspectorCardDocument, type InspectorReadOnly, type InspectorTarget } from './inspectorTarget'
@@ -76,23 +77,19 @@ export interface OpenDocumentOptions {
   readonly card?: CardDocumentContext | null
 }
 
-/** A card line that shares another line's document is edited through the owner line (the test card's 시나리오 → instruction). */
-const SHARED_SLOT_OWNER: Readonly<Record<string, string>> = { scenario: 'instruction' }
-
 /**
  * — the card coordinates of a document opened from `target`: its flow, the stored card's
  * node key and the owner slot of the line the document sits on. `ownerSlot` is the pressed line's slot when the opener
- * knows it; otherwise it is found by the document id among the target's lines, and a sharing line resolves to the line
- * that owns the document. Null when the target is not a stored card or no line carries the document (never guessed).
+ * knows it; otherwise it is found by the document id among the target's lines. Null when the target is not a stored card
+ * or no line carries the document (never guessed).
+ * F81-9: a test card's TS document is its 시나리오 (there is no instruction on a test card). The slot handed on is only
+ * where the server keeps it for the document API (testScenarioStorageSlot), never how the document is shown.
  */
 export function cardDocumentContext(target: InspectorTarget | null, docId: string, ownerSlot?: string | null): CardDocumentContext | null {
   const nodeKey = inspectorCardNodeKey(target)
   if (!target || !nodeKey || !docId) return null
   let slot = ownerSlot ?? target.cardDocuments.find((line) => line.docId === docId)?.slot ?? null
-  if (slot !== null) {
-    const owner = SHARED_SLOT_OWNER[slot]
-    if (owner && target.cardDocuments.some((line) => line.slot === owner && line.docId === docId)) slot = owner
-  }
+  if ((slot === 'scenario' || slot === 'instruction') && isTestCardLines(target.cardDocuments)) slot = testScenarioStorageSlot(target.cardDocuments, docId)
   return slot ? { projectId: target.projectId, flowId: target.flowId, nodeKey, ownerSlot: slot, openedDocId: docId } : null
 }
 

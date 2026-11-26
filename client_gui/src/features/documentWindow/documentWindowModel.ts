@@ -48,6 +48,22 @@ export function documentBodyView(typeCode: string | null): DocumentBodyView {
   return SPECIAL_VIEWS[(typeCode ?? '').trim().toUpperCase()] ?? 'markdown'
 }
 
+/** The role segments a stored title may end with when a TS document was written in the instruction slot. */
+const INSTRUCTION_ROLE_SEGMENTS = new Set(['지시서', '지시', 'instruction', '指示書', '指示'])
+
+/**
+ * F81-9 (0017-T): the title a document is shown with. A TS document is the test card's 시나리오, never a 지시서: an old
+ * TS stored as `… · 테스트 · 지시서` (written while the TS sat in the instruction slot) shows `… · 테스트 · 시나리오`
+ * wherever it opens — the document window from any opener (the Canvas, the document explorer, a notice) and the
+ * Canvas 시나리오 button. Only a ` · `-separated role segment is replaced; the card's own name is kept as written.
+ * Every other document keeps its stored title.
+ */
+export function documentTitleShown(title: string | null | undefined, typeCode: string | null | undefined, scenarioLabel: string): string | null {
+  if (!title) return null
+  if ((typeCode ?? '').trim().toUpperCase() !== 'TS') return title
+  return title.split(' · ').map((part) => INSTRUCTION_ROLE_SEGMENTS.has(part.trim().toLowerCase()) ? scenarioLabel : part).join(' · ')
+}
+
 export interface DocumentSource {
   /** The YAML frontmatter block as stored ('' when the body has none). */
   readonly frontmatter: string
