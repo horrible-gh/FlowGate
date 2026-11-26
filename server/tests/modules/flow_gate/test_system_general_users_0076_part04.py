@@ -24,7 +24,7 @@ from tests.modules.flow_gate.test_system_general_users_0076 import (
     sqlite3,
 )
 
-def test_v14_lowering_the_ceiling_keeps_stored_picks_and_existing_reads_degrade(env):
+def test_v14_lowering_the_ceiling_keeps_stored_picks_and_reads_keep_them(env):
     from modules.flow_gate.services.ai_invoke import admission, review
 
     a = env.h("A")
@@ -53,12 +53,12 @@ def test_v14_lowering_the_ceiling_keeps_stored_picks_and_existing_reads_degrade(
     changed = sorted(name for name in everything_after if everything_after[name] != everything_before.get(name))
     print(f"V14 tables changed by the PATCH (and its auth): {changed}")
     assert set(changed) <= {"system_settings", "auth_sessions"}
-    # The existing read paths now degrade: review → 0 (not reviewed), restart → default 1 (2 attempts).
+    # v02test.0096 F96-11: reads check 1..30, not the stored value, so the stored picks survive.
     review_now = review.resolve_review_count({1: 8}, 1)
     restart_now = admission._resolve_restart_max_attempts(8)
     print(f"V14 after ceiling 3: resolve_review_count(8)={review_now}, _resolve_restart_max_attempts(8)={restart_now}")
-    assert review_now == 0
-    assert restart_now == 2
+    assert review_now == 8
+    assert restart_now == 9
 def test_v15_ceiling_bounds_and_codes(env):
     a = env.h("A")
     results = []

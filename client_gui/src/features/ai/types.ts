@@ -281,7 +281,7 @@ export interface AiGroupStateInput {
   is_default?: boolean
 }
 
-// Repeat-count ceiling (system setting ai_repeat_count_max).
+// Repeat-count choices: the requester's own ceiling (default: system setting ai_repeat_count_max).
 export interface AiExecutionPolicy {
   repeat_count_max: number
   repeat_count_min: number
@@ -290,14 +290,15 @@ export interface AiExecutionPolicy {
 
 // v02test.0089 my AI preferences (GET/PATCH /me/ai-preferences).
 // title_provider: 'auto' (no pick of my own: the system rule), 'off', 'executor' (the AI that answered) or a provider id.
-// repeat_count_max: my own value (null = not set); the effective value is min(mine or system, system).
+// repeat_count_max: my own value (null = not set, 1~30); the effective value is mine, else repeat_count_default.
 export interface MyAiPreferences {
   title_provider: string
   title_provider_effective: string
   repeat_count_max: number | null
   repeat_count_max_effective: number
-  repeat_count_system_max: number
+  repeat_count_default: number
   repeat_count_min: number
+  repeat_count_hard_max: number
 }
 
 export interface MyAiPreferencesUpdate {

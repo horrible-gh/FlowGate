@@ -245,7 +245,7 @@ export async function saveTitleProvider(value: string): Promise<void> {
 }
 
 // v02test.0089: my own title AI and repeat limit (GET/PATCH /me/ai-preferences, the signed-in user only).
-// The repeat limit can never pass the system ceiling (ai_repeat_count_max); PATCH answers the same shape as GET.
+// The repeat limit is 1~30 (F96-11: no system ceiling); PATCH answers the same shape as GET.
 export async function fetchMyAiPreferences(): Promise<MyAiPreferences> {
   return call(() => getRequest<MyAiPreferences>('/api/v1/me/ai-preferences'), 'gui.ai.request_failed.my_preferences_load')
 }

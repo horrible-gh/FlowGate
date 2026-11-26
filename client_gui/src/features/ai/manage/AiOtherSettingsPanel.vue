@@ -4,7 +4,7 @@
       <LoadingState :label="t('gui.common.loading')" />
     </div>
     <div v-else class="os-table" role="table" :aria-label="t('gui.aiManage.tabs.other')">
-      <!-- 최대 반복 횟수: my own value (/me/ai-preferences), capped by the system ceiling. -->
+      <!-- 최대 반복 횟수: my own value (/me/ai-preferences), 1~30 (F96-11: no system ceiling). -->
       <div class="os-row" role="row" data-test="repeat-row">
         <div class="os-name repeat-info" role="rowheader">
           <b>{{ t('gui.ai.providers.repeat_max') }}</b>
@@ -37,7 +37,7 @@
               :label="t('gui.ai.providers.repeat_increase')"
               variant="secondary"
               size="sm"
-              :disabled="prefsSaving || prefs.repeat_count_max_effective >= prefs.repeat_count_system_max"
+              :disabled="prefsSaving || prefs.repeat_count_max_effective >= prefs.repeat_count_hard_max"
               data-test="my-repeat-increase"
               @click="stepMyRepeat(1)"
             >
@@ -77,8 +77,8 @@
 
 <script setup lang="ts">
 // v02test.0096 F96-3 "기타 설정": the repeat limit and title AI cards that sat under the AI list, as one table.
-// F96-6: only my own values (내 값) stay here, one column. The system ceiling and the system title AI are set by an
-// administrator in 환경 설정 (SystemGeneralSettingsView); my repeat limit is still capped by that ceiling.
+// F96-6: only my own values (내 값) stay here, one column. The system title AI is set by an administrator in 환경 설정
+// (SystemGeneralSettingsView). F96-11: the max repeat count is a personal setting only, 1~30, with no system ceiling.
 // Each value is saved as soon as it changes and a failed save puts the previous value back (v02test.0089).
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'

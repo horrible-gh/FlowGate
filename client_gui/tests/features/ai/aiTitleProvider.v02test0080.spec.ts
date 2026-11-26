@@ -19,7 +19,7 @@ const systemAi: ProviderItem[] = [
 const policy = { repeat_count_min: 1, repeat_count_max: 5, repeat_count_hard_max: 30 }
 const prefs = {
   title_provider: 'auto', title_provider_effective: 'executor',
-  repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_system_max: 5, repeat_count_min: 1,
+  repeat_count_max: null, repeat_count_max_effective: 5, repeat_count_default: 5, repeat_count_min: 1, repeat_count_hard_max: 30,
 }
 
 async function mountPanel(admin: boolean) {
