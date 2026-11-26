@@ -24,6 +24,23 @@ export interface CaseDraft {
   pin: CasesPin | null
   pinState: 'idle' | 'loading' | 'failed'
 }
+/** Where a case's text or evidence window goes: beside the case window and never over it (F81 v8, T 1). */
+export interface BesideSpot { x: number; width: number; moved: { x: number; width: number } | null }
+export const BESIDE = { gap: 12, margin: 8, width: 420, least: 280, caseLeast: 320 } as const
+export function besideSpot(caseWindow: { x: number; width: number }, viewportWidth: number): BesideSpot {
+  const { gap, margin, width, least, caseLeast } = BESIDE
+  const right = viewportWidth - margin - (caseWindow.x + caseWindow.width + gap), left = caseWindow.x - gap - margin
+  // The right side at full width, else the left at full width, else the roomier side narrowed to its room.
+  if (right >= width) return { x: caseWindow.x + caseWindow.width + gap, width, moved: null }
+  if (left >= width) return { x: caseWindow.x - gap - width, width, moved: null }
+  if (right >= least && right >= left) return { x: caseWindow.x + caseWindow.width + gap, width: right, moved: null }
+  if (left >= least) return { x: caseWindow.x - gap - left, width: left, moved: null }
+  // Neither side has room: the case window moves left (narrowed down to 320px on a narrow screen) to make room on its right.
+  const caseWidth = Math.max(caseLeast, Math.min(caseWindow.width, viewportWidth - 2 * margin - gap - least))
+  const caseX = Math.max(margin, Math.min(caseWindow.x, viewportWidth - margin - least - gap - caseWidth))
+  const x = caseX + caseWidth + gap
+  return { x, width: Math.max(least, Math.min(width, viewportWidth - margin - x)), moved: { x: caseX, width: caseWidth } }
+}
 export function scenarioSnapshot(cases: readonly TestSpecCaseDetail[], title: string | null): string {
   return JSON.stringify([title, cases.map(testSpecCasePayload)])
 }

@@ -1,6 +1,6 @@
 <template>
   <ModelessShell kind-color="#f0a23a" v-if="card && state && draft" ref="shell" :open="state.open" :minimized="state.minimized"
-    :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 720)" :initial-height="geometry('height', 700)"
+    :title="`${t(k('name'))} · ${caseLabel}`" :initial-x="geometry('x', 220)" :initial-y="geometry('y', 130)" :initial-width="geometry('width', 640)" :initial-height="geometry('height', 600)"
     :close-on-escape="false" @update:minimized="state.minimized = $event" @close="close">
     <!-- the kind, then — muted, as the write window names its card — which case: its id and title once. -->
     <template #header><span class="heading" data-test="case-heading"><span class="heading-kind">{{ t(k('name')) }}</span><span class="heading-case" :title="caseLabel" data-test="case-window-id">{{ caseLabel }}</span></span></template>
@@ -8,19 +8,23 @@
       <InspectorPaneState v-if="card.test.status.value === 'error'" state="error" retryable @retry="card.reload()" />
       <template v-if="card.writing.value === 'rewrite-case' && card.writingCaseId.value === state.caseId"><p class="placeholder" data-test="case-writing">{{ t(k('writing')) }}</p></template>
       <template v-else>
-        <!-- F81 case fields, in this order: title · content · procedure · expected · check · command · result · evidence · remarks. -->
+        <!-- F81 case window v8: title · edit (content · procedure · expected · command, each in its own window) · check (+ ▶ run) ·
+             result · evidence (one row per kind) · remarks. The texts are not shown here; their windows open beside this one. -->
         <label><span>{{ t(k('title')) }}</span><Input v-model="draft.title" :disabled="locked" data-test="case-title" /></label>
-        <label><span>{{ t(k('content')) }}</span><Textarea v-model="draft.content" :rows="3" :placeholder="t(k('content_placeholder'))" :disabled="locked" data-test="case-content" /></label>
-        <label v-for="field in textFields" :key="field"><span>{{ t(k(field)) }}</span><Textarea v-model="draft[field]" :rows="4" :disabled="locked" :data-test="`case-${field}`" /></label>
-        <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control"><InspectorSegment :model-value="draft.check" :options="checkOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.check = $event === 'code' ? 'code' : 'manual'" /></div></div>
-        <!-- shown for a code case only. No language or framework is assumed; one command says what runs, and why it cannot run shows under it. -->
-        <label v-if="draft.check === 'code'"><span>{{ t(k('command')) }}</span><span class="command"><Input v-model="draft.run_command" :placeholder="t(k('command_placeholder'))" class="mono" :disabled="locked" data-test="case-command" />
-          <InspectorReason v-if="commandCode" tone="danger" :text="commandText" data-test="case-command-error" />
-          <!-- F81: [▶ 실행] of a saved code case. FlowGate runs the command and attaches the exit summary; the result and the
-               evidence boxes are read again when it ends. Off while it runs, or while the command shown is not the saved one. -->
-          <span v-if="!adding" class="run"><Button size="sm" variant="secondary" :disabled="!runEnabled" :loading="runningCase" :title="runReason || t(k('run'))" data-test="case-run" @click="runCase">{{ t(k('run')) }}</Button>
-            <span v-if="runReason && !runningCase" class="hint" data-test="case-run-reason">{{ runReason }}</span></span>
-          <InspectorReason v-if="runFailure" tone="danger" :text="runFailure" data-test="case-run-failure" /></span></label>
+        <div class="field" role="group" :aria-label="t(k('edit'))"><span>{{ t(k('edit')) }}</span><div class="openers">
+          <button v-for="field in editFields" :key="field" type="button" class="opener" :class="{ 'opener--open': openTexts.includes(field) }" :aria-pressed="openTexts.includes(field)"
+            :data-test="`case-edit-${fieldTest(field)}`" @click="toggleText(field)"><span class="pen" aria-hidden="true">✎</span>{{ textLabel(field) }}<span class="window-mark" aria-hidden="true" /></button>
+        </div></div>
+        <div class="field" role="group" :aria-label="t(k('mode'))"><span>{{ t(k('mode')) }}</span><div class="control">
+          <span class="mode-line"><InspectorSegment :model-value="draft.check" :options="checkOptions" :disabled="locked" :aria-label="t(k('mode'))" data-test="case-mode" @update:model-value="draft.check = $event === 'code' ? 'code' : 'manual'" />
+            <!-- F81: [▶ 실행] of a saved code case. FlowGate runs the command and attaches the exit summary; the result and the
+                 evidence rows are read again when it ends. Off while it runs, or while the command shown is not the saved one. -->
+            <Button v-if="draft.check === 'code' && !adding" size="sm" variant="secondary" :disabled="!runEnabled" :loading="runningCase" :title="runReason || t(k('run'))" data-test="case-run" @click="runCase">{{ t(k('run')) }}</Button></span>
+          <span v-if="draft.check === 'code' && !adding && runReason && !runningCase" class="hint" data-test="case-run-reason">{{ runReason }}</span>
+          <!-- Why the command cannot run, and why a run failed: shown as before, now under the check line. -->
+          <InspectorReason v-if="draft.check === 'code' && commandCode" tone="danger" :text="commandText" data-test="case-command-error" />
+          <InspectorReason v-if="runFailure" tone="danger" :text="runFailure" data-test="case-run-failure" />
+        </div></div>
         <!-- The result is on the window from the start: four buttons, anyone may press one, and who did is shown. -->
         <div class="field" role="group" :aria-label="t(k('result'))"><span>{{ t(k('result')) }}</span><div class="control">
           <InspectorSegment :model-value="skipping ? 'skip' : shownResult" :options="resultOptions" :disabled="!resultEnabled" :aria-label="t(k('result'))" data-test="case-result" @update:model-value="pickResult" />
@@ -32,7 +36,8 @@
           <span v-if="resultReason" class="hint" data-test="case-result-reason">{{ resultReason }}</span>
           <InspectorReason v-if="resultFailure" tone="danger" :text="resultFailure" data-test="case-result-failure" />
         </div></div>
-        <EvidenceFiles v-if="!adding && card.view.value?.tsDocId && state.caseId" :ts-id="card.view.value.tsDocId" :case-id="state.caseId" :revision="card.view.value" @eligibility="passReason = $event" @uploaded="card.reload()" />
+        <div v-if="evidenceSource" class="field" role="group" :aria-label="t(k('evidence'))"><span>{{ t(k('evidence')) }}</span>
+          <EvidenceRows :evidence="evidence" :open="openKinds" @toggle="toggleKind" /></div>
         <!-- Remarks: one line only. It opens the modeless remark window beside this one. -->
         <div class="field" role="group" :aria-label="t(k('remarks'))"><span>{{ t(k('remarks')) }}</span><div class="control">
           <button type="button" class="remark-line" :class="{ 'remark-line--none': !remarkTally.open && !remarkTally.resolved }" :disabled="adding" data-test="case-remarks" @click="openRemarks">{{ remarkLabel }}</button>
@@ -51,6 +56,23 @@
         <Button size="sm" variant="primary" :disabled="!valid || locked || conflict || checking" :loading="checking" :title="saveReason" data-test="case-save" @click="save">{{ t(k('save')) }}</Button>
         <Button size="sm" variant="secondary" data-test="case-close" @click="close">{{ t(k('close')) }}</Button>
       </div>
+      <!-- The text and evidence windows of this case: modeless, beside the case window, any number at once. -->
+      <template v-if="!state.minimized && state.caseId">
+        <!-- A text window: the item's name as its title, several lines; it writes the case draft and [저장] here saves it. -->
+        <ModelessShell v-for="field in openTexts" :key="`text:${field}`" kind-color="#3b82f6" :open="true" :title="`${textLabel(field)} · ${caseLabel}`"
+          :initial-x="placed[`text:${field}`]?.x ?? 0" :initial-y="placed[`text:${field}`]?.y ?? 0" :initial-width="placed[`text:${field}`]?.width ?? 420" :initial-height="320" :close-on-escape="false" @close="toggleText(field)">
+          <template #header><span class="heading" :data-test="`case-text-window-${fieldTest(field)}`"><span class="heading-kind">{{ textLabel(field) }}</span><span class="heading-case">{{ caseLabel }}</span></span></template>
+          <div class="text-window">
+            <Textarea :model-value="draft[field]" :rows="10" :class="{ mono: field === 'run_command' }" :placeholder="textPlaceholder(field)" :disabled="locked"
+              :data-test="`case-${fieldTest(field)}`" @update:model-value="setText(field, $event)" />
+            <div class="text-bar"><Button size="sm" variant="secondary" :data-test="`case-text-close-${fieldTest(field)}`" @click="toggleText(field)">{{ t(k('close')) }}</Button></div>
+          </div>
+        </ModelessShell>
+        <template v-if="evidenceSource">
+          <EvidenceWindow v-for="kind in openKinds" :key="`evidence:${kind}`" :evidence="evidence" :kind="kind" :case-id="caseLabel"
+            :x="placed[`evidence:${kind}`]?.x ?? 0" :y="placed[`evidence:${kind}`]?.y ?? 0" :width="placed[`evidence:${kind}`]?.width ?? 420" @close="toggleKind(kind)" />
+        </template>
+      </template>
     </div>
   </ModelessShell>
 </template>
@@ -60,14 +82,14 @@ import { useI18n } from 'vue-i18n'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
+import { testSpecCasePayload, type TestCaseResult, type TestEvidenceKind } from '@/features/document'
 import Textarea from '@/components/ui/Textarea.vue'
-import { testSpecCasePayload, type TestCaseResult } from '@/features/document'
-import { documentHistoryWhen, TestEvidenceFiles as EvidenceFiles } from '@/features/documentWindow'
+import { documentHistoryWhen, TestEvidenceRows as EvidenceRows, TestEvidenceWindow as EvidenceWindow, useTestEvidence } from '@/features/documentWindow'
 import InspectorReason from '../../../parts/InspectorReason.vue'
 import InspectorPaneState from '../../../parts/InspectorPaneState.vue'
 import InspectorSegment from '../../../parts/InspectorSegment.vue'
 import type { InspectorTarget } from '../../../inspectorTarget'
-import { caseDraft, newCaseDraft, addedCase, mergeCase, pinMatches, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
+import { besideSpot, caseDraft, newCaseDraft, addedCase, mergeCase, pinMatches, runChanged, scenarioSnapshot, sessionDraft, useScenarioWindow, notifySaved, type CaseDraft } from './scenarioWindowModel'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t, locale } = useI18n()
 const k = (key: string) => `gui.inspector.testSpec.window.case.${key}`
@@ -91,7 +113,6 @@ watch(() => [card.value?.test.status.value, card.value?.view.value, card.value?.
   close()
   notifySaved(t(k('missing'), { id }), 'info')
 }, { immediate: true, flush: 'sync' })
-const textFields = ['procedure', 'expected'] as const
 /** The draft's pin must be the very snapshot the draft was shown from (§2.15.3); a pin of another snapshot is a conflict, never a rebase. */
 const pinStale = computed(() => !!draft.value?.pin && !pinMatches(draft.value))
 const pinReady = computed(() => !!draft.value?.pin && !pinStale.value)
@@ -200,7 +221,51 @@ async function runCase() {
 }
 watch(() => state.value?.caseId, () => { runFailure.value = '' })
 
-// ── Evidence boxes and the remark line ─────────────────────────────────────────────────────────────
+// ── Edit buttons: each text in its own modeless window beside this one (v8) ─────────────────────────
+/** The command button is there for a code case only, as the command field was. */
+const editFields = computed<CaseTextField[]>(() => ['content', 'procedure', 'expected', ...(draft.value?.check === 'code' ? ['run_command' as const] : [])])
+type CaseTextField = 'content' | 'procedure' | 'expected' | 'run_command'
+const textLabel = (field: CaseTextField) => t(k(field === 'run_command' ? 'edit_command' : field))
+const textPlaceholder = (field: CaseTextField) => field === 'content' ? t(k('content_placeholder')) : field === 'run_command' ? t(k('command_placeholder')) : ''
+const fieldTest = (field: CaseTextField) => field === 'run_command' ? 'command' : field
+const openTexts = ref<CaseTextField[]>([]), openKinds = ref<TestEvidenceKind[]>([])
+const placed = ref<Record<string, { x: number; y: number; width: number }>>({})
+/**
+ * Beside the case window, never over it (T 1): the right side, or the left when it has more room, at 420px or
+ * narrowed to the room that side has (not under 280px). When neither side has 280px, the case window is moved
+ * (and, on a narrow screen, narrowed) so the window fits on its right. Each newly opened one sits a step lower.
+ */
+function beside(key: string) {
+  const g = shell.value?.geometry() ?? { x: geometry('x', 220), y: geometry('y', 130), width: geometry('width', 640), height: geometry('height', 600) }
+  const spot = besideSpot(g, window.innerWidth)
+  if (spot.moved) shell.value?.setGeometry({ ...g, x: spot.moved.x, width: spot.moved.width })
+  const step = (openTexts.value.length + openKinds.value.length) * 28
+  placed.value[key] = { x: spot.x, width: spot.width, y: Math.max(8, Math.min(g.y + 40 + step, window.innerHeight - 240)) }
+}
+function toggleText(field: CaseTextField) {
+  if (openTexts.value.includes(field)) { openTexts.value = openTexts.value.filter(item => item !== field); return }
+  beside(`text:${field}`); openTexts.value = [...openTexts.value, field]
+}
+function setText(field: CaseTextField, value: string) { if (draft.value && !locked.value) draft.value[field] = value }
+// A manual case has no command: its window closes with the button.
+watch(() => draft.value?.check, (check) => { if (check !== 'code') openTexts.value = openTexts.value.filter(item => item !== 'run_command') })
+// Another case in this window: the previous case's text and evidence windows close.
+watch(() => state.value?.caseId, () => { openTexts.value = []; openKinds.value = [] })
+
+// ── Evidence rows (+ evidence windows) and the remark line ─────────────────────────────────────────
+/** One listing per case and view, shared by the three rows and the evidence windows (upload / eligibility / reload as before). */
+const evidenceSource = computed(() => {
+  const tsId = card.value?.view.value?.tsDocId, caseId = state.value?.caseId
+  return !adding.value && tsId && caseId ? { tsId, caseId, flowId: props.target.flowId, revision: card.value?.view.value } : null
+})
+const evidence = useTestEvidence(() => evidenceSource.value, {
+  eligibility: (value) => { passReason.value = value },
+  changed: () => { void card.value?.reload() },
+})
+function toggleKind(kind: TestEvidenceKind) {
+  if (openKinds.value.includes(kind)) { openKinds.value = openKinds.value.filter(item => item !== kind); return }
+  beside(`evidence:${kind}`); openKinds.value = [...openKinds.value, kind]
+}
 const remarkTally = computed(() => adding.value || !state.value?.caseId ? { open: 0, resolved: 0 } : card.value?.remarkCounts(state.value.caseId) ?? { open: 0, resolved: 0 })
 const remarkLabel = computed(() => remarkTally.value.open || remarkTally.value.resolved ? t(k('remarks_line'), { open: remarkTally.value.open, resolved: remarkTally.value.resolved }) : t(k('remarks_add')))
 function openRemarks() { const id = state.value?.caseId; if (id && !adding.value) card.value?.openWindow('remark', id) }
@@ -233,17 +298,24 @@ function resetDraft() { if (card.value && draft.value) { delete card.value.draft
 .case { display: flex; flex-direction: column; gap: 12px; min-height: 100%; color: var(--fg2-text); font-size: var(--fg2-control-font-size); }
 label, .field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: start; } label > span, .field > span { color: var(--fg2-muted); padding-top: 7px; }
 .control { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; } .hint { color: var(--fg2-muted); font-size: 11.5px; }
-.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; } /* The command and, under it, why it cannot run; not a label caption (label > span). */
-.command { display: flex; flex-direction: column; min-width: 0; padding-top: 0; color: inherit; }
 .skip { display: flex; align-items: center; gap: 6px; width: 100%; }
-.run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
-/* An evidence box: what it holds, then the add / drop place. */
-.evidence { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 1px dashed var(--fg2-line-strong); border-radius: 8px; box-sizing: border-box; }
-.drop { margin-left: auto; padding: 2px 8px; border: 0; background: none; color: var(--fg2-muted); font: inherit; font-size: 11.5px; }
+.mode-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* v8 edit buttons: ✎ name ▭ — they open a window; lit (blue) while it is open. */
+.openers { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.opener { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 10px; border: 1px solid #35507a; border-radius: 6px; background: #15253c; color: #cfe1ff; font: inherit; white-space: nowrap; cursor: pointer; }
+.opener:hover, .opener--open { border-color: var(--fg2-accent, #3b82f6); background: #1b3152; }
+.pen { color: #7fb0ff; font-size: 12px; }
+.window-mark { display: inline-block; width: 13px; height: 11px; border: 1.5px solid #7fb0ff; border-top-width: 3px; border-radius: 2px; box-sizing: border-box; opacity: 0.85; }
+.opener--open .window-mark { background: rgba(127, 176, 255, 0.33); }
 /* The remark line: one button the width of the field. */
 .remark-line { width: 100%; padding: 6px 10px; border: 1px solid var(--fg2-line-strong); border-radius: 8px; background: none; color: var(--fg2-yellow, #d9a441); font: inherit; text-align: left; cursor: pointer; }
 .remark-line--none { color: var(--fg2-muted); } .remark-line:disabled { cursor: default; opacity: 0.6; }
 /* The write window's heading (SlotWriteWindow): the kind, then the case muted and cut with an ellipsis. */
+/* A text window's body: the text fills it, [닫기] under it. */
+.text-window { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
+.text-window .ui-textarea, .text-window textarea { flex: 1; min-height: 120px; resize: none; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.text-bar { display: flex; flex: none; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--fg2-line); }
 .heading { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; } .heading-kind { flex: 0 0 auto; }
 .heading-case { overflow: hidden; color: var(--fg2-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 10px; border: 1px solid #71313d; border-radius: 8px; background: #2a1820; color: #ffc2cc; font-size: 12px; }

@@ -39,3 +39,7 @@ export { setWorkPlanEditOpener, type WorkPlanEditOpener } from '@/features/workP
 export * from './tsEditSession'
 
 export { default as TestEvidenceFiles } from './TestEvidenceFiles.vue'
+// F81 case window v8: the evidence rows (one per kind) and the kind's modeless evidence window, over one shared listing.
+export { default as TestEvidenceRows } from './TestEvidenceRows.vue'
+export { default as TestEvidenceWindow } from './TestEvidenceWindow.vue'
+export { useTestEvidence, testEvidenceKinds, type TestEvidence, type TestEvidenceSource } from './testEvidenceModel'

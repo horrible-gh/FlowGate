@@ -160,6 +160,52 @@ def test_evidence_upload_rebuilds_approved_report(env, monkeypatch):
     assert "Keep this comment" in body(rid)
 
 
+def test_evidence_delete_rebuilds_report_at_once(env, monkeypatch):
+    """F81 v8 one-by-one delete (Flow attachment DELETE): the report md drops the file right away (R §3-1)."""
+    import io
+    from starlette.datastructures import UploadFile
+    from modules.flow_gate.services import test_evidence_service as evidence
+    doc, run, rid = setup(env, monkeypatch)
+    files = []
+    monkeypatch.setattr(evidence, "tagged", lambda d: files)
+    def uploaded(*args, **kw):
+        files.append({"key": "proof-key", "display_name": "proof.txt", "test_evidence": kw["test_evidence"]})
+        return {"link": "fg-attachment:proof-key"}
+    monkeypatch.setattr(evidence.flow, "upload", uploaded)
+    evidence.upload(doc, "TC-001", "output", UploadFile(filename="proof.txt", file=io.BytesIO(b"ok")), {"user_id": "user"}, 1)
+    assert "fg-attachment:proof-key" in body(rid)
+    before = documents.get_by_id(rid)["revision_no"]
+    tag = files.pop()["test_evidence"]
+    evidence.evidence_removed(json.dumps(tag))
+    assert "fg-attachment:proof-key" not in body(rid)
+    assert documents.get_by_id(rid)["revision_no"] == before + 1
+    assert "Keep this comment" in body(rid)
+    # A tag of no TS (or none) changes nothing.
+    evidence.evidence_removed(json.dumps({"ts_doc_id": "missing", "case_id": "TC-001", "kind": "output", "attempt": 1}))
+    evidence.evidence_removed(None)
+    assert documents.get_by_id(rid)["revision_no"] == before + 1
+
+
+def test_flow_remove_hands_a_tagged_file_to_the_report_rebuild(monkeypatch):
+    from modules.flow_gate.documents.attachments import flow
+    from modules.flow_gate.services import test_evidence_service as evidence
+    calls = []
+    monkeypatch.setattr(evidence, "evidence_removed", lambda raw: calls.append(raw))
+    monkeypatch.setattr(flow, "context", lambda *a, **kw: {"doc_id": "owner"})
+    monkeypatch.setattr(flow, "run_in_document_guard", lambda doc_id, commit: commit())
+    monkeypatch.setattr(flow, "emit", lambda owner: None)
+    monkeypatch.setattr(flow.service, "load_document", lambda doc_id: {"doc_id": doc_id})
+    monkeypatch.setattr(flow, "resolve_registered_attachment", lambda doc, name, require_file=False: (None, SimpleNamespace(exists=lambda: False)))
+    monkeypatch.setattr(flow, "registry_delete", lambda doc_id, name: None)
+    rows = {"tagged": {"doc_id": "d", "filename": "a.txt", "content_sha256": "s", "test_evidence": '{"ts_doc_id": "ts"}'},
+            "plain": {"doc_id": "d", "filename": "b.txt", "content_sha256": "s", "test_evidence": None}}
+    monkeypatch.setattr(flow, "find", lambda flow_id, key: rows[key])
+    assert flow.remove("f", "plain", {}, "s")["deleted"] is True
+    assert calls == []
+    assert flow.remove("f", "tagged", {}, "s")["deleted"] is True
+    assert calls == ['{"ts_doc_id": "ts"}']
+
+
 def test_fail_result_reopens_report_and_partial_submission_preserves_earlier_case(env, monkeypatch):
     from modules.flow_gate.services import test_basis_service as basis
     doc, run, rid = setup(env, monkeypatch)
