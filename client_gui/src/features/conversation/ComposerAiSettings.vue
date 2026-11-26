@@ -3,7 +3,7 @@
        pins the AI picker and AI 관리 use, card ①'s composable) and my own 최대 반복 횟수 / 제목 짓기 AI with the system
        values beside them (the existing /me/ai-preferences API). Every change here is saved at once.
        F96-8: the same one-line rows as the 대화 / 음성 tabs (label left, value right, the window's --csx-* sizes); the
-       system value sits next to the stepper and the title AI in effect inside the 자동 choice, not on extra lines. -->
+       system value sits next to the stepper. F96-13: the title AI has no 자동 choice; 답한 AI 그대로 is the default. -->
   <div class="cas" data-test="conv-ai-settings">
     <label class="cas-row">
       <span class="cas-label">{{ t('gui.conversation.settings.ai_this_chat') }}</span>
@@ -111,7 +111,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCurrentUser } from '@/core/auth/currentUser'
 import { useAiFavorites } from '@shared/aiFavorites'
-import { titleChoices, useMyAiPreferences, type TitleChoice } from '@shared/myAiPreferences'
+import { TITLE_EXECUTOR, titleChoices, useMyAiPreferences, type TitleChoice } from '@shared/myAiPreferences'
 import { fetchMyAiPrefs, saveMyAiPrefs } from './api'
 import type { ChatProvider, MyAiPrefs } from './types'
 
@@ -163,21 +163,14 @@ const resetRepeat = clearingError(control.resetRepeat)
 const chooseTitle = clearingError(control.chooseTitle)
 
 const fixedTitle = computed<TitleChoice[]>(() => [
-  { value: 'auto', label: t('gui.conversation.settings.ai_title_auto') },
+  { value: TITLE_EXECUTOR, label: t('gui.conversation.settings.ai_title_executor') },
   { value: 'off', label: t('gui.conversation.settings.ai_title_off') },
-  { value: 'executor', label: t('gui.conversation.settings.ai_title_executor') },
 ])
 
-// 자동 / 끄기 / 답한 AI 그대로 / separator / the AI this chat can use. While 자동 is chosen, the AI it resolves to is
-// named inside that choice ("자동 · 답한 AI 그대로") instead of on a line of its own. F96-10: an administrator value
-// whose name is not known here leaves just "자동" (never the internal ID).
-const titleOptions = computed<TitleChoice[]>(() => {
-  const p = prefs.value
-  const resolved = p?.title_provider === 'auto' ? knownTitleName(p.title_provider_effective || '') : ''
-  const autoInUse = resolved && resolved !== titleName('auto')
-  const fixed = fixedTitle.value.map((o) => (o.value === 'auto' && autoInUse ? { ...o, label: `${o.label} · ${resolved}` } : o))
-  return titleChoices(prefs.value?.title_provider, fixed, props.providers.map((p) => ({ value: p.id, label: p.name })))
-})
+// 답한 AI 그대로 (the default) / 끄기 / separator / the AI this chat can use. F96-13: no 자동 — a stored 'auto' arrives
+// as 'executor' from the composable, so it shows as 답한 AI 그대로.
+const titleOptions = computed<TitleChoice[]>(() =>
+  titleChoices(prefs.value?.title_provider, fixedTitle.value, props.providers.map((p) => ({ value: p.id, label: p.name }))))
 
 function titleName(value: string): string {
   return fixedTitle.value.find((o) => o.value === value)?.label ?? nameOf(value)
@@ -191,7 +184,7 @@ function knownTitleName(value: string): string {
 const effectiveTitleName = computed(() => {
   const p = prefs.value
   if (!p) return ''
-  return knownTitleName(p.title_provider_effective || p.title_provider) || titleName('auto')
+  return knownTitleName(p.title_provider_effective || p.title_provider) || titleName(TITLE_EXECUTOR)
 })
 
 onMounted(() => { void loadPrefs() })

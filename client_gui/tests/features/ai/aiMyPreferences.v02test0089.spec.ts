@@ -64,7 +64,7 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     expect(value(wrapper)).toBe('3')
     expect(titleRow.get('.repeat-info b').text()).toBe('제목 짓기 AI')
     expect(titleRow.find('[data-test="my-title-ai-card"]').exists()).toBe(true)
-    expect(selectValue(wrapper)).toBe('auto')
+    expect(selectValue(wrapper)).toBe('executor') // v02test.0096 F96-13: a stored 'auto' shows as 답한 AI 그대로
     expect(wrapper.find('[data-test^="system-"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="title-ai-card"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('시스템 (관리자)')
@@ -73,12 +73,13 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     wrapper.unmount()
   })
 
-  it('lists 자동, 끄기, 답한 AI 그대로, a separator, then the enabled AI I can use in my order', async () => {
+  it('lists 답한 AI 그대로 (default), 끄기, a separator, then the enabled AI I can use in my order — no 자동 (F96-13)', async () => {
     const { wrapper } = await mountPanel()
     const options = wrapper.findAll('[data-test="my-title-ai-select"] option')
-    expect(options.map((o) => o.text())).toEqual(['자동', '끄기', '답한 AI 그대로', '──────────', 'My A', 'System A'])
-    expect(options.map((o) => (o.element as HTMLOptionElement).value).slice(0, 3)).toEqual(['auto', 'off', 'executor'])
-    expect((options[3].element as HTMLOptionElement).disabled).toBe(true)
+    expect(options.map((o) => o.text())).toEqual(['답한 AI 그대로', '끄기', '──────────', 'My A', 'System A'])
+    expect(options.map((o) => (o.element as HTMLOptionElement).value).slice(0, 2)).toEqual(['executor', 'off'])
+    expect(options.map((o) => (o.element as HTMLOptionElement).value)).not.toContain('auto')
+    expect((options[2].element as HTMLOptionElement).disabled).toBe(true)
     wrapper.unmount()
   })
 
@@ -95,7 +96,7 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
     ;({ wrapper } = await mountPanel())
     await wrapper.get('[data-test="my-title-ai-select"]').setValue('off')
     await flushPromises()
-    expect(selectValue(wrapper)).toBe('auto')
+    expect(selectValue(wrapper)).toBe('executor')
     expect(document.body.textContent).toContain('저장 실패')
     wrapper.unmount()
   })
@@ -175,11 +176,11 @@ describe('v02test.0089 my repeat limit and title AI (기타 설정 tab since v02
   it('names the new choices in English and Japanese', async () => {
     i18n.global.locale.value = 'en'
     let { wrapper } = await mountPanel()
-    expect(wrapper.findAll('[data-test="my-title-ai-select"] option').map((o) => o.text()).slice(0, 3)).toEqual(['Automatic', 'Off', 'Same AI that answered'])
+    expect(wrapper.findAll('[data-test="my-title-ai-select"] option').map((o) => o.text()).slice(0, 2)).toEqual(['Same AI that answered', 'Off'])
     wrapper.unmount()
     i18n.global.locale.value = 'ja'
     ;({ wrapper } = await mountPanel())
-    expect(wrapper.findAll('[data-test="my-title-ai-select"] option').map((o) => o.text()).slice(0, 3)).toEqual(['自動', 'オフ', '回答したAIのまま'])
+    expect(wrapper.findAll('[data-test="my-title-ai-select"] option').map((o) => o.text()).slice(0, 2)).toEqual(['回答したAIのまま', 'オフ'])
     wrapper.unmount()
   })
 })
