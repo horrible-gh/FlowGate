@@ -361,3 +361,29 @@ def test_foreign_flow_rejected_before_target_lookup(monkeypatch):
         authz.read_caller({"action_scope": "chat", "group_id": FA}, "foreign.flow", {})
     assert caught.value.status == 403 and caught.value.code == "flow_access_denied"
     forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize("instruction", ["omit", "use"])
+def test_restart_empty_instruction_obeys_omit_without_changing_refusal(running, monkeypatch, instruction):
+    from test_fg_card_settings import setting
+    from flowgate.card_documents import repository
+
+    hold_result(running)
+    key = running["key"]
+    doc = next(r["doc_id"] for r in repository.rows(FA, [key]) if r["slot"] == "instruction")
+    _write_instruction(doc, "")
+    setting(running, FA, key, "instruction", instruction)
+    monkeypatch.setattr(workspace, "cleanup_for_stop", lambda aid: True)
+    request = body(running, node=False)
+    if instruction == "use":
+        with pytest.raises(GraphApiError) as caught:
+            recovery.restart(_group(), "u_kim", request, lambda: None)
+        assert (caught.value.status, caught.value.code) == (409, "chat_run_instruction_missing")
+        assert caught.value.params == {"node_keys": [key]}
+        assert run_store.current_run(FA)["run_id"] == running["run_id"]
+        assert store.request(FA, request["request_id"]) is None
+    else:
+        result = recovery.restart(_group(), "u_kim", request, lambda: None)
+        assert result["new_run_id"] != running["run_id"] and not result["pending"]
+        assert next(r["doc_id"] for r in repository.rows(FA, [key]) if r["slot"] == "instruction") == doc
+        assert next(n for n in run_store.node_runs(result["new_run_id"]) if n["node_key"] == key)["stage"] == "result"

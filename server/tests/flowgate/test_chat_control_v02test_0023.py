@@ -461,3 +461,26 @@ def test_a_chat_line_edit_without_front_matter_keeps_the_current_one(monkeypatch
     assert chat_adapter._keep_frontmatter(sent) is sent           # a body with front matter is checked as sent
     other = replace(req, expected_doc_id="o.0001-T")
     assert chat_adapter._keep_frontmatter(other) is other         # another Flow's document is never read
+
+
+@pytest.mark.parametrize("remove_line", [False, True])
+def test_start_with_omitted_empty_instruction_runs_result_without_creating_instruction(
+        env, decided, gate_policy, remove_line):
+    from test_fg_card_settings import setting
+    from flowgate.chat_control import service
+    from flowgate.card_documents import repository
+
+    put_draft(env, FA, 0, [node("tmp_r", "R")])
+    card = service.place(_group(), "u_kim", {"cards": [{}]})["cards"][0]
+    key = card["node_key"]
+    _ai_card(key)
+    setting(env, FA, key, "instruction", "omit")
+    if remove_line:
+        repository.delete(FA, key, "instruction", "T")
+    before = _sql(env["db"], "SELECT doc_id FROM documents ORDER BY doc_id")
+    started = service.start(_group(), "u_kim")
+    assert started["confirmed_revision_no"] == 1 and started["run"]["run_id"]
+    assert [j.get("stage") for j in env["jobs"] if j["node_key"] == key] == ["result"]
+    assert _sql(env["db"], "SELECT doc_id FROM documents ORDER BY doc_id") == before
+    if remove_line:
+        assert not any(r["slot"] == "instruction" for r in repository.rows(FA, [key]))
