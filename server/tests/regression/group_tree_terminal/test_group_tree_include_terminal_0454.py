@@ -35,6 +35,21 @@ from pathlib import Path
 
 import pytest
 
+from starlette.requests import Request
+
+
+def _tree_request():
+    return Request({"type": "http", "headers": []})
+
+
+@pytest.fixture(autouse=True)
+def _authorized_tree_reader(monkeypatch):
+    # These tests cover tree contents; authentication has its own route tests.
+    from modules.flow_gate.api.v1 import tree_routes
+    monkeypatch.setattr(tree_routes, "verify_bearer",
+                        lambda request: {"issued_to": "tree-reader", "_is_user_jwt": True})
+    monkeypatch.setattr(tree_routes, "has_permission", lambda *args: True)
+
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost:5173")
@@ -284,17 +299,17 @@ def stub_tree(monkeypatch):
 
 class TestRouteContract:
     def test_omitting_the_flag_returns_the_full_tree(self, stub_tree):
-        body = tree_routes.get_groups_tree("p")
+        body = tree_routes.get_groups_tree("p", request=_tree_request())
         assert [node["id"] for node in body["data"]["nodes"]] == [n["id"] for n in MIXED_TREE]
 
     def test_include_terminal_true_is_identical_to_omitting_it(self, stub_tree):
-        default_body = tree_routes.get_groups_tree("p")
-        explicit_body = tree_routes.get_groups_tree("p", include_terminal=True)
+        default_body = tree_routes.get_groups_tree("p", request=_tree_request())
+        explicit_body = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=True)
         assert default_body == explicit_body
         assert json.dumps(default_body, sort_keys=True) == json.dumps(explicit_body, sort_keys=True)
 
     def test_include_terminal_false_prunes(self, stub_tree):
-        body = tree_routes.get_groups_tree("p", include_terminal=False)
+        body = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False)
         ids = {node["id"] for node in body["data"]["nodes"]}
         assert ids.isdisjoint(TERMINAL_IDS)
         assert "p.default.0002.sub.0001-T" in ids
@@ -307,7 +322,7 @@ class TestRouteContract:
         # the class comment above TestRouteOverHttp for the same quirk on `include_terminal`,
         # and TestRouteOverHttp.test_the_tree_route_over_http_omits_the_summary_by_default below
         # for the real-HTTP omission case this class cannot exercise.
-        body = tree_routes.get_groups_tree("p", branch="feature-x", include_terminal=False, include_summary=False)
+        body = tree_routes.get_groups_tree("p", request=_tree_request(), branch="feature-x", include_terminal=False, include_summary=False)
         assert set(body) == {"data"}
         # review fix: had added `overview_summary` here UNCONDITIONALLY,
         # which changed the `include_terminal=true` (default) response for every pre-existing
@@ -317,26 +332,26 @@ class TestRouteContract:
         assert set(body["data"]) == {"nodes"}
         assert isinstance(body["data"]["nodes"], list)
         # The compatibility `branch` argument is still accepted and still changes nothing.
-        assert body == tree_routes.get_groups_tree("p", include_terminal=False, include_summary=False)
+        assert body == tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False, include_summary=False)
 
     def test_include_summary_is_opt_in_and_additive_only(self, stub_tree):
         # The rev2 mistake, precisely: adding `overview_summary` must never change what a caller
         # who does not ask for it receives. Same nodes, same order — `include_summary` only ever
         # ADDS a key, never alters `nodes`. (`include_summary=False` passed explicitly — see the
         # Query-sentinel note in test_the_envelope_and_the_branch_argument_are_unchanged above.)
-        without = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=False)
-        with_summary = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        without = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=True, include_summary=False)
+        with_summary = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=True, include_summary=True)
         assert set(without["data"]) == {"nodes"}
         assert set(with_summary["data"]) == {"nodes", "overview_summary"}
         assert with_summary["data"]["nodes"] == without["data"]["nodes"]
         assert with_summary["data"]["overview_summary"] == build_overview_summary(MIXED_TREE)
 
     def test_pruning_issues_no_extra_tree_query(self, stub_tree):
-        tree_routes.get_groups_tree("p", include_terminal=False)
+        tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False)
         assert stub_tree == ["p"]
 
     def test_the_pruned_response_carries_no_nested_children(self, stub_tree):
-        body = tree_routes.get_groups_tree("p", include_terminal=False)
+        body = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False)
         assert [node["id"] for node in body["data"]["nodes"] if "children" in node] == []
 
 
@@ -529,8 +544,8 @@ class TestOverviewSummary:
         # Project-wide by construction (built from raw_nodes, before pruning runs) -- a caller
         # that fetched the pruned tree for the sidebar gets the same totals as one that fetched
         # the full tree, not a partial count scoped to whichever subtree it happened to ask for.
-        pruned = tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
-        full = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        pruned = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False, include_summary=True)
+        full = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=True, include_summary=True)
         assert (
             pruned["data"]["overview_summary"]
             == full["data"]["overview_summary"]
@@ -542,7 +557,7 @@ class TestOverviewSummary:
         # sidebar load alone: the summary (from the unpruned tree) counts MORE documents than
         # the SAME response's pruned `nodes` carries, because it still includes the terminal
         # subtrees pruning drops from `nodes`.
-        body = tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
+        body = tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False, include_summary=True)
         pruned_doc_count = len([n for n in body["data"]["nodes"] if n["node_type"] == "document"])
         assert body["data"]["overview_summary"]["total_documents"] > pruned_doc_count
 
@@ -550,9 +565,9 @@ class TestOverviewSummary:
         # The rev4 review finding, closed at the root: since `overview_summary` now rides the
         # SAME request as `nodes` (rev5), there is no second, independently-timed request left to
         # cost a second DB call — in EITHER arrival order, because there is only one arrival.
-        tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
+        tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=False, include_summary=True)
         assert stub_tree == ["p"]
-        tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        tree_routes.get_groups_tree("p", request=_tree_request(), include_terminal=True, include_summary=True)
         assert stub_tree == ["p", "p"]  # a SECOND screen load still costs its own call, as before
 
     @pytest.fixture
@@ -1037,8 +1052,8 @@ def load_variants() -> dict:
     assert fast_summary == build_overview_summary(nodes)
     with patch.object(process_service, "get_group_tree", lambda _pid: {"nodes": list(nodes)}), \
          patch.object(process_service, "get_hidden_group_tree", lambda _pid: fast_tree):
-        full = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=True, include_summary=False)
-        pruned = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=False, include_summary=False)
+        full = tree_routes.get_groups_tree(LOAD_PROJECT, request=_tree_request(), include_terminal=True, include_summary=False)
+        pruned = tree_routes.get_groups_tree(LOAD_PROJECT, request=_tree_request(), include_terminal=False, include_summary=False)
 
     def _bytes(body: dict) -> int:
         # UTF-8 bytes of the serialized response — what actually travels the wire.
