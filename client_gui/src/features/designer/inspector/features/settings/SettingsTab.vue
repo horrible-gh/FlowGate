@@ -38,7 +38,7 @@
        seconds (`time_limit_sec` / `verify_run_sec`). A test card has one ⚙ — beside the test run zone's 작업 AI, none in the case
        writing zone — whose window (테스트 실행 시간 설정) holds 자동 케이스 · AI 판정 [케이스 수 | 고정] · 1회 시간, and 횟수 only while the
        judgement is 고정; its rows stay in the window, so the AI tab keeps its rows. -->
-  <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
+  <div ref="settingsRoot" class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
       <InspectorLockNote v-if="locked" :text="lockText" />
@@ -135,12 +135,15 @@
                 @click="toggleGear(item.role)"
               ><LineIcon name="settings" /></button>
             </InspectorControlRow>
+            <!-- 0031-T: the window is drawn on the page's top layer (body), placed by its ⚙ (see placeGear), so the
+                 Inspector's scroll area and its blocks (each a layout container) can no longer cut it. -->
+            <Teleport to="body">
             <div
               v-if="gearOpen === item.role"
-              :ref="setGearPop"
+              :ref="(element) => setGearPop(item.role, element)"
               class="inspector-ai-pop"
               :class="{ 'is-above': gearPlace === 'above' }"
-              :style="gearMaxHeight !== null ? { maxHeight: `${gearMaxHeight}px` } : undefined"
+              :style="gearStyle"
               :data-place="gearPlace"
               role="dialog"
               :aria-label="gearWindowTitle(item.role)"
@@ -208,7 +211,7 @@
                 <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
               </InspectorControlRow>
             </div>
-            <div v-if="gearOpen === item.role && gearRoom !== null" class="inspector-ai-pop-room" aria-hidden="true" :style="{ top: `${gearRoom}px` }" />
+            </Teleport>
           </div>
         </InspectorBlock>
         <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-review-count">
@@ -264,7 +267,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
 import Select from '../../../../../components/ui/Select.vue'
@@ -279,7 +282,6 @@ import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRun
 import InspectorSegment, { type InspectorSegmentOption } from '../../parts/InspectorSegment.vue'
 import InspectorDurationInput from '../../parts/InspectorDurationInput.vue'
 import { inspectorSettingsKind, type InspectorTarget } from '../../inspectorTarget'
-import { INSPECTOR_BODY } from '../../inspectorHost'
 import {
   CARD_SETTINGS_FIELDS,
   cardSettingsAiOptions,
@@ -451,6 +453,8 @@ watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = n
 function onOutside(event: Event) {
   if (gearOpen.value === null) return
   const at = event.target as Element | null
+  // 0031-T: the window lives under body now, not in this tab; a press in it (or on a ⚙) is still inside.
+  if (at instanceof Node && gearPopNow()?.contains(at)) return
   if (at?.closest?.('.inspector-ai-pop, .inspector-ai-gear')) return
   closeGear()
 }
@@ -459,68 +463,142 @@ function onKey(event: KeyboardEvent) {
 }
 
 /**
- * (CH QA): where the open window goes inside the Inspector's scrolling body. Under its row
- * when it fits there; else above the row when it fits there; else under the row with the body scrolled just enough to
- * show it whole — its height capped (scrolling inside) only when even the whole body is too low for it. Under the row
- * an invisible 1px mark is kept GEAR_EDGE past the window, so the body can scroll the window clear of its bottom edge
- * (a margin does not count to a scroll area). Placed when it opens and when the window is resized; with no body
- * measured (outside the Frame, no layout) it stays under the row.
+ * 0031-T: where the open window goes. It is drawn on the page's top layer (Teleport to body, position: fixed), placed
+ * by its row's ⚙: its right edge on the row's right edge (kept GEAR_EDGE inside the browser window), as wide as
+ * GEAR_WIDTH (narrower only when the browser window is). Under the row when it fits in the browser window there; else
+ * above the row (towards the canvas) when it fits there; only when it fits on neither side does it take the larger side
+ * with its height capped (scrolling inside). Placed again when the browser window is resized and when anything around
+ * it scrolls (the Inspector body), so it stays by its ⚙. The Inspector's own height no longer matters.
+ * 0032-TR: also placed again when what is in the open window changes its height (e.g. the test card's judgement set to
+ * '고정' adds the count row), so a grown window turns above / gets capped instead of running off the browser window.
+ * The window always stays inside the browser window: when its ⚙ row has been scrolled out of sight it waits at the
+ * nearest edge (GEAR_EDGE in) instead of going out with the row.
  */
-const inspectorBody = inject(INSPECTOR_BODY, null)
 const GEAR_GAP = 6
 const GEAR_EDGE = 8
-const GEAR_MIN_HEIGHT = 96
+const GEAR_WIDTH = 360
+const settingsRoot = ref<HTMLElement | null>(null)
 const gearPlace = ref<'below' | 'above'>('below')
-const gearMaxHeight = ref<number | null>(null)
-/** Top of the 1px scroll mark under the open window, from its row's top (px), or null for none. */
-const gearRoom = ref<number | null>(null)
-let gearPop: HTMLElement | null = null
-let gearPlacing = 0
-function setGearPop(element: Element | ComponentPublicInstance | null) {
-  gearPop = element instanceof HTMLElement ? element : null
-}
-function scrollBoxOf(element: HTMLElement): HTMLElement | null {
-  const body = inspectorBody?.element.value
-  if (body?.contains(element)) return body
-  for (let at = element.parentElement; at; at = at.parentElement) {
-    const overflow = getComputedStyle(at).overflowY
-    if (overflow === 'auto' || overflow === 'scroll') return at
+/** The open window's place in the browser window (px), or null while it is first measured (drawn hidden). */
+const gearBox = ref<{ left: number; width: number; top: number | null; bottom: number | null; maxHeight: number | null } | null>(null)
+const gearWidth = ref<number>(GEAR_WIDTH)
+const gearStyle = computed(() => {
+  const box = gearBox.value
+  if (!box) return { left: '0px', top: '0px', width: `${gearWidth.value}px`, visibility: 'hidden' as const }
+  return {
+    left: `${box.left}px`,
+    width: `${box.width}px`,
+    top: box.top !== null ? `${box.top}px` : undefined,
+    bottom: box.bottom !== null ? `${box.bottom}px` : undefined,
+    maxHeight: box.maxHeight !== null ? `${box.maxHeight}px` : undefined,
   }
-  return null
+})
+/**
+ * The drawn window of each role, kept by role: going from one ⚙ to another, the next window may be drawn before the
+ * former one is dropped (rows are patched in order), so a single slot would be emptied by the former one.
+ */
+const gearPops = new Map<string, HTMLElement>()
+let gearPlacing = 0
+/** 0032-TR: the open window's content height (scrollHeight) at its last placing; a change means its content changed. */
+let gearContent = -1
+/**
+ * 0032-TR: watches each drawn window's size. The placing itself (cap on / off) changes only the window's box, not its
+ * content height (scrollHeight), so only a content change places it again — no placing loop.
+ */
+const gearSizes = typeof ResizeObserver !== 'undefined'
+  ? new ResizeObserver(() => {
+    const pop = gearPopNow()
+    if (pop && pop.scrollHeight !== gearContent) void placeGear()
+  })
+  : null
+function setGearPop(role: string, element: Element | ComponentPublicInstance | null) {
+  const former = gearPops.get(role)
+  if (element instanceof HTMLElement) {
+    if (former === element) return
+    if (former) gearSizes?.unobserve(former)
+    gearPops.set(role, element)
+    gearSizes?.observe(element)
+  } else {
+    if (former) gearSizes?.unobserve(former)
+    gearPops.delete(role)
+  }
+}
+/** The open window's element, or null. */
+function gearPopNow(): HTMLElement | null {
+  return gearOpen.value !== null ? gearPops.get(gearOpen.value) ?? null : null
+}
+/** The row line of the open ⚙ (what the window is placed by), or null when it is not in the page. */
+function gearRowOf(role: string): HTMLElement | null {
+  const gear = settingsRoot.value?.querySelector<HTMLElement>(`[data-gear="${role}"]`)
+  return gear?.closest<HTMLElement>('.inspector-ai-role-line') ?? gear ?? null
 }
 async function placeGear() {
   const turn = ++gearPlacing
-  gearPlace.value = 'below'
-  gearMaxHeight.value = null
-  gearRoom.value = null
+  const role = gearOpen.value
   await nextTick()
-  const pop = gearPop
-  const line = pop?.parentElement
-  const box = pop ? scrollBoxOf(pop) : null
-  if (turn !== gearPlacing || !pop || !line || !box) return
-  const view = box.getBoundingClientRect()
-  if (view.height <= 0) return
-  const row = line.getBoundingClientRect()
+  const pop = role !== null ? gearPops.get(role) ?? null : null
+  const row = role !== null ? gearRowOf(role) : null
+  if (turn !== gearPlacing || !pop || !row || gearOpen.value !== role) return
+  const viewWidth = window.innerWidth || document.documentElement.clientWidth
+  const viewHeight = window.innerHeight || document.documentElement.clientHeight
+  const at = row.getBoundingClientRect()
+  const width = Math.max(0, Math.min(GEAR_WIDTH, viewWidth - 2 * GEAR_EDGE))
+  const left = Math.max(GEAR_EDGE, Math.min(at.right, viewWidth - GEAR_EDGE) - width)
+  // measured at its own height first: no cap, at its final width (a label may wrap), so the window can be seen whole
+  if (gearBox.value) gearBox.value = { ...gearBox.value, left, width, maxHeight: null }
+  else gearWidth.value = width
+  await nextTick()
+  if (turn !== gearPlacing || gearPopNow() !== pop) return
   const full = pop.offsetHeight
-  if (full + GEAR_GAP + GEAR_EDGE > view.bottom - row.bottom && full + GEAR_GAP + GEAR_EDGE <= row.top - view.top) {
-    gearPlace.value = 'above'
-    return
+  gearContent = pop.scrollHeight
+  // 0032-TR: the edges the window grows from, kept inside the browser window (a row scrolled out of sight above or
+  // below no longer puts the window, or the room it counts, outside it)
+  const inView = (y: number) => Math.max(GEAR_EDGE, Math.min(viewHeight - GEAR_EDGE, y))
+  const downFrom = inView(at.bottom + GEAR_GAP)
+  const upFrom = inView(at.top - GEAR_GAP)
+  const below = viewHeight - GEAR_EDGE - downFrom
+  const above = upFrom - GEAR_EDGE
+  const up = full > below && (full <= above || above > below)
+  const room = Math.floor(up ? above : below)
+  gearPlace.value = up ? 'above' : 'below'
+  gearBox.value = {
+    left,
+    width,
+    top: up ? null : Math.round(downFrom),
+    bottom: up ? Math.round(viewHeight - upFrom) : null,
+    maxHeight: full > room ? Math.max(0, room) : null,
   }
-  const fit = Math.floor(view.height - row.height - GEAR_GAP - 2 * GEAR_EDGE)
-  const height = full > fit ? Math.max(GEAR_MIN_HEIGHT, fit) : full
-  if (height < full) gearMaxHeight.value = height
-  gearRoom.value = Math.ceil(row.height + GEAR_GAP + height + GEAR_EDGE - 1)
-  const shift = Math.min(row.bottom + GEAR_GAP + height + GEAR_EDGE - view.bottom, row.top - view.top - GEAR_EDGE)
-  if (shift <= 0) return
-  await nextTick()
-  if (turn === gearPlacing) box.scrollTop += shift
 }
+// a newly opened window starts hidden and unplaced (set before it is drawn, so it never shows at a former place)
+watch(gearOpen, () => {
+  gearContent = -1
+  gearBox.value = null
+  gearPlace.value = 'below'
+  gearWidth.value = GEAR_WIDTH
+}, { flush: 'sync' })
 watch(gearOpen, (role) => { if (role !== null) void placeGear() }, { flush: 'post' })
 function onResize() {
   if (gearOpen.value !== null) void placeGear()
 }
-onMounted(() => { document.addEventListener('pointerdown', onOutside, true); document.addEventListener('keydown', onKey); window.addEventListener('resize', onResize) })
-onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside, true); document.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize) })
+/** Something scrolled (the Inspector body, the page): the window follows its ⚙. Its own inner scroll is not a move. */
+function onScroll(event: Event) {
+  if (gearOpen.value === null) return
+  if (event.target instanceof Node && gearPopNow()?.contains(event.target)) return
+  void placeGear()
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', onOutside, true)
+  document.addEventListener('keydown', onKey)
+  document.addEventListener('scroll', onScroll, true)
+  window.addEventListener('resize', onResize)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onOutside, true)
+  document.removeEventListener('keydown', onKey)
+  document.removeEventListener('scroll', onScroll, true)
+  window.removeEventListener('resize', onResize)
+  gearSizes?.disconnect()
+})
 const runKey = (key: string) => `gui.designer.inspector.run_settings.${key}`
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
@@ -937,40 +1015,34 @@ function reload() {
   background: #c9a14a;
 }
 
+/* 0031-T: drawn under body (Teleport) at a fixed place by its ⚙ (left / top or bottom / width set by placeGear), above
+   the Designer's panels. Away from the Inspector it carries its own text size (the tab's 12px) and is its own width
+   container for the rows inside. It scrolls inside only when the browser window is too low for it on both sides. */
 .inspector-ai-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
+  z-index: var(--fg2-overlay-z, 9999);
   box-sizing: border-box;
-  width: min(360px, 100%);
+  container-type: inline-size;
   padding: 10px 12px;
   border: 1px solid #4aa3ff;
   border-radius: 8px;
   background: #16293c;
   box-shadow: 0 8px 24px rgb(0 0 0 / 56%);
+  color: var(--fg2-text, #dce7f2);
+  font-size: 12px;
   pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-/* The scroll mark kept just past an open window under its row (see placeGear): seen by the body's scroll area only. */
-.inspector-ai-pop-room {
-  position: absolute;
-  left: 0;
-  width: 1px;
-  height: 1px;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-/* Not enough room under the row in the Inspector body: the window opens above it (see placeGear). */
-.inspector-ai-pop.is-above {
-  top: auto;
-  bottom: calc(100% + 6px);
+/* The tab's selects (32px, 12px) — the window is no longer inside .inspector-settings, so it says it again. */
+.inspector-ai-pop :deep(.ui-select) {
+  height: 32px;
+  font-size: 12px;
 }
 
 /* A long label (English 'Instruction review AI') goes on to a second line instead of being cut; the window is 360px
-   wide so a long English value ('Card review role value') fits its select. */
+   wide (GEAR_WIDTH) so a long English value ('Card review role value') fits its select. */
 .inspector-ai-pop :deep(.inspector-control-label) {
   overflow: visible;
   line-height: 1.3;

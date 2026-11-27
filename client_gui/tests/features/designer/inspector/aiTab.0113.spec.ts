@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { config, mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { computed, defineComponent, h, ref } from 'vue'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }))
 vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(), getRequest: http.get, patchRequest: http.patch }))
@@ -20,7 +20,6 @@ import { toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSou
 import { toVueFlowNodes } from '@/features/designer/center/canvas/vueFlowMapping'
 import { target, cardRoles } from '../../ai/rolesFixtures.0113'
 import { prepareInspectorI18n } from './support/inspectorSupport'
-import { INSPECTOR_BODY } from '@/features/designer/inspector/inspectorHost'
 import aiMessages from '@/features/designer/inspector/features/ai/messages'
 import roleMessages from '@/features/ai/roles/messages'
 import ko from '@/app/i18n/ko'
@@ -55,6 +54,11 @@ beforeEach(() => {
     return { data: structuredClone(raw) }
   })
 })
+// 0031-T: the ⚙ window is drawn under body (Teleport); here it is drawn in place so the wrapper finds it. A test that
+// needs the real top layer mounts with `stubs: { teleport: false }`.
+let configStubs: typeof config.global.stubs
+beforeAll(() => { configStubs = config.global.stubs; config.global.stubs = { ...configStubs, teleport: true } })
+afterAll(() => { config.global.stubs = configStubs })
 afterEach(() => { wrapper?.unmount(); wrapper = null })
 async function tab(panel: 'ai' | 'settings', kind = 'run') {
   raw = settingsRaw(kind)
@@ -357,36 +361,118 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
     await w.setProps({ panel: 'ai' }); await flushPromises()
     expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
   })
-  it('0003-CH QA: opens under its row when it fits, above it when only that fits, else under it capped to the Inspector body', async () => {
+  it('0031-T: opens under its ⚙ row when it fits in the browser window, above it when only that fits, capped only when neither does; follows a scroll', async () => {
     const body = document.createElement('div'); document.body.appendChild(body)
-    const box = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 300, width: 300, x: 0, y: top, toJSON() { return {} } }) as DOMRect
-    let rowTop = 150; let popHeight = 120
+    const box = (top: number, bottom: number, right = 300) => ({ top, bottom, height: bottom - top, left: 0, right, width: right, x: 0, y: top, toJSON() { return {} } }) as DOMRect
+    // the Inspector body is only 216px high (the bottom Inspector): it no longer limits the window, the browser window does
+    let rowTop = 700; let popHeight = 200
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this === body) return box(0, 216)
+      if (this === body) return box(552, 768)
       if (this.classList.contains('inspector-ai-role-line')) return box(rowTop, rowTop + 32)
       return box(0, 0)
     })
     const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('inspector-ai-pop') ? popHeight : 0 })
+    const view = { width: window.innerWidth, height: window.innerHeight }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
     try {
       raw = settingsRaw()
-      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n], provide: { [INSPECTOR_BODY as symbol]: { element: ref(body) } } } })
+      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n] } })
       await flushPromises()
       const open = async (role: string) => { await gear(wrapper!, role); await flushPromises(); return wrapper!.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`) }
+      // row at the bottom: 22px under it, 686px above it → above, whole, its right edge on the row's (300 - 360 → kept 8px in)
       let pop = await open('review')
-      expect(pop.attributes('data-place')).toBe('above'); expect(pop.classes()).toContain('is-above'); expect(pop.attributes('style') ?? '').not.toContain('max-height')
+      let style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(pop.classes()).toContain('is-above')
+      expect(style).toContain('bottom: 74px'); expect(style).toContain('left: 8px'); expect(style).toContain('width: 360px')
+      expect(style).not.toContain('max-height'); expect(style).not.toContain('hidden')
       expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+      // row near the top: under it, whole
       rowTop = 40
       pop = await open('execution')
+      style = pop.attributes('style') ?? ''
       expect(pop.attributes('data-place')).toBe('below'); expect(pop.classes()).not.toContain('is-above')
-      expect(wrapper.get('[data-role="execution"] .inspector-ai-pop-room').attributes('style')).toContain('top: 165px')
-      rowTop = 100; popHeight = 190
+      expect(style).toContain('top: 78px'); expect(style).not.toContain('max-height')
+      // the Inspector body scrolls: the window follows its ⚙
+      rowTop = 100
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      expect(pop.attributes('style')).toContain('top: 138px')
+      // too high for either side of the browser window: the larger side (under: 422px) with the height capped there
+      await wrapper.get('[data-gear="execution"]').trigger('click'); await flushPromises()
+      rowTop = 300; popHeight = 900
       pop = await open('review')
-      expect(pop.attributes('data-place')).toBe('below'); expect(pop.attributes('style')).toContain('max-height: 162px')
-      expect(wrapper.get('[data-role="review"] .inspector-ai-pop-room').attributes('style')).toContain('top: 207px')
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('below'); expect(style).toContain('top: 338px'); expect(style).toContain('max-height: 422px')
       await wrapper.get('[data-gear="review"]').trigger('click'); await flushPromises()
-      expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+      expect(wrapper.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
     } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: view.width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: view.height })
       rect.mockRestore(); height.mockRestore(); wrapper?.unmount(); wrapper = null; body.remove()
+    }
+  })
+  it('0032-TR: placed again when its content grows (turns above when only that fits); stays in the browser window when its row is scrolled out of sight', async () => {
+    const body = document.createElement('div'); document.body.appendChild(body)
+    const box = (top: number, bottom: number, right = 300) => ({ top, bottom, height: bottom - top, left: 0, right, width: right, x: 0, y: top, toJSON() { return {} } }) as DOMRect
+    let rowTop = 400; let popHeight = 200
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('inspector-ai-role-line')) return box(rowTop, rowTop + 32)
+      return box(0, 0)
+    })
+    const isPop = (element: HTMLElement) => element.classList.contains('inspector-ai-pop')
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return isPop(this) ? popHeight : 0 })
+    // the content height: the placing caps the box, not the content, so it stays the content's own height
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) { return this instanceof HTMLElement && isPop(this) ? popHeight - 2 : 0 })
+    // jsdom has no ResizeObserver: a stand-in that the test fires by hand
+    const sizeObservers: { callback: ResizeObserverCallback; watched: Set<Element> }[] = []
+    class SizeObserver {
+      callback: ResizeObserverCallback
+      watched = new Set<Element>()
+      constructor(callback: ResizeObserverCallback) { this.callback = callback; sizeObservers.push(this) }
+      observe(element: Element) { this.watched.add(element) }
+      unobserve(element: Element) { this.watched.delete(element) }
+      disconnect() { this.watched.clear() }
+    }
+    vi.stubGlobal('ResizeObserver', SizeObserver)
+    const resized = async () => {
+      for (const observer of sizeObservers) observer.callback([...observer.watched].map(target => ({ target }) as ResizeObserverEntry), observer as unknown as ResizeObserver)
+      await flushPromises()
+    }
+    const view = { width: window.innerWidth, height: window.innerHeight }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
+    try {
+      raw = settingsRaw()
+      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n] } })
+      await flushPromises()
+      const pop = await gear(wrapper, 'execution'); await flushPromises()
+      // row 400–432: 322px under it, 386px above it → a 200px window goes under
+      expect(pop.attributes('data-place')).toBe('below'); expect(pop.attributes('style')).toContain('top: 438px')
+      expect(sizeObservers.some(observer => observer.watched.has(pop.element))).toBe(true)
+      // nothing in it changed: a size note alone does not move it
+      await resized()
+      expect(pop.attributes('style')).toContain('top: 438px')
+      // a row is added inside (360px now): no longer fits under, whole above → turns above, not cut, not capped
+      popHeight = 360
+      await resized()
+      let style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(style).toContain('bottom: 374px'); expect(style).not.toContain('max-height')
+      // the row is scrolled out of sight above (bottom -40px): the window waits at the top edge, not at -34px
+      popHeight = 200; rowTop = -72
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('below'); expect(style).toContain('top: 8px'); expect(style).not.toContain('max-height')
+      // … and out of sight below: it waits at the bottom edge
+      rowTop = 800
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(style).toContain('bottom: 8px'); expect(style).not.toContain('max-height')
+      await wrapper.get('[data-gear="execution"]').trigger('click'); await flushPromises()
+      expect(sizeObservers.every(observer => observer.watched.size === 0)).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: view.width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: view.height })
+      rect.mockRestore(); height.mockRestore(); content.mockRestore(); vi.unstubAllGlobals(); wrapper?.unmount(); wrapper = null; body.remove()
     }
   })
 })
