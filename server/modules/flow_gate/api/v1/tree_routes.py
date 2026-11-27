@@ -50,8 +50,11 @@ class SrcDeleteRequest(BaseModel):
 # heartbeats included). Only group_dispose stays async (it awaits the SSE
 # broadcast) and pushes its sync work through anyio.to_thread.
 @router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
-def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+def get_files_tree(project_id: str, request: Request, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
     """Return the file tree for the project."""
+    auth = _check_tree_auth(request, project_id, "project.document.read")
+    if isinstance(auth, JSONResponse):
+        return auth
     tree = process_service.get_file_tree(project_id)
     return {"data": tree}
 
@@ -531,6 +534,7 @@ def prune_terminal_subtrees(nodes: list[dict]) -> list[dict]:
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
 def get_groups_tree(
     project_id: str,
+    request: Request,
     branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)"),
     include_terminal: bool = Query(
         True,
@@ -582,6 +586,10 @@ def get_groups_tree(
     parameter (explorer.ts fetchGroupTree) — see `_get_raw_tree_nodes`'s docstring for the
     freshness guarantee it carries.
     """
+    auth = _check_tree_auth(request, project_id, "project.group.read")
+    if isinstance(auth, JSONResponse):
+        return auth
+
     # Direct Python callers may leave FastAPI's Query object at its default.
     show_archived = include_archived is True
     if include_terminal:
@@ -693,6 +701,20 @@ def _validate_path_param(path: str) -> None:
 def _rfc5987_encode(name: str) -> str:
     """RFC 5987 UTF-8 percent-encoding — Content-Disposition filename* value."""
     return "UTF-8''" + quote(name, safe="")
+
+
+def _check_tree_auth(request: Request, project_id: str, permission: str):
+    """Authorize each project-wide tree read before accessing data or in-flight work."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    # Worker/chat tokens are bound to a group; a project-wide tree would disclose
+    # sibling groups even inside their bound project. These are console endpoints.
+    if not auth.get("_is_user_jwt"):
+        return _err(403, "FORBIDDEN", "project-wide trees require a user session")
+    if not has_permission(auth["issued_to"], project_id, permission):
+        return _err(403, "FORBIDDEN", "insufficient permission for this operation")
+    return auth
 
 
 def _check_project_auth(request: Request, project_id: str):

@@ -17,6 +17,21 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+from starlette.requests import Request
+
+
+def _tree_request():
+    return Request({"type": "http", "headers": []})
+
+
+@pytest.fixture(autouse=True)
+def _authorized_tree_reader(monkeypatch):
+    # These tests cover tree contents; authentication has its own route tests.
+    from modules.flow_gate.api.v1 import tree_routes
+    monkeypatch.setattr(tree_routes, "verify_bearer",
+                        lambda request: {"issued_to": "tree-reader", "_is_user_jwt": True})
+    monkeypatch.setattr(tree_routes, "has_permission", lambda *args: True)
+
 PROJECT = "gdel"
 NOW = "2026-01-01T00:00:00+00:00"
 
@@ -100,7 +115,7 @@ def delete(env, module, expected=200, token="user"):
 
 def tree(include_archived=False, include_terminal=True):
     from modules.flow_gate.api.v1 import tree_routes
-    return tree_routes.get_groups_tree(PROJECT, include_terminal=include_terminal,
+    return tree_routes.get_groups_tree(PROJECT, request=_tree_request(), include_terminal=include_terminal,
                                        include_archived=include_archived, include_summary=False, force=True)["data"]["nodes"]
 
 
