@@ -365,6 +365,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import { systemCan } from '@shared/permissions/capabilities'
 import SettingsIcon from '../SettingsIcon.vue'
 import ChangeImpactDialog from '../components/ChangeImpactDialog.vue'
@@ -402,6 +403,7 @@ const props = defineProps<{ workspaceId: string }>()
 const { t, te, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { user } = useCurrentUser()
 // The link to invite a person is offered when the server lets this person create users.
 const canInviteUsers = computed(() => systemCan('system.user.create'))
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
