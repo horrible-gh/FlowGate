@@ -63,6 +63,14 @@ def test_leaf_budgets(locale, scope):
     assert not failures, failures
 
 
+def test_card_state_help_explains_applied_chat_mode():
+    content = render.build_child("cards", "state", context())["content"]
+    assert content["method"] == "GET"
+    assert "Read-only" in content["note"]
+    assert "applied chat_mode" in content["note"]
+    assert "Failed edit_once yields read_only" in content["note"]
+
+
 def test_old_flat_names_are_gone_and_bulk_visibility():
     ctx = context()
     removed = set(tree.LEGACY_ORDER) - set(tree.CATALOG_ORDER)

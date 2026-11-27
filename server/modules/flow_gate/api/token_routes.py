@@ -457,6 +457,8 @@ def _issue_token(
             # the capability token_service.issue just fixed on this
             # token, so the mention's CRUD section matches the real grant.
             source_access=result.get("source_access"),
+            command_access=result.get("command_access"),
+            one_shot_claimed=result.get("one_shot_claimed", False),
             locale=req_locale,
         )
         # mention-build failure/empty always revokes the just-minted CH

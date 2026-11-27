@@ -1197,18 +1197,14 @@ def cli_mention_section(api_base: str, raw_token: str) -> str:
 
 
 # what an execute-mode chat is told (API tool text and CLI mention).
-EXECUTE_MODE_NOTE = (
-    "This chat is in execute mode: you may run commands, but you must not change source or "
-    "documents. Only read, git read and test/build commands run; a command that changes files "
-    "(rm/mv/cp/mkdir, git add/commit/checkout/reset, package install/update, --fix/--write "
-    "formatters, unknown programs) is refused with chat_command_execute_mode_denied. Source and "
-    "document edit tools are not available."
-)
+from modules.flow_gate.services.prompt_blocks.blocks.chat_mode import EXECUTE_MODE_NOTE
 
 
 def execute_mode_mention_section() -> str:
-    """The CLI mention's note for an execute-mode chat (after its command section)."""
-    return "\n".join(["## Execute mode", "---", EXECUTE_MODE_NOTE])
+    """Compatibility entry point for the shared current-mode block."""
+    from modules.flow_gate.services.prompt_blocks.blocks.chat_mode import current_mode_section
+
+    return current_mode_section(source_access="read", command_access="execute", locale="en")
 
 
 def tool_descriptor(execute_mode: bool = False) -> dict:

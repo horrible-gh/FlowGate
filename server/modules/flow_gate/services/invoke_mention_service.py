@@ -327,6 +327,7 @@ def build_conversation_mention(
     # the token's own `command_access` ("execute" for an execute-mode
     # chat: commands allowed while source_access stays "read"; None otherwise).
     command_access: Optional[str] = None,
+    one_shot_claimed: Optional[bool] = None,
     locale: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
@@ -366,6 +367,14 @@ def build_conversation_mention(
     ]
     # an edit-mode chat names its commit; FlowGate commits at the run end.
     can_write = source_access == "read_write"
+    if one_shot_claimed is None:
+        # In-app mentions are built before admission commits/clears the claim.
+        # Compare token identity, never the saved mode (already reset to read_only).
+        one_shot_claimed = False
+        if can_write and user_id:
+            from modules.flow_gate.db import user_chat_source_access
+            claim = user_chat_source_access.get(user_id, project, group_name) or {}
+            one_shot_claimed = claim.get("one_shot_token_id") == token_id
     if can_write:
         payload_lines[-2] += ","
         payload_lines.insert(-1, '  "commit_message": "<required when the flow worktree has uncommitted changes: see below>"')
@@ -384,6 +393,10 @@ def build_conversation_mention(
         *_conversation_reread_lines(locale),
         "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
+    from modules.flow_gate.services.prompt_blocks.registry import brief
+    lines += ["", brief("chat.current_mode", source_access=source_access,
+                        command_access=command_access, one_shot_claimed=one_shot_claimed,
+                        locale=_locale(locale))]
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
     # at the end of the document it reads the first half and moves on (scenario 11).
@@ -422,10 +435,6 @@ def build_conversation_mention(
         )
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
             sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
-        if may_run and not can_write:
-            from flowgate.conversation import commands as conversation_commands
-
-            sections.append(conversation_commands.execute_mode_mention_section())
         for section in sections:
             lines += ["", section]
     from modules.flow_gate.services import question_policy

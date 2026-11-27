@@ -116,8 +116,54 @@ def test_reads_are_observational_and_isolate_worker_and_foreign_relations(active
         text = json.dumps(body)
         assert FOREIGN not in text and "FOREIGN_TITLE_MARKER" not in text
         assert all(s not in text for s in ("raw_token","lease_token","lease_expires_at","token_hash","stage_assignments","dispatch"))
-        assert body["capabilities"] == {"read":True,"write":False,"execute":False}
+        assert "capabilities" not in body
+    assert chat_canvas["chat_mode"] == chat_current["chat_mode"] == "read_only"
+    assert "chat_mode" not in worker_canvas and "chat_mode" not in worker_current
     assert called == [] and len(env["events"]) == events and digest(env) == before
+
+
+@pytest.mark.parametrize(("setting", "lose_claim", "expected"), [
+    ("execute", False, "execute"),
+    ("edit", False, "edit"),
+    ("edit_once", False, "edit_once"),
+    ("edit_once", True, "read_only"),
+])
+def test_graph_reads_report_applied_chat_mode(active, monkeypatch, setting, lose_claim, expected):
+    from modules.flow_gate.db import user_chat_source_access
+    from modules.flow_gate.services import graph_execution_hooks
+
+    env, _, _, _, _, _, live = active
+    run = live["ai-read-chat"]
+    call = graph_execution_hooks.call
+
+    def graph_hook(action, *args, **kwargs):
+        # Issue each chat mode with the active Graph fixture already in place.
+        if action != "chat_source_refusal":
+            return call(action, *args, **kwargs)
+
+    monkeypatch.setattr(graph_execution_hooks, "call", graph_hook)
+    user_chat_source_access.upsert("u_kim", "flowgate", FA, setting, "now")
+    if lose_claim:
+        claim = user_chat_source_access.claim
+
+        def lose_to_setting_change(user_id, project_id, group_id, token_id, claimed_at, updated_at):
+            user_chat_source_access.upsert(user_id, project_id, group_id, "read_only", updated_at)
+            return claim(user_id, project_id, group_id, token_id, claimed_at, updated_at)
+
+        monkeypatch.setattr(user_chat_source_access, "claim", lose_to_setting_change)
+    chat = token_service.issue("flowgate", FA, "chat", run["doc_ref"], "u_kim", ai_run_id=run["run_id"])
+    run["current_token_id"] = chat["token_id"]
+    if chat["one_shot_claimed"]:
+        run["chat_edit_once_token_id"] = chat["token_id"]
+        assert user_chat_source_access.commit("u_kim", "flowgate", FA, chat["token_id"], "now") == "COMMITTED"
+    # A later setting change is independent of the issued token.
+    user_chat_source_access.upsert("u_kim", "flowgate", FA, "read_only", "now")
+    before = digest(env)
+    for resource in ("canvas", "runs/current"):
+        body = ok(get(env, chat, resource))
+        assert body["chat_mode"] == expected
+        assert "capabilities" not in body
+    assert digest(env) == before
 
 
 def test_real_tokens_v1_contract_and_all_refusals_preserve_database(active):

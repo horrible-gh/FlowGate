@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 BLOCK_MODULES: tuple[str, ...] = (
     "attachments",
     "cards",
+    "chat_mode",
     "conversation",
     "documents",
     "source_tools",

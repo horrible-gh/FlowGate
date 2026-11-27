@@ -442,7 +442,9 @@ def test_read_only_mention_never_offers_commands(env, source_access, registered)
         integration.register()
     text = _mention(True, source_access=source_access)
     assert "## Command execution" not in text and "/chat-commands" not in text
-    assert "## Execute mode" not in text
+    assert text.count("## 현재 모드") == 1
+    assert "## 현재 모드\n---\n읽기\n" in text
+    assert "chat_command_execute_mode_denied" not in text
 
 
 def test_read_only_mention_keeps_the_other_chat_tool_sections(env):
@@ -467,10 +469,17 @@ def test_execute_mention_offers_commands_without_write(env, registered):
         integration.register()
     text = _mention(True, source_access="read", command_access="execute")
     assert "## Command execution" in text and "/chat-commands" in text
-    assert "## Execute mode" in text and "chat_command_execute_mode_denied" in text
+    assert text.count("## 현재 모드") == 1
+    assert "## 현재 모드\n---\n실행\n" in text
+    assert "chat_command_execute_mode_denied" in text
+    assert "소스·문서 수정은 불가합니다." in text
     assert "commit_message" not in text
     # command_access is honoured only on a read token (never a damaged combination).
-    assert "## Execute mode" not in _mention(True, source_access=None, command_access="execute")
+    invalid = _mention(True, source_access=None, command_access="execute")
+    assert invalid.count("## 현재 모드") == 1
+    assert "## 현재 모드\n---\n읽기\n" in invalid
+    assert "chat_command_execute_mode_denied" not in invalid
+    assert "## Command execution" not in invalid and "/chat-commands" not in invalid
 
 
 def test_start_hook_offers_an_execute_run_the_limited_command_tool(env):
