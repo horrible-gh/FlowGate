@@ -2343,6 +2343,9 @@ def start_run(
         "client_provider_origin": client_provider_origin,
         "fallback_allowed": selected_provider_source == "project_default",
         "action_scope": action_scope,
+        # The settings marker is cleared before the worker starts. Keep the winning
+        # token's identity so Graph reads can report the mode after that commit.
+        "chat_edit_once_token_id": issue["token_id"] if issue.get("one_shot_claimed") else None,
         # Top-level review provenance while the run is live. Finished review provenance
         # remains append-only in document_reviews via review_run_id and row ordering.
         "review_intent": review_intent,

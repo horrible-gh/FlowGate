@@ -9,7 +9,7 @@ from modules.flow_gate.graph_workflow.services import canvas_service
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.graph_workflow.store import run_store
 from modules.flow_gate.rbac.permission_service import has_permission
-from modules.flow_gate.services import token_service
+from modules.flow_gate.services import token_service, tool_registry
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,16 @@ class Scope:
     node_key: str | None = None
     attempt_id: str | None = None
     run_id: str | None = None
+    chat_mode: str | None = None
+
+
+def _chat_mode(token, run):
+    command_access = tool_registry.command_access_for_token(token)
+    if command_access == tool_registry.COMMAND_ACCESS_EDIT:
+        if run.get("chat_edit_once_token_id") == token["token_id"]:
+            return "edit_once"
+        return "edit"
+    return command_access or "read_only"
 
 
 def refuse(code="token_binding_mismatch", status=403):
@@ -135,7 +145,8 @@ def authorize(token, flow_id, run_hint=None):
         refuse("flow_access_denied")
     return Scope(flow_id, project, token["issued_to"], token["token_id"], run["run_id"],
                  mapped["node_key"] if mapped else None, mapped["attempt_id"] if mapped else None,
-                 mapped["run_id"] if mapped else None), group
+                 mapped["run_id"] if mapped else None,
+                 chat_mode=_chat_mode(token, run) if kind == "chat" else None), group
 
 
 def recheck(scope, run_hint=None):

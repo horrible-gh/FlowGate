@@ -23,8 +23,8 @@ def graph_state_read(api_base, _raw_token=None):
             f"GET {base}/api/v2/ai/flows/{{flow_id}}/runs/current\n"
             "Use this run's existing worker/chat Bearer, never a user JWT. Only your bound group is readable; "
             "a card worker sees only its active node/attempt. Chat canvas defaults to latest; view=revision "
-            "shows the execution definition. No write, execution, history or external-group access is granted. "
-            "These reads report stored state and never reconcile or start work. Never log the Bearer.\n"
+            "shows the execution definition. These read-only calls return stored state. "
+            "Chat returns applied chat_mode. Failed edit_once yields read_only. Never log the Bearer.\n"
             + DISPLAY_IDS)
 
 
