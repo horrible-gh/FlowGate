@@ -12,6 +12,9 @@ export default {
     auto: {
       running_title: '충돌 자동 해결 중 ({n}/{max})',
       running_text: '{ai}(으)로 겹친 파일을 맞추는 중입니다. 끝나면 검사한 뒤 병합을 이어 갑니다.',
+      waiting_for_run_title: '다른 AI 실행이 끝나길 기다리는 중',
+      waiting_for_run_text: '대기가 끝나면 같은 차례에서 자동 해결을 이어 갑니다.',
+      running_text_unnamed: '겹친 파일을 맞추는 중입니다. 끝나면 검사한 뒤 병합을 이어 갑니다.',
       exhausted_title: '자동 해결 실패 · {count}번 시도해도 풀지 못했습니다',
       exhausted_title_nocount: '자동 해결 실패 · 풀지 못했습니다',
       exhausted_text: '직접 고르거나 [AI로 해결]을 다시 눌러 주세요.',
@@ -180,6 +183,9 @@ export default {
     auto: {
       running_title: 'Resolving the conflict automatically ({n}/{max})',
       running_text: 'Reconciling the overlapping files with {ai}. When it ends, the result is checked and the merge goes on.',
+      waiting_for_run_title: 'Waiting for another AI run to finish',
+      waiting_for_run_text: 'Automatic resolution will resume the same attempt after the wait.',
+      running_text_unnamed: 'Reconciling the overlapping files. When it ends, the result is checked and the merge goes on.',
       exhausted_title: 'Automatic resolution failed · not solved in {count} tries',
       exhausted_title_nocount: 'Automatic resolution failed · not solved',
       exhausted_text: 'Choose by hand, or press [Resolve with AI] again.',
@@ -348,6 +354,9 @@ export default {
     auto: {
       running_title: '競合を自動解決中 ({n}/{max})',
       running_text: '{ai} で重なったファイルを合わせています。終わると検証してマージを続けます。',
+      waiting_for_run_title: '別の AI の実行が終わるのを待っています',
+      waiting_for_run_text: '待機が終わると同じ試行から自動解決を再開します。',
+      running_text_unnamed: '重なったファイルを合わせています。終わると検証してマージを続けます。',
       exhausted_title: '自動解決に失敗 · {count} 回試しても解決できませんでした',
       exhausted_title_nocount: '自動解決に失敗 · 解決できませんでした',
       exhausted_text: '自分で選ぶか、[AI で解決] をもう一度押してください。',
