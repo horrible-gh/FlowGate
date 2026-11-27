@@ -2234,6 +2234,8 @@ export default {
   },
   document_window: {
     untitled: '문서',
+    // F81-9 (0017-T): the role a TS document's title shows in place of a stored 「지시서」.
+    scenario_title: '시나리오',
     edit: '편집',
     editor: '문서 본문',
     save: '저장',

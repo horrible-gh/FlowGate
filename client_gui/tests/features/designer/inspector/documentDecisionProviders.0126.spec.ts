@@ -112,6 +112,7 @@ it('TestSpecTab (F81) shows ✓/✕ at the end of the scenario and report lines;
     test: { status: ref('ready'), errorKey: ref(null), form: ref('graph'), runState: ref({ key: 'ready', done: 0, total: 1 }),
       counts: ref(null), availability, history: ref([{ runId: 'old-run', statusKey: 'state.passed', at: '2026-11-04' }]), busy: ref(null), failure: ref(null) },
     can: () => ({ enabled: true, reason: null }), openReason: () => null, openWindow, run, cancel, rewriteAll, reload: vi.fn(), reportRecentlyConfirmed: ref(false),
+    cases: ref([{ caseId: 'TC-1' }]),
   }
   await open(TestSpecTab, selected)
   // F81: two lines only (scenario, report); there is no instruction line and no brief button.
@@ -144,4 +145,58 @@ it('TestSpecTab (F81) shows ✓/✕ at the end of the scenario and report lines;
   expect(cancel).toHaveBeenCalledTimes(1)
   expect(report.find('[data-test="test-card-run-history"]').exists()).toBe(true)
   expect(scenario.find('[data-test="inspector-document-decision"]').exists()).toBe(true)
+})
+
+function testCard(cases: { caseId: string }[], hasScenario = cases.length > 0) {
+  return {
+    view: ref(null), presentation: ref({ stage: hasScenario ? 3 : 1, hasScenario, canFollow: false, resultState: { key: 'none' }, stateKey: 'stage.waiting', tone: 'neutral', pending: 0 }),
+    instructionOmitted: ref(false), writing: ref(null), reviewHistory: { data: ref({ reviews: [], rejections: [] }) },
+    test: { status: ref('ready'), errorKey: ref(null), form: ref('graph'), runState: ref({ key: 'none', done: 0, total: 0 }),
+      counts: ref(null), availability: ref({ cancel: { visible: false, enabled: true, reason: null } }), history: ref([]), busy: ref(null), failure: ref(null) },
+    can: () => ({ enabled: true, reason: null }), openReason: () => null, openWindow: vi.fn(), run: vi.fn(), cancel: vi.fn(), rewriteAll: vi.fn(), reload: vi.fn(),
+    reportRecentlyConfirmed: ref(false), cases: ref(cases),
+  }
+}
+
+describe('F81-9 scenario ✓ and the case count', () => {
+  it('turns the scenario ✓ off with "no cases" when the scenario has 0 cases (the report ✓ is untouched)', async () => {
+    fixture.card = testCard([])
+    await open(TestSpecTab, target('TS', ['instruction', 'scenario', 'report']))
+    const b = wrapper!.get('[data-slot="scenario"]').get('[data-test="inspector-document-decision"]')
+    expect(b.attributes('data-action')).toBe('approve')
+    expect(b.attributes('disabled')).toBeDefined()
+    expect(b.attributes('title')).toContain('케이스가 없어 승인할 수 없습니다')
+    await b.trigger('click'); await flushPromises()
+    expect(fixture.post).not.toHaveBeenCalled()
+    expect(wrapper!.get('[data-slot="report"]').get('[data-test="inspector-document-decision"]').attributes('disabled')).toBeUndefined()
+  })
+  it('keeps 0 cases off even if the presentation still says there is a scenario (cases are what the window lists)', async () => {
+    fixture.card = testCard([], true)
+    await open(TestSpecTab, target('TS', ['instruction', 'scenario', 'report']))
+    expect(wrapper!.get('[data-slot="scenario"]').get('[data-test="inspector-document-decision"]').attributes('disabled')).toBeDefined()
+  })
+  it('a ✕ (reject) of an approved scenario stays available with 0 cases', async () => {
+    fixture.card = testCard([])
+    const selected = target('TS', ['instruction', 'scenario', 'report'])
+    raw.documents.instruction.doc_review_status = 'approved'
+    await open(TestSpecTab, selected)
+    const b = wrapper!.get('[data-slot="scenario"]').get('[data-test="inspector-document-decision"]')
+    expect(b.attributes('data-action')).toBe('reject')
+    expect(b.attributes('disabled')).toBeUndefined()
+  })
+  it('shows the server\'s 409 refusal (0 cases) as an error', async () => {
+    fixture.card = testCard([{ caseId: 'TC-1' }])
+    await open(TestSpecTab, target('TS', ['instruction', 'scenario', 'report']))
+    fixture.post.mockRejectedValueOnce({ response: { status: 409, data: { error: { code: 'scenario_has_no_cases', message: '케이스가 없어 승인할 수 없습니다' } } } })
+    await wrapper!.get('[data-slot="scenario"]').get('[data-test="inspector-document-decision"]').trigger('click'); await flushPromises()
+    expect(wrapper!.get('[data-test="document-decision-failure"]').text()).toContain('케이스가 없어 승인할 수 없습니다')
+  })
+  it('decides the scenario in the `scenario` slot once the server\'s decision read names it', async () => {
+    fixture.card = testCard([{ caseId: 'TC-1' }])
+    const selected = target('TS', ['scenario', 'report'])
+    raw.documents.scenario = { doc_id: 'doc_instruction', revision_no: 2, doc_review_status: null }
+    await open(TestSpecTab, selected)
+    await wrapper!.get('[data-slot="scenario"]').get('[data-test="inspector-document-decision"]').trigger('click'); await flushPromises()
+    expect(fixture.post).toHaveBeenLastCalledWith('/api/v1/flows/f_provider/nodes/gn_provider/documents/scenario/decision', expect.objectContaining({ doc_id: 'doc_instruction' }))
+  })
 })

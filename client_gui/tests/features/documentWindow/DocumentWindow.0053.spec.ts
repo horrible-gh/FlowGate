@@ -56,6 +56,8 @@ const GONE = 'flowgate.v02.0053.0099-TR'
 /** a document whose body cannot be read (file not found), and one the person may not edit. */
 const UNREADABLE = 'flowgate.v02.0053.0010-R'
 const LOCKED = 'flowgate.v02.0053.0011-R'
+/** F81-9: an old TS stored with the 지시서 role in its title (written while it sat in the instruction slot). */
+const OLD_TS = 'flowgate.v02.0053.0012-TS'
 
 const FRONT = '---\ntitle: 작업레포트 — T#2\n---'
 
@@ -67,6 +69,7 @@ const RECORDS: Record<string, unknown> = {
   [ORDER]: { doc_id: ORDER, type_code: 'T', title: '작업지시 — T#3', status: 'closed', doc_review_status: 'approved', is_editable: true },
   [UNREADABLE]: { doc_id: UNREADABLE, type_code: 'R', title: '요구사항', status: 'draft', doc_review_status: null, is_editable: true },
   [LOCKED]: { doc_id: LOCKED, type_code: 'R', title: '잠긴 요구사항', status: 'draft', doc_review_status: null, is_editable: false },
+  [OLD_TS]: { doc_id: OLD_TS, type_code: 'TS', title: '카드 · 테스트 · 지시서', status: 'draft', doc_review_status: null, is_editable: true },
 }
 /** Documents whose body read answers "unreadable" (file not found), and whose read fails outright. */
 const unreadable = new Set<string>()
@@ -152,6 +155,14 @@ async function open(docId: string, mode: 'view' | 'edit' = 'view') {
 }
 
 describe('document window — view (flowgate.v02.0053 T#3)', () => {
+  it('F81-9: a TS opened from any opener (no card: the document explorer) never shows a stored 「지시서」 role in its title', async () => {
+    openDocumentWindow(OLD_TS)
+    await flushPromises()
+    const panel = panelOf(OLD_TS)
+    expect(q(panel, 'document-window-title')!.textContent).toBe('카드 · 테스트 · 시나리오')
+    expect(q(panel, 'document-window-body')!.getAttribute('data-view')).toBe('test')
+  })
+
   it('opens in this tab as a modeless window: name · state dot · copy · minimize · close, the MD Viewer as body', async () => {
     const panel = await open(REPORT)
     expect(q(panel, 'document-window-title')!.textContent).toBe('작업레포트 — T#2')

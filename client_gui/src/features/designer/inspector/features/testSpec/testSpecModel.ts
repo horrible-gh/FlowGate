@@ -18,7 +18,6 @@
 // Not offered (D#1 §8.4, §10.2): a single Case's run, result entry, the Case editor (all in the document window), the
 // Graph TS Node run (Graph execution integration) and the separate Case document kind.
 import type { InspectorCardDocument, InspectorCardKind, InspectorReadOnly } from '../../inspectorTarget'
-import { instructionSlotVisible } from '../../../center/graph/instructionVisibility'
 
 /** The parts of the target the section reads. */
 export interface TestSpecTargetFacts {
@@ -387,7 +386,7 @@ export interface TestSpecSlotState {
 }
 
 export interface TestSpecSlot {
-  readonly key: 'instruction' | 'scenario' | 'report'
+  readonly key: 'scenario' | 'report'
   readonly kind: 'document'
   readonly id: string | null
   readonly empty: boolean
@@ -440,18 +439,19 @@ function emptyLine(key: TestSpecSlot['key'], emptyKey: string | null): TestSpecS
 }
 
 /**
- * The three lines from the card's documents, the test view and the target. A document's state is the
- * test view's review status when the view read that document, else the card line's (or the bound
- * document's) state; the report line shows a live or finished run's state and progress first.
+ * F81-9: the two lines (시나리오 · 레포트) from the card's documents, the test view and the target — a test card has
+ * no instruction line, even when the server still sends one (its TS document is the 시나리오). A document's state is the
+ * test view's review status when the view read that document, else the card line's (or the bound document's) state;
+ * the report line shows a live or finished run's state and progress first.
  */
-export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLineFacts, instructionOmitted = false): readonly TestSpecSlot[] {
+export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLineFacts): readonly TestSpecSlot[] {
   const type = target.docType?.trim().toUpperCase() ?? ''
-  const own = (slot: TestSpecSlot['key']) => target.cardDocuments.find((line) => line.slot === slot) ?? null
+  const own = (slot: string) => target.cardDocuments.find((line) => line.slot === slot) ?? null
   const bound = (kind: string) => (target.docId !== null && type === kind ? target.docId : null)
   const viewTs = view ? (view.kind === 'TS' ? view.docId : view.tsDocId) : null
   const viewTsr = view ? (view.kind === 'TSR' ? view.docId : view.tsrDocId) : null
 
-  const stateOf = (id: string, slot: TestSpecSlot['key'], viewId: string | null, viewReview: string | null) => {
+  const stateOf = (id: string, slot: string, viewId: string | null, viewReview: string | null) => {
     const fromView = view && id === viewId ? reviewState(viewReview) : null
     if (fromView) return fromView
     const line = own(slot)
@@ -459,15 +459,9 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
     return id === target.docId ? testSpecDocumentState(target.docReviewStatus, target.docStatus) : null
   }
 
-  const ownInstruction = own('instruction')
-  const tsId = ownInstruction ? ownInstruction.docId : (viewTs ?? bound('TS'))
-  const tsState = tsId ? stateOf(tsId, 'instruction', viewTs, view?.tsReviewStatus ?? null) : null
-  const instruction: TestSpecSlot = tsId
-    ? { key: 'instruction', kind: 'document', id: tsId, empty: false, emptyKey: null, state: tsState, summary: null, progress: null, focus: waiting(tsState), open: 'enabled' }
-    : emptyLine('instruction', null)
-
-  const ownScenario = own('scenario')
-  const scenarioId = ownScenario ? ownScenario.docId : tsId
+  // The TS document: the 시나리오 line's, else the one an instruction line still carries (server data only), else the view's.
+  const ownScenario = own('scenario') ?? own('instruction')
+  const scenarioId = ownScenario ? ownScenario.docId : (viewTs ?? bound('TS'))
   const scenario: TestSpecSlot = scenarioId
     ? {
         key: 'scenario',
@@ -475,7 +469,7 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
         id: scenarioId,
         empty: false,
         emptyKey: null,
-        state: stateOf(scenarioId, 'scenario', viewTs, view?.tsReviewStatus ?? null),
+        state: stateOf(scenarioId, ownScenario?.slot ?? 'scenario', viewTs, view?.tsReviewStatus ?? null),
         summary: testSpecForm(view) === 'spec' && scenarioId === viewTs ? 'tally' : null,
         progress: null,
         focus: false,
@@ -509,7 +503,7 @@ export function testSpecSlots(view: TestSpecViewFacts | null, target: TestSpecLi
       }
     : emptyLine('report', 'empty.after_run')
 
-  return instructionSlotVisible(instructionOmitted, target.cardDocuments, tsId) ? [instruction, scenario, report] : [scenario, report]
+  return [scenario, report]
 }
 
 

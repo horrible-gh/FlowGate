@@ -147,7 +147,7 @@ import {
   documentHistoryWhen,
   type DocumentHistoryFilter,
 } from './documentHistoryModel'
-import { documentReadErrorKey } from './documentWindowModel'
+import { documentReadErrorKey, documentTitleShown } from './documentWindowModel'
 import { closeDocumentHistoryWindow, setDocumentHistoryWindowMinimized, type DocumentHistoryWindowState } from './documentWindows'
 import { useDocumentWindowEvents } from './useDocumentWindowEvents'
 
@@ -186,7 +186,8 @@ async function reload(): Promise<void> {
   }
 }
 
-const title = computed(() => history.value?.record.title || props.win.docId)
+// F81-9: a TS document never shows a stored 「지시서」 role in its title (documentTitleShown).
+const title = computed(() => documentTitleShown(history.value?.record.title, history.value?.record.typeCode, t('gui.document_window.scenario_title')) || props.win.docId)
 
 // --- The timeline and the filter --------------------------------------------------------------------
 
