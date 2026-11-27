@@ -244,7 +244,7 @@ import { closeMergeWindow, type MergeWindowEntry } from './mergeWindows'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import MergeAutoResolve from './MergeAutoResolve.vue'
-import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeCountKey, mergeReasonKey, mergeWorkOf } from './mergeModel'
+import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeAutoWaiting, mergeCountKey, mergeReasonKey, mergeWorkOf } from './mergeModel'
 import { openCardMerge, useMerge } from './useMerge'
 
 const props = defineProps<{ target: InspectorTarget; win?: MergeWindowEntry }>()
@@ -279,7 +279,7 @@ const { state, screen, readFailed, error, busy, picking, providers, aiResolved, 
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const initialWidth = Math.min(560, window.innerWidth - 32)
-const windowTitle = computed(() => t(`gui.inspector.merge.window.${autoInBox.value ? 'auto_running' : screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
+const windowTitle = computed(() => t(`gui.inspector.merge.window.${autoInBox.value && !autoWaiting.value ? 'auto_running' : screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
 const close = () => { if (props.win) closeMergeWindow(props.win.key) }
 watch(() => props.win?.raise, () => { shell.value?.bringToFront(); void reload() })
 
@@ -302,6 +302,7 @@ const reasonText = computed(() => {
 
 // The server's automatic conflict resolution: shown as it is read; this screen never starts or stops it.
 const autoResolve = computed(() => state.value?.autoResolve ?? null)
+const autoWaiting = computed(() => mergeAutoWaiting(autoResolve.value))
 /** Running while the merge is in progress: the progress box itself tells it (title, text, the tries). */
 const autoInBox = computed(() => mergeAutoRunning(autoResolve.value) && screen.value === 'catching_up')
 /** The framed box: running anywhere but the progress box, or every try used up while a person has to choose (F84-9: once the
@@ -312,17 +313,26 @@ const autoDetail = computed(() => {
   if (auto.state === 'running') return !autoInBox.value
   return auto.state === 'exhausted' && screen.value === 'needs_choice' && !allResolved.value
 })
-const autoAiName = computed(() => mergeAutoCurrent(autoResolve.value)?.provider?.name ?? state.value?.defaultProvider?.name ?? t('gui.inspector.merge.needs_choice.ai_default'))
+const autoAiName = computed(() => {
+  const current = mergeAutoCurrent(autoResolve.value)
+  const name = current ? current.provider?.name : state.value?.defaultProvider?.name
+  const label = name?.trim()
+  return label && !/^(none|null)$/i.test(label) ? label : null
+})
 const autoTitle = computed(() => {
   const auto = autoResolve.value
   if (!auto) return ''
+  if (autoWaiting.value) return t('gui.inspector.merge.auto.waiting_for_run_title')
   if (auto.state === 'running') return t('gui.inspector.merge.auto.running_title', mergeAutoProgress(auto))
   return tc('gui.inspector.merge.auto.exhausted_title', auto.attempts.length || auto.maxAttempts)
 })
 /** Out of tries: no sentence; the buttons right below tell what to do. */
-const autoText = computed(() => (autoResolve.value?.state === 'running'
-  ? t('gui.inspector.merge.auto.running_text', { ai: autoAiName.value })
-  : ''))
+const autoText = computed(() => {
+  if (autoWaiting.value) return t('gui.inspector.merge.auto.waiting_for_run_text')
+  if (autoResolve.value?.state !== 'running') return ''
+  const ai = autoAiName.value
+  return ai ? t('gui.inspector.merge.auto.running_text', { ai }) : t('gui.inspector.merge.auto.running_text_unnamed')
+})
 /** Every automatic try failed and nothing is settled yet: the automatic box is the window's one box (its files and tries). */
 const exhaustedBox = computed(() => autoDetail.value && autoResolve.value?.state === 'exhausted')
 /** F84-9: a try already failed (not running, not resolved): the tries are then past failures, kept folded wherever drawn. */

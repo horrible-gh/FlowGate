@@ -56,7 +56,8 @@ export function mergeReasonKey(reason: string | null): string {
 export interface MergeAutoAttempt {
   readonly no: number
   readonly mode: string | null
-  readonly provider: { readonly name: string } | null
+  readonly provider: { readonly name: string | null } | null
+  readonly reasonCode?: string | null
   readonly result: string | null
   readonly reason: string | null
   readonly reasonSummary?: string | null
@@ -65,6 +66,8 @@ export interface MergeAutoAttempt {
 /** The server's automatic resolution as the window draws it (the card merge API's `autoResolve`, read structurally). */
 export interface MergeAuto {
   readonly state: string
+  readonly phase?: string | null
+  readonly waiting?: { readonly reason: string } | null
   readonly attempt: number
   readonly maxAttempts: number
   readonly attempts: readonly MergeAutoAttempt[]
@@ -75,6 +78,11 @@ export interface MergeAuto {
 /** The server is resolving the conflict by itself right now (the merge state stays `catching_up`). */
 export function mergeAutoRunning(auto: Pick<MergeAuto, 'state'> | null | undefined): boolean {
   return auto?.state === 'running'
+}
+
+export function mergeAutoWaiting(auto: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null | undefined): boolean {
+  return auto?.state === 'running'
+    && (auto.phase === 'waiting_for_run' || (!auto.phase && auto.waiting?.reason === 'run_in_progress'))
 }
 
 /** The try to show as current: the one still running, else the one the server counts, else the last one. */
@@ -194,8 +202,8 @@ export function mergeAutoEndedAt(auto: { readonly attempts: readonly { readonly 
 }
 
 /** An AI works on the card's conflict now: the group's resolver lease (`resolving`), or the automatic resolution running. */
-export function mergeAiAtWork(state: { readonly resolving: unknown; readonly autoResolve: Pick<MergeAuto, 'state'> | null }): boolean {
-  return !!state.resolving || state.autoResolve?.state === 'running'
+export function mergeAiAtWork(state: { readonly resolving: unknown; readonly autoResolve: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null }): boolean {
+  return !mergeAutoWaiting(state.autoResolve) && (!!state.resolving || mergeAutoRunning(state.autoResolve))
 }
 
 /**
@@ -205,7 +213,7 @@ export function mergeAiAtWork(state: { readonly resolving: unknown; readonly aut
 export function mergeAiLeftOff(state: {
   readonly state: string
   readonly resolving: unknown
-  readonly autoResolve: Pick<MergeAuto, 'state'> | null
+  readonly autoResolve: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null
   readonly files: readonly { readonly resolved: boolean }[]
 }): boolean {
   if (mergeAiAtWork(state)) return false

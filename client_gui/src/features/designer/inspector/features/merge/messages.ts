@@ -12,6 +12,9 @@ export default {
     auto: {
       running_title: '충돌 자동 해결 중 ({n}/{max})',
       running_text: '{ai}(으)로 충돌을 맞추는 중입니다.',
+      waiting_for_run_title: '다른 AI 실행이 끝나길 기다리는 중',
+      waiting_for_run_text: '대기가 끝나면 같은 차례에서 자동 해결을 이어 갑니다.',
+      running_text_unnamed: '충돌을 맞추는 중입니다.',
       exhausted_title: '자동 해결 실패 ({count}회)',
       exhausted_title_nocount: '자동 해결 실패',
       fold: '자동 해결 {count}회 실패 · 기록 보기',
@@ -178,6 +181,9 @@ export default {
     auto: {
       running_title: 'Resolving the conflict automatically ({n}/{max})',
       running_text: 'Reconciling the conflict with {ai}.',
+      waiting_for_run_title: 'Waiting for another AI run to finish',
+      waiting_for_run_text: 'Automatic resolution will resume the same attempt after the wait.',
+      running_text_unnamed: 'Reconciling the conflict.',
       exhausted_title: 'Automatic resolution failed ({count} tries)',
       exhausted_title_nocount: 'Automatic resolution failed',
       fold: 'Automatic resolution failed {count}× · show tries',
@@ -344,6 +350,9 @@ export default {
     auto: {
       running_title: '競合を自動解決中 ({n}/{max})',
       running_text: '{ai} で競合を合わせています。',
+      waiting_for_run_title: '別の AI の実行が終わるのを待っています',
+      waiting_for_run_text: '待機が終わると同じ試行から自動解決を再開します。',
+      running_text_unnamed: '競合を合わせています。',
       exhausted_title: '自動解決に失敗 ({count} 回)',
       exhausted_title_nocount: '自動解決に失敗',
       fold: '自動解決 {count} 回失敗 · 記録を見る',

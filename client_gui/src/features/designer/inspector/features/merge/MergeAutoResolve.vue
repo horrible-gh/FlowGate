@@ -21,7 +21,12 @@
           <span class="ma-line">
             <b>{{ t('gui.inspector.merge.auto.attempt_no', { no: attempt.no }) }}</b>
             · {{ t(`gui.inspector.merge.auto.modes.${attempt.mode ?? 'unknown'}`) }}
-            · <span data-test="merge-auto-ai">{{ attempt.provider?.name ?? t('gui.inspector.merge.auto.no_ai') }}</span>
+            <template v-if="attempt.provider?.name">
+              · <span data-test="merge-auto-ai">{{ attempt.provider.name }}</span>
+            </template>
+            <template v-else-if="attempt.reasonCode === 'no_available_ai'">
+              · <span data-test="merge-auto-ai">{{ t('gui.inspector.merge.auto.no_ai') }}</span>
+            </template>
             · <span class="ma-result" :class="`is-${tone(attempt.result)}`" data-test="merge-auto-result">{{ t(`gui.inspector.merge.auto.results.${mergeAutoResultKey(attempt.result)}`) }}</span>
           </span>
           <template v-if="attempt.reason || attempt.reasonSummary">
