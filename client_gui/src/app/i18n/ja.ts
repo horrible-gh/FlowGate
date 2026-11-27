@@ -1646,6 +1646,7 @@ export default {
       open_diff: 'diff を開く',
     },
     files_more: '他 {n} 件を表示',
+    files_less: '折りたたむ',
     files_count: '{n} ファイル',
     conflict: {
       title_target: '{target} への反映を一時停止 · 競合の解決が必要',

@@ -1646,6 +1646,7 @@ export default {
       open_diff: 'Open diff',
     },
     files_more: 'Show {n} more',
+    files_less: 'Show less',
     files_count: '{n} files',
     conflict: {
       title_target: 'Apply to {target} paused · resolve conflicts',
