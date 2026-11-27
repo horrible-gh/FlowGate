@@ -54,19 +54,21 @@ function settings(key: string) {
   const values = stored.get(key) ?? {}
   return toSettingsNode({ flow_id: base.flowId, node_key: key, card_kind: 'test', locked, fields: Object.fromEntries([
     ['instruction', 'use', ['use', 'omit']], ['run_ai', null, null], ['review_ai', null, null], ['review_count', 0, [0, 1, 2]],
+    ...(values.case_review_count === undefined ? [] : [['case_review_count', 1, [0, 1, 2]]]),
     ['result_cause', 'ai', ['ai', 'human']], ['follow_scope', 'summary', ['summary', 'full']],
-  ].map(([name, def, choices]) => [String(name), { value: values[String(name)] ?? def, default: def, choices }])) })
+  ].map(([name, def, choices]) => [String(name), { value: values[String(name)] ?? def, default: def, choices }])),
+    ...(values.case_review_count === undefined ? {} : { ai_roles: { options_state: 'ok', options: [], roles: {} } }) })
 }
 const Probe = defineComponent({ props: { target: { type: Object as PropType<InspectorTarget>, required: true }, name: { type: String, required: true } }, setup(props) {
   const card = useTestCard(() => props.target)
   watchEffect(() => { if (card.value) contexts[props.name] = card.value })
   return () => h('span', { 'data-probe': props.name }, card.value?.presentation.value.stage)
 } })
-async function render() {
+async function render(panel?: 'ai') {
   wrapper = mount(defineComponent({ setup: () => () => h('div', [
     h(Probe, { target: target.value, name: 'one' }), h(Probe, { target: target.value, name: 'two' }),
     h(TestCardHeaderState, { target: target.value }), h(TestCardMenu, { target: target.value, close: () => {} }),
-    h(TestSpecTab, { target: target.value }), h(SettingsTab, { target: target.value }),
+    h(TestSpecTab, { target: target.value }), h(SettingsTab, { target: target.value, panel }),
   ]) }), { global: { plugins: [i18n, createPinia()] }, attachTo: document.body })
   await flushPromises()
   return wrapper
@@ -562,6 +564,32 @@ it("a 401 keeps the original request; the held request is resent as it is and on
   expect(pin.base.revisionNo).toBe(5)
   expect(pin.cases).toEqual([])
 })
+it('running tests refuse case deletion with a specific message and allow a fresh save after the run', async () => {
+  await render(); const card = contexts.one
+  const pin = (await card.pinCases())!
+  mocks.save.mockRejectedValueOnce(v2failure(409, 'run_in_progress'))
+
+  expect(await card.saveCases(pin, () => [], 'caseDelete')).toBe(false)
+  expect(card.refusal.value).toMatchObject({ operation: 'caseDelete', kind: 'running', key: 'failure.scenario_running' })
+  expect(pin.base.revisionNo).toBe(4)
+
+  expect(await card.saveCases(pin, () => [], 'caseDelete')).toBe(true)
+  expect(pin.base.revisionNo).toBe(5)
+})
+
+it('the AI tab saves the case-writing review count independently', async () => {
+  stored.set(target.value.nodeId!, { case_review_count: 1 })
+  const w = await render('ai')
+  const count = w.get('[data-test="ai-zone-review-count"][data-zone="case_write"] select')
+  expect((count.element as HTMLSelectElement).value).toBe('1')
+  expect(count.findAll('option').map(option => option.attributes('value'))).toEqual(['0', '1', '2'])
+  await count.setValue('2')
+  await flushPromises()
+  expect(mocks.setting.mock.calls.map(([, , field, value]) => [field, value])).toEqual([['case_review_count', 2]])
+  expect((count.element as HTMLSelectElement).value).toBe('2')
+  expect(contexts.one.settings.node.value?.fields.review_count.value).toBe(0)
+})
+
 it('structured deletion preserves the deletion operation in its refusal', async () => {
   await render(); const card = contexts.one
   mocks.save.mockRejectedValueOnce(v2failure(422, 'invalid_content'))

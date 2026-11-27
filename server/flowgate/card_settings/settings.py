@@ -229,6 +229,8 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
         if kind != fields.CHECK and legacy.node_running(flow_id, node_key):     # a gate: gate_lock decided above
             raise legacy.GraphApiError(409, "node_settings_locked", {"flow_id": flow_id, "node_key": node_key},
                                        message="The card is running; its settings cannot change now.")
+        previous_test_count = (repository.values(flow_id, node_key)
+                               if kind == fields.TEST and name == "review_count" else None)
         if role_write:
             changed = card_roles.apply_role_write(flow_id, node_key, kind, name, value, user_id)
         elif value is None:
@@ -247,6 +249,9 @@ def write(group: dict, node_key: str, name: str, value: Any, user_id: Optional[s
             else:
                 changed = repository.put(flow_id, node_key, name, checked, user_id)
         if changed:
+            if previous_test_count is not None and fields.CASE_REVIEW_COUNT.name not in previous_test_count:
+                repository.put(flow_id, node_key, fields.CASE_REVIEW_COUNT.name,
+                               previous_test_count.get("review_count") or fields.CASE_REVIEW_COUNT.default, user_id)
             repository.bump_version(flow_id, node_key)
             from modules.flow_gate.graph_workflow.services import canvas_events
             canvas_events.publish_canvas_changed(project_id=group.get("project_id"), flow_id=flow_id,
