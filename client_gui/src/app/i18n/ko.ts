@@ -1660,6 +1660,7 @@ export default {
       open_diff: 'diff 열기',
     },
     files_more: '외 {n}개 보기',
+    files_less: '접기',
     files_count: '{n}개 파일',
     conflict: {
       title_target: '{target} 반영 멈춤 · 충돌 해결 필요',
