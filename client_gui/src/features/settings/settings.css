@@ -394,7 +394,8 @@ table.fgs-t { width: 100%; border-collapse: collapse; text-align: left; }
 .fgs-dtr:first-child { border-top: 0; }
 .fgs-dtr.head { min-height: 40px; background: #0a1b2e; color: #90a7bf; font-size: 11px; font-weight: 700; letter-spacing: 0.2px; }
 .fgs-dtr.row { cursor: pointer; }
-.fgs-dtr.row:hover { background: #12283f; }
+/* :where keeps the specificity of the plain row hover, so a selected row's .sel background still wins. */
+.fgs-dtr.row:where(:not(.static)):hover { background: #12283f; }
 .fgs-dtr.row.sel { background: #12304f; box-shadow: inset 3px 0 0 #3f8ae0; }
 .fgs-dtr.row.dim { opacity: 0.55; }
 .fgs-dtr.row.static { cursor: default; }

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -10,6 +12,7 @@ import MyAccessSection from '@/features/settings/components/MyAccessSection.vue'
 import { SETTINGS_PAGES } from '@/features/settings/settingsMenu'
 import ProjectMembersView from '@/features/settings/views/ProjectMembersView.vue'
 import TeamsView from '@/features/settings/views/TeamsView.vue'
+import WorkspaceDetailView from '@/features/settings/views/WorkspaceDetailView.vue'
 import { SettingsRequestError } from '@/features/settings/api'
 import type { ChangeImpactRow, ChangeMode, ProjectRow } from '@/features/settings/types'
 
@@ -304,6 +307,76 @@ describe('설정 › 프로젝트 › 멤버', () => {
     await flushPromises()
     expect(m.assignProjectUserRole).toHaveBeenCalledWith('p1', 'u3', 'role_developer')
     expect(add.mock.calls).toEqual([[{ preview: true }], [{ revision: 5 }]])
+  })
+
+  it('C-3: without project.member.manage the rows are static (no hover / pointer) and every control is really disabled', async () => {
+    await serveLists(['workspace.view'], block(MEMBER_ACTIONS, ['project.member.read']))
+    serveMembers()
+    const w = await mountView(ProjectMembersView, { project: PROJECT })
+    const rows = w.findAll('[data-member-row]')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) expect(row.classes()).toContain('static')
+    for (const key of ['team:t1', 'user:u2']) {
+      expect(w.get(`[data-testid="role-${key}"]`).attributes('disabled')).toBeDefined()
+      expect(w.get(`[data-testid="remove-${key}"]`).attributes('disabled')).toBeDefined()
+    }
+  })
+
+  it('C-3: the row hover highlight never applies to a static (read-only) row', () => {
+    // jsdom cannot hover, so check the stylesheet: every .fgs-dtr.row :hover rule must skip .static.
+    const settingsCss = readFileSync(resolve(__dirname, '../../../src/features/settings/settings.css'), 'utf8')
+    const hoverSelectors = settingsCss
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('}')
+      .map((rule) => rule.split('{')[0])
+      .flatMap((sel) => sel.split(','))
+      .map((sel) => sel.trim())
+      .filter((sel) => sel.startsWith('.fgs-dtr') && sel.includes(':hover'))
+    expect(hoverSelectors).toEqual(['.fgs-dtr.row:where(:not(.static)):hover'])
+  })
+
+  it('C-3: a manager\'s rows stay interactive; a disabled account\'s row is dimmed with the workspace table\'s class', async () => {
+    await serveLists(['workspace.view'], block(MEMBER_ACTIONS, MEMBER_ACTIONS))
+    serveMembers()
+    m.listProjectMembers.mockResolvedValue([
+      { user_id: 'u2', project_id: 'p1', role_id: 'role_reviewer', username: '이두리', email: 'lee@x', is_active: 1 },
+      { user_id: 'u4', project_id: 'p1', role_id: 'role_viewer', username: '최하늘', email: null, is_active: 0 },
+    ] as never)
+    const w = await mountView(ProjectMembersView, { project: PROJECT })
+    const active = w.get('[data-member-row="user:u2"]')
+    expect(active.classes()).not.toContain('static')
+    expect(active.classes()).not.toContain('dim')
+    expect(w.get('[data-member-row="user:u4"]').classes()).toContain('dim')
+    expect(w.get('[data-testid="role-user:u2"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('C-4: the role picker offers the four fixed roles only (no Manager / Worker)', async () => {
+    await serveLists(['workspace.view'], block(MEMBER_ACTIONS, MEMBER_ACTIONS))
+    serveMembers()
+    const w = await mountView(ProjectMembersView, { project: PROJECT })
+    const values = w.findAll('[data-testid="role-user:u2"] option').map((o) => (o.element as HTMLOptionElement).value)
+    expect(values).toEqual(['role_admin', 'role_developer', 'role_reviewer', 'role_viewer'])
+  })
+})
+
+// ── 관리 › 워크스페이스 설정 ───────────────────────────────────────────────────────
+describe('관리 › 워크스페이스 설정 (one workspace)', () => {
+  const DETAIL = {
+    workspace_id: 'w1', name: 'WS 1', status: 'active', is_default: true, member_count: 0, project_count: 0, ai_policy_mode: 'off', owner: null,
+    my_role: 'admin', can_manage: true, can_admin: false, capabilities: block(WORKSPACE_ACTIONS, WORKSPACE_ACTIONS),
+    members: [], projects: [], active_project_count: 0,
+    access: { defaults: { owner: 'admin', admin: 'admin', member: 'dev' }, exceptions: [] },
+    policy: { ai_mode: 'off', allowlist: [], project_create: 'members' },
+  }
+
+  it('C-1: 팀 stays listed next to 워크스페이스 설정 when the settings screen is opened', async () => {
+    await serveLists(WORKSPACE_ACTIONS, block(MEMBER_ACTIONS, MEMBER_ACTIONS))
+    m.getWorkspace.mockResolvedValue(DETAIL as never)
+    const w = await mountView(WorkspaceDetailView, { workspaceId: 'w1' })
+    const keys = w.findAll('[data-subnav]').map((item) => item.attributes('data-subnav'))
+    expect(keys).toEqual(expect.arrayContaining(['teams', 'workspace', 'members', 'projects']))
+    expect(w.get('[data-subnav="workspace"]').attributes('aria-current')).toBe('page')
+    expect(w.get('[data-subnav="teams"]').attributes('href')).toBe('/app/settings/manage/teams')
   })
 })
 

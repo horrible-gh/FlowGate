@@ -51,7 +51,10 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   { key: 'agents', scope: 'me', routeName: 'settings-me-agents', path: '/settings/me/agents', labelKey: 'gui.agent_screen.title', icon: 'bot' },
   { key: 'security', scope: 'me', routeName: 'settings-me-security', path: '/settings/me/security', labelKey: 'gui.settings.me_nav.security', icon: 'shield' },
   { key: 'teams', scope: 'manage', modern: true, requires: { system: [], workspace: ['workspace.team.manage'] }, routeName: 'settings-manage-teams', path: '/settings/manage/teams', labelKey: 'gui.settings.manage_nav.teams', icon: 'users' },
-  { key: 'workspace', scope: 'manage', modern: true, requires: { system: [], workspace: ['workspace.view'] }, routeName: 'settings-workspaces', path: '/settings/workspaces', labelKey: 'gui.settings.manage_nav.workspaces', icon: 'grid' },
+  // 관리 › 워크스페이스 (설정) is a management entry: offered to someone who may manage a workspace, not to
+  // every member who may only look at it (v02test.0090 C-2). The route itself still opens read-only for a
+  // member reaching it by URL (access.ts keeps `workspace.view` there).
+  { key: 'workspace', scope: 'manage', modern: true, requires: { system: [], workspace: ['workspace.member.manage', 'workspace.admin'] }, routeName: 'settings-workspaces', path: '/settings/workspaces', labelKey: 'gui.settings.manage_nav.workspaces', icon: 'grid' },
   { key: 'project', scope: 'project', requires: { system: ['system.settings.read'], project: ['project.settings.read', 'project.member.read'] }, routeName: 'settings-project', path: '/settings/project', labelKey: 'gui.settings.project_nav.select', icon: 'folder' },
   { key: 'general', scope: 'system', requires: SYSTEM_READ, routeName: 'settings-system-general', path: '/settings/system/general', labelKey: 'gui.settings.system_nav.general', icon: 'gear', groupKey: 'gui.settings.system_groups.ops' },
   { key: 'agents', scope: 'system', requires: { system: ['system.settings.manage'] }, routeName: 'settings-system-agents', path: '/settings/system/agents', labelKey: 'gui.settings.system_nav.agents', icon: 'bot', groupKey: 'gui.settings.system_groups.resources' },

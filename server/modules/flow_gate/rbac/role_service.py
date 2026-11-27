@@ -56,12 +56,15 @@ def list_user_roles(user_id: str) -> list[dict]:
 
 
 def list_project_members(project_id: str) -> list[dict]:
-    """Direct project members with their role information."""
+    """Direct project members with their role information.
+
+    ``is_active`` lets the member screen dim a disabled account's row (v02test.0090 C-3).
+    """
     return get_store()._fetch_all(
         """
         SELECT upr.user_id, upr.project_id, upr.role_id,
                upr.granted_at, upr.granted_by,
-               u.username, u.email,
+               u.username, u.email, u.is_active,
                r.role_name
         FROM user_project_roles upr
         JOIN users u ON upr.user_id = u.user_id
