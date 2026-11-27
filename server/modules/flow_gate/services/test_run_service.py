@@ -1230,7 +1230,9 @@ def record_spec_results(
         if execution_live is not None:
             judged = test_basis_service.judge(basis, execution_live)
     else:
-        live_state = test_basis_service.live_state(doc, parsed["cases"])
+        reference = db_test_runs.latest_spec_run(doc_id, doc.get("revision_no") or 0)
+        reference_basis = test_spec_service.load_result_meta((reference or {}).get("result_meta")).get("test_basis")
+        live_state = test_basis_service.run_live_state(doc, reference_basis, parsed["cases"])
         if live_state["live"] is None and not live_state["no_worktree"]:
             raise _http_error(409, "basis_unavailable", doc_id=doc_id,
                               basis_state=live_state["state"], reasons=live_state["reasons"])
@@ -1243,6 +1245,12 @@ def record_spec_results(
                                 "measured_at": now_iso(), "submission": triggered_via,
                                 "project_id": doc.get("project_id"),
                                 "group_id": doc.get("group_id")}
+        if basis is not None and reference_basis:
+            # Manual cases following an attempt's code cases keep the same source context.
+            inherited = reference_basis.get("binding") or {}
+            for key in ("execution_token_id", "group_basis_id"):
+                if inherited.get(key):
+                    basis["binding"][key] = inherited[key]
         judged = test_basis_service.judge(basis, live_state)
     if basis:
         # server authority outranks a caller's claim
@@ -1573,7 +1581,9 @@ def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
                 "overall": recorded.get("overall"), "run_id": recorded.get("run_id"),
                 "basis_id": test_spec_service.load_result_meta(recorded.get("result_meta")).get("basis_id"),
                 "stale": False, "basis_state": test_basis_service.VALID, "basis_reasons": []}
-    state = test_basis_service.live_state(ts_doc, memo=memo) if ts_doc else {
+    newest = db_test_runs.latest_spec_run(ts_id, revision)
+    newest_basis = test_spec_service.load_result_meta((newest or {}).get("result_meta")).get("test_basis")
+    state = test_basis_service.run_live_state(ts_doc, newest_basis, memo=memo) if ts_doc else {
         "live": None, "state": test_basis_service.UNVERIFIABLE, "no_worktree": False,
         "reasons": [test_basis_service.REASON_UNMEASURABLE + ":ts_missing"]}
     live = state["live"]
@@ -2057,7 +2067,7 @@ def describe_test_document(doc: dict) -> dict:
             if reference is not None:
                 basis = test_spec_service.load_result_meta(reference.get("result_meta")).get(
                     "test_basis")
-                state = test_basis_service.live_state(doc, parsed["cases"], memo=True)
+                state = test_basis_service.run_live_state(doc, basis, parsed["cases"], memo=True)
                 judged = test_basis_service.judge(basis, state)
                 if state["live"] is not None:
                     effective_run = db_test_runs.latest_spec_result(

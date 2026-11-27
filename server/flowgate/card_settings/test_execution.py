@@ -70,6 +70,8 @@ def finish(work):
                         report = documents.get_by_id(report_id)
                         gate = runner.tsr_gate_state(report)
                         reason = None if gate.get("passed") else "test_gate_" + str(gate.get("overall") or "incomplete").lower()
+                        if not gate.get("passed") and gate.get("basis_reasons"):
+                            reason = "test_gate_" + str(gate.get("basis_state") or "unverifiable") + ":" + ",".join(gate["basis_reasons"])
                         rows = test_runs.list_cases(latest["run_id"])
                         if reason is None and (not rows or any(
                                 r.get("case_status") in (None, "NOT_RUN", "PENDING")

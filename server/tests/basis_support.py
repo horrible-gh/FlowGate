@@ -6,7 +6,8 @@ and verdict code over real git repositories. Only the edges are replaced: the Gr
 worktree lookup (a dict of temp repositories), the run scratch root (a temp directory),
 the Group lock (``stub_group_lock``), and the documents/events tables (an in-memory dict
 that a failed transaction rolls back together with the SQLite rows). the earlier implementation removed
-Source Bundle and its tables, so the SQLite connection starts empty.
+Source Bundle and its tables. SQLite retains the write gate path inventory and namespace
+mutex schema; transaction callbacks use the production connection contract.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from group_lock_stub import stub_group_lock
+from modules.flow_gate.db import connection
 
 PROJECT = "flowgate"
 CASES = [{"case_id": "TC-001", "execution_mode": "automated",
@@ -44,12 +46,18 @@ def make_repo(root: Path, value: str = "1") -> Path:
     return root
 
 
-class BasisStore:
+class BasisStore(connection.FlowGateStore):
     """The store surface the db modules use, over one in-memory SQLite connection."""
 
     def __init__(self):
         self.conn = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # This harness stores TS bodies in docs, with no on-disk document paths.
+        # The real write gate still queries its path inventory and namespace mutex.
+        self.conn.execute("CREATE TABLE documents (doc_id TEXT PRIMARY KEY, project_id TEXT, "
+                          "branch TEXT, file_path TEXT)")
+        self.conn.execute("CREATE TABLE system_settings (setting_key TEXT PRIMARY KEY, "
+                          "setting_value TEXT, value_type TEXT, updated_at TEXT)")
         self.docs: dict[str, dict] = {}
         self.events: list[tuple[str, str, dict]] = []
         self._depth = 0
@@ -68,13 +76,14 @@ class BasisStore:
         return [dict(row) for row in self.conn.execute(sql, list(values or [])).fetchall()]
 
     @contextmanager
-    def transaction(self):
+    def _transaction_frame(self):
         if self._depth:
             yield self
             return
         self._depth = 1
         docs, events = copy.deepcopy(self.docs), list(self.events)
         self.conn.execute("BEGIN")
+        connection._tx_local.txn = self.conn
         try:
             yield self
         except BaseException:
@@ -84,6 +93,7 @@ class BasisStore:
         else:
             self.conn.execute("COMMIT")
         finally:
+            connection._tx_local.txn = None
             self._depth = 0
 
 
