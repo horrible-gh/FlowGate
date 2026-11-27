@@ -1204,6 +1204,73 @@ class TestMigration:
         other_db.close()
 
 
+class TestMyAccessProjects:
+    @pytest.mark.parametrize("with_direct_grant", [False, True])
+    def test_system_admin_lists_all_projects(self, fresh, with_direct_grant):
+        from modules.flow_gate.auth import auth_api
+        from modules.flow_gate.auth.jwt_service import create_access_token
+
+        db, store = fresh
+        app = FastAPI()
+        app.include_router(auth_api.router, prefix="/auth")
+        client = TestClient(app)
+        token, _ = create_access_token(SYSADMIN["user_id"], SYSADMIN["user_id"], [])
+        # Include an archived project: admin access is not limited to active rows.
+        _project(db._conn.execute, "p_my_access_archived")
+        db._conn.execute("UPDATE projects SET is_active = 0 WHERE project_id = ?", ["p_my_access_archived"])
+        if with_direct_grant:
+            _grant(db._conn.execute, SYSADMIN["user_id"], "pr1", "role_viewer")
+        db._conn.commit()
+        try:
+            response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+            assert response.status_code == 200, response.text
+            body = response.json()
+            expected_ids = [row["project_id"] for row in store._fetch_all(
+                "SELECT project_id FROM projects WHERE project_id <> ? ORDER BY project_id", ["__SYSTEM__"]
+            )]
+            assert "pr1" in expected_ids and "pr2" in expected_ids
+            assert "p_my_access_archived" in expected_ids
+            assert body["projects"] == [
+                {"project_id": pid, "role": "role_admin", "sources": ["system_admin"],
+                 "grants": {"system_admin": "role_admin"}}
+                for pid in expected_ids
+            ]
+            from modules.flow_gate.rbac import capabilities
+
+            member_projects = capabilities.memberships(P_ADMIN["user_id"])["projects"]
+            assert member_projects
+            expected_keys = {"project_id", "role", "sources", "grants"}
+            assert all(set(row) == expected_keys for row in member_projects)
+            assert all(set(row) == set(member_projects[0]) for row in body["projects"])
+            assert body["is_admin"] is True
+            assert body["teams"] == []
+            assert body["capabilities"]["role"] == "system_admin"
+        finally:
+            db._conn.execute("DELETE FROM user_project_roles WHERE user_id = ? AND project_id = ?",
+                             [SYSADMIN["user_id"], "pr1"])
+            db._conn.execute("DELETE FROM projects WHERE project_id = ?", ["p_my_access_archived"])
+            db._conn.commit()
+
+    @pytest.mark.parametrize("person", [P_ADMIN, DEVELOPER, REVIEWER, VIEWER, OUTSIDER, SYSTEM_ONLY])
+    def test_regular_user_memberships_unchanged(self, fresh, person):
+        from modules.flow_gate.auth import auth_api
+        from modules.flow_gate.auth.jwt_service import create_access_token
+        from modules.flow_gate.rbac import capabilities
+
+        app = FastAPI()
+        app.include_router(auth_api.router, prefix="/auth")
+        client = TestClient(app)
+        token, _ = create_access_token(person["user_id"], person["user_id"], [])
+        expected = capabilities.memberships(person["user_id"])
+        response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["projects"] == expected["projects"]
+        assert body["teams"] == expected["teams"]
+        assert body["is_admin"] is False
+        assert all("system_admin" not in row["grants"] for row in body["projects"])
+
+
 class TestManagementApi:
     def test_invite_team_access_revision_and_role_matrix(self, fresh, monkeypatch):
         from modules.flow_gate.api.v1 import module_routes

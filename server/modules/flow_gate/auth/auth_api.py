@@ -240,6 +240,20 @@ def me(current_user:dict=Depends(get_current_user)):
     from modules.flow_gate.rbac import capabilities
 
     access = capabilities.memberships(current_user["user_id"])
+    if current_user.get("is_admin"):
+        from modules.flow_gate.db.connection import get_store
+        from modules.flow_gate.rbac.access import SYSTEM_PROJECT
+
+        # Administrators can access every real project without a membership.
+        # Keep the existing project/role/sources/grants shape consumed by MyAccessSection.
+        access["projects"] = [
+            {"project_id": row["project_id"], "role": "role_admin",
+             "sources": ["system_admin"], "grants": {"system_admin": "role_admin"}}
+            for row in get_store()._fetch_all(
+                "SELECT project_id FROM projects WHERE project_id <> ? ORDER BY project_id",
+                [SYSTEM_PROJECT],
+            )
+        ]
     return {**access, "capabilities": capabilities.system(current_user), "user_id":current_user["user_id"],"username":current_user.get("username"),"email":current_user.get("email"),"is_admin":bool(current_user.get("is_admin")),"first_login_required":bool(current_user.get("first_login_required")),"roles":_roles(current_user["user_id"])}
 
 # Backward-compatible helper names used by the established authentication tests.
