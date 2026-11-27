@@ -1493,7 +1493,7 @@ def reap() -> int:
 
 def reverify(run_id: str) -> dict:
     """An operator's ownership re-verification of a recovery_incomplete run (the earlier implementation,
-    the route requires perm_document_update).
+    the route requires project.document.update).
 
     The server runs the reaper's proof (``_reprove``) once, now. Proved -> the run is ended
     and its G freed. Not proved -> refused with the reason's code (``selfcheck_owner_alive``,

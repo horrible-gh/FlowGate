@@ -15,7 +15,7 @@
           <button type="button" class="fgs-iconbtn" :title="t('gui.settings.csv')" :aria-label="t('gui.settings.csv')" @click="exportUsers">
             <SettingsIcon name="download" />
           </button>
-          <button type="button" class="fgs-btn pri" data-testid="user-create" @click="openCreate">
+          <button type="button" class="fgs-btn pri" data-testid="user-create" :disabled="!can('system.user.create')" @click="openCreate">
             <SettingsIcon name="plus" />{{ t('gui.settings.users.create') }}
           </button>
         </div>
@@ -97,7 +97,7 @@
             <button type="button" class="fgs-chip warn" :class="{ on: tfaMissingOnly }" data-testid="chip-2fa" @click="tfaMissingOnly = !tfaMissingOnly"><SettingsIcon name="shieldno" size="sm" />{{ t('gui.settings.users.tfa_missing_short') }}</button>
           </div>
 
-          <div class="fgs-dtable" style="--cols: minmax(240px, 1.7fr) 110px 90px 100px 110px 24px">
+          <div class="fgs-dtable" style="--cols: minmax(140px, 1.7fr) 110px 90px 100px 110px 24px">
             <div class="fgs-dtr head">
               <div>{{ t('gui.settings.users.col_user') }}</div>
               <div>{{ t('gui.settings.users.col_permission') }}</div>
@@ -107,7 +107,7 @@
               <div />
             </div>
             <div
-              v-for="row in filtered"
+              v-for="row in usersPage"
               :key="row.user_id"
               class="fgs-dtr row"
               :class="{ sel: selected?.user_id === row.user_id, dim: row.state === 'disabled' }"
@@ -133,7 +133,15 @@
             </div>
             <div v-if="!filtered.length" class="fgs-empty">{{ t('gui.settings.no_match') }}</div>
           </div>
-          <div class="fgs-tablefoot" data-testid="users-foot">{{ filtered.length }} / {{ data.summary.total }}</div>
+          <div class="fgs-tablefoot fgs-pager" data-testid="users-foot">
+            <span>{{ usersRange }}</span>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_prev')" :aria-label="t('gui.settings.page_prev')" :disabled="!usersHasPrev" data-testid="users-foot-prev" @click="usersPrev">
+              <SettingsIcon name="back" size="sm" />
+            </button>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_next')" :aria-label="t('gui.settings.page_next')" :disabled="!usersHasNext" data-testid="users-foot-next" @click="usersNext">
+              <SettingsIcon name="chev" size="sm" />
+            </button>
+          </div>
         </template>
       </div>
     </section>
@@ -162,7 +170,7 @@
                 <input
                   type="checkbox"
                   :checked="selected.is_admin"
-                  :disabled="busy || isLastAdmin(selected) || selected.state === 'disabled'"
+                  :disabled="busy || isLastAdmin(selected) || selected.state === 'disabled' || !can('system.user.assign_admin')"
                   :aria-label="t('gui.settings.users.system_admin')"
                   data-testid="drawer-admin"
                   @click.prevent="askAdmin(!selected.is_admin)"
@@ -176,7 +184,7 @@
               <span class="fgs-spacer" />
               <span v-if="selected.tfa_enabled" class="tfa ok"><SettingsIcon name="shieldok" />{{ t('gui.settings.users.tfa_on') }}</span>
               <span v-else class="tfa no"><SettingsIcon name="shieldno" />{{ t('gui.settings.users.tfa_off') }}</span>
-              <button type="button" class="fgs-btn sm" :disabled="busy || !selected.tfa_enabled" data-testid="drawer-tfa-reset" @click="askTfaReset">
+              <button type="button" class="fgs-btn sm" :disabled="busy || !selected.tfa_enabled || !can('system.user.update')" data-testid="drawer-tfa-reset" @click="askTfaReset">
                 <SettingsIcon name="reset" size="sm" />{{ t('gui.settings.users.reset') }}
               </button>
             </div>
@@ -193,12 +201,41 @@
               <span class="fgs-muted">{{ shortDate(selected.created_at) }}</span>
             </div>
           </div>
+
+          <!-- v02test.0090: the last administrator's guard in words, and the teams / final project roles the server reports. -->
+          <p v-if="modern && isLastAdmin(selected)" class="fgs-hintline" data-testid="drawer-last-admin">{{ t('gui.settings.users.last_admin') }}</p>
+          <template v-if="modern">
+            <div class="fgs-sec" data-card="user-teams">
+              <div class="fgs-sec-head"><h3>{{ t('gui.settings.users.teams') }}</h3></div>
+              <LoadingState v-if="detailLoading" inline size="sm" :label="t('gui.common.loading')" />
+              <p v-else-if="detailError" class="fgs-error" role="alert" data-testid="user-detail-error">{{ detailError }}</p>
+              <template v-else-if="detail">
+                <div v-for="team in detail.teams" :key="team.team_id" class="fgs-row" :data-user-team="team.team_id">
+                  <div class="fgs-row-label"><strong>{{ team.name }}</strong></div>
+                  <div class="fgs-row-ctrl fgs-muted">{{ workspaceNameOf(team.workspace_id) }}</div>
+                </div>
+                <p v-if="!detail.teams.length" class="fgs-muted" data-testid="user-teams-empty">{{ t('gui.settings.users.teams_empty') }}</p>
+              </template>
+            </div>
+            <div v-if="detail && !detailLoading" class="fgs-sec" data-card="user-projects">
+              <div class="fgs-sec-head"><h3>{{ t('gui.settings.users.projects') }}</h3></div>
+              <p v-if="detail.is_admin" class="fgs-muted" data-testid="user-projects-admin">{{ t('gui.settings.users.projects_admin') }}</p>
+              <div v-for="p in detail.projects" :key="p.project_id" class="fgs-row" :data-user-project="p.project_id">
+                <div class="fgs-row-label"><strong>{{ projectNameOf(p.project_id) }}</strong></div>
+                <div class="fgs-row-ctrl">
+                  <span data-testid="user-project-role">{{ roleLabelOf(p.role) }}</span>
+                  <small class="fgs-muted"> — {{ sourcesOf(p.sources) }}</small>
+                </div>
+              </div>
+              <p v-if="!detail.projects.length && !detail.is_admin" class="fgs-muted" data-testid="user-projects-empty">{{ t('gui.settings.users.projects_empty') }}</p>
+            </div>
+          </template>
         </div>
         <div class="dr-ft">
-          <button v-if="selected.state === 'invited'" type="button" class="fgs-btn sm" :disabled="busy" data-testid="drawer-resend" @click="resend">
+          <button v-if="selected.state === 'invited'" type="button" class="fgs-btn sm" :disabled="busy || !can('system.user.update')" data-testid="drawer-resend" @click="resend">
             <SettingsIcon name="mail" size="sm" />{{ t('gui.settings.users.resend_invite') }}
           </button>
-          <button v-else type="button" class="fgs-btn sm" :disabled="busy || selected.state === 'disabled'" data-testid="drawer-password" @click="askPassword">
+          <button v-else type="button" class="fgs-btn sm" :disabled="busy || selected.state === 'disabled' || !can('system.user.update')" data-testid="drawer-password" @click="askPassword">
             <SettingsIcon name="pw" size="sm" />{{ t('gui.settings.users.reset_password') }}
           </button>
           <span class="fgs-spacer" />
@@ -206,7 +243,7 @@
             v-if="selected.state === 'disabled'"
             type="button"
             class="fgs-btn sm pri"
-            :disabled="busy"
+            :disabled="busy || !can('system.user.update')"
             data-testid="drawer-enable"
             @click="enable"
           ><SettingsIcon name="power" size="sm" />{{ t('gui.settings.users.enable') }}</button>
@@ -214,7 +251,7 @@
             v-else
             type="button"
             class="fgs-btn sm danger"
-            :disabled="busy || isLastAdmin(selected)"
+            :disabled="busy || isLastAdmin(selected) || !can('system.user.disable')"
             :title="isLastAdmin(selected) ? t('gui.settings.users.last_admin') : undefined"
             data-testid="drawer-disable"
             @click="askDisable"
@@ -315,17 +352,20 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import { copyToClipboard } from '@/core/interaction/clipboard'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSettingsToasts } from '../components/useSettingsToasts'
 import { useSystemNav } from '../components/systemNav'
+import { usePagedList } from '../components/usePagedList'
 import type { SettingsIconName } from '../icons'
 import {
   createSystemUser,
   disableSystemUser,
   enableSystemUser,
+  getSystemUser,
   listSystemUsers,
   resendInvite,
   resetPassword,
@@ -333,11 +373,20 @@ import {
   setSystemAdmin,
 } from '../api'
 import { downloadCsv, initials, relativeTime, shortDate, toCsv } from '../format'
-import type { CreateUserInput, SystemUser, SystemUsersResponse, UserCredentialResult, UserState } from '../types'
+import { allows, reportsCapabilities, useAccessLists } from '../capabilities'
+import type { CreateUserInput, SystemUser, SystemUserDetail, SystemUsersResponse, UserCredentialResult, UserState } from '../types'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const route = useRoute()
 const systemNav = useSystemNav()
+const { user: me } = useCurrentUser()
+const accessLists = useAccessLists()
+
+// v02test.0090: a current server sends capabilities, and each button follows its own permission ID
+// (create / assign_admin / disable / update). An older server sends none: the buttons stay on, as
+// before, and the server's own refusal is shown.
+const modern = computed(() => reportsCapabilities(me.value))
+const can = (action: string) => !modern.value || allows(me.value?.capabilities, action)
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
 
 const data = ref<SystemUsersResponse | null>(null)
@@ -391,6 +440,16 @@ const filtered = computed(() => {
   )
 })
 
+// v02test.0090 (F90-12): 20 rows a time; a search / filter change goes back to page 1.
+const {
+  pageItems: usersPage,
+  rangeLabel: usersRange,
+  hasPrev: usersHasPrev,
+  hasNext: usersHasNext,
+  prev: usersPrev,
+  next: usersNext,
+} = usePagedList(filtered, [query, stateFilter, adminOnly, tfaMissingOnly])
+
 function pct(n: number): string {
   const total = data.value?.summary.total ?? 0
   return total ? `${(n / total) * 100}%` : '0%'
@@ -425,6 +484,39 @@ function exportUsers() {
 
 // ── drawer ──
 const selected = ref<SystemUser | null>(null)
+
+// The drawer's teams and final project roles come from GET /system/users/{id} (current servers only).
+const detail = ref<SystemUserDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref<string | null>(null)
+let detailSeq = 0
+
+async function loadDetail(userId: string | null) {
+  const mine = ++detailSeq
+  detail.value = null
+  detailError.value = null
+  if (!userId || !modern.value) {
+    detailLoading.value = false
+    return
+  }
+  detailLoading.value = true
+  try {
+    const answer = await getSystemUser(userId)
+    if (mine === detailSeq) detail.value = answer
+  } catch (err) {
+    if (mine === detailSeq) detailError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    if (mine === detailSeq) detailLoading.value = false
+  }
+}
+
+watch(() => selected.value?.user_id ?? null, (id) => void loadDetail(id))
+
+const workspaceNameOf = (workspaceId: string) => data.value?.workspaces.find((w) => w.workspace_id === workspaceId)?.name ?? ''
+const projectNameOf = (projectId: string) => accessLists.projects.value.find((p) => p.project_id === projectId)?.project_name ?? projectId
+const roleLabelOf = (role: string | null) => (role && te(`gui.settings.project_roles.${role}`) ? t(`gui.settings.project_roles.${role}`) : t('gui.settings.impact.no_role'))
+const sourcesOf = (sources: readonly string[]) =>
+  sources.map((s) => (te(`gui.settings.sources.${s}`) ? t(`gui.settings.sources.${s}`) : s)).join(' · ')
 
 function openDrawer(row: SystemUser) {
   selected.value = row

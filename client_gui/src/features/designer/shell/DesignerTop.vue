@@ -40,6 +40,8 @@
       :select-mode="selectMode"
       :targets="targets"
       :run-band="runBand"
+      :run-refused="runRefused"
+      :run-refused-reason="runRefusedReason"
       @command="emit('command', $event)"
       @update:density="emit('update:density', $event)"
       @update:zoom="emit('update:zoom', $event)"
@@ -91,8 +93,11 @@ withDefaults(
     selectMode?: boolean
     /** the open Flow's run band (runBandView), or null. */
     runBand?: DesignerRunBand | null
+    /** 0090: the server refused this person `project.run`; the Toolbar's run buttons are off. */
+    runRefused?: boolean
+    runRefusedReason?: string
   }>(),
-  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, selectMode: false, runBand: null },
+  { recent: () => EMPTY_RECENT_LISTS, canValidate: false, selectMode: false, runBand: null, runRefused: false, runRefusedReason: '' },
 )
 
 const emit = defineEmits<{

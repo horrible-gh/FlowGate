@@ -315,7 +315,7 @@ def test_route_notifications_denies_without_permission(monkeypatch):
     response = client.get("/api/v1/projects/flowgate/notifications")
 
     assert response.status_code == 403
-    assert "perm_document_read" in response.json()["error_message"]
+    assert "project.document.read" in response.json()["error_message"]
     assert response.headers["cache-control"] == "no-store"
 
 
@@ -325,7 +325,7 @@ def test_route_notifications_seen_denies_without_permission(monkeypatch):
     response = client.post("/api/v1/projects/flowgate/notifications/seen")
 
     assert response.status_code == 403
-    assert "perm_document_read" in response.json()["error_message"]
+    assert "project.document.read" in response.json()["error_message"]
     assert response.headers["cache-control"] == "no-store"
 
 

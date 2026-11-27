@@ -106,7 +106,7 @@ def test_completed_current_run_qualifies(env):
     seed_decision(env)
     view = call(env)
     assert view["eligible"] and view["reason"] is None and not view["archived"]
-    assert env["permissions"] == [("reader", "archive", "perm_document_read")]
+    assert env["permissions"] == [("reader", "archive", "project.document.read")]
 
 
 @pytest.mark.parametrize("status,reason", [

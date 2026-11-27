@@ -14,7 +14,7 @@ and API tools (``tools``: ``get_card_roles`` / ``set_card_roles``).
   applicable role's resolved state and selection (``ai_roles.card_roles.card_role_view``), the settings version and
   context a change sends back, the lock state, and the public selectable AI list (id, name, exec type, kind, owner
   scope — ``availability.selectable_ais``; never a key or endpoint).
-- Change: ``authz.write_caller`` (edit mode or a claimed edit-once, no pending claim, ``perm_document_update``), then
+- Change: ``authz.write_caller`` (edit mode or a claimed edit-once, no pending claim, ``project.document.update``), then
   inside the Flow guard: the chat re-judged (``chat_authz.chat_recheck``: the run alive, the token still its current
   one, edit mode, no pending claim — then the write permission and the ownership again), and the v1 PATCH's own rules
   for a role field (``settings.write``): Graph ownership, the expected context, the expected settings version (required

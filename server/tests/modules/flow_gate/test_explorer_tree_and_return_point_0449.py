@@ -611,7 +611,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "fwd", realise_all=True)
         reopened = doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         assert reopened["return_point"]["exists"] is True
         point = db_rp.get_by_group(ids["group_id"])
@@ -657,7 +657,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "ctrl", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         monkeypatch.setattr(
             workflow_rework_service, "clear_return_point_if_complete", lambda *_a, **_k: False
@@ -676,12 +676,12 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "read", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         for type_code in ("D", "L", "T"):
             _approve(ids[type_code], ids["user_id"])
 
-        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"]})
+        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"], "is_admin": True})
         assert payload["return_point"]["exists"] is False
         assert payload["return_point"]["current_min_seq"] is None
 
@@ -704,7 +704,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "legacy", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         monkeypatch.setattr(
             workflow_rework_service, "clear_return_point_if_complete", lambda *_a, **_k: False
@@ -714,7 +714,7 @@ class TestReturnPointClearedByForwardReapproval:
         point = db_rp.get_by_group(ids["group_id"])
         assert point is not None
 
-        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"]})
+        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"], "is_admin": True})
         assert payload["return_point"] == {
             "exists": False,
             "front_seq": None,
@@ -735,11 +735,11 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "live", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         _approve(ids["D"], ids["user_id"])  # one down, two still pending
 
-        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"]})
+        payload = doc_routes.get_workflow_return_point(ids["B"], {"user_id": ids["user_id"], "is_admin": True})
         assert payload["return_point"]["exists"] is True
         assert payload["return_point"]["current_min_seq"] == 5
         assert payload["return_point"]["front_seq"] == 6
@@ -771,7 +771,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "part", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         _approve(ids["D"], ids["user_id"])
 
@@ -787,7 +787,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "nest", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=6),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         first = db_rp.get_by_group(ids["group_id"])
         assert first is not None
@@ -796,7 +796,7 @@ class TestReturnPointClearedByForwardReapproval:
         # A nested rewind, reaching further back while the first is still live.
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         nested = db_rp.get_by_group(ids["group_id"])
         assert nested is not None
@@ -823,7 +823,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "memo", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         assert db_rp.get_by_group(ids["group_id"]) is not None
 
@@ -861,7 +861,7 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "answer", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         point = db_rp.get_by_group(ids["group_id"])
         assert point is not None
@@ -955,7 +955,7 @@ class TestReturnPointClearedByForwardReapproval:
 
         result = doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
 
         # Not reopened…
@@ -985,11 +985,11 @@ class TestReturnPointClearedByForwardReapproval:
         ids = _seed_workflow_group(rp_store, "restore", realise_all=True)
         doc_routes.reopen_workflow(
             doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         restored = doc_routes.restore_workflow(
             doc_routes._RestoreBody(doc_id=ids["B"], destination_seq=None),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         assert restored["reached_front"] is True
         assert restored["return_point_cleared"] is True
@@ -1102,14 +1102,14 @@ class TestAdvanceHeadContract:
 
         created = doc_routes.open_final_approval(
             doc_routes._GroupDocRef(doc_id=ids["B"]),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
 
         assert created["doc_id"].endswith("-AC")
         # Idempotent: asking again reuses the same un-approved AC rather than minting a new one.
         again = doc_routes.open_final_approval(
             doc_routes._GroupDocRef(doc_id=ids["B"]),
-            {"user_id": ids["user_id"]},
+            {"user_id": ids["user_id"], "is_admin": True},
         )
         assert again["doc_id"] == created["doc_id"]
         assert _token_issued_events(ids["group_id"]) == 0
@@ -1452,7 +1452,7 @@ class TestNoTracebackStepsAroundTheDeclaredFields:
 
         app = FastAPI()
         app.include_router(tr.router)
-        app.dependency_overrides[get_current_user] = lambda: {"user_id": "u"}
+        app.dependency_overrides[get_current_user] = lambda: {"user_id": "u", "is_admin": True}
 
         def _boom(*_a, **_k):
             raise RuntimeError(f"token mint rejected credential {self.SECRET}")

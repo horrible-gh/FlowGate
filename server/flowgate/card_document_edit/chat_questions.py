@@ -14,7 +14,7 @@ Both transports share one service: the API chat tool (``call_handler``) and the 
   document), then ``chat_recheck_alive`` inside the chat run's gate, so an answer never lands after its run's end;
 * scope: the target document is in the chat's project AND Flow (group), is not a conversation, and the item is that
   document's;
-* permission (Q#600): ``perm_document_create`` of the issued user on the document's project — no edit mode, no command
+* permission (Q#600): ``project.document.create`` of the issued user on the document's project — no edit mode, no command
   access, no approval step; archived / disposed Flows (``graph_service.require_writable`` under the document's guard)
   and the Graph attempt fence refuse as on the general route;
 * one answer: a question that already has an answer is refused (409 ``question_already_answered``); the same chat
@@ -302,7 +302,7 @@ def chat_list_questions(via, *, token_raw=None, run_hint=None, query=None, ctx=N
         doc_id = _text(inp.get("doc_id"), "doc_id")
         include_answered = _flag(inp.get("include_answered"), "include_answered")
         flow_id = run.get("group_id")
-        _authorize(token, run["project_id"], "perm_document_read", flow_id)
+        _authorize(token, run["project_id"], "project.document.read", flow_id)
         if doc_id is not None:
             docs = [_document_in_flow(run, doc_id)]
         else:
@@ -401,7 +401,7 @@ def chat_answer_question(via, *, token_raw=None, run_hint=None, doc_id=None, ite
         if not (body or "").strip() and not option_ids:
             raise invalid("invalid_answer", "body", "required")
         doc = _document_in_flow(run, target_doc_id)
-        _authorize(token, doc["project_id"], "perm_document_create", doc.get("group_id"))
+        _authorize(token, doc["project_id"], "project.document.create", doc.get("group_id"))
         holder = chat_gate.TicketHolder()
         try:
             chat_authz.chat_recheck_alive(run, token, holder)

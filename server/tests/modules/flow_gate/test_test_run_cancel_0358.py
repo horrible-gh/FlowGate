@@ -682,7 +682,7 @@ def test_cancel_route_denies_without_perm_test_run(monkeypatch):
 
 def test_cancel_route_allows_permission_holder_regardless_of_runner_mismatch(monkeypatch):
     """#5: a different user than the one who started the run can still cancel it, as
-    long as they hold perm_test_run (or are admin) — no runner_id match required."""
+    long as they hold project.run (or are admin) — no runner_id match required."""
     from modules.flow_gate.api.v1 import test_run_routes as routes
 
     monkeypatch.setattr(

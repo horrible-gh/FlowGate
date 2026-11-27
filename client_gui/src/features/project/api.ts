@@ -28,6 +28,7 @@ import api, {
   putRequest,
 } from '@shared/api'
 import { normalizeApiError } from '@shared/apiErrors'
+import { setProjectCapabilityRows, startCapabilityRead } from '@shared/permissions/capabilities'
 import { serverDetailOf } from '../../core/i18n/serverDetail'
 import { projectCreateConflictOf } from './createConflict'
 import type {
@@ -84,6 +85,8 @@ interface RawProject {
   created_at?: string | null
   updated_at?: string | null
   modules?: RawProjectModule[] | null
+  /** The server's answer to "what may this person do here" (rbac/capabilities.py), kept in the shared store. */
+  capabilities?: unknown
 }
 
 interface RawProjectListResponse {
@@ -113,13 +116,19 @@ function toProject(raw: RawProject): Project {
 
 /** GET /api/v1/projects?status=active, normalized and with the system row dropped. */
 export async function fetchActiveProjects(): Promise<Project[]> {
+  // The session this list was asked for: an answer that comes after sign-out / an account switch, or after a newer
+  // read of the same projects, does not touch the permission store (it still gives the caller its list).
+  const read = startCapabilityRead()
   try {
     const response = await getRequest<RawProjectListResponse | RawProject[]>(
       '/api/v1/projects',
       { status: 'active' },
     )
     const raw = Array.isArray(response.data) ? response.data : response.data?.projects ?? []
-    return raw.filter((p) => p.project_id !== SYSTEM_PROJECT_ID).map(toProject)
+    const listed = raw.filter((p) => p.project_id !== SYSTEM_PROJECT_ID)
+    // The server already cut the list to the person's projects; each row's capabilities go to the shared store.
+    setProjectCapabilityRows(listed, read)
+    return listed.map(toProject)
   } catch (error) {
     throw new Error(serverDetailOf(error))
   }

@@ -16,7 +16,7 @@
 
     <template v-else-if="draft && view">
       <p v-if="lockReason" class="wpe-line is-locked" data-test="wp-edit-lock" :data-reason="lockReason">
-        <span aria-hidden="true">🔒</span>{{ t(`lock.${lockReason}`) }}
+        <span aria-hidden="true">🔒</span>{{ lockReason === 'permission' && refusalText ? refusalText : t(`lock.${lockReason}`) }}
       </p>
       <p v-if="reloading" class="wpe-line" role="status" data-test="wp-edit-reloading">{{ t('reloading') }}</p>
 
@@ -373,7 +373,7 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 const { t: gt } = useI18n({ useScope: 'global' })
 
-const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision } =
+const { phase, loadError, unreadableRaw, view, draft, saving, reloading, lockReason, refusalText, inputsLocked, failure, rowErrors, topErrors, capability, externalRevision } =
   props.editor
 
 /** Lucide `rotate-ccw` (ISC) — the defaults row's mark, as in the confirmed mockup; also 「전개 재시도」. */

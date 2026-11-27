@@ -114,11 +114,11 @@ def test_v1_card_routes_refuse_before_build_target_or_stage(env, monkeypatch, me
     # Permission decoration is separately covered by the real composition suite.
     unwrap = lambda fn: getattr(fn, '__wrapped__', fn)
     calls = {
-      'content': lambda: unwrap(routes.update_document_content)(D, routes.DocumentContentUpdate(content='bad'), {'user_id':'user'}),
-      'rpc': lambda: unwrap(routes.update_document_content_rpc)(routes.DocumentContentUpdateRpc(doc_id=D,content='bad'), {'user_id':'user'}),
-      'brief': lambda: unwrap(routes.save_test_brief)(D, routes.TestBriefSaveBody(text='bad', expected_content='stale'), {'user_id':'user'}),
-      'spec': lambda: unwrap(routes.save_test_spec)(D, routes.TestSpecSaveBody(cases=[]), {'user_id':'user'}),
-      'spec_non_ts': lambda: unwrap(routes.save_test_spec)(D, routes.TestSpecSaveBody(cases=[]), {'user_id':'user'}),
+      'content': lambda: unwrap(routes.update_document_content)(D, routes.DocumentContentUpdate(content='bad'), {'user_id':'user','is_admin':True}),
+      'rpc': lambda: unwrap(routes.update_document_content_rpc)(routes.DocumentContentUpdateRpc(doc_id=D,content='bad'), {'user_id':'user','is_admin':True}),
+      'brief': lambda: unwrap(routes.save_test_brief)(D, routes.TestBriefSaveBody(text='bad', expected_content='stale'), {'user_id':'user','is_admin':True}),
+      'spec': lambda: unwrap(routes.save_test_spec)(D, routes.TestSpecSaveBody(cases=[]), {'user_id':'user','is_admin':True}),
+      'spec_non_ts': lambda: unwrap(routes.save_test_spec)(D, routes.TestSpecSaveBody(cases=[]), {'user_id':'user','is_admin':True}),
     }
     if method == 'spec':
         env.db._execute('UPDATE documents SET type_code = ? WHERE doc_id = ?', ['TS',D])
@@ -364,9 +364,9 @@ def test_non_card_structured_v1_keeps_legacy_type_error_order(env,method):
     unwrap = lambda fn: getattr(fn,'__wrapped__',fn)
     with pytest.raises(HTTPException) as caught:
         if method == 'brief':
-            unwrap(routes.save_test_brief)(D,routes.TestBriefSaveBody(text='bad',expected_content='stale'),{'user_id':'user'})
+            unwrap(routes.save_test_brief)(D,routes.TestBriefSaveBody(text='bad',expected_content='stale'),{'user_id':'user','is_admin':True})
         else:
-            unwrap(routes.save_test_spec)(D,routes.TestSpecSaveBody(cases=[]),{'user_id':'user'})
+            unwrap(routes.save_test_spec)(D,routes.TestSpecSaveBody(cases=[]),{'user_id':'user','is_admin':True})
     assert caught.value.status_code == 422 and caught.value.detail['error'] == 'not_ts'
 
 

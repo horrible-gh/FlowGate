@@ -5,7 +5,7 @@
     </div>
     <div class="gx-actions">
       <button type="button" class="gx-btn" :title="t('gui.git.ai.watch')" :aria-label="t('gui.git.ai.watch')" data-test="git-ai-watch" @click="openWindow">{{ t('gui.git.ai.watch') }}</button>
-      <button type="button" class="gx-btn ghost" :disabled="!session.canAct.value" :title="t('gui.git.ai.stop')" :aria-label="t('gui.git.ai.stop')" data-test="git-ai-stop" @click="session.cancelAi()">
+      <button type="button" class="gx-btn ghost" :disabled="!session.canMerge.value" :title="t('gui.git.ai.stop')" :aria-label="t('gui.git.ai.stop')" data-test="git-ai-stop" @click="session.cancelAi()">
         ■ {{ t('gui.git.ai.stop') }}
       </button>
     </div>

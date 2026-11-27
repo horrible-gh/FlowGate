@@ -25,9 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.settings.user_admin_service import (
-    assign_project_role,
     create_user,
-    deactivate_user,
     get_backup_code_status,
     get_user,
     get_user_project_roles,
@@ -36,11 +34,11 @@ from modules.flow_gate.settings.user_admin_service import (
     regenerate_backup_codes,
     reset_password,
     reset_totp,
-    revoke_project_role,
     unlock_user,
     update_user,
     UsernameAlreadyExists,
 )
+from modules.flow_gate.settings import system_user_service as system_users
 from modules.flow_gate.settings.workspace_service import WorkspaceError
 
 router = APIRouter(tags=["UserAdmin"])
@@ -85,7 +83,13 @@ def create_user_endpoint(
     user: dict = Depends(require_permission("system.user.create")),
 ):
     try:
-        return create_user(body.model_dump(), created_by=user.get("user_id"))
+        from modules.flow_gate.db.connection import get_store
+
+        with get_store().transaction():
+            system_users._lock_access()
+            row = create_user(body.model_dump(), created_by=user.get("user_id"))
+            system_users._audit(user, "user.create", row["user_id"])
+            return row
     except UsernameAlreadyExists:
         raise HTTPException(status_code=409, detail={"code": "username_already_exists"}) from None
     except WorkspaceError as exc:
@@ -113,18 +117,37 @@ def update_user_endpoint(
     body: UserPatch,
     user: dict = Depends(require_permission("system.user.update")),
 ):
-    row = update_user(uid, {k: v for k, v in body.model_dump().items() if v is not None})
-    if not row:
-        raise HTTPException(status_code=404, detail="User not found")
-    return row
+    from modules.flow_gate.db.connection import get_store
+
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    enabled = fields.pop("is_active", None)
+    if enabled not in (None, 0, 1):
+        raise HTTPException(status_code=422, detail={"code": "status_invalid"})
+    try:
+        with get_store().transaction():
+            system_users._lock_access()
+            if not get_user(uid):
+                raise HTTPException(status_code=404, detail="User not found")
+            if enabled is not None:
+                operation = system_users.enable_user if enabled else system_users.disable_user
+                operation(user, uid)
+            if "role_id" in fields:
+                system_users.set_admin(user, uid, fields["role_id"] == "role_admin")
+            row = update_user(uid, fields)
+            if fields:
+                system_users._audit(user, "user.update", uid)
+            return row
+    except system_users.SystemUserError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
 
 
 @router.delete("/users/{uid}", status_code=200)
-def delete_user_endpoint(uid: str, user: dict = Depends(require_permission("system.user.delete"))):
-    row = deactivate_user(uid)
-    if not row:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"detail": "deactivated", "user": row}
+def delete_user_endpoint(uid: str, user: dict = Depends(require_permission("system.user.disable"))):
+    try:
+        system_users.disable_user(user, uid)
+    except system_users.SystemUserError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
+    return {"detail": "deactivated", "user": get_user(uid)}
 
 
 @router.post("/users/{uid}/totp/reset")
@@ -166,22 +189,26 @@ def get_roles(uid: str, user: dict = Depends(require_permission("system.user.rea
 def assign_role(
     uid: str,
     body: AssignRoleBody,
-    user: dict = Depends(require_permission("system.user.assign_role")),
+    revision: int | None = None,
+    preview: bool = False,
+    user: dict = Depends(require_permission("system.user.assign_admin")),
 ):
-    try:
-        return assign_project_role(uid, body.project_id, body.role_id, granted_by=user.get("user_id"))
-    except WorkspaceError as exc:
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code}) from None
+    from modules.flow_gate.rbac.routers.rbac_admin import change_direct_role
+
+    return change_direct_role(user, body.project_id, uid, body.role_id, revision, preview)
 
 
 @router.delete("/users/{uid}/project-roles/{project_id}", status_code=200)
 def revoke_role(
     uid: str,
     project_id: str,
-    user: dict = Depends(require_permission("system.user.assign_role")),
+    revision: int | None = None,
+    preview: bool = False,
+    user: dict = Depends(require_permission("system.user.assign_admin")),
 ):
-    revoke_project_role(uid, project_id)
-    return {"detail": "revoked"}
+    from modules.flow_gate.rbac.routers.rbac_admin import change_direct_role
+
+    return change_direct_role(user, project_id, uid, None, revision, preview)
 
 
 @router.get("/me/backup-codes")

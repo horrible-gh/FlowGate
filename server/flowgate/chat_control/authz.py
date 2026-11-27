@@ -7,7 +7,7 @@ token's own group as the Flow, its project, the conversation document of that gr
 - its effective source access is ``read_write`` (an edit or edit-once chat; reading mode is refused with 403
   ``chat_edit_mode_required``), the same rule the chat card document edit applies (``chat_authz.chat_recheck``);
 - no edit-once claim of this token is still pending;
-- the issuing user may write the Flow (``perm_document_update``, the Canvas draft save and Run button permission).
+- the issuing user may write the Flow (``project.document.update``, the Canvas draft save and Run button permission).
 
 the card AI role API keeps the token and run of the request (``Caller``): a read
 (``read_caller``) is the Graph read boundary of a chat token alone, a change (``write_caller``) the boundary above; the
@@ -23,7 +23,7 @@ from flowgate.card_document_edit import chat_authz
 from flowgate.graph_read import authz as graph_authz
 from modules.flow_gate.rbac.permission_service import has_permission
 
-WRITE_PERMISSION = "perm_document_update"
+WRITE_PERMISSION = "project.document.update"
 EDIT_MODE_REQUIRED = "chat_edit_mode_required"
 
 

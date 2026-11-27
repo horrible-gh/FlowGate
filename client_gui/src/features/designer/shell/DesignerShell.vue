@@ -43,6 +43,8 @@
       @archive="archiveActiveFlow"
       :select-mode="center.selectMode.value"
       :run-band="runBand"
+      :run-refused="runRefusal !== null"
+      :run-refused-reason="runRefusalText"
       @command="onTopCommand"
       @toggle-panel="onTogglePanel"
       @show-tab="onShowTab"
@@ -58,6 +60,8 @@
     </aside>
     <!-- The Body stays mounted but unseen until the saved Dock sizes
          are read (or the read failed / took too long), so it is never drawn at the default sizes first. -->
+    <!-- 0090: why the card edit / run / approve / Git buttons are off for this person (the server's capabilities). -->
+    <PermissionNote :project-id="projectId" :actions="PERMISSION_NOTE_ACTIONS" />
     <DesignerBody
       :class="{ 'is-awaiting-sizes': !sizesReady }"
       :left-width="leftColumnWidth(layout)"
@@ -269,6 +273,9 @@
 //
 // (NR the earlier change, Q #510 E-1) — an F5 brings the working screen back. See
 // "F5 restore" below.
+import PermissionNote from '@/components/ui/PermissionNote.vue'
+import { useCapabilities } from '@shared/permissions/capabilities'
+import { denialLines } from '@shared/permissions/denial'
 import { createRunFailurePublisher, resolveSessionStorage, runErrorText as requestErrorText } from './runFailureToast'
 import { isCompletedNoop, type AckRun } from '../center/run/completedCommandAck'
 import { AiRoleSetupModeless } from '@/features/ai'
@@ -466,6 +473,14 @@ onBeforeUnmount(() => {
 const top = reactive(createDesignerTopState())
 
 const projectId = computed<string | null>(() => projectStore.currentProjectId)
+// The actions whose buttons the PermissionNote explains (design 0004-D 6.3: edit, run, approve, Git).
+// The server's "no" for [실행] in this project (null: allowed, or not answered yet); its sentence is the buttons' tooltip.
+const projectCaps = useCapabilities(projectId)
+const runRefusal = computed(() => projectCaps.refusal('project.run'))
+const runRefusalText = computed(() => runRefusal.value
+  ? denialLines([{ action: 'project.run', decision: runRefusal.value }], projectCaps.role.value, (key, params) => t(key, params ?? {})).join(' ')
+  : '')
+const PERMISSION_NOTE_ACTIONS = ['project.document.update', 'project.run', 'project.document.approve', 'project.git.write', 'project.git.merge'] as const
 const notificationsOpen = ref(false)
 const notificationProject = computed(() => projectId.value ? explorerProject(projectId.value) : null)
 watch([projectId, () => projectStore.designerSessionOwner], () => { notificationsOpen.value = false }, { flush: 'sync' })
@@ -854,6 +869,8 @@ const menuTargets = computed<DesignerMenuTargets>(() => ({
     && (center.activeRun.value.error.status === null || center.activeRun.value.error.status >= 500),
   // the open Flow's run status is not confirmed yet (being read, or the read failed).
   runUnknown: center.canRun && !center.activeRunStatus.value.known,
+  // 0090: the server refused this person `project.run` in this project (Run menu and Toolbar buttons off, Stop stays).
+  runRefused: runRefusal.value !== null,
   // flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run — 다음 단계 / 전체 실행 wait.
   runHold: center.canRun && runCommandHold(center.activeRunStatus.value.run),
   // alignment (2+) / equal distribution (3+) need that many selected cards.

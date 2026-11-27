@@ -119,11 +119,11 @@ def heal(doc, exc, actor):
     from .dedicated_windows import editable
     if exc.reason != "not_json" or not wp.is_unwritten_plan(exc.raw):
         return None
-    if not guards.has_permission(actor, doc["project_id"], "perm_document_update"):
+    if not guards.has_permission(actor, doc["project_id"], "project.document.update"):
         return None
     def build(fresh, body):
         editable(fresh)
-        if not guards.has_permission(actor, fresh["project_id"], "perm_document_update"):
+        if not guards.has_permission(actor, fresh["project_id"], "project.document.update"):
             raise internal_error()
         try:
             current = wp.load_body(window._plan_path(fresh), project_id=fresh["project_id"], doc_id=fresh["doc_id"])

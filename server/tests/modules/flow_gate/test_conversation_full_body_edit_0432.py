@@ -175,7 +175,7 @@ def _save(monkeypatch, doc: dict, content: str = "wholesale rewrite"):
     return routes.update_document_content(
         doc["doc_id"],
         routes.DocumentContentUpdate(content=content),
-        {"user_id": _OWNER},
+        {"user_id": _OWNER, "is_admin": True},
     )
 
 
@@ -206,7 +206,7 @@ def test_the_rpc_wrapper_takes_the_same_block(store, monkeypatch, tmp_path):
     with pytest.raises(HTTPException) as exc_info:
         routes.update_document_content_rpc(
             routes.DocumentContentUpdateRpc(doc_id=doc["doc_id"], content="rewrite"),
-            {"user_id": _OWNER},
+            {"user_id": _OWNER, "is_admin": True},
         )
 
     assert exc_info.value.status_code == 409

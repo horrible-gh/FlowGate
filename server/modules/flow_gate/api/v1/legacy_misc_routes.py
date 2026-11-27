@@ -1,21 +1,19 @@
 """T373 — Unify LegacyMisc API v1 track (P006 §3-10).
 
-Migration targets (9 items):
-  GET  /flowgate/api/v1/brief
-  GET  /flowgate/api/v1/queue
-  GET  /flowgate/api/v1/draft/{doc_id}
-  GET  /flowgate/api/v1/detail/{doc_id}
-  GET  /flowgate/api/v1/projects
-  GET  /flowgate/api/v1/groups/{group_id}
+Remaining routes (both used by the console file explorer):
   POST /flowgate/api/v1/storage/folder
   POST /flowgate/api/v1/storage/file
-  POST /flowgate/api/v1/clipboard
 
-T394 — Transfer 2 remaining /flow_gate/ items:
-  POST /flowgate/api/v1/outbox/create
-  POST /flowgate/api/v1/project-settings/pick-folder
+Both require a signed-in user and a document-update grant on the target project.
+The project is checked as named in the body and, when a group is named, as stored
+on that group, so a request cannot pair another project's group with its own.
 
-The following 4 are claimed by existing v1 routers:
+Routes removed because nothing called them any more: /brief, /queue, /draft,
+/draft/{doc_id}, /detail, /detail/{doc_id}, /projects (already served first by
+the project settings router), GET /groups/{group_id}, /clipboard, /outbox/create
+and /project-settings/pick-folder (a server-side folder dialog).
+
+The following are claimed by other v1 routers:
   GET  /flowgate/api/v1/modules        → modules/flow_gate/api/v1/module_routes.py
   GET  /flowgate/api/v1/groups         → workflow/routers/workflow.py
   POST /flowgate/api/v1/groups         → workflow/routers/workflow.py
@@ -23,211 +21,75 @@ The following 4 are claimed by existing v1 routers:
 """
 from __future__ import annotations
 
-import asyncio
-import os
-
 import anyio.to_thread
-from fastapi import APIRouter, Form, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from modules.flow_gate import db as _db
-from modules.flow_gate import service, process_service
-from modules.flow_gate.services import git_service
+from modules.flow_gate import process_service
+from modules.flow_gate.auth.middleware import get_current_user
 
 router = APIRouter(prefix="/api/v1", tags=["LegacyMisc"])
 
 
-# handlers doing sync DB work are plain `def` so
-# FastAPI runs them in the threadpool instead of blocking the event loop. The
-# ones that `await request.json()` stay async.
-#
-# staying `async def` was not enough — those handlers
-# still ran their sync mkdir/file-create/clipboard work ON the event loop after
-# the await. They now hand that work to anyio.to_thread.run_sync, so only the
-# body parse happens on the loop.
-@router.get("/brief", response_class=JSONResponse)
-def api_brief():
-    return service.envelope("brief", service.get_brief())
+def _require_storage_target(user: dict, body: dict) -> None:
+    """403 unless the user may update every project the body names."""
+    from modules.flow_gate.rbac import access
+
+    project_id = body.get("project_id") or None
+    group_project = access.project_of_group(body.get("group_id") or None)
+    targets = {p for p in (project_id, group_project) if p}
+    if not targets and not access.is_admin(user):
+        access.require(user, None, "project.document.update")
+    for target in targets:
+        access.require(user, target, "project.document.update")
 
 
-@router.get("/queue", response_class=JSONResponse)
-def api_queue():
-    return service.envelope("queue", service.build_action_queue())
-
-
-@router.get("/draft", response_class=JSONResponse)
-def api_draft_rpc(doc_id: str = Query(...)):
-    return api_draft(doc_id)
-
-
-@router.get("/draft/{doc_id:path}", response_class=JSONResponse)
-def api_draft(doc_id: str):
-    draft = service.build_worker_draft(doc_id)
-    if draft is None:
-        return JSONResponse(
-            status_code=404,
-            content={"ok": False, "kind": "draft", "detail": f"Document not found: {doc_id}"},
-        )
-    return service.envelope("draft", draft)
-
-
-@router.get("/detail", response_class=JSONResponse)
-def api_detail_rpc(doc_id: str = Query(...)):
-    return api_detail(doc_id)
-
-
-@router.get("/detail/{doc_id:path}", response_class=JSONResponse)
-def api_detail(doc_id: str):
-    detail = service.get_document_detail(doc_id)
-    if detail is None:
-        return JSONResponse(
-            status_code=404,
-            content={"ok": False, "kind": "detail", "detail": f"Document not found: {doc_id}"},
-        )
-    return service.envelope("detail", detail)
-
-
-@router.get("/projects", response_class=JSONResponse)
-def api_projects():
-    """Return projects and modules as JSON."""
-    projects = process_service.get_projects_with_modules()
-    return {"projects": projects}
-
-
-@router.get("/groups/{group_id}", response_class=JSONResponse)
-def api_get_group(group_id: str):
-    """Retrieve single group (JSON)."""
-    group = _db.get_group(group_id)
-    if group is None:
-        return JSONResponse(
-            status_code=404,
-            content={"status": "error", "message": f"Group not found: {group_id}"},
-        )
-    row = dict(group)
-    row["work_base_ref"] = row.get("work_base_ref")
-    row["effective_work_base_ref"] = git_service.resolve_group_work_base_ref(
-        row["project_id"], group_id, group=row
-    )
-    return JSONResponse(content={"status": "success", "group": row})
-
-
+# The handlers `await request.json()` on the loop and hand every DB/file step,
+# including the permission check, to anyio.to_thread.run_sync.
 @router.post("/storage/folder", response_class=JSONResponse)
-async def api_create_folder(request: Request):
+async def api_create_folder(request: Request, current_user: dict = Depends(get_current_user)):
     """Create folder. Body: {project_id, parent_path, name, group_id?}
 
     0327 T0004 (B0001): the optional group_id creates inside that group's worktree
     so the explorer's "new folder" works while a group branch is selected.
     """
     body = await request.json()
-    result = await anyio.to_thread.run_sync(
-        lambda: process_service.create_storage_folder(
+
+    def _create():
+        _require_storage_target(current_user, body)
+        return process_service.create_storage_folder(
             project_id=body.get("project_id", ""),
             parent_path=body.get("parent_path", ""),
             name=body.get("name", ""),
             group_id=body.get("group_id") or None,
         )
-    )
+
+    result = await anyio.to_thread.run_sync(_create)
     if result.get("status") == "error":
         return JSONResponse(status_code=400, content=result)
     return JSONResponse(content=result)
 
 
 @router.post("/storage/file", response_class=JSONResponse)
-async def api_create_file(request: Request):
+async def api_create_file(request: Request, current_user: dict = Depends(get_current_user)):
     """Create file. Body: {project_id, parent_path, name, group_id?}
 
     0327 T0004 (B0001): the optional group_id creates inside that group's worktree
     so the explorer's "new file" works while a group branch is selected.
     """
     body = await request.json()
-    result = await anyio.to_thread.run_sync(
-        lambda: process_service.create_storage_file(
+
+    def _create():
+        _require_storage_target(current_user, body)
+        return process_service.create_storage_file(
             project_id=body.get("project_id", ""),
             parent_path=body.get("parent_path", ""),
             name=body.get("name", ""),
             group_id=body.get("group_id") or None,
         )
-    )
+
+    result = await anyio.to_thread.run_sync(_create)
     if result.get("status") == "error":
         return JSONResponse(status_code=400, content=result)
     return JSONResponse(content=result)
-
-
-@router.post("/clipboard", response_class=JSONResponse)
-async def api_clipboard(request: Request):
-    data = await request.json()
-    file_path = (data.get("file_path") or "").strip()
-    if not file_path:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "file_path is required"},
-        )
-    return await anyio.to_thread.run_sync(process_service.build_clipboard_text, file_path)
-
-
-# ── T394: Transfer remaining /flow_gate/ items ──────────────────────────────────────────────
-
-@router.post("/outbox/create", response_class=JSONResponse)
-def api_outbox_create(
-    request: Request,
-    project: str = Form(...),
-    module: str = Form(""),
-    title: str = Form(...),
-    slug: str = Form(""),
-    priority: str = Form("medium"),
-    body: str = Form(""),
-    owner: str = Form("admin"),
-    group_id: str = Form(""),
-    new_group_name: str = Form(""),
-    work_base_ref: str = Form(""),
-    doc_type: str = Form("R"),
-    template: str = Form("default"),
-):
-    """Create an R/B workflow-root document. Form-encoded POST."""
-    result = process_service.create_requirement(
-        project=project.strip(),
-        module=module.strip(),
-        title=title.strip(),
-        slug=slug.strip(),
-        priority=priority.strip(),
-        body=body,
-        owner=owner.strip(),
-        group_id=group_id.strip(),
-        new_group_name=new_group_name.strip(),
-        work_base_ref=work_base_ref,
-        doc_type=doc_type.strip(),
-        template=template.strip(),
-        locale=request.headers.get("x-locale") or "ko",
-    )
-    if result.get("errors"):
-        return JSONResponse(status_code=400, content={"ok": False, "errors": result["errors"]})
-    return JSONResponse(content={"ok": True, "result": result})
-
-
-def _pick_folder_dialog(initial_dir: str = "") -> str:
-    """Server-side Windows folder selection dialog. Returns selected path or empty string."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes("-topmost", True)
-        result = filedialog.askdirectory(
-            parent=root,
-            initialdir=initial_dir if (initial_dir and os.path.isdir(initial_dir)) else "/",
-        )
-        root.destroy()
-        return os.path.normpath(result) if result else ""
-    except Exception:
-        return ""
-
-
-@router.post("/project-settings/pick-folder", response_class=JSONResponse)
-async def api_pick_folder(initial_dir: str = Form("")):
-    """Invoke server-side folder selection dialog."""
-    loop = asyncio.get_running_loop()
-    path = await loop.run_in_executor(None, _pick_folder_dialog, initial_dir.strip())
-    if path:
-        return JSONResponse(content={"cancelled": False, "path": path})
-    return JSONResponse(content={"cancelled": True, "path": ""})

@@ -883,7 +883,7 @@ class TestRegisterDocumentResultEndpoint:
 
         monkeypatch.setattr(wf_router, "transition_document_review", _spy_transition)
 
-        current_user = {"user_id": "u001", "permissions": ["document.update"]}
+        current_user = {"user_id": "u001", "is_admin": True, "permissions": ["document.update"]}
 
         async def _run():
             return await wf_router.register_document_result_endpoint(
@@ -934,7 +934,7 @@ class TestRegisterDocumentResultEndpoint:
         import modules.flow_gate.api.v1.events.publisher as pub_mod
         monkeypatch.setattr(pub_mod, "broadcast_event", _mock_broadcast)
 
-        current_user = {"user_id": "u001", "permissions": ["document.update"]}
+        current_user = {"user_id": "u001", "is_admin": True, "permissions": ["document.update"]}
 
         async def _run():
             return await wf_router.register_document_result_endpoint(

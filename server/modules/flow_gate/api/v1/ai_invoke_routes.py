@@ -574,9 +574,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             })
 
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
 
     if body.continuation_reworker_provider_id is not None:
         if body.mode != "continuous":
@@ -1262,9 +1262,9 @@ def get_ai_invoke_providers(project: str, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     effective = ai_invoke_service.list_runtime_providers(project, user_id)
     from modules.flow_gate.db.connection import get_store
     from modules.flow_gate.services.message_image_service import provider_accepts_images
@@ -1295,9 +1295,9 @@ def get_active_ai_invoke(group_id: str, request: Request, conflict_progress: boo
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     content = ai_invoke_service.get_active_status(group_id)
     if conflict_progress:
         from modules.flow_gate.services.ai_invoke import diagnostics as _diagnostics
@@ -1334,9 +1334,9 @@ def resume_ai_invoke(body: dict, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
 
     locale = request.headers.get("x-locale") or "ko"
     try:
@@ -1374,9 +1374,9 @@ def release_paused_ai_invoke(group_id: str, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     try:
         result = ai_invoke_service.release_paused_chain(
             group_id=group_id,
@@ -1446,9 +1446,9 @@ def list_ai_invoke_runs(
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project_id}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     try:
         options = {"cursor": cursor, "doc_ref": doc_ref} if cursor is not None or doc_ref is not None else {}
         result = ai_invoke_service.list_runs(group_id=group_id, project=project, limit=limit, **options)
@@ -1479,9 +1479,9 @@ def get_ai_invoke_rework_hint(group_id: str, doc_ref: str, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     handoff = ai_invoke_service.previous_timeout_handoff(group_id, doc_ref)
     return JSONResponse(status_code=200, content={
         "ok": True,
@@ -1504,9 +1504,9 @@ def list_ai_invoke_leases(project: str, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     from modules.flow_gate.db import group_ai_leases as db_leases
 
     items = []
@@ -1541,9 +1541,9 @@ def release_ai_invoke_lease(group_id: str, request: Request):
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {project}"})
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     try:
         result = ai_invoke_service.force_release_group_lease(group_id)
     except HTTPException as exc:
@@ -1563,7 +1563,7 @@ def list_ai_invoke_lease_events(
     Admin-only on purpose (§14/§21): this is the append-only audit trail behind a
     group's lease acquire/activate/handoff/release/reclaim/admission-reject
     decisions, not a signal ordinary document readers are meant to see -- unlike
-    GET /leases above, `perm_document_read` is not enough here.
+    GET /leases above, `project.document.read` is not enough here.
     Declared ahead of GET /{run_id} for the same path-shadowing reason as
     /leases and /leases/{group_id}/release.
 
@@ -1603,9 +1603,9 @@ def get_ai_invoke_status(run_id: str, request: Request):
     # so an unknown id is still a 404 regardless of the caller's permissions.
     project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
     user_id = auth["issued_to"]
-    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "perm_document_read")):
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "project.document.read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "perm_document_read required"})
+                                                      "message": "project.document.read required"})
     return JSONResponse(status_code=200, content=payload)
 
 

@@ -35,6 +35,11 @@ export interface WorkPlanEditRequest {
   readonly title?: string | null
   /** The opener's read-only verdict, read reactively (ownership conflict / revision view, the Flow's run lock). */
   readonly external?: () => 'read_only' | 'run_locked' | null
+  /**
+   * flowgate.v02test.0090: the server's sentence for refusing to change the card's documents (`project.document.update`),
+   * read reactively; null / absent: not refused. A sentence locks the window with it as the reason.
+   */
+  readonly refusal?: () => string | null
   /** Told after every successful save (the opener reads its line again). */
   readonly saved?: (revisionNo: number) => void
   /** flowgate.v02.0074 T#2: 'import' opens [JSON 가져오기] once the plan is read (once per request); absent or null: as before. */
@@ -45,8 +50,15 @@ export interface WorkPlanEditRequest {
   readonly submitted?: () => void
 }
 
-/** The opener's part of a request for a window opened from outside the Inspector's work plan line. */
-export type WorkPlanEditOpener = (docId: string, flowId: string) => Pick<WorkPlanEditRequest, 'external' | 'saved'>
+/**
+ * The opener's part of a request for a window opened from outside the Inspector's work plan line. `projectId` is the
+ * document's project when the caller knows it (the [업로드] path): the opener's `refusal` is that project's server answer
+ * for `project.document.update`, so the window opened from [업로드] locks for a view-only person as the card line's does.
+ */
+export type WorkPlanEditOpener = (docId: string, flowId: string, projectId?: string | null) => WorkPlanEditOpenerPart
+
+/** What an opener hands a window: its verdict, the server's refusal of changing the card's documents, and the save callback. */
+export type WorkPlanEditOpenerPart = Pick<WorkPlanEditRequest, 'external' | 'saved' | 'refusal'>
 
 export interface WorkPlanEditWindowState {
   readonly docId: string
@@ -138,14 +150,16 @@ export function setWorkPlanEditOpener(opener: WorkPlanEditOpener | null): () => 
 }
 
 /** The registered opener's part of a request (reactive); without one the window is run-locked and tells no one. */
-export function workPlanEditOpenerOf(docId: string, flowId: string): Pick<WorkPlanEditRequest, 'external' | 'saved'> {
+export function workPlanEditOpenerOf(docId: string, flowId: string, projectId: string | null = null): WorkPlanEditOpenerPart {
   const opener = editOpener.value
-  return opener ? opener(docId, flowId) : { external: () => 'run_locked' }
+  return opener ? opener(docId, flowId, projectId) : { external: () => 'run_locked' }
 }
 
 /**
  * flowgate.v02.0074 T#2 (D#1 §6.3) — opens the plan's window asking for [JSON 가져오기]. An open window is reused (its
- * external · saved · title kept, brought back and to the front); else one is opened with the registered opener's part.
+ * external · saved · title kept, brought back and to the front); else one is opened with the registered opener's part,
+ * which carries the server's refusal of `project.document.update` (flowgate.v02test.0090: a view-only person gets the
+ * window locked with the reason, as from the card line); an open window keeps the refusal it was opened with (reactive).
  */
 export function openWorkPlanEditImport(docId: string, context: { projectId: string | null; groupId: string | null }): void {
   if (!docId) return
@@ -155,7 +169,7 @@ export function openWorkPlanEditImport(docId: string, context: { projectId: stri
     return
   }
   const groupId = context.groupId ?? workPlanGroupOf(docId)
-  openWorkPlanEditWindow({ docId, projectId: context.projectId, groupId, initialMode: 'import', ...workPlanEditOpenerOf(docId, groupId ?? '') })
+  openWorkPlanEditWindow({ docId, projectId: context.projectId, groupId, initialMode: 'import', ...workPlanEditOpenerOf(docId, groupId ?? '', context.projectId) })
 }
 
 /** Removes the window (the window asked about unsaved edits first); its Step windows are told. */

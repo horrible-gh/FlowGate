@@ -7,7 +7,7 @@
     type="button"
     class="inspector-memo"
     :class="{ 'is-none': !latest && !unread, 'is-failed': failure !== null || unread }"
-    :disabled="busy"
+    :disabled="busy || refused !== null"
     :title="tip"
     :aria-label="tip"
     data-test="designer-inspector-memo"
@@ -20,6 +20,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { useDocumentRefusals } from '../../openDocument'
 import { useMemo } from './useMemo'
 
 const props = defineProps<{
@@ -31,14 +32,20 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.memo.${key}`
 
 const { latest, unread, busy, failure, open } = useMemo(() => props.target)
+// flowgate.v02test.0090: writing a first memo creates a document — the server's refusal of `project.document.create` turns the
+// button off with its sentence (opening an existing memo only reads, so it stays on).
+const refusals = useDocumentRefusals()
+const refused = computed(() => (latest.value ? null : refusals.create.value))
 
 const tip = computed(() => {
+  if (refused.value) return refused.value
   if (failure.value) return t(k(`failure.${failure.value}`))
   if (unread.value) return t(k('unread'))
   return t(k(latest.value ? 'open' : 'write'))
 })
 
 function onClick() {
+  if (refused.value !== null) return
   void open(t(k('title'), { title: props.target.title }))
 }
 </script>

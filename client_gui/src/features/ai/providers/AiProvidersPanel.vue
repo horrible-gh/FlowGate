@@ -220,7 +220,8 @@
       </section>
 
       <!-- v02test.0096 F96-3: the repeat limit and title AI cards that sat here moved to the 기타 설정 tab
-           (settings/AiOtherSettingsPanel.vue); this tab is the list only. -->
+           (settings/AiOtherSettingsPanel.vue); this tab is the list only. The administrator-only system cards
+           (shown on canManageSystem && !mineOnly: the repeat ceiling and the system title AI) are not kept (F96-11). -->
     </template>
 
     <AiProviderEditDialog
@@ -277,6 +278,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemCan } from '@shared/permissions/capabilities'
 import { useAiFavorites } from '@shared/aiFavorites'
 import {
   AiRequestError,
@@ -309,8 +311,9 @@ const emit = defineEmits<{ changed: [] }>()
 const props = defineProps<{ mineOnly?: boolean }>()
 
 const { t } = useI18n()
+// System AI is system-scope: the server's `system.settings.manage` (no `is_admin` here).
+const canManageSystem = computed(() => systemCan('system.settings.manage'))
 const { user } = useCurrentUser()
-const isAdmin = computed(() => !!user.value?.isAdmin)
 // 📌 pins (v02test.0096): stored apart from the AI list, per signed-in person; the composer's AI picker reads them.
 const favorites = useAiFavorites(() => user.value?.username)
 
@@ -357,7 +360,7 @@ function listOf(owner: AiOwnerScope): ProviderItem[] {
 }
 
 function canEdit(owner: AiOwnerScope): boolean {
-  return owner === 'user' || isAdmin.value
+  return owner === 'user' || canManageSystem.value
 }
 
 async function load(): Promise<void> {
@@ -368,7 +371,7 @@ async function load(): Promise<void> {
     // system AI first, then mine.
     void loadOrder()
     const [system, mine] = await Promise.all([
-      isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
+      canManageSystem.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
     ])
     systemList.value = system.providers ?? []
@@ -449,7 +452,7 @@ function dismissToast(id: string | number): void {
 
 // Owners the add dialog may pick; each list has its own PROVIDERS_MAX.
 const ownerChoices = computed<AiOwnerScope[]>(() => {
-  const owners: AiOwnerScope[] = isAdmin.value && !props.mineOnly ? ['system', 'user'] : ['user']
+  const owners: AiOwnerScope[] = canManageSystem.value && !props.mineOnly ? ['system', 'user'] : ['user']
   return owners.filter((owner) => listOf(owner).length < PROVIDERS_MAX)
 })
 const addBlocked = computed(() => ownerChoices.value.length === 0)
@@ -521,7 +524,7 @@ function pickMyDefault(row: Row): void {
 }
 
 function setDefaultProvider(providerId: string) {
-  if (saving.value || deleting.value || !isAdmin.value || systemDefaultId.value === providerId) return
+  if (saving.value || deleting.value || !canManageSystem.value || systemDefaultId.value === providerId) return
   void persist('system', systemList.value, providerId)
 }
 
@@ -554,7 +557,7 @@ async function persistOrder(next: string[]): Promise<void> {
     order.value = data.order ?? next
     if (data.system_order_changed) {
       // The fallback order moved with it: read the system list again so its own order is current.
-      const system = await (isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi()).catch(() => null)
+      const system = await (canManageSystem.value ? fetchSystemAi() : fetchVisibleSystemAi()).catch(() => null)
       if (system && !disposed) systemList.value = system.providers ?? systemList.value
       pushToast(t('gui.ai.owned.fallback_order_changed'), 'info', true)
     }

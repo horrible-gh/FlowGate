@@ -180,10 +180,12 @@ const target = computed(() => {
 })
 // No action before the conflicts answer says this is an ordinary merge, not a TR conflict;
 // readOnly / 403 / busy turn all three off, `직접 해결` included (0033-D §5.1).
-const actionable = computed(() => session.canAct.value && session.conflictActionable.value && !worktree?.state.busy)
+const actionable = computed(() => session.canMerge.value && session.conflictActionable.value && !worktree?.state.busy)
+// Conflict handling is under project.git.merge: the server's sentence when it sent one, else the generic wording.
+const mergeBlockedText = computed(() => session.state.mergeReason ?? t(session.state.readOnly ? 'gui.git.conflict.blocked.read_only' : 'gui.git.conflict.blocked.merge_read_only'))
 const blockedText = computed(() => {
   if (actionable.value) return null
-  if (session.state.readOnly) return t('gui.git.conflict.blocked.read_only')
+  if (session.state.mergeReadOnly) return mergeBlockedText.value
   if (session.state.forbidden) return t('gui.git.conflict.blocked.forbidden')
   if (session.state.busy) return t('gui.git.conflict.blocked.busy')
   if (session.pendingRow.value?.mergeId == null) return t('gui.git.conflict.blocked.missing_merge')

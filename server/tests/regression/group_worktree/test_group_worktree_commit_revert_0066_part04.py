@@ -72,7 +72,7 @@ def test_rbac_strict_body_and_request_size(repo, operation, monkeypatch):
     monkeypatch.setattr(git_routes, "_has_permission",
                         lambda user, perm, pid: permissions.append((perm, pid)) or False)
     assert repo.client.post(URL + "/" + operation, json=body).status_code == 403
-    assert permissions == [("project.settings.edit", "p_0669b")]
+    assert permissions == [("project.git.write", "p_0669b")]
     monkeypatch.setattr(git_routes, "_has_permission", lambda *args: True)
     invalid = [{}, {**body, "all": True}, {**body, "force": True}]
     invalid += [{"message": 3}] if operation == "commit" else [{"paths": []}, {"paths": [3]}]

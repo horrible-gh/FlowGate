@@ -131,7 +131,7 @@ def authorize(token, flow_id, run_hint=None):
     doc = documents.get_by_id(token.get("doc_ref"))
     if not doc or not _same(doc.get("group_id"), flow_id) or not _same(doc.get("project_id"), project):
         refuse()
-    if not has_permission(token.get("issued_to"), project, "perm_document_read"):
+    if not has_permission(token.get("issued_to"), project, "project.document.read"):
         refuse("flow_access_denied")
     return Scope(flow_id, project, token["issued_to"], token["token_id"], run["run_id"],
                  mapped["node_key"] if mapped else None, mapped["attempt_id"] if mapped else None,

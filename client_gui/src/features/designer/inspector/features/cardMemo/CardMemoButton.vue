@@ -24,6 +24,7 @@ import { cardMemoLockedReason } from './cardMemoModel'
 import { openCardMemoWindow } from './useCardMemoWindows'
 import { gateMemoPanel } from './useGateMemo'
 import { cardMemoCardOf } from './useCardMemo'
+import { useDocumentRefusals } from '../../openDocument'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -33,12 +34,15 @@ const { t } = useI18n()
 const k = (key: string) => `gui.inspector.cardMemo.${key}`
 
 const card = computed(() => cardMemoCardOf(props.target))
+// A new memo is a new document line: the server's `project.document.create` refusal turns the button off with its sentence.
+const refusals = useDocumentRefusals()
 
 /** Why a new memo cannot be written here, or null. */
 const reason = computed(() => {
   if (!card.value) return t(k('unsaved'))
   const locked = cardMemoLockedReason(props.target)
-  return locked ? t(k(locked)) : null
+  if (locked) return t(k(locked))
+  return refusals.create.value
 })
 
 function openNew() {

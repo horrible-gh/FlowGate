@@ -11,7 +11,7 @@ bundle adds the two read paths the earlier implementation promised on top of tha
     ``persisted`` so a client knows which source it got.
   * GET /ai-invoke/runs lists recent runs for a group or a project, merging
     still-running rows (memory) with finished ones (DB), newest first.
-  * Both routes now require `perm_document_read` on the run's project — before
+  * Both routes now require `project.document.read` on the run's project — before
     this bundle a persisted run_id alone was reachable by any signed-in user.
 
 Service-layer tests exercise `list_live_runs` / `list_runs` / `get_run_detail`

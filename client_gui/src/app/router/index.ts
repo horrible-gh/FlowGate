@@ -40,6 +40,12 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 // (e.g. /settings/project/p1 without a section), are replaced by the overview
 // (installSettingsAccessGuard). The settings menus list a screen only once its route below exists.
 // /settings/project without a project: ProjectSettingsLayout renders the hint, nothing renders here.
+//
+// v02test.0090: who opens a screen is decided by the server's capabilities (features/settings/access):
+// 팀 (manage/teams), 워크스페이스 (workspaces, workspaces/:workspaceId — one workspace goes straight to its
+// settings) and 프로젝트 › 멤버 (project/:projectId/members) are new; the Workspace screens are open
+// only on a server that reports capabilities (an older one keeps them retired, so they land on the
+// overview), and 프로젝트 / 시스템 screens open for whoever the server allows, not only administrators.
 const ProjectSelectionBody = defineComponent({ name: 'ProjectSelectionBody', render: () => null })
 
 const settingsRoute: RouteRecordRaw = {
@@ -67,6 +73,22 @@ const settingsRoute: RouteRecordRaw = {
       path: 'me/security',
       name: 'settings-me-security',
       component: () => import('@/features/settings/views/MeSecuritySettingsView.vue'),
+    },
+    {
+      path: 'manage/teams',
+      name: 'settings-manage-teams',
+      component: () => import('@/features/settings/views/TeamsView.vue'),
+    },
+    {
+      path: 'workspaces',
+      name: 'settings-workspaces',
+      component: () => import('@/features/settings/views/WorkspaceListView.vue'),
+    },
+    {
+      path: 'workspaces/:workspaceId',
+      name: 'settings-workspace-detail',
+      component: () => import('@/features/settings/views/WorkspaceDetailView.vue'),
+      props: true,
     },
     {
       path: 'system/general',
@@ -119,6 +141,11 @@ const settingsRoute: RouteRecordRaw = {
           path: ':projectId/git',
           name: 'settings-project-git',
           component: () => import('@/features/settings/views/ProjectGitReadView.vue'),
+        },
+        {
+          path: ':projectId/members',
+          name: 'settings-project-members',
+          component: () => import('@/features/settings/views/ProjectMembersView.vue'),
         },
       ],
     },

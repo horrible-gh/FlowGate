@@ -238,7 +238,7 @@ class AgentJobService:
         if not project or not project["is_active"]:
             return False
         from modules.flow_gate.rbac.permission_service import has_permission
-        return bool(user["is_admin"]) or has_permission(user_id, project_id, "perm_document_read")
+        return bool(user["is_admin"]) or has_permission(user_id, project_id, "project.document.read")
 
     def _job_allowed(self, row, agent_id):
         agent = self.s._fetch_one("SELECT owner_user_id FROM agents WHERE agent_id=?", [agent_id])

@@ -109,6 +109,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import Alert from '@/components/ui/Alert.vue'
 import Button from '@/components/ui/Button.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -118,27 +119,32 @@ import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import type { SubnavItem } from '../components/SettingsSubnav.vue'
+import { allows, reportsCapabilities, useAccessLists } from '../capabilities'
 import { useProjectList, type ReadError } from '../components/useProjectList'
 import type { SettingsIconName } from '../icons'
 import type { ProjectRow } from '../types'
 
-type Section = 'general' | 'paths' | 'git'
+type Section = 'general' | 'paths' | 'git' | 'members'
 
 const SECTIONS: { key: Section; icon: SettingsIconName; labelKey: string }[] = [
   { key: 'general', icon: 'folder', labelKey: 'gui.settings.project_nav.general' },
   { key: 'paths', icon: 'storage', labelKey: 'gui.settings.project_nav.paths' },
   { key: 'git', icon: 'code', labelKey: 'gui.settings.project_nav.git' },
+  { key: 'members', icon: 'users', labelKey: 'gui.settings.project_nav.members' },
 ]
 const SECTION_OF_ROUTE: Record<string, Section> = {
   'settings-project-general': 'general',
   'settings-project-paths': 'paths',
   'settings-project-git': 'git',
+  'settings-project-members': 'members',
 }
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { projects, loading, error, lost, load } = useProjectList()
+const { user } = useCurrentUser()
+const accessLists = useAccessLists()
 
 const includeInactive = ref(false)
 const removedId = ref<string | null>(null)
@@ -156,11 +162,24 @@ const inactiveCount = computed(() => projects.value?.filter((p) => !p.is_active)
 const options = computed(() =>
   (projects.value ?? []).filter((p) => includeInactive.value || p.is_active || p.project_id === selected.value?.project_id))
 
+// v02test.0090: the sections a project offers follow the capabilities the server sent for it — the
+// three settings pages need project.settings.read, 멤버 needs project.member.read. A server that sends
+// none (older) offers the three settings pages and no 멤버, as before.
+function sectionShown(projectId: string, key: Section): boolean {
+  if (!reportsCapabilities(user.value)) return key !== 'members'
+  const caps = accessLists.projects.value.find((p) => p.project_id === projectId)?.capabilities
+  return allows(caps, key === 'members' ? 'project.member.read' : 'project.settings.read')
+}
+
+function defaultSection(projectId: string): Section {
+  return SECTIONS.find((s) => sectionShown(projectId, s.key))?.key ?? 'general'
+}
+
 const sectionNav = computed<SubnavItem[]>(() => {
   const project = selected.value
   if (!project) return []
   const base = `/settings/project/${encodeURIComponent(project.project_id)}`
-  return SECTIONS.map((s) => ({ key: s.key, label: t(s.labelKey), icon: s.icon, to: `${base}/${s.key}` }))
+  return SECTIONS.filter((s) => sectionShown(project.project_id, s.key)).map((s) => ({ key: s.key, label: t(s.labelKey), icon: s.icon, to: `${base}/${s.key}` }))
 })
 
 function optionLabel(p: ProjectRow): string {
@@ -174,7 +193,8 @@ function errorTitle(err: ReadError): string {
 function choose(id: string) {
   if (!id || id === selected.value?.project_id) return
   removedId.value = null
-  void router.push(`/settings/project/${encodeURIComponent(id)}/${section.value ?? 'general'}`)
+  const keep = section.value && sectionShown(id, section.value) ? section.value : defaultSection(id)
+  void router.push(`/settings/project/${encodeURIComponent(id)}/${keep}`)
 }
 
 /** The list GET again; a selected project missing from the new list is cleared. */

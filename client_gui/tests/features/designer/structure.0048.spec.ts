@@ -156,7 +156,8 @@ const B9_TRANSPORT = /fetch\(|\baxios\b|@shared\/api\b/
 
 /** B11 — what features/document may import besides its own files: the shared transport. */
 // Shared request identity carries no feature dependency or state beyond this tab.
-const DOCUMENT_SHARED = /^@shared\/(api|apiErrors|canvasClient)$/
+// flowgate.v02test.0090: the parser of the server's capability answer (a document carries its own).
+const DOCUMENT_SHARED = /^@shared\/(api|apiErrors|canvasClient|permissions\/capabilities)$/
 /** B11 — the one line kind of features/document/index.ts (comments and blank lines aside). */
 const DOCUMENT_INDEX_LINE = /^export \* from '\.\/[A-Za-z/]+'$/
 

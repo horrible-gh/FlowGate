@@ -150,7 +150,7 @@ const QUIET_REASONS: readonly string[] = ['nothing_to_merge', 'no_target']
 const mergeReason = computed(() => {
   if (QUIET_REASONS.includes(reasons.value.merge.code ?? '')) return null
   const message = reasonMessage(reasons.value.merge)
-  return message ? t(message.key, message.params) : null
+  return message ? message.text ?? t(message.key, message.params) : null
 })
 
 // §3-4(4-1): the line the re-read judgment settled after a refused push.
@@ -163,7 +163,7 @@ const rejectLine = computed(() => {
 
 function tip(button: WorktreeButton, help: string | null): string | undefined {
   const message = reasonMessage(reasons.value[button])
-  if (message) return t(message.key, message.params)
+  if (message) return message.text ?? t(message.key, message.params)
   return help ? t(help) : undefined
 }
 

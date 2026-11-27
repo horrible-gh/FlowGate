@@ -212,8 +212,8 @@ def env(store, repo, monkeypatch):
     store._execute("INSERT OR IGNORE INTO roles (role_id, role_name, created_at, updated_at) "
                    "VALUES (?,?,?,?)", ["role_tr2", "TR2", now, now])
     for perm in ("document.create", "document.read", "document.update", "document.approve",
-                 "document.reject", "perm_document_create", "perm_document_read",
-                 "perm_document_update", "perm_document_approve"):
+                 "document.reject", "project.document.create", "project.document.read",
+                 "project.document.update", "project.document.approve"):
         store._execute("INSERT OR IGNORE INTO permissions (permission_id, permission_name, "
                        "created_at) VALUES (?,?,?)", [perm, perm, now])
         store._execute("INSERT OR IGNORE INTO role_permissions (role_id, permission_id) "
@@ -315,7 +315,7 @@ def auto_approved_t2(group: dict) -> str:
     created = routes.create_next_approved_core(
         project_id=PROJECT, group_id=group["group_id"], module=MODULE,
         prev_doc_id=group["root"], type_code="T2", actor_user_id=USER,
-        approver_perms={"document.approve", "document.update", "perm_document_create"})
+        approver_perms={"document.approve", "document.update", "project.document.create"})
     return created["doc_id"]
 
 

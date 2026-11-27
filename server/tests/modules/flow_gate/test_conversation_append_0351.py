@@ -35,7 +35,7 @@ def _client() -> TestClient:
     app = FastAPI()
     app.include_router(router_module.router)
     app.dependency_overrides[get_current_user] = lambda: {
-        "user_id": "u1", "username": "User"
+        "user_id": "u1", "username": "User", "is_admin": True
     }
     return TestClient(app)
 

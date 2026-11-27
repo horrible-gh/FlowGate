@@ -255,7 +255,7 @@ def granted(monkeypatch):
                         lambda token, flow_id, run_hint=None: state["calls"].append(flow_id) or (_Scope(), {"group_id": flow_id}))
     monkeypatch.setattr(chat_authz, "effective_write_kind", lambda token: state["kind"])
     monkeypatch.setattr(chat_authz, "claim_pending", lambda token: state["claim"])
-    monkeypatch.setattr(authz, "has_permission", lambda user, project, perm: state["perm"] and perm == "perm_document_update")
+    monkeypatch.setattr(authz, "has_permission", lambda user, project, perm: state["perm"] and perm == "project.document.update")
     return state
 
 

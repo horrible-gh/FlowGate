@@ -16,7 +16,7 @@
         </div>
       </div>
       <!-- System AI is evaluated by an administrator; everyone reads the results. -->
-      <div v-if="isAdmin" class="detail-actions">
+      <div v-if="canManageSystem" class="detail-actions">
         <Button variant="secondary" @click="setsOpen = true">{{ t('gui.ai.evaluation.sets_manage') }}</Button>
         <Button variant="primary" @click="openStart">＋ {{ t('gui.ai.evaluation.new_evaluation') }}</Button>
       </div>
@@ -73,7 +73,7 @@
             </span>
             <span class="date-cell">{{ formatDate(item.created_at) }}</span>
             <span class="row-actions" @click.stop>
-              <button v-if="isAdmin && isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
+              <button v-if="canManageSystem && isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
                 {{ t('gui.ai.evaluation.cancel') }}
               </button>
               <button
@@ -157,11 +157,11 @@
     <AiEvaluationDetailModal
       :open="!!detailId"
       :evaluation-id="detailId"
-      :can-review="isAdmin"
+      :can-review="canManageSystem"
       @close="detailId = null"
       @changed="onDetailChanged"
     />
-    <AiEvaluationSetsDialog v-if="isAdmin" :open="setsOpen" @close="setsOpen = false" @changed="(list) => (sets = list)" />
+    <AiEvaluationSetsDialog v-if="canManageSystem" :open="setsOpen" @close="setsOpen = false" @changed="(list) => (sets = list)" />
   </div>
 </template>
 
@@ -174,7 +174,7 @@ import IconButton from '@/components/ui/IconButton.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Select from '@/components/ui/Select.vue'
-import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemCan } from '@shared/permissions/capabilities'
 import AiIcon from '../AiIcon.vue'
 import { cancelEvaluation, fetchEvaluationHistory, listEvaluationSets, startEvaluation } from '../api'
 import {
@@ -197,8 +197,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ changed: [] }>()
 const { t, te, locale } = useI18n()
-const { user } = useCurrentUser()
-const isAdmin = computed(() => !!user.value?.isAdmin)
+// System AI evaluation is system-scope: the server's `system.settings.manage` (no `is_admin` here).
+const canManageSystem = computed(() => systemCan('system.settings.manage'))
 
 const targetId = ref('')
 const judgeId = ref('')
@@ -379,7 +379,7 @@ async function loadSets(): Promise<void> {
 }
 
 function openStart(): void {
-  if (!isAdmin.value) return
+  if (!canManageSystem.value) return
   startError.value = ''
   startOpen.value = true
   void loadSets()

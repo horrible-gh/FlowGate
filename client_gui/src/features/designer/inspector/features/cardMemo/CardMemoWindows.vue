@@ -77,8 +77,8 @@
           size="sm"
           variant="secondary"
           class="card-memo-window-delete"
-          :disabled="win.busy || locked(win) || win.gone || win.confirming"
-          :title="lockText(win)"
+          :disabled="win.busy || locked(win) || removeRefusal(win) !== null || win.gone || win.confirming"
+          :title="lockText(win) ?? removeRefusal(win) ?? undefined"
           data-test="card-memo-delete"
           @click="win.confirming = true"
         >{{ t(k('delete')) }}</Button>
@@ -89,7 +89,7 @@
           :disabled="locked(win) || win.gone || win.confirming"
           :title="lockText(win)"
           data-test="card-memo-window-edit"
-          @click="editCardMemoWindow(win)"
+          @click="startEdit(win)"
         >{{ t(k('edit')) }}</Button>
         <Button
           v-else
@@ -119,6 +119,7 @@ import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import Textarea from '../../../../../components/ui/Textarea.vue'
 import Toggle from '../../../../../components/ui/Toggle.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
+import { useDocumentRefusals } from '../../openDocument'
 import {
   CARD_MEMO_BODY_MAX,
   cardMemoBodyProblem,
@@ -141,14 +142,29 @@ const k = (key: string) => `gui.inspector.cardMemo.${key}`
 
 const card = computed(() => cardMemoCardOf(props.target))
 const lockedReason = computed(() => cardMemoLockedReason(props.target))
+// flowgate.v02test.0090: a memo follows the document permissions — a new memo is a create, a change an update, [삭제] a
+// delete. The server's refusal (its own sentence) locks the window of the selected card's project like a read-only view does.
+const refusals = useDocumentRefusals()
 
-/** The window's card cannot be changed here (the selected view is read only). */
+/** The server's sentence for refusing what this window would do (write: create / update), or null. */
+function writeRefusal(win: CardMemoWindow): string | null {
+  if (!sameCard(win.card, card.value)) return null
+  return win.memoId === null ? refusals.create.value : refusals.update.value
+}
+
+/** The window's card cannot be changed here (the selected view is read only, or the server refuses the write). */
 function locked(win: CardMemoWindow): boolean {
-  return sameCard(win.card, card.value) && lockedReason.value !== null
+  return sameCard(win.card, card.value) && (lockedReason.value !== null || writeRefusal(win) !== null)
 }
 
 function lockText(win: CardMemoWindow): string | undefined {
-  return locked(win) && lockedReason.value ? t(k(lockedReason.value)) : undefined
+  if (!locked(win)) return undefined
+  return lockedReason.value ? t(k(lockedReason.value)) : writeRefusal(win) ?? undefined
+}
+
+/** Why [삭제] alone is off: the server's refusal of `project.document.delete`. */
+function removeRefusal(win: CardMemoWindow): string | null {
+  return sameCard(win.card, card.value) ? refusals.remove.value : null
 }
 
 /** A written memo whose form says what it already says: nothing to save. */
@@ -185,6 +201,12 @@ function problemOf(draft: CardMemoDraft, sent?: { title?: string; body?: string 
   const body = !sent || 'body' in sent ? cardMemoBodyProblem(draft.body) : null
   if (body) return { field: 'body', key: `field.body.${body}`, message: '', reread: false }
   return null
+}
+
+/** [편집]: guarded too, so a press after the server's refusal came in changes nothing. */
+function startEdit(win: CardMemoWindow): void {
+  if (locked(win) || win.gone || win.confirming) return
+  editCardMemoWindow(win)
 }
 
 async function save(win: CardMemoWindow): Promise<void> {
@@ -227,7 +249,7 @@ async function save(win: CardMemoWindow): Promise<void> {
 }
 
 async function confirmDelete(win: CardMemoWindow): Promise<void> {
-  if (win.busy || win.memoId === null || locked(win)) return
+  if (win.busy || win.memoId === null || locked(win) || removeRefusal(win) !== null) return
   win.busy = true
   const answer = await cardMemoWriteRemove(win.card, win.memoId)
   win.busy = false

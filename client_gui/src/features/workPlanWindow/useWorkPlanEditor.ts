@@ -240,6 +240,8 @@ export interface WorkPlanEditorOptions {
   groupId(): string | null
   /** The opener's verdict: read only (ownership conflict / revision view) or the Flow's run lock; null = none. */
   external(): 'read_only' | 'run_locked' | null
+  /** flowgate.v02test.0090: the server's sentence for refusing the change (the plan locks with it), or null. */
+  refusal?(): string | null
   /** Child drafts / in-flight reserved uploads must survive refresh and must precede a parent PUT. */
   stepPending?(): boolean
   /** Told after every successful save. */
@@ -264,6 +266,8 @@ export interface WorkPlanEditor {
   /** A read again over the shown plan is on its way (every input waits for it). */
   readonly reloading: Readonly<Ref<boolean>>
   readonly lockReason: ComputedRef<WorkPlanLockReason | null>
+  /** The server's sentence behind a `permission` lock. */
+  readonly refusalText: ComputedRef<string | null>
   /** the plan is its run card's own (write / revise), or null. */
   readonly cardTarget: ComputedRef<WorkPlanCardTarget | null>
   /** flowgate.v02.0083 T#3: [제출] shown, usable now, and why not. */
@@ -404,6 +408,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
   const retrySubmission = ref(false)
   const submittedRevision = ref<string | null>(null)
 
+  const refusalText = computed<string | null>(() => options.refusal?.() ?? null)
   const lockInput = () => ({
     external: options.external(),
     aiRunning: aiRunning.value,
@@ -411,6 +416,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     editable: view.value?.editable ?? true,
     editLockedReason: view.value?.editLockedReason ?? null,
     refused: refused.value,
+    permission: refusalText.value !== null,
   })
   const lockReason = computed<WorkPlanLockReason | null>(() => {
     const own = card.value
@@ -1051,6 +1057,7 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     saving,
     reloading,
     lockReason,
+    refusalText,
     cardTarget,
     submitState,
     submitting,

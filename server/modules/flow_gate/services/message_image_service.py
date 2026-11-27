@@ -39,7 +39,7 @@ def context(flow_id, user, write=False):
     group = groups.get_by_id(flow_id)
     if not group:
         raise MessageImageError(404, "message_image_flow_not_found")
-    permission = "perm_document_update" if write else "perm_document_read"
+    permission = "project.document.update" if write else "project.document.read"
     if not attachments.has_permission(user, permission, group["project_id"]):
         raise MessageImageError(403, "message_image_forbidden")
     if write and process_service.is_group_disposed(flow_id):

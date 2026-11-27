@@ -8,6 +8,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '@/features/project/types'
+import { grantNewProject } from '../../helpers/capabilities'
 
 const fetchActiveProjects = vi.hoisted(() => vi.fn())
 const createProjectApi = vi.hoisted(() => vi.fn())
@@ -15,7 +16,6 @@ const createGroupApi = vi.hoisted(() => vi.fn())
 const createFlowApi = vi.hoisted(() => vi.fn())
 const suggestProjectSlug = vi.hoisted(() => vi.fn())
 const fetchProjectGroupTree = vi.hoisted(() => vi.fn())
-const currentUser = vi.hoisted(() => ({ value: null as { username: string; email: string | null; isAdmin: boolean } | null }))
 
 vi.mock('@/features/project/api', () => ({
   fetchActiveProjects,
@@ -25,7 +25,6 @@ vi.mock('@/features/project/api', () => ({
   suggestProjectSlug,
   fetchProjectGroupTree,
 }))
-vi.mock('@/core/auth/currentUser', () => ({ useCurrentUser: () => ({ user: currentUser }) }))
 
 import { useProjectStore } from '@/features/project/store'
 import ProjectDialog from '@/features/project/ProjectDialog.vue'
@@ -54,7 +53,7 @@ beforeEach(() => {
   createFlowApi.mockReset()
   suggestProjectSlug.mockReset().mockResolvedValue(null)
   fetchProjectGroupTree.mockReset().mockResolvedValue([])
-  currentUser.value = { username: 'member', email: null, isAdmin: false }
+  grantNewProject(false)
   localStorage.clear()
   setActivePinia(createPinia())
 })
@@ -146,7 +145,7 @@ describe('openDialog with the create request', () => {
   })
 
   it('ProjectDialog opens the create child for an admin and not for anyone else', async () => {
-    currentUser.value = { username: 'admin', email: null, isAdmin: true }
+    grantNewProject(true)
     const wrapper = mount(ProjectDialog, { attachTo: document.body })
     const store = useProjectStore()
     store.openDialog({ create: true })
@@ -166,7 +165,7 @@ describe('openDialog with the create request', () => {
     store.closeDialog()
     wrapper.unmount()
 
-    currentUser.value = { username: 'member', email: null, isAdmin: false }
+    grantNewProject(false)
     const member = mount(ProjectDialog, { attachTo: document.body })
     useProjectStore().openDialog({ create: true })
     await member.vm.$nextTick()

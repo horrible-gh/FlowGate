@@ -50,13 +50,13 @@ def test_permission_matrix_issued_to_not_create(l3,monkeypatch,via,permission):
     calls=[]
     def allowed(user,project,perm):
         calls.append((user,project,perm))
-        return perm=='perm_document_read' or (permission=='update_only' and perm=='perm_document_update') or (
-            permission=='create_only' and perm=='perm_document_create') or project=='l3verify-foreign'
+        return perm=='project.document.read' or (permission=='update_only' and perm=='project.document.update') or (
+            permission=='create_only' and perm=='project.document.create') or project=='l3verify-foreign'
     monkeypatch.setattr(guards,'has_permission',allowed)
     before=l3.observe()
     result=l3.request(via)
     assert result[0]==(200 if permission=='update_only' else 403),result
-    assert (USER,PROJECT,'perm_document_update') in calls
+    assert (USER,PROJECT,'project.document.update') in calls
     if permission!='update_only':
         assert code(result)=='permission_denied'
         unchanged(before,l3.observe())

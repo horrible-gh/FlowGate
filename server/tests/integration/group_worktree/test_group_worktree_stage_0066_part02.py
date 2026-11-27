@@ -133,7 +133,7 @@ def test_rbac_and_body_contract(repo, monkeypatch):
     monkeypatch.setattr(git_routes, "_has_permission", lambda user, perm, pid: calls.append((perm, pid)) or False)
     assert repo.client.get(URL + "/status").status_code == 403
     assert repo.client.post(URL + "/stage", json={"all": True}).status_code == 403
-    assert calls == [("project.settings.read", "p_0669b"), ("project.settings.edit", "p_0669b")]
+    assert calls == [("project.git.read", "p_0669b"), ("project.git.write", "p_0669b")]
     monkeypatch.setattr(git_routes, "_has_permission", lambda *args: True)
     for payload in ({}, {"paths": []}, {"all": True, "paths": []},
                     {"all": "true"}, {"all": True, "force": True}):

@@ -133,6 +133,10 @@ describe('features/git structure (flowgate.v02.0033)', () => {
       /^@\/core\/auth\/currentUser$/,
       /^@shared\/api$/,
       /^@shared\/gitErrors$/,
+      // flowgate.v02test.0090: the server's capabilities (read-only turns on a refused `project.git.write`).
+      /^@shared\/permissions\/capabilities$/,
+      // the server's refusal of `project.git.merge` as one sentence (shown where a merge / conflict control is off).
+      /^@shared\/permissions\/denial$/,
       /^@shared\/utils\/uuid$/,
     ]
     for (const file of FILES) {
