@@ -50,8 +50,11 @@ class SrcDeleteRequest(BaseModel):
 # heartbeats included). Only group_dispose stays async (it awaits the SSE
 # broadcast) and pushes its sync work through anyio.to_thread.
 @router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
-def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+def get_files_tree(project_id: str, request: Request, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
     """Return the file tree for the project."""
+    auth = _check_tree_auth(request, project_id, "project.document.read")
+    if isinstance(auth, JSONResponse):
+        return auth
     tree = process_service.get_file_tree(project_id)
     return {"data": tree}
 
@@ -238,7 +241,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     """Delete one file or directory from the base checkout, or from a group's worktree."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
-    if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
+    if not has_permission(auth["issued_to"], project_id, "project.document.delete"):
         return _err(403, "FORBIDDEN", "insufficient permission for this operation")
 
     group_id = (body.group_id or "").strip() or None
@@ -531,6 +534,7 @@ def prune_terminal_subtrees(nodes: list[dict]) -> list[dict]:
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
 def get_groups_tree(
     project_id: str,
+    request: Request,
     branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)"),
     include_terminal: bool = Query(
         True,
@@ -582,6 +586,10 @@ def get_groups_tree(
     parameter (explorer.ts fetchGroupTree) — see `_get_raw_tree_nodes`'s docstring for the
     freshness guarantee it carries.
     """
+    auth = _check_tree_auth(request, project_id, "project.group.read")
+    if isinstance(auth, JSONResponse):
+        return auth
+
     # Direct Python callers may leave FastAPI's Query object at its default.
     show_archived = include_archived is True
     if include_terminal:
@@ -695,11 +703,25 @@ def _rfc5987_encode(name: str) -> str:
     return "UTF-8''" + quote(name, safe="")
 
 
+def _check_tree_auth(request: Request, project_id: str, permission: str):
+    """Authorize each project-wide tree read before accessing data or in-flight work."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    # Worker/chat tokens are bound to a group; a project-wide tree would disclose
+    # sibling groups even inside their bound project. These are console endpoints.
+    if not auth.get("_is_user_jwt"):
+        return _err(403, "FORBIDDEN", "project-wide trees require a user session")
+    if not has_permission(auth["issued_to"], project_id, permission):
+        return _err(403, "FORBIDDEN", "insufficient permission for this operation")
+    return auth
+
+
 def _check_project_auth(request: Request, project_id: str):
     """Verify Bearer token and check project_id permission.
 
-    - Worker token: perm_document_read is checked inside verify_bearer() against the token's project.
-    - User JWT: after verify_bearer() validation, perm_document_read is additionally checked
+    - Worker token: project.document.read is checked inside verify_bearer() against the token's project.
+    - User JWT: after verify_bearer() validation, project.document.read is additionally checked
       against the requested project_id.
 
     Success: returns token_rec dict.
@@ -711,7 +733,7 @@ def _check_project_auth(request: Request, project_id: str):
 
     if token_rec.get("_is_user_jwt"):
         user_id: str = token_rec["issued_to"]
-        if not has_permission(user_id, project_id, "perm_document_read"):
+        if not has_permission(user_id, project_id, "project.document.read"):
             return _err(403, "FORBIDDEN", "insufficient permission for this operation")
 
     return token_rec
@@ -732,7 +754,7 @@ def download_file(
 
     Complies with P007 §2-1 spec.
     - Response: application/octet-stream, Content-Disposition RFC 5987 UTF-8 encoding.
-    - Auth: verify_bearer() + perm_document_read.
+    - Auth: verify_bearer() + project.document.read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
     - 0327 T0004: group_id downloads that group's worktree copy (NR0003 recommendation 3).
     """
@@ -779,7 +801,7 @@ def download_zip(
     - Reads the ZIP from SpooledTemporaryFile in chunks and sends via StreamingResponse.
     - Preserves directory structure; empty folders are not included.
     - Content-Disposition RFC 5987 UTF-8 encoding.
-    - Auth: verify_bearer() + perm_document_read.
+    - Auth: verify_bearer() + project.document.read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
     - 0327 T0004: group_id zips that group's worktree copy (NR0003 recommendation 3).
     """

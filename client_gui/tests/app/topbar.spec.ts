@@ -4,7 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@shared/i18n'
 import Topbar from '@/app/components/Topbar.vue'
 import { registerAppMessages } from '@/app/i18n'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../helpers/capabilities'
 
 registerAppMessages(i18n)
 

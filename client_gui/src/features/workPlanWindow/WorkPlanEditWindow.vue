@@ -181,6 +181,7 @@ const editor = useWorkPlanEditor({
   groupId,
   stepPending: () => workPlanStepEditsPending(props.win.docId),
   external: () => props.win.request.external?.() ?? null,
+  refusal: () => props.win.request.refusal?.() ?? null,
   saved: (revisionNo) => props.win.request.saved?.(revisionNo),
   stepOpen: (rowId) => workPlanStepEditOpen(props.win.docId, rowId),
   card: () => props.win.request.card?.() ?? null,

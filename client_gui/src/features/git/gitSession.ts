@@ -112,7 +112,12 @@ export interface GitDirtyView {
 export interface GitState {
   projectId: string | null
   flow: FlowRef | null
+  /** Write scope off (`project.git.write` refused, or a read-only Flow): commit, update, fetch, base changes. */
   readOnly: boolean
+  /** Merge scope off (`project.git.merge` refused, or a read-only Flow): merging, Push, conflict handling, review. */
+  mergeReadOnly: boolean
+  /** The server's sentence for the refused `project.git.merge` (null: none sent, the generic wording is used). */
+  mergeReason: string | null
   statusLoad: LoadStatus
   // Why the last git/status read failed: 403/404 and the like read as "unreadable".
   statusError: 'unreadable' | 'network' | null
@@ -180,13 +185,15 @@ export interface GitSession {
   readonly defaultProviderId: ComputedRef<string | null>
   /** the AI the picker starts on: last used here, else the project default, else the first. */
   readonly preferredProviderId: ComputedRef<string | null>
-  /** False while read-only, forbidden or another action runs. */
+  /** False while the write scope is read-only, forbidden or another action runs. */
   readonly canAct: ComputedRef<boolean>
+  /** Same for the merge scope (merge / Push / conflict handling / review): `project.git.merge`, not `project.git.write`. */
+  readonly canMerge: ComputedRef<boolean>
   /** The conflicts answer for the active merge is in and says an ordinary merge (§3.2, §3.7). */
   readonly conflictActionable: ComputedRef<boolean>
 
   setContext(projectId: string | null, flow: FlowRef | null): void
-  setReadOnly(readOnly: boolean): void
+  setReadOnly(readOnly: boolean, mergeReadOnly?: boolean, mergeReason?: string | null): void
   refresh(): Promise<void>
 
   startAi(card?: GitCardKey, providerId?: string | null): Promise<void>
@@ -291,6 +298,8 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     projectId: null,
     flow: null,
     readOnly: false,
+    mergeReadOnly: false,
+    mergeReason: null,
     statusLoad: 'idle',
     statusError: null,
     status: null,
@@ -463,6 +472,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
   })
 
   const canAct = computed(() => !state.readOnly && !state.forbidden && !state.busy)
+  const canMerge = computed(() => !state.mergeReadOnly && !state.forbidden && !state.busy)
 
   // ── Notices ────────────────────────────────────────────────────────────────────────
 
@@ -560,8 +570,12 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     void load({ forceConflicts: true })
   }
 
-  function setReadOnly(readOnly: boolean): void {
+  // Two scopes with their own server answers: `readOnly` is `project.git.write`, `mergeReadOnly` is `project.git.merge`.
+  // One argument sets both (a read-only Flow).
+  function setReadOnly(readOnly: boolean, mergeReadOnly: boolean = readOnly, mergeReason: string | null = null): void {
     state.readOnly = readOnly
+    state.mergeReadOnly = mergeReadOnly
+    state.mergeReason = mergeReadOnly ? mergeReason : null
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────────────
@@ -789,8 +803,9 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
   // ── Actions ────────────────────────────────────────────────────────────────────────
 
   // One action at a time; whatever happens, git/status is read again afterwards (§4.4).
-  async function act(card: GitCardKey, key: string, run: () => Promise<void>, after: { forceConflicts?: boolean } = {}): Promise<void> {
-    if (!canAct.value || disposed) return
+  // `scope`: which server permission the action is under — `write` (project.git.write) or `merge` (project.git.merge).
+  async function act(card: GitCardKey, key: string, run: () => Promise<void>, after: { forceConflicts?: boolean } = {}, scope: 'write' | 'merge' = 'write'): Promise<void> {
+    if (!(scope === 'merge' ? canMerge : canAct).value || disposed) return
     const myCtx = ctx
     state.busy = key
     dismissNotice(card)
@@ -830,7 +845,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
         }
         throw error
       }
-    })
+    }, {}, 'merge')
   }
 
   function abortMerge(): Promise<void> {
@@ -840,13 +855,13 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (groupCard.value !== 'review' && !conflictActionable.value) return Promise.resolve()
     const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
     // The conflicts answer is read again either way: a refused abort leaves "정리 실패" (`abort_failure`) on the session.
-    return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId), { forceConflicts: true })
+    return act(card, 'abort', () => src().abortMerge(target.groupId, target.mergeId), { forceConflicts: true }, 'merge')
   }
 
   async function abortOpenSession(target: ForceCleanupTarget): Promise<{ code: string; reason: string | null } | null> {
     // Not a notice code: the Git tab words it (GitQuickActions REASONS.git_busy).
     const busyCode = 'git_busy'
-    if (!canAct.value || disposed) return { code: busyCode, reason: null }
+    if (!canMerge.value || disposed) return { code: busyCode, reason: null }
     const myCtx = ctx
     let refused: { code: string; reason: string | null } | null = null
     state.busy = 'abort'
@@ -882,7 +897,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     let result: GitForceCleanupResult | null = null
     await act('conflict', 'force_cleanup', async () => {
       result = await run(wanted.groupId, wanted.mergeId)
-    }, { forceConflicts: true })
+    }, { forceConflicts: true }, 'merge')
     return result
   }
 
@@ -912,7 +927,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     await act('window', 'resolve', async () => {
       await resolve(target.groupId, target.mergeId, path, chunks)
       ok = true
-    }, { forceConflicts: true })
+    }, { forceConflicts: true }, 'merge')
     return ok
   }
 
@@ -920,14 +935,14 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
   // existing abort. The decision cancel and the new approval stay with the gate (and the person).
   async function abortForReapproval(): Promise<boolean> {
     const target = activeConflict()
-    if (!target || !canAct.value || disposed) return false
+    if (!target || !canMerge.value || disposed) return false
     if (groupCard.value !== 'review' && !conflictActionable.value) return false
     const card: GitCardKey = groupCard.value === 'review' ? 'review' : 'conflict'
     let ok = false
     await act(card, 'reapprove', async () => {
       await src().abortMerge(target.groupId, target.mergeId)
       ok = true
-    }, { forceConflicts: true })
+    }, { forceConflicts: true }, 'merge')
     return ok
   }
 
@@ -943,7 +958,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
         if (!err.network && (err.status === 404 || err.status === 409)) return
         throw error
       }
-    }, { forceConflicts: true })
+    }, { forceConflicts: true }, 'merge')
   }
 
   function approve(): Promise<void> {
@@ -980,7 +995,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
       // re_review / reconciling: the review re-read carries the new state, its reason line
       // and (re_review) the new fingerprint. A re_review after a rejected push is NOT a
       // remote-apply failure record (§3.6).
-    })
+    }, {}, 'merge')
   }
 
   function openReject(open: boolean): void {
@@ -1011,7 +1026,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
       if (result.resolverRunId) {
         state.ai = { active: true, runId: result.resolverRunId, status: 'running', actionScope: 'resolve_conflict' }
       }
-    }, { forceConflicts: true })
+    }, { forceConflicts: true }, 'merge')
   }
 
   function targetOf(request: GitApplyRequest): string {
@@ -1051,7 +1066,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
       action: hold.action,
       targetBranch: hold.requestTargetBranch,
     }
-    return act('hold', 'apply', () => runApply(request))
+    return act('hold', 'apply', () => runApply(request), {}, 'merge')
   }
 
   function retryApply(): Promise<void> {
@@ -1059,7 +1074,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     if (!failure) return Promise.resolve()
     // The stored request object itself, never a request rebuilt from today's state.
     const request = failure.request as GitApplyRequest
-    return act('push', 'retry', () => runApply(request))
+    return act('push', 'retry', () => runApply(request), {}, 'merge')
   }
 
   function setCommitMessage(message: string): void {
@@ -1197,6 +1212,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     defaultProviderId,
     preferredProviderId,
     canAct,
+    canMerge,
     conflictActionable,
     setContext,
     setReadOnly,

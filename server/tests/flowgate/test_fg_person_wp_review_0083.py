@@ -278,7 +278,7 @@ def _wp_body(note):
 def _author_edits(env):
     """The author (u_lee) may edit the Flow's documents through the inbox (its RBAC, run for real)."""
     _opus(env)
-    _grant("u_lee", "perm_document_read", "perm_document_create", "perm_document_update")
+    _grant("u_lee", "project.document.read", "project.document.create", "project.document.update")
 
 
 def _edit(doc, note, reason="rejected", user="u_lee"):

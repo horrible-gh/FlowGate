@@ -1,13 +1,7 @@
 <template>
-  <SettingsShell scope="workspace">
+  <SettingsShell scope="manage">
     <template #nav>
-      <SettingsSubnav
-        :title="t('gui.settings.scope.workspace')"
-        head-icon="grid"
-        head-tone="teal"
-        :items="[{ key: 'list', label: t('gui.settings.workspaces.list'), icon: 'grid', to: '/settings/workspaces' }]"
-        active="list"
-      />
+      <SettingsSubnav :items="manageNav" active="workspace" />
     </template>
 
     <section class="fgs-panel workspace-list">
@@ -89,7 +83,7 @@
                   {{ t('gui.settings.workspaces.open') }} <SettingsIcon name="chev" size="sm" />
                 </RouterLink>
                 <button
-                  v-if="ws.can_admin"
+                  v-if="canAdmin(ws)"
                   type="button"
                   class="fgs-iconbtn"
                   :title="t('gui.settings.more')"
@@ -212,7 +206,9 @@ import { useCurrentUser } from '@/core/auth/currentUser'
 import SettingsIcon from '../SettingsIcon.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
+import { useManageNav } from '../components/manageNav'
 import { useSettingsToasts } from '../components/useSettingsToasts'
+import { allows, reportsCapabilities } from '../capabilities'
 import { createWorkspace, deleteWorkspace, listSystemUsers, listWorkspaces, updateWorkspace } from '../api'
 import { initials } from '../format'
 import type { SystemUser, WorkspaceSummary } from '../types'
@@ -220,6 +216,7 @@ import type { SystemUser, WorkspaceSummary } from '../types'
 const { t } = useI18n()
 const router = useRouter()
 const { user } = useCurrentUser()
+const manageNav = useManageNav()
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
 
 const workspaces = ref<WorkspaceSummary[]>([])
@@ -238,6 +235,11 @@ async function load() {
     workspaces.value = result.workspaces
     canCreate.value = result.can_create
     loaded.value = true
+    // v02test.0090 Q1-B: with one workspace (and nothing more to create) the list is skipped: its
+    // settings are the whole screen.
+    if (reportsCapabilities(user.value) && result.workspaces.length === 1 && !result.can_create) {
+      await router.replace(`/settings/workspaces/${encodeURIComponent(result.workspaces[0].workspace_id)}`)
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -255,6 +257,11 @@ const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
   return workspaces.value.filter((w) => (!q || w.name.toLowerCase().includes(q)) && (!stateFilter.value || w.status === stateFilter.value))
 })
+
+/** The server's capability for this workspace; an older server's flag stands in. */
+function canAdmin(ws: WorkspaceSummary): boolean {
+  return ws.capabilities ? allows(ws.capabilities, 'workspace.admin') : ws.can_admin
+}
 
 function aiLabel(ws: WorkspaceSummary): string {
   if (ws.status === 'disabled') return '—'

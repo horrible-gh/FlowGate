@@ -38,7 +38,7 @@ from flowgate.conversation import legacy_adapter
 
 logger = logging.getLogger(__name__)
 
-UPDATE_PERMISSION = "perm_document_update"
+UPDATE_PERMISSION = "project.document.update"
 META_KEY = "chat_auto_title"
 OWED, CLAIMED, DONE, FAILED, MANUAL = "owed", "claimed", "done", "failed", "manual"
 TITLE_MAX_CHARS = 30  # Shared names must fit graph_node_title_states (1..30).

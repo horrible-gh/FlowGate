@@ -23,6 +23,9 @@ def _body(resp):
 
 def _wire(monkeypatch):
     monkeypatch.setattr(module_routes, "verify_bearer", lambda req: {"user_id": "tester"})
+    # The target's project check is covered by test_server_access_guard_v02test_0090.
+    monkeypatch.setattr(module_routes, "_doc_project", lambda did: "proj")
+    monkeypatch.setattr(module_routes, "can_read_project", lambda auth, project: True)
     monkeypatch.setattr(db_wfseq, "get_sequence_by_doc_id", lambda did: {"id": 7})
     monkeypatch.setattr(
         db_wfseq, "get_effective_head", lambda sid: {"id": 5, "type": "TR"}

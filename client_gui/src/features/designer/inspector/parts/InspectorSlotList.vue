@@ -89,21 +89,23 @@
           variant="secondary"
           class="inspector-slot-action"
           :class="`is-${action.state}`"
-          :title="actionLabel(action)"
+          :title="actionRefusal(action) ?? actionLabel(action)"
+          :disabled="actionRefusal(action) !== null"
           data-test="inspector-slot-action"
           :data-action="action.key"
           :data-state="action.state"
-          @click="emit('action', line, action.key)"
+          @click="act(line, action.key)"
         >{{ actionLabel(action) }}</Button>
       </template>
       <IconButton
         v-if="decisionOf(line).visible && editable && line.open === 'enabled'"
         :label="t('gui.designer.inspector.slot.edit')"
-        :title="t('gui.designer.inspector.slot.edit')"
+        :title="editRefusal ?? t('gui.designer.inspector.slot.edit')"
+        :disabled="editRefusal !== null"
         variant="secondary"
         size="sm"
         data-test="inspector-slot-edit"
-        @click="emit('edit', line)"
+        @click="edit(line)"
       >✎</IconButton>
       <InspectorHistoryButton
         v-if="line.open === 'enabled' && line.id && line.history !== false"
@@ -123,11 +125,12 @@
       <IconButton
         v-if="!decisionOf(line).visible && editable && line.open === 'enabled'"
         :label="t('gui.designer.inspector.slot.edit')"
-        :title="t('gui.designer.inspector.slot.edit')"
+        :title="editRefusal ?? t('gui.designer.inspector.slot.edit')"
+        :disabled="editRefusal !== null"
         variant="secondary"
         size="sm"
         data-test="inspector-slot-edit"
-        @click="emit('edit', line)"
+        @click="edit(line)"
       >✎</IconButton>
       <InspectorDocumentDecision v-if="decisionOf(line).visible" :name="line.name"
         :action="decisionOf(line).action" :disabled="decisionOf(line).disabled" :reason="decisionOf(line).reason"
@@ -216,8 +219,15 @@ const props = withDefaults(
     decisions?: SlotDecisions | null
     /** ✎ (open straight in the editor) on every line that opens. */
     editable?: boolean
+    /**
+     * flowgate.v02test.0090 — the server's sentence for refusing to edit the card's documents (`project.document.update`), or
+     * null: ✎ is shown disabled with it as its tooltip, and a document without a body opens in the viewer instead of the editor.
+     */
+    editRefusal?: string | null
+    /** The server's sentence for refusing to write a new line document ([작성]), or null: the button is disabled with it. */
+    writeRefusal?: string | null
   }>(),
-  { editable: false },
+  { editable: false, editRefusal: null, writeRefusal: null },
 )
 
 const emit = defineEmits<{
@@ -259,10 +269,26 @@ function hasDocument(line: InspectorSlotView): boolean {
   return (line.kind ?? 'document') === 'document' && !!line.id && !line.empty && !line.nav
 }
 
-/** Opening a line: a line whose document has no body yet opens straight in its editor. */
+/** Opening a line: a line whose document has no body yet opens straight in its editor (unless editing is refused). */
 function open(line: InspectorSlotView) {
-  if (line.blank && !line.empty) emit('edit', line)
+  if (line.blank && !line.empty && props.editRefusal === null) emit('edit', line)
   else emit('open', line)
+}
+
+/** ✎ pressed (also guarded here: a stale press while the server refuses editing sends nothing). */
+function edit(line: InspectorSlotView) {
+  if (props.editRefusal !== null) return
+  emit('edit', line)
+}
+
+/** The refusal behind a row action: only [작성] writes a document. */
+function actionRefusal(action: SlotAction): string | null {
+  return action.key === 'write' ? props.writeRefusal : null
+}
+
+function act(line: InspectorSlotView, key: SlotActionKey) {
+  if (key === 'write' && props.writeRefusal !== null) return
+  emit('action', line, key)
 }
 
 /** A row action's words (the common wording; a running one says it runs). */

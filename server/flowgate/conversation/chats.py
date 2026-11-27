@@ -6,7 +6,7 @@ workflow: no effective-head check, no sequence result slot, no parent auto-close
 AI run's group lease (the lease middleware exempts this route explicitly). Filling a
 pending CH head of a workflow stays the job of ``POST /documents/next-empty``.
 
-Decision order: input -> ``perm_document_create`` -> project -> group ->
+Decision order: input -> ``project.document.create`` -> project -> group ->
 group belongs to project -> group not disposed -> number reservation -> document file +
 row -> CH auto-complete (approved) -> 201.
 
@@ -38,7 +38,7 @@ from flowgate.conversation import legacy_adapter
 logger = logging.getLogger(__name__)
 
 REQUIRED_FIELDS = ("project_id", "group_id", "title")
-CREATE_PERMISSION = "perm_document_create"
+CREATE_PERMISSION = "project.document.create"
 CLIENT_REQUEST_FIELD = "client_request_id"
 CREATE_REQUEST_META_KEY = "chat_create_request"
 ERR_CONVERSATION_CREATE_IN_PROGRESS = "conversation_create_in_progress"
@@ -51,7 +51,7 @@ _intent_locks: dict[str, list] = {}
 
 
 class ChatCreateForbidden(Exception):
-    """No ``perm_document_create``; answered with the existing RBAC 403 response."""
+    """No ``project.document.create``; answered with the existing RBAC 403 response."""
 
 
 def _invalid(message: str) -> c.ConversationError:

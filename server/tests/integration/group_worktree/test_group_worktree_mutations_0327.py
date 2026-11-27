@@ -299,7 +299,7 @@ def _delete_client(monkeypatch, tmp_path, *, registered=True, can_delete=True,
     monkeypatch.setattr(git_service, "base_src_root", lambda *a, **k: base)
     monkeypatch.setattr(git_service, "base_checkout_dirty_status", lambda _pid: {"dirty": False, "files": []})
     monkeypatch.setattr(tree_routes, "verify_bearer", lambda _r: {"issued_to": "u1", "_is_user_jwt": True})
-    monkeypatch.setattr(tree_routes, "has_permission", lambda _u, _p, perm: can_delete or perm != "perm_document_delete")
+    monkeypatch.setattr(tree_routes, "has_permission", lambda _u, _p, perm: can_delete or perm != "project.document.delete")
     return TestClient(app), wt, base
 
 
@@ -362,7 +362,7 @@ def test_group_delete_for_another_projects_group_is_404(monkeypatch, tmp_path):
 
 
 def test_group_delete_still_requires_the_delete_permission(monkeypatch, tmp_path):
-    """Opening group deletes must not loosen the gate — perm_document_delete first."""
+    """Opening group deletes must not loosen the gate — project.document.delete first."""
     client, wt, _base = _delete_client(monkeypatch, tmp_path, can_delete=False)
     (wt / "keep.md").write_text("k", encoding="utf-8")
 

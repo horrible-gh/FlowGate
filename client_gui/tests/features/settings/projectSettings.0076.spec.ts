@@ -5,7 +5,7 @@ import { RouterView } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../../helpers/capabilities'
 import { SESSION_CHECK_MS } from '@/features/settings/components/useLiveRequests'
 import ProjectGitReadView from '@/features/settings/views/ProjectGitReadView.vue'
 import ProjectPathsReadView from '@/features/settings/views/ProjectPathsReadView.vue'
@@ -62,6 +62,8 @@ vi.mock('@shared/api', async (importOriginal) => {
     const query = method === 'GET' && params && Object.keys(params).length
       ? `?${new URLSearchParams(params as Record<string, string>).toString()}` : ''
     const call = `${method} ${path}${query}`
+    // The settings menu asks which projects the person can see (their capabilities) — not a settings request.
+    if (call === 'GET /api/v1/projects?status=active') return Promise.resolve({ data: { projects: [] } })
     net.requests.push(call)
     if (!net.hold.has(call)) return Promise.resolve().then(() => answer(call))
     return new Promise((resolve, reject) => {

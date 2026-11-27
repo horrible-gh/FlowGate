@@ -180,10 +180,10 @@ def _maybe_dry_run(
 
 # new action: doc_type → required permission
 _NEW_PERM_MAP: dict[str, str] = {
-    "AC": "perm_document_approve",
-    "RJ": "perm_document_reject",
+    "AC": "project.document.approve",
+    "RJ": "project.document.reject",
 }
-_NEW_PERM_DEFAULT = "perm_document_create"
+_NEW_PERM_DEFAULT = "project.document.create"
 
 
 def _permission_for_new(doc_type: str) -> str:
@@ -2874,7 +2874,7 @@ def _handle_failure_origin_review(
     if binding_failure is not None:
         return binding_failure
     actor_user_id = token_rec["issued_to"]
-    if not has_permission(actor_user_id, project, "perm_document_update"):
+    if not has_permission(actor_user_id, project, "project.document.update"):
         return _permission_denied("Insufficient permissions for this operation")
 
     doc = db_docs.get_by_id(doc_id)
@@ -2957,7 +2957,7 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     # here re-created the 0086 trap — live RBAC tables are unpopulated, so the admin
     # issuer's chain token 403'd at the very entrance it was minted for (the earlier change).
     if not test_run_service.token_can_run_tests(token_rec["issued_to"], project):
-        return _permission_denied("Permission denied: perm_test_run required")
+        return _permission_denied("Permission denied: project.run required")
 
     doc = db_docs.get_by_id(str(doc_id))
     if doc is None:
@@ -3512,7 +3512,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     actor_user_id: str = token_rec["issued_to"]
 
     # ── Step 4: Permission ──
-    if not has_permission(actor_user_id, project, "perm_document_update"):
+    if not has_permission(actor_user_id, project, "project.document.update"):
         return _permission_denied("Insufficient permissions for this operation")
 
     # ── Step 5: Referential integrity ──

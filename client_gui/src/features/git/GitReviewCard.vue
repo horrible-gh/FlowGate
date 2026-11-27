@@ -103,12 +103,12 @@ const settling = computed(() => reviewState.value === 'applying' || reviewState.
 const letterOf = (status: string): GitFileLetter | null => LETTERS.find((l) => l === status.slice(0, 1)) ?? null
 
 const canApprove = computed(
-  () => session.canAct.value && !settling.value && !!review.value?.canApprove && !!review.value.fingerprint,
+  () => session.canMerge.value && !settling.value && !!review.value?.canApprove && !!review.value.fingerprint,
 )
 const canReject = computed(
-  () => session.canAct.value && !settling.value && !!review.value?.canReject && !!session.defaultProviderId.value,
+  () => session.canMerge.value && !settling.value && !!review.value?.canReject && !!session.defaultProviderId.value,
 )
-const canAbort = computed(() => session.canAct.value && !settling.value)
+const canAbort = computed(() => session.canMerge.value && !settling.value)
 
 // Fixed text per reconciliation kind; the server's last_error is never shown (§3.7).
 const stateLine = computed(() => {

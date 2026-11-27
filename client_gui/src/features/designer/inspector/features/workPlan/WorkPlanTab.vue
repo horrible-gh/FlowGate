@@ -17,7 +17,7 @@
        no dashed block under the line — a plan with no started cards shows no progress line
        (the block was not a drop target; the the earlier implementation placeholder is gone). -->
   <section class="inspector-work-plan" data-test="inspector-work-plan" :data-status="status" :data-has-document="hasDocument ? 'true' : 'false'">
-    <InspectorSlotList :decisions="documentDecisions" :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
+    <InspectorSlotList :write-refusal="refusals.update.value ?? refusals.create.value" :decisions="documentDecisions" :slots="lines" @open="openLine" @history="historyLine" @action="actionLine">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" /></template>
     </InspectorSlotList>
@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { useCardDocumentDecisions } from '../../openDocument'
+import { useCardDocumentDecisions, useDocumentRefusals } from '../../openDocument'
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
@@ -49,6 +49,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+// The server's refusals of changing the card's documents: [작성] goes off with the reason; the plan window opens locked with it.
+const refusals = useDocumentRefusals()
 
 const host = inject(INSPECTOR_HOST, null)
 
@@ -63,7 +65,7 @@ const hasDocument = computed(() => props.target.docId !== null)
  * Flow is: ownership conflict, revision view, its run lock).
  */
 function openLine(line: InspectorSlotView) {
-  if (line.id) openWorkPlan(props.target, line.id, host)
+  if (line.id) openWorkPlan(props.target, line.id, host, () => refusals.update.value)
 }
 
 /** The history button: the line's review·rejection history window. */

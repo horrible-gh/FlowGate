@@ -23,8 +23,8 @@ os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "pepper_test"
 os.environ["FLOWGATE_TOKEN_PEPPER_pepper_test"] = "test_pepper_secret_value"
 
 _SERVER_DIR = Path(__file__).resolve().parents[4]
-_SCHEMA_001 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "001_flowgate_schema.sql"
-_SCHEMA_002 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "002_auth_columns.sql"
+_SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
+_SCHEMA_FILES = {"001", "002", "136", "214"}
 
 sys.path.insert(0, str(_SERVER_DIR))
 
@@ -39,11 +39,13 @@ def db_conn():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(_SCHEMA_001.read_text(encoding="utf-8"))
-    try:
-        conn.executescript(_SCHEMA_002.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
+    # the base schema plus the workspace (136) and fixed-role (214) deploy SQL: the roles and their
+    # permissions come from the deploy SQL only
+    for sql_file in sorted(p for p in _SCHEMA_DIR.glob("*.sql") if p.name.split("_", 1)[0] in _SCHEMA_FILES):
+        try:
+            conn.executescript(sql_file.read_text(encoding="utf-8"))
+        except sqlite3.Error:
+            pass
 
     # Test project
     conn.execute(
@@ -68,15 +70,6 @@ def db_conn():
         "INSERT INTO groups (group_id, project_id, title, created_at, updated_at) "
         "VALUES ('test-project-__ALL__-0001', 'test-project', 'All Group', datetime('now'), datetime('now'))"
     )
-
-    # Set permissions if the role_permissions table exists
-    try:
-        conn.execute(
-            "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) "
-            "VALUES ('role_manager', 'perm_document_read')"
-        )
-    except sqlite3.OperationalError:
-        pass  # Table doesn't exist, that's OK
 
     conn.commit()
     return conn

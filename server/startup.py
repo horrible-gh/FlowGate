@@ -24,6 +24,32 @@ def preload_singletons():
         logger.warning(f"[startup] test-run worker bootstrap failed: {exc}")
 
 
+def migrate_rbac_0090():
+    """Move the old grants into the fixed-role model once (rbac/migration_0090.py).
+
+    Runs right after the singletons, before any other start step judges a permission. A
+    completed, failed or interrupted migration does not run again here: a failure is only
+    retried when a person runs `tools/rbac_migrate.py --retry`. Until the record says
+    completed, the server refuses every non-administrator request, so a failure is logged as
+    an error and the server still starts for administrators.
+    """
+    try:
+        from modules.flow_gate.rbac import migration_0090
+
+        result = migration_0090.run()
+        if result.get("status") == "completed" and not result.get("skipped"):
+            logger.info(f"[startup] RBAC grant migration completed: {result.get('categories')}")
+        elif result.get("claim_lost"):
+            # another server on the same database took the record first and runs (or ran) it
+            logger.info(f"[startup] RBAC grant migration is run by another server ({result.get('status')})")
+        elif result.get("status") != "completed":
+            logger.error(f"[startup] RBAC grant migration is {result.get('status')}: non-administrator "
+                         f"requests are refused until `tools/rbac_migrate.py --retry` completes it "
+                         f"({result.get('error') or 'see --status'})")
+    except Exception as exc:
+        logger.error(f"[startup] RBAC grant migration could not run: {exc}")
+
+
 def recover_ai_invoke_leases():
     """task 1: clear AI-run group leases orphaned by a restart.
 
@@ -538,6 +564,7 @@ def run_all():
     check_runtime_dependencies()
     record_deployment()
     preload_singletons()
+    migrate_rbac_0090()
     recover_ai_invoke_leases()
     start_scratch_sweeps()           # AI-run -> Token -> purge, never awaited here
     register_server_instance()

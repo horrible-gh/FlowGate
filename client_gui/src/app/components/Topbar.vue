@@ -51,6 +51,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemRole } from '@shared/permissions/capabilities'
 import { PRODUCT_NAME } from '@shared/productName'
 import IconButton from '@/components/ui/IconButton.vue'
 import Input from '@/components/ui/Input.vue'
@@ -61,7 +62,8 @@ const { user } = useCurrentUser()
 
 const initial = computed(() => user.value?.username.charAt(0).toUpperCase() ?? '')
 const roleLabel = computed(() =>
-  user.value?.isAdmin ? t('gui.topbar.user_role_admin') : t('gui.topbar.user_role_member'),
+  // A label for the role the server reported in /auth/me's capabilities — not a permission check.
+  systemRole() === 'system_admin' ? t('gui.topbar.user_role_admin') : t('gui.topbar.user_role_member'),
 )
 </script>
 

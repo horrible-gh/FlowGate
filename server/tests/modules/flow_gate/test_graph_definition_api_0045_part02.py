@@ -36,7 +36,7 @@ from tests.modules.flow_gate.test_graph_definition_api_0045 import (
 )
 
 def test_draft_write_needs_edit_permission_and_a_user_token(env):
-    env["denied"].add(("u_kim", "perm_document_update"))
+    env["denied"].add(("u_kim", "project.document.update"))
     assert put_draft(env, F51, 0, [], []).json()["error"]["code"] == "flow_access_denied"
     worker = env["client"].put(f"/api/v1/flows/{F51}/graph/draft", json={"draft_version": 0, "nodes": [], "edges": []},
                                headers={"Authorization": "Bearer worker"})

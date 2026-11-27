@@ -40,11 +40,11 @@
           >✎</IconButton>
           <IconButton
             :label="t(k('delete'))"
-            :title="lockText ?? t(k('delete'))"
+            :title="removeText ?? t(k('delete'))"
             variant="secondary"
             size="sm"
             class="inspector-card-memo-delete"
-            :disabled="lockText !== null || removing === memo.memoId"
+            :disabled="removeText !== null || removing === memo.memoId"
             data-test="card-memo-remove"
             @click="removeAsked = memo"
           >
@@ -82,6 +82,7 @@ import type { InspectorTarget } from '../../inspectorTarget'
 import { cardMemoTitlePreview, type CardMemoFacts, type CardMemoFailure } from './cardMemoModel'
 import { closeCardMemoWindowsOf, openCardMemoWindow } from './useCardMemoWindows'
 import { useCardMemo } from './useCardMemo'
+import { useDocumentRefusals } from '../../openDocument'
 
 const props = defineProps<{
   target: InspectorTarget
@@ -92,8 +93,18 @@ const k = (key: string) => `gui.inspector.cardMemo.${key}`
 
 const { card, memos, status, readFailure, lockedReason, reload, remove } = useCardMemo(() => props.target)
 
-/** Why ✎ and the trash icon cannot be used here (the view is read only), or null. */
-const lockText = computed(() => (lockedReason.value ? t(k(lockedReason.value)) : null))
+const refusals = useDocumentRefusals()
+/**
+ * Why ✎ and the trash icon cannot be used here, or null: the view is read only, or the server refuses changing the
+ * card's documents (its own sentence) — a memo follows the document permissions, so a person who may not edit
+ * (update) or delete (delete) is refused here with the server's reason.
+ */
+const lockText = computed(() => {
+  if (lockedReason.value === 'locked.permission') return refusals.update.value ?? t(k(lockedReason.value))
+  return lockedReason.value ? t(k(lockedReason.value)) : null
+})
+/** Why the trash icon alone is off: the server's refusal of `project.document.delete`, when ✎ is not locked. */
+const removeText = computed(() => lockText.value ?? refusals.remove.value)
 
 /** The memo whose delete waits for the confirm, the one being deleted, and the last refusal. */
 const removeAsked = shallowRef<CardMemoFacts | null>(null)
@@ -117,7 +128,7 @@ async function confirmRemove(): Promise<void> {
   const memo = removeAsked.value
   const current = card.value
   removeAsked.value = null
-  if (!memo || !current || lockText.value) return
+  if (!memo || !current || removeText.value) return
   removing.value = memo.memoId
   removeFailure.value = null
   const answer = await remove(current, memo.memoId)

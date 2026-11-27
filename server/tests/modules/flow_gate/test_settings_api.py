@@ -32,37 +32,6 @@ def test_db_path(migrated_sqlite_db):
         INSERT OR IGNORE INTO roles(role_id,role_name,is_system,created_at,updated_at)
             VALUES('role_admin','Administrator',1,datetime('now'),datetime('now')),
                   ('role_manager','Manager',1,datetime('now'),datetime('now'));
-        INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at)
-            VALUES
-                ('system.settings.manage','System settings management',datetime('now')),
-                ('system.user.read','User read',datetime('now')),
-                ('system.user.create','User create',datetime('now')),
-                ('system.user.update','User update',datetime('now')),
-                ('system.user.delete','User delete',datetime('now')),
-                ('system.user.assign_role','Assign role',datetime('now')),
-                ('project.settings.read','Project settings read',datetime('now')),
-                ('project.settings.edit','Project settings edit',datetime('now')),
-                ('project.document_type.create','Document type create',datetime('now')),
-                ('project.document_type.update','Document type update',datetime('now')),
-                ('project.document_type.delete','Document type delete',datetime('now'));
-        INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
-            VALUES
-                ('role_admin','system.settings.manage'),
-                ('role_admin','system.user.read'),
-                ('role_admin','system.user.create'),
-                ('role_admin','system.user.update'),
-                ('role_admin','system.user.delete'),
-                ('role_admin','system.user.assign_role'),
-                ('role_admin','project.settings.read'),
-                ('role_admin','project.settings.edit'),
-                ('role_admin','project.document_type.create'),
-                ('role_admin','project.document_type.update'),
-                ('role_admin','project.document_type.delete'),
-                ('role_manager','project.settings.read'),
-                ('role_manager','project.settings.edit'),
-                ('role_manager','project.document_type.create'),
-                ('role_manager','project.document_type.update'),
-                ('role_manager','project.document_type.delete');
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)
             VALUES('__SYSTEM__','[System]',1,datetime('now'),datetime('now')),
                   ('proj_001','TestProject',1,datetime('now'),datetime('now'));
@@ -436,9 +405,10 @@ class TestUserCreateApi:
         rows = mock_db._fetch_all(
             "SELECT project_id, role_id FROM user_project_roles WHERE user_id = ?", [uid]
         )
+        # a project role is stored as its fixed role (role_worker reads as role_developer)
         assert {(row["project_id"], row["role_id"]) for row in rows} == {
             ("__SYSTEM__", role_id),
-            ("proj_001", "role_worker"),
+            ("proj_001", "role_developer"),
         }
         assert _has_permission(body, "system.user.create", None) is bool(is_admin)
 
@@ -496,7 +466,7 @@ class TestUserCreateApi:
         )
         assert assigned.status_code == 201
         assert assigned.json()["project_id"] == "proj_001"
-        assert assigned.json()["role_id"] == "role_worker"
+        assert assigned.json()["role_id"] == "role_developer"
         roles = client.get(f"/api/v1/users/{uid}/project-roles")
         assert any(row["project_id"] == "proj_001" for row in roles.json()["roles"])
         removed = client.delete(f"/api/v1/users/{uid}/project-roles/proj_001")
@@ -754,11 +724,12 @@ class TestRBACDecorators:
         assert _has_permission(admin, "system.settings.manage", None) is True
         assert _has_permission(admin, "any.permission", "any_project") is True
 
-    def test_role_admin_has_system_permission(self):
+    def test_system_role_alone_gives_no_system_permission(self):
         from modules.flow_gate.rbac.decorators import _has_permission
 
+        # a role_admin row on __SYSTEM__ is not read: system permissions follow is_admin only
         user = {"user_id": "usr_admin", "is_admin": 0}
-        assert _has_permission(user, "system.settings.manage", None) is True
+        assert _has_permission(user, "system.settings.manage", None) is False
 
     def test_no_role_denied(self):
         from modules.flow_gate.rbac.decorators import _has_permission

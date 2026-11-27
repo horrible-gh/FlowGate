@@ -1006,12 +1006,14 @@ export function providerOptions(
  * detail: not editable; 409 detail: the Flow was discarded — the read's editable does not check that). null when it
  * can be edited.
  */
-export type WorkPlanLockReason = 'read_only' | 'run_locked' | 'ai_running' | 'upload' | 'final_approved' | 'status' | 'not_editable' | 'disposed'
+export type WorkPlanLockReason = 'permission' | 'read_only' | 'run_locked' | 'ai_running' | 'upload' | 'final_approved' | 'status' | 'not_editable' | 'disposed'
 
 /** A save the server refused for good (not a conflict or a field error): the window stays locked. */
 export type WorkPlanRefusal = 'not_editable' | 'disposed'
 
 export interface WorkPlanLockInput {
+  /** flowgate.v02test.0090: the server refuses changing the card's documents (`project.document.update`) — locks first. */
+  readonly permission?: boolean
   readonly external: 'read_only' | 'run_locked' | null
   readonly aiRunning: boolean
   readonly uploadGuarded: boolean
@@ -1027,6 +1029,7 @@ export interface WorkPlanLockInput {
 }
 
 export function workPlanLockReason(input: WorkPlanLockInput): WorkPlanLockReason | null {
+  if (input.permission) return 'permission'
   if (input.card) {
     if (input.card.conflict) return 'read_only'
     if (input.card.aiRunning) return 'ai_running'

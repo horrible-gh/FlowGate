@@ -24,8 +24,11 @@ def body_routes(env, monkeypatch):
     app = env['client'].app
     app.include_router(console.router, prefix='/api/v1')
     app.include_router(token.router, prefix='/flowgate')
-    app.dependency_overrides[console.get_current_user] = lambda: {'user_id': 'u_kim'}
+    app.dependency_overrides[console.get_current_user] = lambda: {'user_id': 'u_kim', 'is_admin': True}
     monkeypatch.setattr(token, 'verify_bearer', lambda request: {'_is_user_jwt': True})
+    # The faked bearer names no user, so the outbound read check is faked with it;
+    # the project read rule itself is covered by test_server_access_guard_v02test_0090.
+    monkeypatch.setattr(token, 'can_read_project', lambda auth, project_id: True)
     monkeypatch.setattr(console, '_broadcast_document_refresh', lambda doc: None)
     env['client'] = TestClient(app, raise_server_exceptions=False)
 

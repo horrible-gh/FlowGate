@@ -98,7 +98,7 @@ def post_test_results(body: TestResultsBody, request: Request):
     0684 T#3 (D#1 §3-8): a result for an automated Case the server runs is refused item by
     item (``refused_results``) -- its official result comes from a server run only.
 
-    Same permission gate as starting a run (admin or perm_test_run). The server maps the
+    Same permission gate as starting a run (admin or project.run). The server maps the
     results onto the TS Case IDs, computes the overall verdict itself (a submitted
     ``overall`` is ignored), writes the TSR test report and applies the test gate.
     Plain ``def``: the synchronous DB/file work runs in the threadpool.
@@ -154,7 +154,7 @@ def post_test_run_cancel(run_id: str, request: Request):
     synchronous DB/process work below never blocks the event loop
     (test_event_loop_blocking_0279.py only flags `async def` handlers).
 
-    Same permission gate as starting a run (admin or perm_test_run) rather than
+    Same permission gate as starting a run (admin or project.run) rather than
     start-author-only — NR0003 §permissions: another operator must be able to reclaim a
     runaway execution, and start-author-only would be inconsistent with the admin
     bypass that already exists. Worker tokens (test_run/repair_token scopes) are not

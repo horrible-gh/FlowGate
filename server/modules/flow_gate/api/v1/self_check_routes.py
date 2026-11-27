@@ -40,7 +40,7 @@ def _auth(request: Request, doc_id: str, mutate: bool):
     except selfcheck.SelfCheckError as exc:
         return _error(exc)
     if auth.get("_is_user_jwt"):
-        permission = "perm_document_update" if mutate else "perm_document_read"
+        permission = "project.document.update" if mutate else "project.document.read"
         if not has_permission(auth.get("issued_to"), doc["project_id"], permission):
             return _forbidden()
     else:
@@ -124,7 +124,7 @@ def _draft_user_row(auth: dict, run_id: str, mutate: bool):
     row = selfcheck.group_draft_run(run_id)
     if row is None:
         return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
-    permission = "perm_document_update" if mutate else "perm_document_read"
+    permission = "project.document.update" if mutate else "project.document.read"
     if not has_permission(auth.get("issued_to"), row["project_id"], permission):
         return _forbidden()
     return row
@@ -154,7 +154,7 @@ def list_draft_runs(request: Request, limit: int = Query(20, ge=1, le=100), grou
         if not group_id:
             return _error(selfcheck.SelfCheckError(422, "selfcheck_invalid_request"))
         project_id, runs = selfcheck.list_group_draft_runs(group_id, limit)
-        if not has_permission(auth.get("issued_to"), project_id, "perm_document_read"):
+        if not has_permission(auth.get("issued_to"), project_id, "project.document.read"):
             return _forbidden()
         return {"ok": True, "runs": runs}
     except selfcheck.SelfCheckError as exc:
@@ -201,7 +201,7 @@ def cancel_draft_run(request: Request, run_id: str):
 # draft run its caller can neither read nor cancel on the routes above. These two routes
 # let any worker token of that Group (new / edit / review) and a console user with read
 # permission see the holder's summary. Read only: cancelling stays with the owning TR's
-# edit token, the owning draft token, or a user with perm_document_update.
+# edit token, the owning draft token, or a user with project.document.update.
 group_router = APIRouter(prefix="/api/v1/self-check/group", tags=["TR Self-check"])
 _GROUP_READ_SCOPES = {"new", "edit", "review"}
 
@@ -226,7 +226,7 @@ def list_group_runs(request: Request, group_id: str | None = Query(None)):
         if not group_id:
             return _error(selfcheck.SelfCheckError(422, "selfcheck_invalid_request"))
         project_id = selfcheck.group_project(group_id)
-        if not has_permission(auth.get("issued_to"), project_id, "perm_document_read"):
+        if not has_permission(auth.get("issued_to"), project_id, "project.document.read"):
             return _forbidden()
         return {"ok": True, "runs": selfcheck.group_active_runs(project_id, group_id)}
     except selfcheck.SelfCheckError as exc:
@@ -240,7 +240,7 @@ def read_group_run(request: Request, run_id: str):
         return auth
     row = selfcheck.group_run(run_id)
     if auth.get("_is_user_jwt"):
-        if row is not None and not has_permission(auth.get("issued_to"), row["project_id"], "perm_document_read"):
+        if row is not None and not has_permission(auth.get("issued_to"), row["project_id"], "project.document.read"):
             return _forbidden()
     elif row is not None and (row["project_id"], row["group_id"]) != (auth["project"], auth["group_id"]):
         row = None      # another Group's run: not found, as for an unknown id
@@ -251,7 +251,7 @@ def read_group_run(request: Request, run_id: str):
 
 # ── the earlier implementation: operator re-verification of a protected run ──
 # A run left recovery_incomplete (owner or tree not proved) keeps its Group closed until a
-# proof exists. A console user with perm_document_update asks the server to run the proof
+# proof exists. A console user with project.document.update asks the server to run the proof
 # again now; the server refuses when it still proves nothing. No forced release exists, and
 # no worker token reaches this route.
 recovery_router = APIRouter(prefix="/api/v1/self-check/recovery", tags=["TR Self-check"])
@@ -267,7 +267,7 @@ def reverify_run(request: Request, run_id: str):
     row = selfcheck.group_run(run_id)
     if row is None:
         return _error(selfcheck.SelfCheckError(404, "selfcheck_run_not_found"))
-    if not has_permission(auth.get("issued_to"), row["project_id"], "perm_document_update"):
+    if not has_permission(auth.get("issued_to"), row["project_id"], "project.document.update"):
         return _forbidden()
     try:
         return {"ok": True, **selfcheck.reverify(run_id)}

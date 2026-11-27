@@ -15,6 +15,7 @@ import {
   type CardMemoInput,
 } from '@/features/document'
 import { inspectorCardNodeKey, type InspectorTarget } from '../../inspectorTarget'
+import { useDocumentRefusals } from '../../openDocument'
 import { cardMemoFailure, cardMemoLockedReason, type CardMemoFailure } from './cardMemoModel'
 
 /** A stored card: its Flow and node key. */
@@ -99,7 +100,10 @@ export function useCardMemo(target: () => InspectorTarget | null): CardMemoState
   const memos = shallowRef<readonly CardMemo[]>([])
   const status = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const readFailure = shallowRef<CardMemoFailure | null>(null)
-  const lockedReason = computed(() => cardMemoLockedReason(target()))
+  // A memo follows the document permissions (the server's rule): the Inspector's refusal of `project.document.update`
+  // locks the memos' change and delete like a conflict view does (the reason text is the server's sentence, see the section).
+  const refusals = useDocumentRefusals()
+  const lockedReason = computed(() => cardMemoLockedReason(target()) ?? (refusals.update.value !== null ? 'locked.permission' : null))
   // Request order: only the latest read may set the list.
   let generation = 0
 

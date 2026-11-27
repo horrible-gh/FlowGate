@@ -67,7 +67,7 @@ def post_answer(
     Step 1. Verify session auth (get_current_user dependency)
     Step 2. Confirm q_id exists
     Step 3. Check Q.status
-    Step 4. Validate permissions (perm_document_create)
+    Step 4. Validate permissions (project.document.create)
     Step 5. Validate dispatch_mode
     Step 6. Number, save, and register A document to DB
     Step 7. Transition Q status open → answered
@@ -97,9 +97,9 @@ def post_answer(
     if process_service.is_group_disposed(q_doc.get("group_id")):
         return _fail(409, "Modification not allowed: the group has been disposed.")
 
-    # ── Step 4: Validate permissions (perm_document_create) ─────────────────────────────
+    # ── Step 4: Validate permissions (project.document.create) ─────────────────────────────
     project_id: str = q_doc["project_id"]
-    if not has_permission(actor_user_id, project_id, "perm_document_create"):
+    if not has_permission(actor_user_id, project_id, "project.document.create"):
         return _fail(403, "You do not have permission to perform this action")
 
     # ── Step 5: Validate dispatch_mode ───────────────────────────────────

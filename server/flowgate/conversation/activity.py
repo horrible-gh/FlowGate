@@ -159,7 +159,7 @@ def readable_chat_document(doc_id: str, user: dict) -> dict:
     doc = legacy_adapter.get_document(doc_id)
     if not doc or str(doc.get("type_code") or doc.get("type") or "").upper() != c.CHAT_TYPE_CODE:
         raise c.ConversationError(404, c.ERR_CHAT_DOCUMENT_NOT_FOUND, "chat document not found")
-    if not legacy_adapter.has_permission(user, "perm_document_read", doc.get("project_id")):
+    if not legacy_adapter.has_permission(user, "project.document.read", doc.get("project_id")):
         raise c.ConversationError(403, c.ERR_ACTIVITY_FORBIDDEN, "no read permission for this document")
     return doc
 

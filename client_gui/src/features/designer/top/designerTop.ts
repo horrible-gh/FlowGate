@@ -478,6 +478,8 @@ export interface DesignerMenuTargets {
   runStopRetry?: boolean
   /** the open Flow's run status is not confirmed yet (every run command waits). */
   runUnknown?: boolean
+  /** flowgate.v02test.0090: the server refused this person `project.run` here — every run command but Stop is off. */
+  runRefused?: boolean
   /** flowgate.v02.0143 T#1: an automatic Q&A responder answers the open Flow's idle run (`runCommandHold`): 다음 단계 / 전체 실행 wait. */
   runHold?: boolean
 }
@@ -534,6 +536,7 @@ export function isMenuCommandEnabled(
   const minimum = arrangeSelectionMinimum(cmd)
   if (minimum !== null) return (targets.selectedCount ?? 0) >= minimum
   if (cmd.startsWith('run.')) {
+    if (targets.runRefused === true && cmd !== 'run.stop') return false
     if (cmd === 'run.stop' && runPhase === 'stopping' && targets.runStopRetry !== true) return false
     if (targets.runHold === true && HELD_RUN_COMMANDS.has(cmd)) return false             
     return targets.runBusy !== true && targets.runUnknown !== true && isRunCommandEnabled(cmd, runPhase)

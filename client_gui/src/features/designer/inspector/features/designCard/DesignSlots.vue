@@ -5,7 +5,7 @@
        flowgate.v02.0053 T#5 (0053 CH) — shaped like 조사 · 작업: 지시서 · 레포트, without the "설명 대기" note;
        the 지시서 line is hidden when the card's settings omit the instruction (useDesignCard). -->
   <section class="inspector-design-card" data-test="inspector-design-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <InspectorSlotList :edit-refusal="refusals.update.value" :write-refusal="refusals.update.value ?? refusals.create.value" :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
     </InspectorSlotList>
@@ -17,7 +17,7 @@ import { useCardDocumentDecisions } from '../../openDocument'
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory, useDocumentRefusals } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { designCardSlots, type DesignSlot } from './designCardModel'
@@ -28,6 +28,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+// The server's refusals of editing the card's documents: ✎ and the row actions go off with the reason as their tooltip.
+const refusals = useDocumentRefusals()
 
 const host = inject(INSPECTOR_HOST, null)
 

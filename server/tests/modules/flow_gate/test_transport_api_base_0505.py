@@ -703,7 +703,7 @@ class TestProdTypeGenuineTopologyProof:
     # Unlike api_bound_request above (still self-HTTP, still used by create_question),
     # _api_read_document now calls document_routes.get_document/get_document_section
     # in-process. Its binding is auth_outbound.verify_bearer -- project + has_permission
-    # (perm_document_read), not a doc_ref/group match like conversation_context's -- so
+    # (project.document.read), not a doc_ref/group match like conversation_context's -- so
     # the "differently-bound token" regression this call's completion criteria calls for
     # is a real token the permission table denies, not a different doc_ref.
 

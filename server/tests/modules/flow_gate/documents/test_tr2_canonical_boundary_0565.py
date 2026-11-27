@@ -103,7 +103,7 @@ def test_generic_markdown_content_route_cannot_overwrite_tr2(monkeypatch):
     with pytest.raises(HTTPException) as error:
         routes.update_document_content(
             "d", routes.DocumentContentUpdate(content="unvalidated"),
-            current_user={"user_id": "human"})
+            current_user={"user_id": "human", "is_admin": True})
     assert error.value.status_code == 409
 
 
@@ -120,7 +120,7 @@ def test_human_direct_route_passes_expected_revision_to_single_writer(monkeypatc
     monkeypatch.setattr(routes.tr2, "save",
                         lambda *args, **kwargs: seen.append((args, kwargs)) or {"ok": True})
     result = routes.put_tr2(None, "d", routes.Tr2Save(expected_revision=2, body=_body()),
-                            current_user={"user_id": "human"})
+                            current_user={"user_id": "human", "is_admin": True})
     assert result == {"ok": True}
     assert seen == [(("d", _body()), {"actor": "human", "expected_revision": 2})]
 

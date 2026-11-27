@@ -9,7 +9,7 @@ Fix (the subject of this test): the question/answer registration endpoints also 
   - validate the edit-scoped token via token_service.verify
   - allow only when the token's doc_ref matches the path {doc_id} (context binding)
   - force asker_kind/author_kind to 'ai' (the worker only registers AI questions/answers)
-  - permission is perm_document_create based on the token's issued_to (isolated here via a has_permission patch)
+  - permission is project.document.create based on the token's issued_to (isolated here via a has_permission patch)
 
 Environment: TESTING=1 (temporary SQLite, no sqloader) — mirrors the test_inbox.py harness.
 """

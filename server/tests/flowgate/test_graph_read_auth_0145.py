@@ -42,7 +42,7 @@ def world(monkeypatch):
     monkeypatch.setattr(chat_authz, "_get_run_record", lambda _: state["run"])
     monkeypatch.setattr(authz.documents, "get_by_id", lambda _: dict(doc_id=DOC, project_id="flowgate", group_id=FLOW))
     monkeypatch.setattr(authz.canvas_service, "load_flow", lookup)
-    monkeypatch.setattr(authz, "has_permission", lambda u,p,perm: state["permission"] and perm == "perm_document_read")
+    monkeypatch.setattr(authz, "has_permission", lambda u,p,perm: state["permission"] and perm == "project.document.read")
     monkeypatch.setattr(authz.run_store, "_one", lambda sql, args: state["mapped"] if "graph_run_token_map" in sql else state["execution"])
     monkeypatch.setattr(authz.run_store, "active_run", lambda _: dict(run_id="test-graph"))
     monkeypatch.setattr(service, "with_read_snapshot", lambda f: f())

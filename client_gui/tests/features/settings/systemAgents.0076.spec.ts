@@ -5,7 +5,7 @@ import { RouterView } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../../helpers/capabilities'
 import { issueAgentEnrollment, revokeAgentCredential, updateSystemAgent } from '@/features/settings/api'
 import SystemAgentSettingsView from '@/features/settings/views/SystemAgentSettingsView.vue'
 import AgentEditDialog from '@/features/settings/components/AgentEditDialog.vue'
@@ -186,6 +186,8 @@ vi.mock('@shared/api', async (importOriginal) => {
 
   const handle = async (method: string, path: string, body?: unknown) => {
     const call = `${method} ${path}`
+    // The settings menu asks which projects the person can see (their capabilities) — not an Agent request.
+    if (call === 'GET /api/v1/projects') return { data: { projects: [] } }
     net.requests.push(call)
     if (body !== undefined) net.bodies.push({ call, body })
     if ((method !== 'GET' && net.holdNext) || net.holdCall?.test(call)) {

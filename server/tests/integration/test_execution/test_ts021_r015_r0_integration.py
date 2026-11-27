@@ -367,7 +367,7 @@ class TestSC01PermissionMatrix:
     """SC-01: permission matrix — verify the current state of D1~D6."""
 
     def test_sc01a_worker_token_issue_200(self, ts021_client):
-        """SC-01-A: role_worker token issuance -> 200 (token_routes correctly uses perm_document_read)."""
+        """SC-01-A: role_worker token issuance -> 200 (token_routes correctly uses project.document.read)."""
         resp = ts021_client.post(
             "/api/v1/token/issue",
             json={
@@ -384,7 +384,7 @@ class TestSC01PermissionMatrix:
         assert "scratch_dir" in body
 
     def test_sc01a_viewer_token_issue_200(self, ts021_client):
-        """SC-01-A(viewer): role_viewer also has perm_document_read, so it returns 200."""
+        """SC-01-A(viewer): role_viewer also has project.document.read, so it returns 200."""
         resp = ts021_client.post(
             "/api/v1/token/issue",
             json={
@@ -397,9 +397,9 @@ class TestSC01PermissionMatrix:
         assert resp.status_code == 200, f"SC-01-A viewer FAIL: {resp.text}"
 
     def test_sc01b_viewer_list_projects_403_d1(self, ts021_client):
-        """SC-01-B: verify the D1 fix — role_viewer -> GET /list/projects -> 200 (D1 fix: perm_document_read).
+        """SC-01-B: verify the D1 fix — role_viewer -> GET /list/projects -> 200 (D1 fix: project.document.read).
 
-        auth_outbound.py uses perm_document_read -> viewer has permission -> 200.
+        auth_outbound.py uses project.document.read -> viewer has permission -> 200.
         """
         token = _issue_fg_token(issued_to="usr_ts021_viewer")
         resp = ts021_client.get(
@@ -469,9 +469,9 @@ class TestSC01PermissionMatrix:
         assert resp.status_code == 403, f"SC-01-D: expected 403, got {resp.status_code}"
 
     def test_sc01e_worker_inbox_edit_403_d5(self, ts021_client):
-        """SC-01-E: verify the D5 fix — role_worker inbox edit -> 200 (perm_document_update fix).
+        """SC-01-E: verify the D5 fix — role_worker inbox edit -> 200 (project.document.update fix).
 
-        inbox_routes.py uses perm_document_update -> worker has permission -> 200.
+        inbox_routes.py uses project.document.update -> worker has permission -> 200.
         """
         # Set doc_ref=doc_id so step 3 passes
         token = _issue_fg_token(action_scope="edit", doc_ref="proj-ts021-__ALL__-0001-NR0001")
@@ -694,7 +694,7 @@ class TestSC03DocRefMapping:
 
         qa_service.issue_followup_token() stores the raw doc_id as doc_ref.
         After the D7/D8 fixes: resolve_doc_id("proj-ts021-__ALL__-0001-NR0001") -> direct lookup succeeds.
-        After the D5 fix: perm_document_update passes -> 200.
+        After the D5 fix: project.document.update passes -> 200.
         """
         # Manually issue the QA followup token (store raw doc_ref via token_service.issue())
         result = _issue_fg_token(action_scope="edit", doc_ref="proj-ts021-__ALL__-0001-NR0001")
@@ -713,7 +713,7 @@ class TestSC03DocRefMapping:
             },
             headers=_fg_bearer(result),
         )
-        # After the D7/D8/D5 fixes: step 3 passes (raw == raw), step 4 passes (perm_document_update) -> 200
+        # After the D7/D8/D5 fixes: step 3 passes (raw == raw), step 4 passes (project.document.update) -> 200
         assert resp.status_code == 200, f"SC-03-D: expected 200 (D5/D7/D8 fixed), got {resp.status_code}"
 
 
@@ -1005,9 +1005,9 @@ class TestSC07QAChannel:
         assert "context binding" in body.get("error_message", "").lower(), body
 
     def test_sc07c_qa_answer_ment_copy_403_d6(self, ts021_client):
-        """SC-07-C: verify the D6 fix — POST /qa/{q_id}/answer -> 200 (perm_document_create fix).
+        """SC-07-C: verify the D6 fix — POST /qa/{q_id}/answer -> 200 (project.document.create fix).
 
-        qa_routes.py uses perm_document_create -> manager has permission -> 200.
+        qa_routes.py uses project.document.create -> manager has permission -> 200.
         """
         resp = ts021_client.post(
             "/api/v1/qa/proj-ts021.__all__.0001.0002-Q/answer",
@@ -1094,7 +1094,7 @@ class TestSC08PathStyleDocument:
         )
         # If the D1 bug remained, this would be 403 — anything else means D1 is fixed
         assert resp.status_code != 403, (
-            f"SC-08-A: D1 not fixed — auth still returns 403. Need to verify perm_document_read usage."
+            f"SC-08-A: D1 not fixed — auth still returns 403. Need to verify project.document.read usage."
         )
 
     def test_sc08b_module_not_all_400(self, ts021_client):

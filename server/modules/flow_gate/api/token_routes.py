@@ -287,7 +287,7 @@ def _issue_token(
     2. action_scope validation (if explicit) / auto-determination (if null, T244 §1-2)
     3. Project existence check
     4. Group resolution (group_name → group_id)
-    5. Issuance permission check (perm_document_read)
+    5. Issuance permission check (project.document.read)
     6. doc_ref canonical form validation
     7. token_service.issue() call
     """
@@ -331,10 +331,10 @@ def _issue_token(
 
     # Step 4: issuance permission check (document.read)
     user_id: str = current_user["user_id"]
-    if not has_permission(user_id, body.project, "perm_document_read"):
+    if not has_permission(user_id, body.project, "project.document.read"):
         raise HTTPException(
             status_code=403,
-            detail="Token issuance permission denied (perm_document_read required)",
+            detail="Token issuance permission denied (project.document.read required)",
         )
 
     # Step 5: doc_ref canonical form validation — moved to Step 1-b in T261

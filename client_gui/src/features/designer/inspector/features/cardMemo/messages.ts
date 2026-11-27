@@ -27,6 +27,7 @@ export default {
       conflict: '담당이 겹친 플로우라 메모를 바꿀 수 없습니다',
       archived: '읽기 전용입니다. 보관 상태를 확인하거나 복원한 뒤 변경하세요.',
       revision: '확정본 보기에서는 메모를 바꿀 수 없습니다',
+      permission: '문서를 고칠 권한이 없어 메모를 바꿀 수 없습니다',
     },
     failure: {
       field: {
@@ -80,6 +81,7 @@ export default {
       conflict: 'The flow has conflicting owners; its memos cannot change',
       archived: 'Read only. Check the archive status or restore the Flow before making changes.',
       revision: 'Memos cannot change in a revision view',
+      permission: 'You may not edit documents here, so memos cannot change',
     },
     failure: {
       field: {
@@ -133,6 +135,7 @@ export default {
       conflict: '担当が重なったフローのためメモを変更できません',
       archived: '読み取り専用です。保管状態を確認するか、フローを復元してから変更してください。',
       revision: '確定版の表示ではメモを変更できません',
+      permission: '文書を編集する権限がないためメモを変更できません',
     },
     failure: {
       field: {

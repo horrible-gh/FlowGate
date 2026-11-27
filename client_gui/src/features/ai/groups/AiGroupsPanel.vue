@@ -345,7 +345,7 @@ import {
   type AiLatestEvaluation,
   type ProviderItem,
 } from '../types'
-import { useCurrentUser } from '@/core/auth/currentUser'
+import { systemCan } from '@shared/permissions/capabilities'
 import AiIcon from '../AiIcon.vue'
 import AiGroupEditDialog from './AiGroupEditDialog.vue'
 import AiRoleMatrix from './AiRoleMatrix.vue'
@@ -360,9 +360,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
-const { user } = useCurrentUser()
-// Every group holds system AI only (a user's own AI cannot join yet), so only an administrator edits.
-const canEdit = computed(() => !!user.value?.isAdmin)
+// Every group holds system AI only (a user's own AI cannot join yet), so only whoever the server lets manage system settings edits.
+const canEdit = computed(() => systemCan('system.settings.manage'))
 
 const groups = ref<AiGroup[]>([...props.initialGroups])
 const preferredId = (items: AiGroup[]) => (items.find(g => g.group_type === 'role') ?? items[0])?.ai_group_id ?? null
