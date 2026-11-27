@@ -23,6 +23,17 @@ vi.mock('@/features/settings/api', async (importOriginal) => {
   return mocked
 })
 
+// The menu reads the projects the person can see from the shared capability store (GET /api/v1/projects),
+// not from the settings adapter: answer it with the same rows serve() gives listAllProjects.
+const shared = vi.hoisted(() => ({ projectRows: [] as unknown[] }))
+vi.mock('@shared/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@shared/api')>(),
+  getRequest: vi.fn(async (path: string) => {
+    if (path === '/api/v1/projects') return { data: { projects: shared.projectRows } }
+    throw new Error(`unexpected GET ${path}`)
+  }),
+}))
+
 registerAppMessages(i18n)
 const m = vi.mocked(api)
 
@@ -45,10 +56,12 @@ function serve(workspaceAllowed: string[], projectAllowed: string[], workspaces 
       owner: null, my_role: 'member', can_manage: false, can_admin: false, capabilities: block(WORKSPACE_ACTIONS, workspaceAllowed),
     })),
   } as never)
-  m.listAllProjects.mockResolvedValue([
+  const projects = [
     { project_id: 'p1', project_name: 'P1', description: null, is_active: 1, modules: [], capabilities: block(['project.settings.read', 'project.member.read', 'project.member.manage'], projectAllowed) },
     { project_id: '__SYSTEM__', project_name: 'sys', is_active: 1 },
-  ] as never)
+  ]
+  m.listAllProjects.mockResolvedValue(projects as never)
+  shared.projectRows = projects
 }
 
 beforeEach(() => {
@@ -56,6 +69,7 @@ beforeEach(() => {
   for (const fn of Object.values(m)) if (typeof fn === 'function' && 'mockReset' in fn) (fn as ReturnType<typeof vi.fn>).mockReset()
   resetSettingsAccess()
   setCurrentUser(null)
+  shared.projectRows = []
 })
 
 afterEach(() => {
@@ -127,8 +141,8 @@ describe('decideSettingsAccess with capabilities', () => {
     const auth = ready(PROJECT_ADMIN, projectLists)
     expect(decideSettingsAccess(target('/settings/project/p1/members'), auth)).toEqual({ kind: 'allow' })
     expect(decideSettingsAccess(target('/settings/workspaces/w1'), auth)).toEqual({ kind: 'allow' })
-    expect(decideSettingsAccess(target('/settings/system/users'), auth)).toEqual({ kind: 'home', notice: 'admin_only' })
-    expect(decideSettingsAccess(target('/settings/system/general'), auth)).toEqual({ kind: 'home', notice: 'admin_only' })
+    expect(decideSettingsAccess(target('/settings/system/users'), auth)).toEqual({ kind: 'home', notice: 'no_permission' })
+    expect(decideSettingsAccess(target('/settings/system/general'), auth)).toEqual({ kind: 'home', notice: 'no_permission' })
     expect(decideSettingsAccess(target('/settings/manage/teams'), auth)).toEqual({ kind: 'home', notice: 'no_permission' })
   })
 
@@ -137,7 +151,7 @@ describe('decideSettingsAccess with capabilities', () => {
     expect(decideSettingsAccess(target('/settings/project/p1/members'), ready(PROJECT_ADMIN, waiting))).toEqual({ kind: 'pending' })
     expect(decideSettingsAccess(target('/settings/manage/teams'), ready(PROJECT_ADMIN, waiting))).toEqual({ kind: 'pending' })
     // a system screen needs no list: /auth/me alone decides
-    expect(decideSettingsAccess(target('/settings/system/users'), ready(PROJECT_ADMIN, waiting))).toEqual({ kind: 'home', notice: 'admin_only' })
+    expect(decideSettingsAccess(target('/settings/system/users'), ready(PROJECT_ADMIN, waiting))).toEqual({ kind: 'home', notice: 'no_permission' })
   })
 
   it('the system administrator opens everything the server allows, the Workspace screens included', () => {
@@ -190,12 +204,26 @@ describe('the settings menu', () => {
     expect(w.get('[data-page="manage:workspace"]').attributes('data-path')).toBe('/settings/workspaces') // two workspaces: the list
   })
 
-  it('a project administrator gets 내 설정, 워크스페이스 설정 and 프로젝트, not 사용자 / 팀 / 시스템', async () => {
+  it('a project administrator who may only look at the workspace gets 내 설정 and 프로젝트, not 워크스페이스 설정 / 사용자 / 팀 / 시스템', async () => {
     serve(['workspace.view'], ['project.settings.read', 'project.member.read', 'project.member.manage'])
     setCurrentUser(PROJECT_ADMIN)
     const w = await render()
-    expect(pages(w)).toEqual(['me:account', 'me:theme', 'me:agents', 'me:security', 'manage:workspace', 'project:project'])
-    // one workspace: the entry is the "워크스페이스 설정" screen itself (no list in between)
+    expect(pages(w)).toEqual(['me:account', 'me:theme', 'me:agents', 'me:security', 'project:project'])
+  })
+
+  it('C-2: a view-only member is not offered 관리 › 워크스페이스 설정', async () => {
+    serve(['workspace.view'], ['project.member.read'])
+    setCurrentUser(PROJECT_ADMIN)
+    const w = await render()
+    expect(pages(w)).not.toContain('manage:workspace')
+    expect(pages(w).some((page) => page?.startsWith('manage:'))).toBe(false)
+  })
+
+  it('a workspace manager with one workspace gets the "워크스페이스 설정" entry (no list in between)', async () => {
+    serve(['workspace.view', 'workspace.member.manage'], ['project.member.read'])
+    setCurrentUser(PROJECT_ADMIN)
+    const w = await render()
+    expect(pages(w)).toContain('manage:workspace')
     const entry = w.get('[data-page="manage:workspace"]')
     expect(entry.attributes('data-path')).toBe('/settings/workspaces/w1')
     expect(entry.attributes('data-label')).toBe('gui.settings.manage_nav.workspace_settings')

@@ -38,7 +38,8 @@
             <div>{{ t('gui.settings.members.col_role') }}</div>
             <div />
           </div>
-          <div v-for="row in rowsPage" :key="row.key" class="fgs-dtr row" :class="{ dim: row.dim }" :data-member-row="row.key">
+          <!-- Without project.member.manage the rows are not interactive (no hover / pointer), like the workspace members table. -->
+          <div v-for="row in rowsPage" :key="row.key" class="fgs-dtr row" :class="{ dim: row.dim, static: !canManage }" :data-member-row="row.key">
             <div class="fgs-who">
               <div><b>{{ row.name }}</b><span v-if="row.sub">{{ row.sub }}</span></div>
             </div>
@@ -47,7 +48,7 @@
               <select
                 class="fgs-input"
                 :value="row.role"
-                :disabled="!canManage || changing || row.dim"
+                :disabled="!canManage || changing || (row.kind === 'team' && row.dim)"
                 :aria-label="t('gui.settings.members.col_role')"
                 :data-testid="`role-${row.key}`"
                 @change="changeRole(row, ($event.target as HTMLSelectElement).value)"
@@ -291,7 +292,8 @@ const rows = computed<Row[]>(() => [
     name: member.username,
     sub: member.email ?? '',
     role: member.role_id,
-    dim: false,
+    // A disabled account is dimmed with the workspace members table's class (an older server sends no is_active: not dimmed).
+    dim: member.is_active === false || member.is_active === 0,
   })),
 ])
 
@@ -318,7 +320,7 @@ async function change<T>(spec: ChangeSpec<T>, done: () => void) {
 }
 
 function changeRole(row: Row, roleId: string) {
-  if (roleId === row.role) return
+  if (!canManage.value || roleId === row.role) return
   const title = t('gui.settings.members.change_title', { name: row.name, from: roleName(row.role), to: roleName(roleId) })
   const request =
     row.kind === 'team'
@@ -328,6 +330,7 @@ function changeRole(row: Row, roleId: string) {
 }
 
 function removeRow(row: Row) {
+  if (!canManage.value) return
   const request = row.kind === 'team' ? revokeProjectTeamRole(props.project.project_id, row.id) : revokeProjectUserRole(props.project.project_id, row.id)
   void change({ title: t('gui.settings.members.remove_title', { name: row.name }), request, confirmEmpty: true, label: t('gui.settings.members.remove') }, () =>
     pushToast(t('gui.settings.members.removed', { name: row.name })),
@@ -347,6 +350,7 @@ const addOptions = computed(() => {
 })
 
 function openAdd(kind: 'user' | 'team') {
+  if (!canManage.value) return
   adding.value = { kind, id: '', role: 'role_developer' }
 }
 

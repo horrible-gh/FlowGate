@@ -384,6 +384,8 @@ export interface ProjectDirectMember {
   username: string
   email: string | null
   role_name?: string
+  /** The account is enabled (users.is_active); absent from an older server. */
+  is_active?: boolean | number
 }
 
 export interface ProjectMemberCandidates {

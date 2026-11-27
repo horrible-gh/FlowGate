@@ -1,6 +1,9 @@
 <template>
   <SettingsShell scope="manage">
     <template #nav>
+      <!-- The 관리 pages (팀 · 워크스페이스 설정) stay listed here as on the list and teams screens (C-1): with one
+           workspace this screen is the "워크스페이스 설정" entry itself, and 팀 must not drop out of the menu. -->
+      <SettingsSubnav :items="manageNav" active="workspace" />
       <SettingsSubnav
         :title="detail?.name ?? ''"
         :items="tabItems"
@@ -379,6 +382,7 @@ import SettingsIcon from '../SettingsIcon.vue'
 import ChangeImpactDialog from '../components/ChangeImpactDialog.vue'
 import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav, { type SubnavItem } from '../components/SettingsSubnav.vue'
+import { useManageNav } from '../components/manageNav'
 import { useChangeFlow, type ChangeSpec } from '../components/useChangeFlow'
 import { useSettingsToasts } from '../components/useSettingsToasts'
 import { usePagedList } from '../components/usePagedList'
@@ -416,6 +420,7 @@ const { user } = useCurrentUser()
 // The link to invite a person is offered when the server lets this person create users.
 const canInviteUsers = computed(() => systemCan('system.user.create'))
 const { toasts, pushToast, dismissToast } = useSettingsToasts()
+const manageNav = useManageNav()
 
 const detail = ref<WorkspaceDetail | null>(null)
 const loading = ref(false)
