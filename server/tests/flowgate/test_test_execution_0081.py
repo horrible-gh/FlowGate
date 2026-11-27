@@ -11,7 +11,7 @@ from test_fg_question_pending_0111 import _ai_run_finished, _ended, card_outputs
 pytestmark = pytest.mark.usefixtures("legacy_cards")
 
 
-def start_test(env, monkeypatch):
+def start_test(env, monkeypatch, code_root=None, mixed=False):
     from flowgate.card_document_edit import integration
     from modules.flow_gate.services import test_spec_service as spec, test_run_service as runner, test_basis_service as basis
     from flowgate.card_documents import lines
@@ -24,7 +24,8 @@ def start_test(env, monkeypatch):
     key = first["key_map"]["tmp_t"]
     response = env["client"].post(f"/api/v1/flows/{FA}/graph/revisions", json={"draft_version": 1}, headers=_h())
     assert response.status_code == 201, response.text
-    monkeypatch.setattr(basis, "live_state", lambda *a, **kw: {"live": None, "no_worktree": True, "state": "unverifiable", "reasons": []})
+    if code_root is None:
+        monkeypatch.setattr(basis, "live_state", lambda *a, **kw: {"live": None, "no_worktree": True, "state": "unverifiable", "reasons": []})
     _start(env)
     [job] = env["jobs"]
     env["jobs"].clear()
@@ -33,6 +34,12 @@ def start_test(env, monkeypatch):
     cases = [{"case_id": cid, "title": cid, "category": "normal", "content": "Check observed output",
               "check": "manual", "checker": "ai", "required": True, "procedure": "inspect", "expected": "ok"}
              for cid in ("TC-001", "TC-002")]
+    if code_root is not None:
+        # Phase 1 creates an untracked script only in the attempt, not in the group.
+        (code_root / "tests" / "generated.py").write_text("assert 2 + 2 == 4\n")
+        manual = cases[1:] if mixed else []
+        cases = [{**cases[0], "check": "code", "checker": None,
+                  "automation_ref": "tests/generated.py", "run_command": "python tests/generated.py"}] + manual
     from flowgate.card_document_edit import dedicated_bridge
     from flowgate.card_document_edit.contracts import Actor, Built, DedicatedRequest, Origin
     class Rule:
@@ -122,3 +129,100 @@ def test_report_assembly_error_is_explicit_failure(env, decided, monkeypatch):
     _ended(env, WORK_RUN, work["graph_exec_id"], action_scope="test_run", doc_ref=ts_id)
     row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
     assert row["dispatch_error_code"] == "report_assembly_failed"
+
+
+@pytest.mark.parametrize("change", [None, "group", "attempt", "missing", "integrated", "mixed",
+                                  "group_unmeasurable", "binding_changed"])
+def test_code_attempt_basis_completes_or_reports_source_change(env, decided, monkeypatch, tmp_path, change):
+    from basis_support import make_repo
+    from group_lock_stub import stub_group_lock
+    from modules.flow_gate.db import documents, test_runs
+    from modules.flow_gate.services import (test_basis_service as basis,
+        test_run_service as runner, spec_execution_service as execution,
+        source_fingerprint, graph_source_hooks)
+    from modules.flow_gate.workflow import pipeline_service
+    group = make_repo(tmp_path / "group-source")
+    attempt = make_repo(tmp_path / "attempt-source")
+    monkeypatch.setattr(source_fingerprint, "resolve_worktree", lambda *a: group)
+    monkeypatch.setattr(source_fingerprint, "_MEMO", {})
+    monkeypatch.setattr(graph_source_hooks, "source_root", lambda *a, **kw: attempt)
+    monkeypatch.setattr(runner, "_scratch_dir", lambda doc, rid: tmp_path / "runs" / rid)
+    stub_group_lock(monkeypatch)
+    key, work, ts_id, report_id, auth = start_test(env, monkeypatch, code_root=attempt, mixed=change == "mixed")
+    assert not (group / "tests" / "generated.py").exists()
+    admitted = execution.admit(ts_id, case_id=None, runner_id="u_kim", locale="ko",
+                               triggered_via="token", execution_token=auth)
+    if change == "group_unmeasurable":
+        def unavailable(*args):
+            raise source_fingerprint.SourceFingerprintError("group_worktree_unavailable", "missing group")
+        monkeypatch.setattr(source_fingerprint, "resolve_worktree", unavailable)
+    elif change == "binding_changed":
+        from modules.flow_gate.db import tokens
+        original_get = tokens.get_by_id
+        monkeypatch.setattr(tokens, "get_by_id", lambda tid:
+            {**auth, "doc_ref": "another-ts"} if tid == auth["token_id"] else original_get(tid))
+    execution.execute(test_runs.get_run(admitted["run_id"]))
+    if change in ("group_unmeasurable", "binding_changed"):
+        refused = test_runs.get_run(admitted["run_id"])
+        reason = ("group_worktree_unavailable" if change == "group_unmeasurable"
+                  else "execution_token_binding_changed")
+        assert refused["status"] == "failed" and refused["error"] == "basis_capture_failed", refused
+        meta = json.loads(refused["result_meta"])
+        assert meta["phase"] == execution.PHASE_FINISHED
+        assert meta["prepare_refused"] == {"error": "basis_capture_failed", "reasons": reason}
+        assert not meta.get("reported_case_ids") and not meta.get("test_basis")
+        assert not (tmp_path / "runs" / admitted["run_id"]).exists()
+        assert not runner.tsr_gate_state(documents.get_by_id(report_id))["passed"]
+        with pytest.raises(pipeline_service.TransitionError):
+            pipeline_service._require_test_gate_for_approval(documents.get_by_id(report_id))
+        assert execution.attach_chain(documents.get_by_id(ts_id), {}) is None
+        return
+    if change == "mixed":
+        from modules.flow_gate.api.v1 import test_run_routes as routes
+        from modules.flow_gate.services import test_evidence_service as evidence
+        monkeypatch.setattr(routes, "verify_bearer", lambda r: auth)
+        evidence.upload(documents.get_by_id(ts_id), "TC-002", "output",
+                        UploadFile(filename="observed.txt", file=io.BytesIO(b"ok")),
+                        {"user_id": "u_kim", "is_admin": True}, 1)
+        response = routes.post_test_results(routes.TestResultsBody(doc_id=ts_id, results=[
+            {"case_id": "TC-002", "status": "PASS", "actual": "observed"}]),
+            Request({"type": "http", "method": "POST", "path": "/", "headers": []}))
+        assert response.status_code == 201, response.body
+    latest = test_runs.latest_spec_run(ts_id)
+    assert latest and latest["overall"] == "PASS", test_runs.latest_by_doc(ts_id)
+    meta = json.loads(latest["result_meta"])
+    assert meta["live_verdict"]["state"] == basis.VALID
+    assert meta["test_basis"]["binding"]["execution_token_id"] == auth["token_id"]
+    report = documents.get_by_id(report_id)
+    assert runner.tsr_gate_state(report)["passed"]
+    pipeline_service._require_test_gate_for_approval(report)
+    assert execution.attach_chain(documents.get_by_id(ts_id), {})["finished"]
+    if change in ("group", "attempt"):
+        root = group if change == "group" else attempt
+        (root / "server" / "app.py").write_text("VALUE = 99\n")
+    elif change == "missing":
+        monkeypatch.setattr(graph_source_hooks, "source_root", lambda *a, **kw: None)
+    elif change == "integrated":
+        (group / "tests" / "generated.py").write_bytes((attempt / "tests" / "generated.py").read_bytes())
+        monkeypatch.setattr(graph_source_hooks, "source_root", lambda *a, **kw: None)
+    blocked = change in ("group", "attempt", "missing")
+    gate = runner.tsr_gate_state(documents.get_by_id(report_id))
+    assert gate["passed"] is not blocked, gate
+    if blocked:
+        assert gate["basis_reasons"]
+        assert gate["basis_state"] == (basis.UNVERIFIABLE if change == "missing" else basis.STALE)
+        with pytest.raises(pipeline_service.TransitionError):
+            pipeline_service._require_test_gate_for_approval(documents.get_by_id(report_id))
+        assert execution.attach_chain(documents.get_by_id(ts_id), {}) is None
+    _ai_run_finished(env, WORK_RUN, work["graph_exec_id"], doc_ref=ts_id)
+    _ended(env, WORK_RUN, work["graph_exec_id"], action_scope="test_run", doc_ref=ts_id)
+    row = _sql(env["db"], "SELECT * FROM graph_node_runs WHERE node_key = ?", (key,))[0]
+    if blocked:
+        assert row["status"] != "done", row
+        assert "test_gate_" + gate["basis_state"] in row["dispatch_error_code"]
+        assert gate["basis_reasons"][0] in row["dispatch_error_code"]
+    else:
+        assert row["status"] == "done", row
+        assert not row["dispatch_error_code"]
+        assert row["result_doc_id"] == report_id
+        assert documents.get_by_id(report_id)["doc_review_status"] == "approved"

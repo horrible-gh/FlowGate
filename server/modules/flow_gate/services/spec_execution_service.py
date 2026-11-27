@@ -293,11 +293,18 @@ class ExecutionRootResolver:
                     from modules.flow_gate.services import graph_source_hooks
                     token = tokens.get_by_id(token_id)
                     if not token or token.get("doc_ref") != doc["doc_id"] or token.get("group_id") != group_id:
-                        raise ValueError("execution_token_binding_changed")
+                        raise ValueError("basis_capture_failed:execution_token_binding_changed")
                     graph_source_hooks.require_writable(token, "test_run")
                     source = graph_source_hooks.source_root(token)
+                try:
+                    group_basis = test_basis_service.resolve(current_doc, cases) if source is not None else None
+                except test_basis_service.BasisUnverifiable as exc:
+                    raise ValueError("basis_capture_failed:" + exc.code) from exc
                 basis = test_basis_service.measure_run(current_doc, cases, root,
                     run_id=run["run_id"], **({"source": source} if source is not None else {}))
+                if source is not None:
+                    basis["binding"].update(execution_token_id=token_id,
+                                            group_basis_id=group_basis["basis_id"])
             finally:
                 if lock is not None:
                     lock_manager.release(*lock)
@@ -614,7 +621,7 @@ def execute(run: dict) -> None:
         # result is recorded under the executed Basis either way; this decides its gate.
         live = None
         if results and not active.cancel_event.is_set():
-            live = test_basis_service.live_state(db_docs.get_by_id(doc["doc_id"]), spec_cases)
+            live = test_basis_service.run_live_state(db_docs.get_by_id(doc["doc_id"]), basis, spec_cases)
         with runner._get_run_lock(run_id):
             if active.cancel_event.is_set():
                 merge_run_meta(run_id, phase=PHASE_FINISHED)
