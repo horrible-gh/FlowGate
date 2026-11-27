@@ -18,9 +18,11 @@
 
     <div class="fgs-panel-body">
       <!-- Why the add / change controls are off: the server's own reason, one line. -->
-      <p v-if="!canManage && canRead" class="fgs-hintline" data-testid="members-disabled-reason">{{ disabledReason }}</p>
+      <!-- Hidden while the capabilities are still out: the reason is only known once they arrive. -->
+      <p v-if="!canManage && canRead && !accessPending" class="fgs-hintline" data-testid="members-disabled-reason">{{ disabledReason }}</p>
 
-      <LoadingState v-if="loading && !loaded" :label="t('gui.common.loading')" />
+      <!-- Loading also while the capabilities are out (opened by URL / reloaded): not yet "no access". -->
+      <LoadingState v-if="(loading && !loaded) || (accessPending && !canRead)" :label="t('gui.common.loading')" />
       <ErrorState v-else-if="error" :title="errorTitle" :message="error" data-testid="members-error">
         <template #action>
           <Button variant="secondary" @click="load">{{ t('gui.common.retry') }}</Button>
@@ -142,6 +144,10 @@ const { dialog, busy: changing, run, confirm, cancel } = useChangeFlow((message)
 const caps = computed(() => lists.projects.value.find((p) => p.project_id === props.project.project_id)?.capabilities)
 const canRead = computed(() => allows(caps.value, 'project.member.read'))
 const canManage = computed(() => allows(caps.value, 'project.member.manage'))
+// The project list's capabilities are still being read (the page was opened by URL or reloaded: the
+// project screen does not wait for them). Then "no access" is not known yet — only 'ready' (refused)
+// or 'failed' shows it.
+const accessPending = computed(() => lists.status.value === 'idle' || lists.status.value === 'loading')
 const disabledReason = computed(() => {
   const reason = refusalReason(caps.value, 'project.member.manage') ?? 'forbidden'
   return te(`gui.settings.refusal.${reason}`) ? t(`gui.settings.refusal.${reason}`) : t('gui.settings.refusal.forbidden')
@@ -155,11 +161,15 @@ const loaded = ref(false)
 const error = ref<string | null>(null)
 const errorTitle = computed(() => t('gui.settings.errors.load_failed'))
 let seq = 0
+// The candidates have their own counter: they are also read alone when the manage permission arrives
+// after the list, and an older answer (with or without candidates) must not overwrite a newer one.
+let pickSeq = 0
 
 /** The project's direct and team roles; the candidates only for someone who may manage. */
 async function load() {
   if (!canRead.value) return
   const mine = ++seq
+  const pick = ++pickSeq
   loading.value = true
   error.value = null
   try {
@@ -171,7 +181,7 @@ async function load() {
     if (mine !== seq) return
     users.value = direct
     teams.value = byTeam
-    candidates.value = pickable
+    if (pick === pickSeq) candidates.value = pickable
     loaded.value = true
   } catch (err) {
     if (mine === seq) error.value = err instanceof Error ? err.message : String(err)
@@ -180,10 +190,67 @@ async function load() {
   }
 }
 
-onMounted(load)
-watch(() => props.project.project_id, () => {
+/** Only the candidates (+ 사람 / + 팀): the manage permission arrived after the list was read. */
+async function loadCandidates() {
+  if (!canManage.value) return
+  const pick = ++pickSeq
+  try {
+    const pickable = await getProjectMemberCandidates(props.project.project_id)
+    if (pick === pickSeq) candidates.value = pickable
+  } catch (err) {
+    if (pick === pickSeq) pushToast(err instanceof Error ? err.message : String(err), 'danger')
+  }
+}
+
+/**
+ * Forget the list and the candidates and drop the answers still on the way (another project, or the
+ * read permission was lost — e.g. another person signed in and the capabilities were reset). Without
+ * this the previous session's rows stay on screen (`loaded` is still true) until the next answer, and
+ * its candidates can be picked.
+ */
+function resetList() {
+  seq++
+  pickSeq++
+  users.value = []
+  teams.value = []
+  candidates.value = { users: [], teams: [] }
+  adding.value = null
+  loading.value = false
   loaded.value = false
-  void load()
+  error.value = null
+}
+
+/** The manage permission was lost while the read one stayed: the candidates are no longer offered. */
+function resetCandidates() {
+  pickSeq++
+  candidates.value = { users: [], teams: [] }
+  adding.value = null
+}
+
+onMounted(load)
+// One watcher for the project and both permissions, so one change sends at most one request:
+// - another project: read it again (as before);
+// - the read permission arrived late (capabilities came after the mount): read the list now —
+//   load() also takes the candidates when the manage permission came with it;
+// - only the manage permission arrived later: read the candidates;
+// - the read permission was lost: forget the list (and drop the answers on the way); the manage
+//   permission was lost: forget the candidates.
+watch([() => props.project.project_id, canRead, canManage], ([projectId, read, manage], [prevProjectId, prevRead, prevManage]) => {
+  if (projectId !== prevProjectId) {
+    resetList()
+    void load()
+    return
+  }
+  if (!read) {
+    if (prevRead) resetList()
+    return
+  }
+  if (!prevRead) {
+    void load()
+    return
+  }
+  if (manage && !prevManage) void loadCandidates()
+  else if (!manage && prevManage) resetCandidates()
 })
 
 // ── rows ──
