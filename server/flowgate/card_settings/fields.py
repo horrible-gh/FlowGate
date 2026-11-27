@@ -146,6 +146,7 @@ _INSTRUCTION_AI = Field("instruction_ai", AI)    # None: the run AI, else the no
 _RUN_AI = Field("run_ai", AI)                    # None: the node's assignee AI
 _REVIEW_AI = Field("review_ai", AI)              # None: the project's default reviewer
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
+CASE_REVIEW_COUNT = Field("case_review_count", REPEAT, _REVIEW_COUNT.default)
 _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
 _TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
@@ -166,7 +167,7 @@ _FIELDS = {
         Field("run_pre_instruction", "stage_text", ""),
     ),
     TEST: (
-        _INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT,
+        _INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT, CASE_REVIEW_COUNT,
         Field("result_cause", CHOICE, "ai", ("ai", "human")),
         Field("follow_scope", CHOICE, "summary", ("summary", "full")),
     ),
@@ -313,7 +314,8 @@ def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> di
     out = {}
     for f in fields_of(kind) + (HOLD,):
         has = f.name in stored
-        out[f.name] = {"value": _shown(kind, f, stored[f.name]) if has else f.default, "stored": has,
+        value = stored.get(_REVIEW_COUNT.name, f.default) if f == CASE_REVIEW_COUNT else f.default
+        out[f.name] = {"value": _shown(kind, f, stored[f.name]) if has else value, "stored": has,
                        "default": f.default, "choices": choices_of(f, choices)}
     return out
 

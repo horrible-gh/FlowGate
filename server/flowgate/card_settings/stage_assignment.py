@@ -357,11 +357,20 @@ def with_result_review_plan(a: dict, attempt_id: str, author: str, r, stored: di
             "rework_provider_id": ra["provider_id"] if ra is not None and ra["actor"] == AI else None}
 
 
+def _preparation_review_count(kind: Optional[str], stored: dict):
+    if kind == fields.TEST:
+        return stored.get(fields.CASE_REVIEW_COUNT.name, stored.get("review_count"))
+    return stored.get("instruction_review_count")
+
+
 def instruction_review_setting(kind: Optional[str], flow_id: str, node_key: str) -> str:
     """L-2 §2.8.2 ``instruction_review_setting``: no_review / needs_review / unknown."""
-    if kind != fields.RUN:
-        return NO_REVIEW_SETTING                         # TEST / PLAN have no instruction review field
-    value = repository.stored(flow_id, node_key, "instruction_review_count")
+    if kind == fields.TEST:
+        value = _preparation_review_count(kind, repository.values(flow_id, node_key))
+    elif kind == fields.RUN:
+        value = repository.stored(flow_id, node_key, "instruction_review_count")
+    else:
+        return NO_REVIEW_SETTING
     if value is repository.ABSENT or value is None:
         return NO_REVIEW_SETTING
     count = _review_count(value)
@@ -391,7 +400,7 @@ def instruction_reviewer_assignment(flow_id: str, node: dict, attempt_id: str, a
     if s == _UNKNOWN:
         return _a(WAIT_SETUP, SETTING_UNREADABLE, source=SRC_INSTRUCTION_REVIEW_SETTING)
     stored = inputs.stored or {}
-    v = stored.get("instruction_review_ai")
+    v = stored.get("instruction_review_ai") if kind_of(node) == fields.RUN else None
     if isinstance(v, str) and v.strip():
         cause = availability.check_availability(v, availability.CARD, project_id=project_id)
         a = _a(AI, source=SRC_INSTRUCTION_REVIEW_FIELD, provider_id=v,
@@ -404,7 +413,7 @@ def instruction_reviewer_assignment(flow_id: str, node: dict, attempt_id: str, a
                             run_starter)
     if a["actor"] == AI:
         ia = store.read(attempt_id, INSTRUCTION, 0)
-        count = _review_count(stored.get("instruction_review_count"))
+        count = _review_count(_preparation_review_count(kind_of(node), stored))
         if author == AI and ia is not None and ia["actor"] == AI:
             a = {**a, "review_rounds": _rounds(count) or 1, "rework_provider_id": ia["provider_id"]}
         else:
@@ -473,7 +482,7 @@ def start_stage(flow_id: str, run: dict, node: dict, attempt_id: str, stage: str
         worker = resolve.resolve_role(flow_id, node, write_role, project_id=project_id, inputs=inputs)
         a["rework_provider_id"] = worker.provider_id if worker.outcome == "ai" else None
         if stage == INSTRUCTION_REVIEW:
-            count = _review_count((inputs.stored or {}).get("instruction_review_count"))
+            count = _review_count(_preparation_review_count(kind, inputs.stored or {}))
             a["review_rounds"] = _rounds(count) or 1
     review = stage in REVIEW_STAGES
     value_kind, value_pid = _slot_value(flow_id, key, ROLE_OF[stage])

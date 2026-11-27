@@ -46,8 +46,9 @@ def saved(doc, before, after):
         return
     running = test_runs.get_running_by_doc(doc["doc_id"])
     if running:
-        from fastapi import HTTPException
-        raise HTTPException(409, detail={"error": "run_in_progress", "run_id": running["run_id"]})
+        from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+        raise GraphApiError(409, "run_in_progress", {"run_id": running["run_id"]},
+                            message="The test is running. Edit the scenario after it finishes.")
     if cases_changed(before, after):
         reopen(doc)
     regenerate(documents.get_by_id(doc["doc_id"]) or doc)

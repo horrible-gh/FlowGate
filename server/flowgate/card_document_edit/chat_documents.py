@@ -168,11 +168,16 @@ def _card_line(doc):
         _log.warning("chat document card line unresolved doc=%s", doc.get("doc_id"), exc_info=True)
         raise invalid("card_binding_missing", "card_binding", "invalid_format",
                       validation={"reason": "card_edit_unavailable"})
-    lines = sorted({(row["node_key"], row["slot"]) for row in rows})
+    from flowgate.card_documents import slots
+    scenario_nodes = {row["node_key"] for row in rows
+                      if row["slot"] == slots.SCENARIO and row["doc_type"] == "TS"}
+    lines = {(row["node_key"], row["slot"]) for row in rows
+             if not (row["slot"] == slots.INSTRUCTION and row["doc_type"] == "TS"
+                     and row["node_key"] in scenario_nodes)}
     if len(lines) != 1:
         raise invalid("card_binding_missing", "card_binding", "invalid_format",
                       validation={"reason": "ambiguous_or_inconsistent_binding"})
-    return lines[0]
+    return next(iter(lines))
 
 
 @dataclass(frozen=True)

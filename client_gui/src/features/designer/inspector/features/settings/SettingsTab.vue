@@ -105,9 +105,9 @@
               </InspectorControlRow>
             </div>
           </InspectorBlock>
-          <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-zone-review-count" data-zone="case_write" :data-key="TEST_AI_ZONES.case_write.review_count">
-            <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
-              <Select :model-value="views.review_count.value" :options="optionsOf('review_count')" :disabled="locked || views.review_count.disabled" :aria-label="t(runKey('review_count'))" @update:model-value="(value: string) => onAiChange('review_count', value)" />
+          <InspectorBlock v-if="card.node.value.fields.case_review_count" :locked="locked" data-test="ai-zone-review-count" data-zone="case_write" :data-key="TEST_AI_ZONES.case_write.review_count">
+            <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('case_review_count')">
+              <Select :model-value="views.case_review_count.value" :options="optionsOf('case_review_count')" :disabled="locked || views.case_review_count.disabled" :aria-label="t(runKey('review_count'))" @update:model-value="(value: string) => onAiChange('case_review_count', value)" />
             </InspectorControlRow>
           </InspectorBlock>
           <div class="inspector-ai-zone" data-test="ai-zone" data-zone="test_run">{{ t(k('test_zone.test_run')) }}</div>
@@ -665,7 +665,7 @@ function onChange(field: CardSettingsField, text: string) {
  */
 function optionsOf(field: CardSettingsField) {
   const view = views.value[field]
-  const counted = field === 'review_count' || field === 'instruction_review_count'
+  const counted = field === 'review_count' || field === 'instruction_review_count' || field === 'case_review_count'
   return (counted ? visibleReviewCountOptions(view.options, view.value) : view.options)
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
