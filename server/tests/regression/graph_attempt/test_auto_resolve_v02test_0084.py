@@ -18,6 +18,7 @@ from modules.flow_gate.services import ai_invoke_service as ai
 from modules.flow_gate.services.git.credentials import GitServiceError
 
 
+REAL_PROVIDERS = auto.providers
 REAL_LAUNCH = auto.launch
 REAL_UNRESOLVED = auto.unresolved
 
@@ -112,7 +113,7 @@ def test_success_has_no_idle_gap_and_exposes_contract(env, monkeypatch):
     assert out["state"] == "succeeded" and out["attempt"] == 1
     assert out["attempts"][0]["result"] == "resolved"
     assert env.commit.call_count == 1 and not auto.working("graph")
-    assert set(out) == {"state", "attempt", "max_attempts", "attempts", "unresolved", "count"}
+    assert set(out) == {"state", "attempt", "max_attempts", "attempts", "unresolved", "count", "phase", "waiting"}
 
 
 def test_three_failures_rebase_switch_and_persistent_reasons(env):
@@ -426,3 +427,107 @@ def test_conflict_session_ai_error_response(env, monkeypatch):
     item = saved["resolver_attempt"]
     assert item["code"] == "ai_error" and item["remaining"] == 1
     assert "exit code 9" in item["reason_summary"]
+
+
+@pytest.mark.parametrize("attempt, real_providers", [(1, False), (2, False), (3, False), (3, True)])
+def test_busy_admission_preserves_budget_and_resumes_same_attempt(env, monkeypatch, attempt, real_providers):
+    from fastapi import HTTPException
+    if real_providers:
+        from modules.flow_gate.db import groups
+        monkeypatch.setattr(auto, "providers", REAL_PROVIDERS)
+        monkeypatch.setattr(groups, "get_by_id", lambda gid: {"project_id": "p", "owner_id": "user"})
+        monkeypatch.setattr(service, "_default_provider", lambda *args: {"id": "first"})
+        # The third attempt has exactly one unused provider in the real selector.
+        monkeypatch.setattr(ai, "list_runtime_providers", lambda *args: {
+            "default_provider_id": "first",
+            "providers": [{"id": "first", "name": "AI"}, {"id": "other", "name": "AI"}],
+        })
+    for _ in range((attempt - 1) * 2):
+        auto.tick(7)
+    launch = auto.launch
+    def busy(*args):
+        raise HTTPException(409, {"code": "run_in_progress", "run_id": "other-run"})
+    monkeypatch.setattr(auto, "launch", busy)
+    for _ in range(4):
+        auto.tick(7)
+        out = auto.wire(auto.get(7))
+        assert out["state"] == "running" and out["phase"] == "waiting_for_run"
+        assert len(out["attempts"]) == attempt - 1
+        assert out["waiting"]["run_id"] == "other-run"
+        pending_provider = auto.get(7)["data"]["pending_attempt"]["provider"]
+        assert pending_provider == {"id": "other" if attempt == 3 else "first", "name": "AI"}
+    env.lease.update(run_id="other-run")
+    auto.tick(7)
+    assert len(env.launches) == attempt - 1
+    # Durable payload alone is enough for another coordinator to continue.
+    pending = auto.get(7)
+    pending["data"]["pending_attempt"]["started_at"] = "2000-01-01T00:00:00+00:00"
+    auto.save(pending)
+    env.lease.clear()
+    monkeypatch.setattr(auto, "launch", launch)
+    auto.tick(7)
+    out = auto.wire(auto.get(7))
+    assert [n for n, _, _ in env.launches] == list(range(1, attempt + 1))
+    assert out["attempt"] == attempt and out["waiting"] is None
+    assert out["attempts"][-1]["result"] == "running"
+    assert out["state"] == "running" and out["phase"] == "waiting"
+    assert env.launches[-1][1] == pending_provider
+    assert out["attempts"][-1]["provider"] == pending_provider
+    assert out["attempts"][-1]["reason_code"] is None
+    assert env.replay.call_count == (1 if attempt >= 2 else 0)
+
+
+def test_existing_lease_waits_without_attempt_and_human_can_stop(env):
+    env.lease.update(run_id="other-run")
+    for _ in range(4):
+        auto.tick(7)
+    out = auto.wire(auto.get(7))
+    assert out["phase"] == "waiting_for_run" and out["attempts"] == []
+    assert auto.working("graph")
+    auto.stop_by_person(7)
+    env.lease.clear()
+    auto.tick(7)
+    assert not env.launches and auto.get(7)["state"] == "stopped_by_person"
+
+
+def test_existing_lease_release_starts_first_attempt(env):
+    env.lease.update(run_id="other-run")
+    auto.tick(7)
+    env.run["status"] = "paused"
+    env.lease.clear()
+    auto.tick(7)
+    assert not env.launches
+    env.run["status"] = "running"
+    auto.tick(7)
+    assert [n for n, _, _ in env.launches] == [1]
+
+
+def test_other_admission_409_is_not_wait(env, monkeypatch):
+    from fastapi import HTTPException
+    def reject(*args):
+        raise HTTPException(409, {"code": "other_error"})
+    monkeypatch.setattr(auto, "launch", reject)
+    auto.tick(7)
+    out = auto.wire(auto.get(7))
+    assert out["attempts"][0]["result"] == "ai_error" and out["waiting"] is None
+
+
+def test_provider_null_name_recovers_and_actual_run_name_wins(env, monkeypatch):
+    from modules.flow_gate.db import ai_providers
+    monkeypatch.setattr(ai_providers, "get_name_any", lambda pid: "Selected AI" if pid == "other" else None)
+    assert auto.provider_identity({"id": "other", "name": "None"}) == {"id": "other", "name": "Selected AI"}
+    assert auto.provider_identity({"id": "missing", "name": "None"}) == {"id": "missing", "name": None}
+    assert auto.provider_identity({"id": "None", "name": "None"}) is None
+    auto.tick(7)
+    env.records["ai-1"]["provider"] = {"id": "actual", "name": "Actual AI"}
+    auto.tick(7)
+    assert auto.wire(auto.get(7))["attempts"][0]["provider"] == {"id": "actual", "name": "Actual AI"}
+
+
+def test_missing_other_provider_has_null_and_reason_code(env, monkeypatch):
+    for _ in range(4):
+        auto.tick(7)
+    monkeypatch.setattr(auto, "providers", lambda row: ({}, "user", None))
+    auto.tick(7)
+    item = auto.wire(auto.get(7))["attempts"][-1]
+    assert item["provider"] is None and item["reason_code"] == "no_other_ai"
