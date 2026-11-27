@@ -72,14 +72,15 @@ def conversion_finish(pending, inserted, draft_changed=False):
     enqueue(pending)
 
 
-def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale="ko", run_chain=True):
+def tsr(doc, *, run=None, kind="result", state=None, reason=None, cases=None, locale="ko", run_chain=True, refresh=False):
     from modules.flow_gate.services import test_run_service as old
-    if not run or not run.get("run_id"):
+    if not refresh and (not run or not run.get("run_id")):
         raise internal_error()
     ts_id = doc["doc_id"]
     def build(ts, current_run):
         if kind == "result":
-            return render_result(ts, current_run, test_runs.list_cases(current_run["run_id"]), locale)
+            return render_result(ts, current_run, test_runs.list_cases(current_run["run_id"]),
+                                 (current_run.get("locale") or "ko") if refresh else locale)
         meta = old.test_spec_service.load_result_meta(current_run.get("result_meta"))
         text, title = old._pending_report(ts, current_run, meta.get("spec_cases") or cases or [],
                                          state=state, reason=reason, locale=locale)
@@ -92,13 +93,22 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
     def write():
         flow_guard.lock_document_row(ts_id)
         ts = documents.get_by_id(ts_id)
-        current_run = test_runs.get_run(run["run_id"])
+        if refresh:
+            # Choose the latest saved result under both the admission and document guards.
+            if test_runs.get_running_by_doc(ts_id):
+                return None
+            current_run = test_runs.latest_spec_run(ts_id)
+            if current_run is None:
+                return None
+        else:
+            current_run = test_runs.get_run(run["run_id"])
         if (ts is None or current_run is None or current_run.get("doc_id") != ts_id
                 or not current_run.get("runner_id") or users.get_by_id(current_run["runner_id"]) is None):
             raise internal_error()
-        latest = test_runs.latest_by_doc(ts_id)
-        if latest is None or latest["run_id"] != current_run["run_id"]:
-            raise internal_error()
+        if not refresh:
+            latest = test_runs.latest_by_doc(ts_id)
+            if latest is None or latest["run_id"] != current_run["run_id"]:
+                raise internal_error()
         actor = current_run["runner_id"]
         active = old._active_tsr_for_ts(ts)
         run_meta = old.test_spec_service.load_result_meta(current_run.get("result_meta"))
@@ -110,12 +120,13 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
                     or not orphan or orphan.get("target_id") != ts_id
                     or orphan.get("group_id") != ts.get("group_id")):
                 raise internal_error()
-            # Converge only the current run, under the same guard as the report write.
-            test_runs.set_run_tsr_doc(current_run["run_id"], active["doc_id"])
-            if run_meta.get("tsr_doc_id"):
-                import json
-                run_meta["tsr_doc_id"] = active["doc_id"]
-                test_runs.set_run_result_meta(current_run["run_id"], json.dumps(run_meta))
+            if not refresh:
+                # Converge only the current run, under the same guard as the report write.
+                test_runs.set_run_tsr_doc(current_run["run_id"], active["doc_id"])
+                if run_meta.get("tsr_doc_id"):
+                    import json
+                    run_meta["tsr_doc_id"] = active["doc_id"]
+                    test_runs.set_run_result_meta(current_run["run_id"], json.dumps(run_meta))
         if active is not None:
             flow_guard.lock_document_row(active["doc_id"])
             active = documents.get_by_id(active["doc_id"])
@@ -129,7 +140,9 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
             owner = test_runs.latest_by_tsr_doc(active["doc_id"])
             # An admitted run may take over a previous report; a late older run may not.
             if owner is not None and owner["run_id"] != current_run["run_id"] and owner.get("created_at", "") > current_run.get("created_at", ""):
-                raise internal_error()
+                if not (refresh and owner.get("doc_id") == ts_id
+                        and test_runs._run_kind(owner) in {"spec_execution", "initialization"}):
+                    raise internal_error()
             class Rule:
                 needs_current = False
                 def precheck(self, fresh):
@@ -174,7 +187,7 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
             assert after_commit(pending.mark_committed)
             assert after_rollback(pending.discard)
             enqueue(pending)
-        old._register_tsr_result(ts, tsr_id, path, run_chain)
+        old._register_tsr_result(ts, tsr_id, path, run_chain and not refresh)
         return tsr_id
     return generated_boundary(doc, write)
 
