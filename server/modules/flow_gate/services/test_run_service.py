@@ -752,6 +752,43 @@ def request_cancel(run_id: str) -> dict:
         return {"run_id": run_id, "status": "cancelling"}
 
 
+def execution_time_settings(doc: dict, cases: Optional[list] = None) -> dict:
+    """TS execution budget only; never used while writing a scenario.
+
+    One worker handles all cases. Its budget is seconds per judgement multiplied
+    by the fixed count or by the current non-automatic case count (minimum one).
+    Review and restart counts remain independent.
+    """
+    from flowgate.card_documents import repository as documents
+    from flowgate.card_settings import fields, repository as settings
+    stored = {}
+    if doc.get("group_id"):
+        keys = {row["node_key"] for row in documents.rows(doc["group_id"])
+                if row.get("doc_id") == doc.get("doc_id") and row.get("slot") == "scenario"}
+        if len(keys) > 1:
+            raise RuntimeError("test_card_settings_ambiguous")
+        if keys:
+            stored = settings.values(doc["group_id"], next(iter(keys)))
+    mode = stored.get("ai_judge_mode", "case_count")
+    fixed = stored.get("ai_judge_runs", 5)
+    fixed = fixed if type(fixed) is int and fixed >= 1 else 5
+    if cases is None:
+        if ts_contract_version(doc) == test_spec_service.CONTRACT_SPEC:
+            _, parsed = load_spec_ts(doc["doc_id"])
+            cases = parsed["cases"]
+        else:
+            cases = []
+    runs = fixed if mode == "fixed" else max(1, sum(c.get("execution_mode") != "automated" for c in cases))
+    seconds = fields.seconds_value(stored, "ai_judge_run_sec", 120)
+    return {"auto_case_timeout_sec": fields.seconds_value(stored, "auto_case_timeout_sec", 120),
+            "ai_judge_mode": mode, "ai_judge_run_sec": seconds, "ai_judge_runs": runs,
+            "ai_judge_timeout_sec": seconds * runs}
+
+
+def automatic_case_timeout(doc: dict) -> int:
+    return execution_time_settings(doc, cases=[])["auto_case_timeout_sec"]
+
+
 def issue_test_run_request(
     *,
     doc_id: str,
@@ -2722,7 +2759,7 @@ def _execute_case(
     result, exit_code, output, stdout_raw = _run_shell_command(
         _replace_placeholders(case["cmd"], port, scratch),
         root,
-        CASE_TIMEOUT_SEC,
+        automatic_case_timeout(doc),
         env,
         active,
     )

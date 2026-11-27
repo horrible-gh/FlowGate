@@ -293,6 +293,9 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
                        cs.preparation_slot("document", card["doc_type"]): _instruction_line(
                            flow_id, key, cs.preparation_slot("document", card["doc_type"])),
                        "roles": placement_roles.summary(flow_id, key, card.get("roles")),
+                       "clamped": any(name in run_settings.fields.SECOND_RANGES and value is not None
+                                       and run_settings.fields.seconds_value({name: value}, name, value) != value
+                                       for name, value in (card.get("settings") or {}).items()),
                        "settings": _settings_summary(flow_id, key, card["doc_type"])})
     _record_owner(flow_id, [card["node_key"] for card in placed], owner)
     defaults = placement_roles.defaults_used({c["node_key"]: c["roles"] for c in placed})

@@ -349,6 +349,14 @@ def _command_args(loc: dict, junit_path: Path) -> list[str]:
     return args
 
 
+def _automatic_timeout(active) -> int:
+    from modules.flow_gate.services import test_run_service as runner
+    run_id = getattr(active, "run_id", None)
+    run = db_test_runs.get_run(run_id) if run_id else None
+    doc = db_docs.get_by_id(run["doc_id"]) if run else None
+    return runner.automatic_case_timeout(doc) if doc else 120
+
+
 class ExistingRunnerAdapter:
     @staticmethod
     def run_pytest(nodeid: str, root: Path, scratch: Path, active) -> tuple[str, str, int | None, str]:
@@ -368,7 +376,7 @@ class ExistingRunnerAdapter:
                                        policy=process_runner.CHILD_ENV_POLICY_DEFAULT)
         argv = [_python(env), "-m", "pytest", nodeid, "-q", "-p", "no:cacheprovider",
                 "--junitxml=" + str(junit_path)]
-        timeout = runner.CASE_TIMEOUT_SEC
+        timeout = _automatic_timeout(active)
         cancelled = active.cancel_event if active is not None else threading.Event()
         try:
             control, _ownership = executor.spawn(argv, root, env, timeout,
@@ -432,7 +440,7 @@ class ExistingRunnerAdapter:
         env = {key: value for key, value in env.items() if key.upper() != "PATH"}
         env["PATH"] = path_value
         argv = [resolved.executable, *resolved.argv_prefix, *args]
-        timeout = runner.CASE_TIMEOUT_SEC
+        timeout = _automatic_timeout(active)
         cancelled = active.cancel_event if active is not None else threading.Event()
         try:
             control, _ownership = executor.spawn(argv, cwd, env, timeout,

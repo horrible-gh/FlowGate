@@ -646,3 +646,28 @@ class TestBudgetExhaustedReason:
         run = _budget_run(timeout_sec=3600, elapsed_sec=3400)
         assert svc._retry_eligible(run) is False
         assert run["retry_block_reason"] == "question_pending"
+
+
+from test_fg_card_settings import db_path  # isolated migrated store for the admission guards
+
+
+class TestTsExecutionBudgetF81:
+    @pytest.mark.parametrize("scope, expected", [("test_run", 750), ("edit", 14400)])
+    def test_execution_budget_reaches_worker_deadline_only_for_execution(self, db_path, run_env, monkeypatch, scope, expected):
+        from modules.flow_gate.services import test_run_service
+        from modules.flow_gate.db import _SqliteTxnAdapter, ai_providers
+        monkeypatch.setattr(ai_providers, "get_runnable_row", lambda *_: {"enabled": True})
+        monkeypatch.setattr(_SqliteTxnAdapter, "cursor", property(lambda self: self._cur), raising=False)
+        budget = {"auto_case_timeout_sec": 90, "ai_judge_mode": "fixed",
+                  "ai_judge_run_sec": 150, "ai_judge_runs": 5, "ai_judge_timeout_sec": 750}
+        calls = []
+        def resolve(doc):
+            calls.append(doc)
+            return budget
+        monkeypatch.setattr(test_run_service, "execution_time_settings", resolve)
+        response = _start_single(run_env, action_scope=scope, step_timeout_sec=14400)
+        assert response["timeout_sec"] == expected
+        assert datetime.fromisoformat(response["deadline_at"]) - datetime.fromisoformat(response["started_at"]) == timedelta(seconds=expected)
+        finished = _wait_finished(response["run_id"])
+        assert finished["timeout_sec"] == expected
+        assert bool(calls) is (scope == "test_run")
