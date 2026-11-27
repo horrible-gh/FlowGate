@@ -39,7 +39,7 @@ GUIDE = (
     "role group defaults only stand in for a person who chose nothing: apply a group (from_group) only when the user "
     "names it. Decide each card's review count yourself from the card's work (`settings.review_count`, e.g. 2 for "
     "error-prone work, 1 for a small change whose done criteria are easy to check, 0 only when the user wants no "
-    "review); leave restart and time_limit at their defaults unless the work needs otherwise. After placing, tell the "
+    "review); leave restart and time_limit_sec at their defaults unless the work needs otherwise. After placing, tell the "
     "user each card's AI and review count with a short reason; when no AI fits, say the default stayed."
 )
 
@@ -55,7 +55,7 @@ PLACE_DESCRIPTION = (
     "or a disabled AI is 422 ai_not_selectable and nothing is placed. The answer names each new card's node_key, "
     "instruction line and roles (source chat / default / unset; `defaults_used` lists the roles you left to the "
     "defaults); write the instruction into the line (card document edit, slot=instruction) before starting the run. "
-    "Each card may also carry `settings` ({review_count, restart, time_limit, verify_max_runs, verify_run_minutes}; a TS card only review_count): choose "
+    "Each card may also carry `settings` ({review_count, restart, time_limit_sec, verify_max_runs, verify_run_sec}; TS also accepts auto_case_timeout_sec, ai_judge_mode, ai_judge_run_sec, ai_judge_runs): choose "
     "the review count yourself; a value the card cannot take is 422 with its `choices` and nothing is placed. "
     "doc_type: T work (default), TS test, N research, D basic design, P protocol, L logic, DB DB design; each is "
     "the card a person drops from the palette (label omitted: the palette name) with the same roles, instruction "
@@ -105,11 +105,15 @@ _SETTINGS_OBJECT = {
     "properties": {
         "review_count": {**_SETTING_INT, "description": "AI reviews of the result: 0 none, -1 until it passes, 1..max."},
         "restart": {**_SETTING_INT, "description": "Restarts after a failed run: -1 until done, 0 none, 1..max (not TS)."},
-        "time_limit": {**_SETTING_INT, "description": "Minutes per run: 30, 45, 60, 90, 120, 180 or 240 (not TS)."},
+        "time_limit_sec": {**_SETTING_INT, "description": "Seconds per run: 1800..14400, default 14400; clamped (not TS)."},
+        "auto_case_timeout_sec": {**_SETTING_INT, "description": "TS automatic case seconds: 60..1800, default 120; clamped."},
+        "ai_judge_mode": {"type": ["string", "null"], "enum": ["case_count", "fixed", None],
+                          "description": "TS AI budget: non-automatic case count (minimum 1), or fixed runs."},
+        "ai_judge_run_sec": {**_SETTING_INT, "description": "TS AI seconds per run: 60..1800, default 120; clamped."},
+        "ai_judge_runs": {**_SETTING_INT, "description": "TS fixed positive run count, default 5; retained in case_count mode."},
         "verify_max_runs": {**_SETTING_INT, "description": "Verifications the card may use: a whole number of 1 or more "
                                                            "(presets 3, 5, 10); null = the default 10 (not TS)."},
-        "verify_run_minutes": {**_SETTING_INT, "description": "Longest minutes of one verification: 1..30 (presets 2, 3, "
-                                                              "5, 10, 20, 30); null = the default 1 (not TS)."},
+        "verify_run_sec": {**_SETTING_INT, "description": "Seconds per verification: 60..1800, default 60; clamped (not TS)."},
     },
     "description": "The card's run settings (null takes the default back); get_card_roles lists each one's choices.",
 }
@@ -155,8 +159,8 @@ SET_ROLES_DESCRIPTION = (
     "roles: {role: {kind: assigned, provider_id: <an id from get_card_roles options>} or {kind: not_used}}; "
     "from_group: an AI group id (get_ai_options role_groups) whose role profile fills the roles — only when the user "
     "names that group (roles sent with it win); "
-    "settings: {review_count, restart, time_limit, verify_max_runs, verify_run_minutes} (a value from its get_card_roles `choices`, null = default; verify_* also take any whole number in their range; a TS "
-    "card has only review_count) — roles, settings or both; "
+    "settings: {review_count, restart, time_limit_sec, verify_max_runs, verify_run_sec} (a value from its get_card_roles `choices` or seconds range, null = default; verify_* also take any whole number in their range; a TS "
+    "card also has auto_case_timeout_sec, ai_judge_mode, ai_judge_run_sec and ai_judge_runs) — roles, settings or both; "
     "expected_settings_version (and expected_context) from get_card_roles. All or nothing. Refusals: 403 "
     "chat_edit_mode_required / chat_card_not_owned, 422 role_not_applicable / ai_not_selectable (another user's or a "
     "disabled AI) / setting_not_applicable / not_a_choice, 409 node_settings_locked (the card runs) / "
@@ -328,9 +332,9 @@ def contract_place(api_base, raw_token):
         ' "after": "<node_key, optional>", "gate": true}',
         "`roles` per card is yours to choose (omitted roles take the defaults; `defaults_used` in the answer lists",
         "them). Another user's or a disabled AI: 422 ai_not_selectable and nothing is placed.",
-        "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit (minutes;",
-        "not TS), verify_max_runs (verifications, 1 or more) and verify_run_minutes (1..30; not TS, null = the",
-        "default 10 / 1 minute). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
+        "`settings` per card: review_count (0 none, -1 until it passes, 1..max), restart and time_limit_sec (1800..14400 seconds;",
+        "not TS), verify_max_runs (verifications, 1 or more) and verify_run_sec (60..1800 seconds; not TS, null = the",
+        "default 10 / 60 seconds). Decide the review count yourself; a value the card cannot take is 422 with its `choices`.",
         TOPOLOGY_GUIDE,
         "doc_type: T work (default), TS test, N research, D basic design, P protocol, L logic, DB DB design: the",
         "palette card of that type (label omitted: its palette name). The retired work plan card cannot be placed.",
@@ -369,7 +373,7 @@ def contract_roles(api_base, raw_token):
         "The instruction / execution / review AI of a work card this chat placed (any mode): each role's state and",
         "selection, settings_version and context (send them back with a change), locked, and `options` (the AIs",
         "you may pick: id, name, kind). Other cards: 403 chat_card_not_owned (lists the node_keys this chat placed).",
-        "`settings`: the card's review_count / restart / time_limit / verify_max_runs / verify_run_minutes, each with value, default and choices.",
+        "`settings`: the card's review_count / restart / time_limit_sec / verify_max_runs / verify_run_sec, each with value, default and choices.",
         "",
         f"PATCH {base}/api/v2/chat/flows/{{flow_id}}/nodes/{{node_key}}/roles",
         f"Authorization: Bearer {raw_token}",
@@ -382,8 +386,8 @@ def contract_roles(api_base, raw_token):
         '{"from_group": "<role_groups ai_group_id>", "expected_settings_version": <from GET>} applies that AI',
         "group's role profile to the card: only when the user names the group (roles sent with it win).",
         '{"settings": {"review_count": 2}, "expected_settings_version": <from GET>} changes the run settings',
-        "(review_count, restart, time_limit, verify_max_runs, verify_run_minutes; a value from its `choices`, null = default; with or without roles, one",
-        "save). 422 setting_not_applicable (a TS card has only review_count) / not_a_choice. Any placed type.",
+        "(review_count, restart, time_limit_sec, verify_max_runs, verify_run_sec; a value from its `choices` or seconds range, null = default; with or without roles, one",
+        "save). 422 setting_not_applicable (a TS card also has auto_case_timeout_sec, ai_judge_mode, ai_judge_run_sec and ai_judge_runs) / not_a_choice. Any placed type.",
         "",
         "flow_id is this chat's group id. Edit mode only: reading mode answers 403 chat_edit_mode_required.",
         "You are not woken when the run stops: report what you started and ask the user to message you when it",

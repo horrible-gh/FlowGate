@@ -148,26 +148,56 @@ _REVIEW_AI = Field("review_ai", AI)              # None: the project's default r
 _REVIEW_COUNT = Field("review_count", REPEAT, 0)
 CASE_REVIEW_COUNT = Field("case_review_count", REPEAT, _REVIEW_COUNT.default)
 _RESTART = Field("restart", REPEAT, DEFAULT_RESTART_COUNT)
-_TIME_LIMIT = Field("time_limit", MINUTES, DEFAULT_TIME_LIMIT_MINUTES, TIME_LIMIT_MINUTES)
+_TIME_LIMIT = Field("time_limit_sec", "seconds", 14400)
 _REVIEW_BASIS = Field("review_basis", CHOICE, "type", tuple(REVIEW_CRITERIA))
 _AFTER_EXHAUSTED = Field("after_review_exhausted", CHOICE, "continue", ("continue", "stop"))
 # (1-A): a run card's verification options (the run AI's advanced ⚙). No stored value = the card
 # default 10 runs / 1 minute (``verify_limits.resolve_verify_limits`` reads the same constants).
 VERIFY_MAX_RUNS = Field("verify_max_runs", VERIFY_RUNS, DEFAULT_VERIFY_MAX_RUNS, VERIFY_RUN_CHOICES)
-VERIFY_RUN_MINUTES = Field("verify_run_minutes", VERIFY_MINUTES, DEFAULT_VERIFY_RUN_MINUTES, VERIFY_MINUTE_CHOICES)
+DEFAULT_VERIFY_RUN_SEC = 60
+VERIFY_RUN_SEC = Field("verify_run_sec", "seconds", DEFAULT_VERIFY_RUN_SEC)
+SECOND_RANGES = {"time_limit_sec": (1800, 14400), "verify_run_sec": (60, 1800),
+                 "auto_case_timeout_sec": (60, 1800), "ai_judge_run_sec": (60, 1800)}
+LEGACY_SECONDS = {"time_limit": "time_limit_sec", "verify_run_minutes": "verify_run_sec"}
+
+
+def seconds_settings(stored: dict) -> dict:
+    """Read old rows during rolling upgrades; explicit seconds always win."""
+    out = dict(stored)
+    for old, new in LEGACY_SECONDS.items():
+        value = out.pop(old, None)
+        if new not in out and type(value) is int:
+            out[new] = value * 60
+    return out
+
+
+def setting_input(name: str, value: Any) -> tuple[str, Any]:
+    if name in LEGACY_SECONDS:
+        return LEGACY_SECONDS[name], value * 60 if type(value) is int else value
+    return name, value
+
+
+def seconds_value(stored: dict, name: str, default: int) -> int:
+    value = seconds_settings(stored).get(name)
+    low, high = SECOND_RANGES[name]
+    return max(low, min(high, value)) if type(value) is int else default
 # the work plan card's AI pre-instruction writing switch. Off by default: nothing writes a
 # pre-instruction by itself today, so storing nothing and storing off mean the same.
 PRE_INSTRUCTION_AUTO = Field("pre_instruction_auto", FLAG, False)
 _FIELDS = {
     RUN: (
         _INSTRUCTION, _INSTRUCTION_AI, _RUN_AI, _RESTART, _REVIEW_AI, _REVIEW_COUNT, _TIME_LIMIT, _REVIEW_BASIS, _AFTER_EXHAUSTED,
-        VERIFY_MAX_RUNS, VERIFY_RUN_MINUTES,
+        VERIFY_MAX_RUNS, VERIFY_RUN_SEC,
         Field("instruction_review_ai", AI), Field("instruction_review_count", REPEAT, 0),
         Field("instruction_note", "stage_text", ""), Field("run_note", "stage_text", ""),
         Field("run_pre_instruction", "stage_text", ""),
     ),
     TEST: (
         _INSTRUCTION, _RUN_AI, _REVIEW_AI, _REVIEW_COUNT, CASE_REVIEW_COUNT,
+        Field("auto_case_timeout_sec", "seconds", 120),
+        Field("ai_judge_mode", CHOICE, "case_count", ("case_count", "fixed")),
+        Field("ai_judge_run_sec", "seconds", 120),
+        Field("ai_judge_runs", VERIFY_RUNS, 5, VERIFY_RUN_CHOICES),
         Field("result_cause", CHOICE, "ai", ("ai", "human")),
         Field("follow_scope", CHOICE, "summary", ("summary", "full")),
     ),
@@ -232,6 +262,11 @@ def field_of(kind: Optional[str], name: str) -> Optional[Field]:
 def check_value(field: Field, value: Any, *, repeat_choices: Iterable[int],
                 team_exists: Callable[[str], bool], ai_exists: Callable[[str], bool]) -> Any:
     """The value to store (normalized), or ``InvalidValue``. ``None`` is never passed here."""
+    if field.kind == "seconds":
+        if type(value) is not int:
+            raise InvalidValue("not_an_integer")
+        low, high = SECOND_RANGES[field.name]
+        return max(low, min(high, value))
     if field.kind == "stage_text":
         if not isinstance(value, str) or len(value) > 100_000 or "\x00" in value:
             raise InvalidValue("invalid_text")
@@ -310,6 +345,7 @@ def choices_of(field: Field, repeat_choices: Iterable[int]) -> Optional[list]:
 def view(kind: Optional[str], stored: dict, repeat_choices: Iterable[int]) -> dict:
     """``field -> {value, stored, default, choices}`` in display order (shown value = stored, else default); 0061
     the card's Hold last, for every card."""
+    stored = seconds_settings(stored)
     choices = tuple(repeat_choices)
     out = {}
     for f in fields_of(kind) + (HOLD,):
@@ -324,6 +360,8 @@ def _shown(kind: Optional[str], field: Field, value: Any) -> Any:
     """The value a stored one is shown as. A check card's switches are never null (a null push / keep branch /
     archive reads as false), and a stored choice that is not one of the field's choices (an old merge target branch
     name that migration 158 has not moved yet) is not shown as a setting: the default stands."""
+    if field.kind == "seconds":
+        return seconds_value({field.name: value}, field.name, field.default)
     if kind != CHECK:
         return value
     if field.kind == FLAG and value is None:
@@ -408,8 +446,7 @@ def review_loop(stored: dict, *, reviewer: str, reworker: Optional[str]) -> dict
     The rework hop gets the longest loop budget within the card's time limit, failure restarts follow
     the card's restart within the loop's own range, and the loop as a whole gets its longest budget.
     """
-    limit = (stored.get("time_limit") if stored.get("time_limit") in TIME_LIMIT_MINUTES
-             else DEFAULT_TIME_LIMIT_MINUTES) * 60
+    limit = seconds_value(stored, "time_limit_sec", _TIME_LIMIT.default)
     rework = max([s for s in LOOP_REWORK_TIMEOUTS_SEC if s <= limit] or [LOOP_REWORK_TIMEOUTS_SEC[0]])
     restart = _count(stored.get("restart", _RESTART.default))
     if restart is None or restart < -1:
@@ -458,6 +495,7 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
     """
     if kind not in (RUN, TEST, PLAN):
         return {}
+    stored = seconds_settings(stored)
     plan: dict = {"settings": {f.name: stored[f.name] for f in fields_of(kind) if f.name in stored and f.name not in ("result_cause", "follow_scope")}}
     written = result_doc_type(node_type, doc_type, stored)
     if written:
@@ -469,10 +507,9 @@ def run_plan(kind: Optional[str], stored: dict, node_type: Optional[str] = None,
         plan["provider_id"] = stored["run_ai"]
     if kind in (RUN, PLAN):
         # Do not persist defaults or replace explicit values (including zero / unlimited restarts).
-        limit = stored.get("time_limit", _TIME_LIMIT.default)
+        limit = seconds_value(stored, "time_limit_sec", _TIME_LIMIT.default)
         restart = stored.get("restart", _RESTART.default)
-        if limit in TIME_LIMIT_MINUTES:
-            plan["step_timeout_sec"] = int(limit) * 60
+        plan["step_timeout_sec"] = limit
         if isinstance(restart, int) and not isinstance(restart, bool):
             plan["restart_max"] = restart
     return plan

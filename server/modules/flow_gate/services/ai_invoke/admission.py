@@ -2198,6 +2198,13 @@ def start_run(
         timeout_sec = _resolve_timeout_sec(
             mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
         )
+    test_execution_budget = None
+    if action_scope == "test_run" and not document_review_loop:
+        from modules.flow_gate.services import test_run_service
+        test_doc = test_run_service.db_docs.get_by_id(doc_ref)
+        if test_doc is not None:
+            test_execution_budget = test_run_service.execution_time_settings(test_doc)
+            timeout_sec = test_execution_budget["ai_judge_timeout_sec"]
     chat_timeout_sec = None
     if action_scope == "chat":
         from modules.flow_gate.services import chat_doc_settings_service
@@ -2210,6 +2217,7 @@ def start_run(
         mode == "single" and action_scope == "new" and node_restart_max_attempts is not None
     )
     run = {
+        "test_execution_budget": test_execution_budget,
         "graph_exec_id": graph_exec_id,
         "graph_attempt_id": graph_attempt_id,
         "invocation_origin": dict(invocation_origin) if invocation_origin else None,
