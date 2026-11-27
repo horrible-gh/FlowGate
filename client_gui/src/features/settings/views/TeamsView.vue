@@ -36,7 +36,7 @@
         <EmptyState v-else-if="!workspaceId" :title="t('gui.settings.teams.no_workspace')" data-testid="teams-no-workspace" />
 
         <template v-else>
-          <div class="fgs-dtable" style="--cols: minmax(180px, 1.4fr) 90px minmax(240px, 2.2fr) 24px">
+          <div class="fgs-dtable" style="--cols: minmax(140px, 1.4fr) 90px minmax(180px, 2.2fr) 24px">
             <div class="fgs-dtr head">
               <div>{{ t('gui.settings.teams.col_name') }}</div>
               <div>{{ t('gui.settings.teams.col_people') }}</div>

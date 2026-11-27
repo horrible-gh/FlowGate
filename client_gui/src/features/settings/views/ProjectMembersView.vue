@@ -31,14 +31,14 @@
       <EmptyState v-else-if="!canRead" :title="t('gui.settings.members.no_access')" data-testid="members-no-access" />
 
       <template v-else>
-        <div class="fgs-dtable" style="--cols: minmax(200px, 1.6fr) 90px 180px 110px">
+        <div class="fgs-dtable" style="--cols: minmax(140px, 1.6fr) 90px 180px 110px">
           <div class="fgs-dtr head">
             <div>{{ t('gui.settings.members.col_name') }}</div>
             <div>{{ t('gui.settings.members.col_kind') }}</div>
             <div>{{ t('gui.settings.members.col_role') }}</div>
             <div />
           </div>
-          <div v-for="row in rows" :key="row.key" class="fgs-dtr row" :class="{ dim: row.dim }" :data-member-row="row.key">
+          <div v-for="row in rowsPage" :key="row.key" class="fgs-dtr row" :class="{ dim: row.dim }" :data-member-row="row.key">
             <div class="fgs-who">
               <div><b>{{ row.name }}</b><span v-if="row.sub">{{ row.sub }}</span></div>
             </div>
@@ -62,6 +62,15 @@
             </div>
           </div>
           <div v-if="!rows.length" class="fgs-empty" data-testid="members-empty">{{ t('gui.settings.members.empty') }}</div>
+        </div>
+        <div class="fgs-tablefoot fgs-pager" data-testid="members-foot">
+          <span>{{ rowsRange }}</span>
+          <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_prev')" :aria-label="t('gui.settings.page_prev')" :disabled="!rowsHasPrev" data-testid="members-foot-prev" @click="rowsPrev">
+            <SettingsIcon name="back" size="sm" />
+          </button>
+          <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_next')" :aria-label="t('gui.settings.page_next')" :disabled="!rowsHasNext" data-testid="members-foot-next" @click="rowsNext">
+            <SettingsIcon name="chev" size="sm" />
+          </button>
         </div>
         <p class="fgs-hintline">{{ t('gui.settings.members.final_hint') }}</p>
       </template>
@@ -122,6 +131,7 @@ import SettingsIcon from '../SettingsIcon.vue'
 import ChangeImpactDialog from '../components/ChangeImpactDialog.vue'
 import { useChangeFlow, type ChangeSpec } from '../components/useChangeFlow'
 import { useSettingsToasts } from '../components/useSettingsToasts'
+import { usePagedList } from '../components/usePagedList'
 import {
   assignProjectTeamRole,
   assignProjectUserRole,
@@ -284,6 +294,16 @@ const rows = computed<Row[]>(() => [
     dim: false,
   })),
 ])
+
+// v02test.0090 (F90-12): 20 rows a time; another project goes back to page 1.
+const {
+  pageItems: rowsPage,
+  rangeLabel: rowsRange,
+  hasPrev: rowsHasPrev,
+  hasNext: rowsHasNext,
+  prev: rowsPrev,
+  next: rowsNext,
+} = usePagedList(rows, [() => props.project.project_id])
 
 const roleName = (role: string) => (te(`gui.settings.project_roles.${role}`) ? t(`gui.settings.project_roles.${role}`) : role)
 const userName = (userId: string) =>

@@ -97,7 +97,7 @@
             <button type="button" class="fgs-chip warn" :class="{ on: tfaMissingOnly }" data-testid="chip-2fa" @click="tfaMissingOnly = !tfaMissingOnly"><SettingsIcon name="shieldno" size="sm" />{{ t('gui.settings.users.tfa_missing_short') }}</button>
           </div>
 
-          <div class="fgs-dtable" style="--cols: minmax(240px, 1.7fr) 110px 90px 100px 110px 24px">
+          <div class="fgs-dtable" style="--cols: minmax(140px, 1.7fr) 110px 90px 100px 110px 24px">
             <div class="fgs-dtr head">
               <div>{{ t('gui.settings.users.col_user') }}</div>
               <div>{{ t('gui.settings.users.col_permission') }}</div>
@@ -107,7 +107,7 @@
               <div />
             </div>
             <div
-              v-for="row in filtered"
+              v-for="row in usersPage"
               :key="row.user_id"
               class="fgs-dtr row"
               :class="{ sel: selected?.user_id === row.user_id, dim: row.state === 'disabled' }"
@@ -133,7 +133,15 @@
             </div>
             <div v-if="!filtered.length" class="fgs-empty">{{ t('gui.settings.no_match') }}</div>
           </div>
-          <div class="fgs-tablefoot" data-testid="users-foot">{{ filtered.length }} / {{ data.summary.total }}</div>
+          <div class="fgs-tablefoot fgs-pager" data-testid="users-foot">
+            <span>{{ usersRange }}</span>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_prev')" :aria-label="t('gui.settings.page_prev')" :disabled="!usersHasPrev" data-testid="users-foot-prev" @click="usersPrev">
+              <SettingsIcon name="back" size="sm" />
+            </button>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_next')" :aria-label="t('gui.settings.page_next')" :disabled="!usersHasNext" data-testid="users-foot-next" @click="usersNext">
+              <SettingsIcon name="chev" size="sm" />
+            </button>
+          </div>
         </template>
       </div>
     </section>
@@ -351,6 +359,7 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav from '../components/SettingsSubnav.vue'
 import { useSettingsToasts } from '../components/useSettingsToasts'
 import { useSystemNav } from '../components/systemNav'
+import { usePagedList } from '../components/usePagedList'
 import type { SettingsIconName } from '../icons'
 import {
   createSystemUser,
@@ -430,6 +439,16 @@ const filtered = computed(() => {
     && (!tfaMissingOnly.value || (!u.tfa_enabled && u.state !== 'disabled')),
   )
 })
+
+// v02test.0090 (F90-12): 20 rows a time; a search / filter change goes back to page 1.
+const {
+  pageItems: usersPage,
+  rangeLabel: usersRange,
+  hasPrev: usersHasPrev,
+  hasNext: usersHasNext,
+  prev: usersPrev,
+  next: usersNext,
+} = usePagedList(filtered, [query, stateFilter, adminOnly, tfaMissingOnly])
 
 function pct(n: number): string {
   const total = data.value?.summary.total ?? 0

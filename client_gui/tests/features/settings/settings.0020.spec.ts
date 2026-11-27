@@ -247,7 +247,7 @@ describe('워크스페이스 상세 (시안 12)', () => {
     await wrapper.get('[data-role-filter="all"]').trigger('click')
     await wrapper.get('[data-testid="invited-filter"]').trigger('click')
     expect(wrapper.findAll('[data-member]').map((r) => r.attributes('data-member'))).toEqual(['u3'])
-    expect(wrapper.get('[data-testid="member-foot"]').text()).toBe('1 / 3')
+    expect(wrapper.get('[data-testid="member-foot"]').text()).toBe('1–1 / 1')
   })
 
   it('adds an existing user and changes a member role through preview → apply; the owner is locked', async () => {

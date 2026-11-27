@@ -63,7 +63,7 @@
                 :data-project-row="p.project_id"
               >
                 <span class="mono">{{ p.project_id }}</span>
-                <b>{{ p.project_name }}</b>
+                <b class="name" :title="p.project_name">{{ p.project_name }}</b>
                 <span class="desc">{{ p.description || '—' }}</span>
                 <span><span class="fgs-pill" :class="p.is_active ? 'ok' : 'off'">{{ t(p.is_active ? 'gui.settings.projects.active' : 'gui.settings.projects.inactive') }}</span></span>
                 <span class="mods">{{ p.modules.length ? p.modules.map((m) => m.name).join(', ') : '—' }}</span>
@@ -143,6 +143,14 @@ onMounted(() => {
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.name {
+  /* 긴 프로젝트 이름은 줄바꿈하거나 옆 칸을 침범하지 않고 한 줄에서 "…"로 줄인다 (사용자 표 .fgs-who b 와 같은 규칙). */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .desc,

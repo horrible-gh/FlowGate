@@ -377,7 +377,11 @@ table.fgs-t { width: 100%; border-collapse: collapse; text-align: left; }
 .fgs-t tbody tr.sel { background: #12304f; box-shadow: inset 3px 0 0 #3f8ae0; }
 .fgs-t td.r, .fgs-t th.r { text-align: right; }
 
-.fgs-dtable { border: 1px solid #263d57; border-radius: 12px; overflow: hidden; background: #0b1c2d; }
+/* v02test.0090 (F90-12): a window too narrow for every column scrolls the table sideways inside its
+ * rounded frame — never the page. Each row is at least as wide as its columns' minimums, so the
+ * row lines and hover backgrounds run the full scrolled width. */
+.fgs-dtable { border: 1px solid #263d57; border-radius: 12px; overflow-x: auto; overflow-y: hidden; background: #0b1c2d; }
+.fgs-dtable > .fgs-dtr { min-width: min-content; }
 
 .fgs-dtr {
   display: grid;
@@ -399,9 +403,14 @@ table.fgs-t { width: 100%; border-collapse: collapse; text-align: left; }
 .fgs-dtr.row.dim { opacity: 0.55; }
 .fgs-dtr.row.static { cursor: default; }
 .fgs-tablefoot { padding: 10px 2px 0; color: #70869f; font-size: 12px; }
+/* "1–20 / 34" with previous / next only (v02test.0090 F90-12). */
+.fgs-tablefoot.fgs-pager { display: flex; align-items: center; gap: 6px; }
+.fgs-tablefoot.fgs-pager .fgs-iconbtn { width: 26px; height: 26px; border-radius: 7px; }
+.fgs-tablefoot.fgs-pager .fgs-iconbtn:first-of-type { margin-left: 4px; }
 
 .fgs-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.fgs-who b, .fgs-who strong { display: block; font-size: 13px; }
+.fgs-who b, .fgs-who strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fgs-who > div:not(.fgs-av) { min-width: 0; }
 .fgs-who > div > span, .fgs-who small { display: block; color: #89a2b9; font-size: 11.5px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fgs-who .txt { min-width: 0; }
 
