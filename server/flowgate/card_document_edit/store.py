@@ -229,11 +229,13 @@ def _commit_revision(ctx, inp):
     body_replace(inp)
     for task in built.transaction_tasks:
         task()
+    type_tasks = list(built.type_tasks)
     if doc.get("type_code") == "TS":
-        from modules.flow_gate.services.test_card_changes import saved
-        saved(doc, inp.body.text or "", built.stored_bytes.decode("utf-8"))
+        from modules.flow_gate.services.test_card_changes import regenerate_after_save, saved
+        if saved(doc, inp.body.text or "", built.stored_bytes.decode("utf-8")):
+            type_tasks.append(lambda: regenerate_after_save(doc))
     saved_doc = documents.get_by_id(doc["doc_id"])
     test_approval_carry.preserve(approvals, saved_doc)
     return ContactPlan(doc["project_id"], doc.get("group_id"), saved_doc, req.actor.user_id,
                        req.origin.token_id if req.actor.kind == "worker" else None,
-                       type_tasks=list(built.type_tasks))
+                       type_tasks=type_tasks)
