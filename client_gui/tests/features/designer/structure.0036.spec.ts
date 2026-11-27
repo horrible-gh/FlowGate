@@ -107,7 +107,8 @@ describe('features/designer/inspector structure (flowgate.v02.0036)', () => {
     expect(Object.keys(inspector.menu).sort()).toEqual(['history'])
     // flowgate.v02.0053 T#7: the 테스트 card's 시나리오 작성 block (its 작성 AI) and a refused change's icon name.
     expect(Object.keys(inspector.run_settings).sort()).toEqual(
-      ['advanced', 'failed', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'scenario_title', 'time_limit', 'title', 'verify_max_runs', 'verify_run_minutes', 'writer_ai'].sort(),
+      // flowgate.v02test.0081: the time settings in seconds, the test card's time settings and the [number][unit] words.
+      ['advanced', 'ai_judge_mode', 'ai_judge_run_sec', 'ai_judge_runs', 'auto_case_timeout_sec', 'duration', 'failed', 'restart', 'review_ai', 'review_basis', 'review_count', 'run_ai', 'scenario_title', 'time_limit_sec', 'title', 'verify_max_runs', 'verify_run_sec', 'writer_ai'].sort(),
     )
     expect(messages.designer.shell).not.toHaveProperty('bottom_label')
     expect(messages.designer.shell).not.toHaveProperty('bottom_parts')

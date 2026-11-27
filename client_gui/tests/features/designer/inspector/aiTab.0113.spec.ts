@@ -30,8 +30,8 @@ const i18n = prepareInspectorI18n()
 let wrapper: VueWrapper<any> | null = null
 function settingsRaw(kind = 'run'): any {
   const fields: Record<string,any> = {}
-  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', after_review_exhausted: 'continue', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit: 60, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
-  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'after_review_exhausted' ? ['continue','stop'] : name === 'instruction' ? ['use','omit'] : name === 'time_limit' ? [60,120] : null }
+  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', after_review_exhausted: 'continue', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit_sec: 3600, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
+  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'after_review_exhausted' ? ['continue','stop'] : name === 'instruction' ? ['use','omit'] : null }
   return { card_kind: kind, settings_version: 7, locked: false, fields, ai_roles: { options_state: 'ok', options: [{ id: 'a', name: 'None' }], card_init_state: 'legacy', has_legacy_roles: true,
     preserved: { run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last' }, roles: {
       ...(kind !== 'plan' ? { instruction: { selected: null, state: 'assigned_ok', outcome: 'ai', display_name: 'Old AI', provider_id: 'old', legacy_flag: true, source: 'legacy_fields' } } : {}),
@@ -65,6 +65,11 @@ async function tab(panel: 'ai' | 'settings', kind = 'run') {
 async function gear(w: VueWrapper<any>, role: string) {
   await w.get(`[data-gear="${role}"]`).trigger('click'); await flushPromises()
   return w.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`)
+}
+/** flowgate.v02test.0081: types a number into a time setting's [number] box and takes it (Enter / leaving the box). */
+async function typeDuration(w: VueWrapper<any>, field: string, text: string) {
+  const box = w.get(`[data-test="inspector-run-settings-${field}-amount"]`)
+  await box.setValue(text); await box.trigger('focusout'); await flushPromises()
 }
 const labels = (w: { findAll: VueWrapper<any>['findAll'] }) => w.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))
 describe('D §8 UI conditions, settings remainder and preserved values', () => {
@@ -101,7 +106,7 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(cardRoleRows(roles,'omit').map(row => [row.role, row.held])).toEqual([['instruction',true],['execution',false],['review',false]])
     expect(roles).toEqual(before)
     expect(SETTINGS_FIELDS).toEqual({ run: ['instruction'], test: ['instruction','result_cause','follow_scope'], plan: ['pre_instruction_auto'] })
-    expect(AI_FIELDS.test).toEqual(['review_count'])
+    expect(AI_FIELDS.test).toEqual(['review_count', 'auto_case_timeout_sec', 'ai_judge_mode', 'ai_judge_run_sec', 'ai_judge_runs'])
   })
   it.each(['run','test','plan'])('%s settings keeps procedure fields only', async kind => {
     const w = await tab('settings',kind)
@@ -176,9 +181,11 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     await gear(w, 'review')
     expect(w.get('[data-test="inspector-run-settings-after_review_exhausted"]').attributes('disabled')).toBeUndefined()
   })
-  it('a 테스트 card has the four rows and no ⚙ (no advanced item)', async () => {
+  // F81: two zones (case writing · test run) of 작업 AI · 검수 AI; flowgate.v02test.0081: its one ⚙ (test run 작업 AI) holds the
+  // time settings, so a card whose answer has none of them has no ⚙ (testCardTime.0081.spec has the ⚙ itself).
+  it('a 테스트 card has its zone rows and no ⚙ while the server gives no time setting (no advanced item)', async () => {
     const w = await tab('ai','test')
-    expect(w.findAll('[data-role]')).toHaveLength(3)
+    expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['execution','review','execution','review'])
     expect(w.find('[data-test="inspector-run-settings-review_count"]').exists()).toBe(true)
     expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-ai-gear"]').exists()).toBe(false)
@@ -315,7 +322,7 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
   })
   it('marks a ⚙ (and its selects) only when a value differs from its default', async () => {
     raw = settingsRaw()
-    for (const name of ['restart', 'time_limit', 'review_basis', 'after_review_exhausted']) raw.fields[name].default = raw.fields[name].value
+    for (const name of ['restart', 'time_limit_sec', 'review_basis', 'after_review_exhausted']) raw.fields[name].default = raw.fields[name].value
     raw.fields.instruction_review_ai.default = 'gone'; raw.fields.instruction_review_count.default = 1
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
     expect(wrapper.get('[data-gear="execution"]').attributes('data-modified')).toBeUndefined()
@@ -327,10 +334,11 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
     expect(pop.get('[data-field="instruction_review_count"]').attributes('data-modified')).toBe('true')
     expect(pop.get('[data-field="instruction_review_ai"]').attributes('data-modified')).toBeUndefined()
     await gear(wrapper, 'execution')
-    await wrapper.get('[data-test="inspector-run-settings-time_limit"]').setValue('120'); await flushPromises()
-    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit', value: 120 })
+    // flowgate.v02test.0081: [1][시간] → [2][시간] is 7200 seconds
+    await typeDuration(wrapper, 'time_limit_sec', '2')
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit_sec', value: 7200 })
     expect(wrapper.get('[data-gear="execution"]').attributes('data-modified')).toBe('true')
-    expect(wrapper.get('[data-test="inspector-run-settings-time_limit"]').classes()).toContain('is-modified')
+    expect(wrapper.get('[data-test="inspector-run-settings-time_limit_sec"]').classes()).toContain('is-modified')
   })
   it('a card opens with every ⚙ window closed', async () => {
     const w = await tab('ai')
@@ -341,8 +349,8 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
   it('0003-CH QA: a value picked in the window keeps it open, also when the same card comes back as a new target', async () => {
     const w = await tab('ai')
     await gear(w, 'execution')
-    await w.get('[data-test="inspector-run-settings-time_limit"]').setValue('120'); await flushPromises()
-    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit', value: 120 })
+    await typeDuration(w, 'time_limit_sec', '2')
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit_sec', value: 7200 })
     await w.setProps({ target: { ...target() } }); await flushPromises()
     expect(w.find('[data-test="inspector-ai-advanced"][data-for="execution"]').exists()).toBe(true)
     await w.setProps({ panel: 'settings' }); await flushPromises()

@@ -9,7 +9,9 @@
        "케이스 작성", its TSC mark left out): 작성 AI | 검수 AI · 검수 횟수, no fold. A field whose change the
        server refused carries its reason: a red ! icon beside the control, the reason its tooltip.
        flowgate.v02.0072 T#3 — `labels`: the caller may name an item its own way (the WP card's 작업 AI); the layout,
-       the controls and the fold stay the same. -->
+       the controls and the fold stay the same.
+       flowgate.v02test.0081 (0029-T): a field given with `duration` (실행 제한 시간 · 검증 1회 시간) is two boxes — [number][unit ▾] —
+       over seconds instead of a select. -->
   <InspectorBlock
     :title="title ?? t(k(layout === 'scenario' ? 'scenario_title' : 'title'))"
     :locked="locked"
@@ -26,7 +28,18 @@
     <div class="inspector-run-settings-grid">
       <div v-for="(column, index) in columns" :key="index">
         <InspectorControlRow v-for="name in column" :key="name" :label="labelOf(name)" :hint="fields[name]?.reason ?? null">
+          <InspectorDurationInput
+            v-if="fields[name]?.duration"
+            :model-value="secondsOf(name)"
+            :min="fields[name]!.duration!.min"
+            :max="fields[name]!.duration!.max"
+            :disabled="locked || fields[name]!.disabled === true"
+            :label="labelOf(name)"
+            :test-id="`inspector-run-settings-${name}`"
+            @update:model-value="(seconds: number) => emit('update:field', name, String(seconds))"
+          />
           <Select
+            v-else
             :model-value="fields[name]?.value ?? ''"
             :options="optionsOf(name)"
             :placeholder="placeholderOf(name)"
@@ -41,7 +54,18 @@
     <div v-if="layout === 'run' && advancedOpen" class="inspector-run-settings-advanced" data-test="inspector-run-settings-advanced-panel">
       <div v-for="name in advancedFields" :key="name" class="inspector-run-settings-card">
         <InspectorControlRow :label="labelOf(name)" :hint="fields[name]?.reason ?? null">
+          <InspectorDurationInput
+            v-if="fields[name]?.duration"
+            :model-value="secondsOf(name)"
+            :min="fields[name]!.duration!.min"
+            :max="fields[name]!.duration!.max"
+            :disabled="locked || fields[name]!.disabled === true"
+            :label="labelOf(name)"
+            :test-id="`inspector-run-settings-${name}`"
+            @update:model-value="(seconds: number) => emit('update:field', name, String(seconds))"
+          />
           <Select
+            v-else
             :model-value="fields[name]?.value ?? ''"
             :options="optionsOf(name)"
             :placeholder="placeholderOf(name)"
@@ -64,8 +88,9 @@ import Select, { type SelectOption } from '../../../../components/ui/Select.vue'
 import InspectorBlock from './InspectorBlock.vue'
 import InspectorControlRow from './InspectorControlRow.vue'
 import InspectorFailureIcon from './InspectorFailureIcon.vue'
+import InspectorDurationInput from './InspectorDurationInput.vue'
 
-export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit' | 'verify_max_runs' | 'verify_run_minutes' | 'review_basis' | 'after_review_exhausted'
+export type InspectorRunSettingsField = 'run_ai' | 'restart' | 'review_ai' | 'review_count' | 'time_limit_sec' | 'verify_max_runs' | 'verify_run_sec' | 'review_basis' | 'after_review_exhausted'
 
 export interface InspectorRunSettingsValue {
   /** The shown value ('' = none / the placeholder). */
@@ -77,6 +102,11 @@ export interface InspectorRunSettingsValue {
   readonly reason?: string | null
   /** Why the server refused the last change of the field (the tooltip of the ! icon), or null. */
   readonly failure?: string | null
+  /**
+   * flowgate.v02test.0081: a time setting — drawn as [number][unit ▾] (InspectorDurationInput) instead of a list; its
+   * `value` is whole seconds as text ('' = none) and a change leaves as seconds text. [min, max] in seconds.
+   */
+  readonly duration?: { readonly min: number; readonly max: number }
 }
 
 /** A field absent from `fields` is shown disabled and empty (the v7 item stays on screen). */
@@ -90,8 +120,8 @@ const RUN_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [
 /** v7 testSettings: 작성 AI | 검수 AI · 검수 횟수. */
 const SCENARIO_COLUMNS: readonly (readonly InspectorRunSettingsField[])[] = [['run_ai'], ['review_ai', 'review_count']]
 // flowgate.v02test.0053 0003-T: the two 검증 options follow the time limit, and only a card that has them draws them.
-const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted']
-const OPTIONAL_ADVANCED: readonly InspectorRunSettingsField[] = ['after_review_exhausted', 'verify_max_runs', 'verify_run_minutes']
+const ADVANCED: readonly InspectorRunSettingsField[] = ['time_limit_sec', 'verify_max_runs', 'verify_run_sec', 'review_basis', 'after_review_exhausted']
+const OPTIONAL_ADVANCED: readonly InspectorRunSettingsField[] = ['after_review_exhausted', 'verify_max_runs', 'verify_run_sec']
 const advancedFields = computed(() => ADVANCED.filter(name => !OPTIONAL_ADVANCED.includes(name) || props.fields[name]))
 
 const props = withDefaults(
@@ -122,6 +152,12 @@ function labelOf(name: InspectorRunSettingsField): string {
   const own = props.labels[name]
   if (own) return own
   return t(k(props.layout === 'scenario' && name === 'run_ai' ? 'writer_ai' : name))
+}
+
+/** A time setting's seconds (null: none). */
+function secondsOf(name: InspectorRunSettingsField): number | null {
+  const text = props.fields[name]?.value ?? ''
+  return /^[0-9]+$/.test(text) ? Number(text) : null
 }
 
 function optionsOf(name: InspectorRunSettingsField): SelectOption[] {

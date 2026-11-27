@@ -375,9 +375,11 @@ describe('settings tab on a v0.1 step — reading (flowgate.v02.0048 T#9, v7 for
     expect(isDisabled(runSelect(w, 'restart'))).toBe(true)
     expect(hintOf(runSelect(w, 'restart'))).toBe('이 단계에는 저장되지 않음')
     await w.get('[data-test="inspector-run-settings-advanced"]').trigger('click')
-    for (const field of ['time_limit', 'review_basis']) {
-      expect(isDisabled(runSelect(w, field))).toBe(true)
-      expect(hintOf(runSelect(w, field))).toBe('이 단계에는 저장되지 않음')
+    // flowgate.v02test.0081: the time limit is a [number][unit] box (its unit select stands for it here)
+    for (const field of ['time_limit_sec-unit', 'time_limit_sec-amount', 'review_basis']) {
+      const control = field === 'time_limit_sec-amount' ? w.find('input[data-test="inspector-run-settings-time_limit_sec-amount"]') : runSelect(w, field)
+      expect(isDisabled(control), field).toBe(true)
+      expect(hintOf(control), field).toBe('이 단계에는 저장되지 않음')
     }
     for (const test of ['settings-instruction-switch']) {
       for (const option of w.get(`[data-test="${test}"]`).findAll('[data-test="inspector-segment-option"]')) {
