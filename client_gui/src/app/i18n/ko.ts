@@ -2960,6 +2960,8 @@ export default {
     search_people: '이름 · 이메일',
     filter_all: '전체',
     no_match: '조건에 맞는 항목이 없습니다.',
+    page_prev: '이전',
+    page_next: '다음',
     none: '없음',
     csv: 'CSV 내보내기',
     saved: '저장되었습니다.',

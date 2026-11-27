@@ -104,7 +104,7 @@
             </button>
           </div>
 
-          <div class="fgs-dtable" style="--cols: minmax(230px, 1.6fr) 120px 100px 110px 110px 24px">
+          <div class="fgs-dtable" style="--cols: minmax(140px, 1.6fr) 120px 100px 110px 110px 24px">
             <div class="fgs-dtr head">
               <div>{{ t('gui.settings.detail.col_member') }}</div>
               <div>{{ t('gui.settings.detail.col_role') }}</div>
@@ -114,7 +114,7 @@
               <div />
             </div>
             <div
-              v-for="member in filteredMembers"
+              v-for="member in membersPage"
               :key="member.user_id"
               class="fgs-dtr row"
               :class="{ static: !canManage, dim: member.state === 'disabled' }"
@@ -140,7 +140,15 @@
             </div>
             <div v-if="!filteredMembers.length" class="fgs-empty">{{ t('gui.settings.no_match') }}</div>
           </div>
-          <div class="fgs-tablefoot" data-testid="member-foot">{{ filteredMembers.length }} / {{ detail.members.length }}</div>
+          <div class="fgs-tablefoot fgs-pager" data-testid="member-foot">
+            <span>{{ membersRange }}</span>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_prev')" :aria-label="t('gui.settings.page_prev')" :disabled="!membersHasPrev" data-testid="member-foot-prev" @click="membersPrev">
+              <SettingsIcon name="back" size="sm" />
+            </button>
+            <button type="button" class="fgs-iconbtn" :title="t('gui.settings.page_next')" :aria-label="t('gui.settings.page_next')" :disabled="!membersHasNext" data-testid="member-foot-next" @click="membersNext">
+              <SettingsIcon name="chev" size="sm" />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -373,6 +381,7 @@ import SettingsShell from '../components/SettingsShell.vue'
 import SettingsSubnav, { type SubnavItem } from '../components/SettingsSubnav.vue'
 import { useChangeFlow, type ChangeSpec } from '../components/useChangeFlow'
 import { useSettingsToasts } from '../components/useSettingsToasts'
+import { usePagedList } from '../components/usePagedList'
 import { allows, refusalReason, reportsCapabilities, useAccessLists } from '../capabilities'
 import type { SettingsIconName } from '../icons'
 import {
@@ -521,6 +530,16 @@ const filteredMembers = computed(() => {
     && (!invitedOnly.value || m.state === 'invited'),
   )
 })
+
+// v02test.0090 (F90-12): 20 rows a time; a search / filter change goes back to page 1.
+const {
+  pageItems: membersPage,
+  rangeLabel: membersRange,
+  hasPrev: membersHasPrev,
+  hasNext: membersHasNext,
+  prev: membersPrev,
+  next: membersNext,
+} = usePagedList(filteredMembers, [memberQuery, roleFilter, invitedOnly, () => props.workspaceId])
 
 function exportMembers() {
   if (!detail.value) return

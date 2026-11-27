@@ -2946,6 +2946,8 @@ export default {
     search_people: 'Name · email',
     filter_all: 'All',
     no_match: 'Nothing matches.',
+    page_prev: 'Previous',
+    page_next: 'Next',
     none: 'None',
     csv: 'Export CSV',
     saved: 'Saved.',

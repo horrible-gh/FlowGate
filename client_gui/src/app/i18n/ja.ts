@@ -2947,6 +2947,8 @@ export default {
     search_people: '名前 · メール',
     filter_all: 'すべて',
     no_match: '条件に合う項目がありません。',
+    page_prev: '前へ',
+    page_next: '次へ',
     none: 'なし',
     csv: 'CSV エクスポート',
     saved: '保存しました。',
