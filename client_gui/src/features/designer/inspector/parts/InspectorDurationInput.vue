@@ -207,9 +207,11 @@ function onUnit(next: DurationUnit) {
   border-color: #e5484d;
 }
 
+/* 0031-T: wide enough for the longest unit name in each language ('hours' / '시간') after the select's own padding
+   (12px left, 34px for its ▾), so a unit is never cut ('hour:'). */
 .inspector-duration-unit {
   flex: none;
-  width: 78px;
+  width: 96px;
 }
 
 .inspector-duration-note {

@@ -5,8 +5,8 @@
  *   [케이스 수 | 고정] (케이스 수 by default) · 1회 시간, and 횟수 only while 고정; a yellow dot once a value is not its default;
  *   the AI tab keeps its rows.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { config, mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }))
 vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(), getRequest: http.get, patchRequest: http.patch }))
 import SettingsTab from '@/features/designer/inspector/features/settings/SettingsTab.vue'
@@ -61,6 +61,11 @@ beforeEach(() => {
   })
 })
 afterEach(() => { wrapper?.unmount(); wrapper = null })
+// 0031-T: the ⚙ window is drawn under body (Teleport); here it is drawn in place so the wrapper finds it. A test that
+// needs the real top layer mounts with `stubs: { teleport: false }`.
+let configStubs: typeof config.global.stubs
+beforeAll(() => { configStubs = config.global.stubs; config.global.stubs = { ...configStubs, teleport: true } })
+afterAll(() => { config.global.stubs = configStubs })
 
 async function tab(kind: 'run' | 'test', values: Record<string, unknown> = {}) {
   raw = settingsRaw(kind, values)
@@ -242,6 +247,22 @@ describe('the test card — one ⚙ beside the test run 작업 AI', () => {
     unit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await flushPromises()
     expect(wrapper.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
     expect(http.patch).not.toHaveBeenCalled()
+  })
+
+  it('0031-T: the ⚙ window is drawn under body, out of the Inspector; a press in it keeps it open, a press outside closes it', async () => {
+    raw = settingsRaw('test')
+    wrapper = mount(SettingsTab, { props: { target: target('TS'), panel: 'ai' }, global: { plugins: [i18n], stubs: { teleport: false } }, attachTo: document.body }); await flushPromises()
+    await wrapper.get('[data-gear="execution"]').trigger('click'); await flushPromises()
+    const pop = document.body.querySelector<HTMLElement>('[data-test="inspector-ai-advanced"][data-for="execution"]')
+    expect(pop).not.toBeNull()
+    expect(wrapper.element.contains(pop)).toBe(false)
+    expect(pop!.parentElement).toBe(document.body)
+    const unit = pop!.querySelector<HTMLElement>('[data-test="inspector-run-settings-auto_case_timeout_sec-unit"]')!
+    unit.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true })); await flushPromises()
+    pop!.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true })); await flushPromises()
+    expect(document.body.querySelector('[data-test="inspector-ai-advanced"]')).not.toBeNull()
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true })); await flushPromises()
+    expect(document.body.querySelector('[data-test="inspector-ai-advanced"]')).toBeNull()
   })
 
   it('(0030-TR 3rd) a click outside the open ⚙ window takes the typed number before closing it: 2 분 → 5 → 300 sent once', async () => {
