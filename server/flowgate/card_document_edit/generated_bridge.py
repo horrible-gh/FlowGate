@@ -104,12 +104,26 @@ def tsr(doc, *, run, kind="result", state=None, reason=None, cases=None, locale=
         run_meta = old.test_spec_service.load_result_meta(current_run.get("result_meta"))
         bound = current_run.get("tsr_doc_id") or run_meta.get("tsr_doc_id")
         if bound and (active is None or active["doc_id"] != bound):
-            raise internal_error()
+            orphan = documents.get_by_id(bound)
+            slot = old._card_tsr_for_ts(ts)
+            if (slot is None or active is None or slot["doc_id"] != active["doc_id"]
+                    or not orphan or orphan.get("target_id") != ts_id
+                    or orphan.get("group_id") != ts.get("group_id")):
+                raise internal_error()
+            # Converge only the current run, under the same guard as the report write.
+            test_runs.set_run_tsr_doc(current_run["run_id"], active["doc_id"])
+            if run_meta.get("tsr_doc_id"):
+                import json
+                run_meta["tsr_doc_id"] = active["doc_id"]
+                test_runs.set_run_result_meta(current_run["run_id"], json.dumps(run_meta))
         if active is not None:
             flow_guard.lock_document_row(active["doc_id"])
             active = documents.get_by_id(active["doc_id"])
             if active.get("status") in {"cancelled", "archived"}:
                 raise old._http_error(409, "tsr_already_approved", tsr_doc_id=active["doc_id"])
+            if active.get("target_id") is None and old._card_tsr_for_ts(ts) is not None:
+                documents.update(active["doc_id"], {"target_id": ts_id, "triggered_by": ts_id})
+                active = documents.get_by_id(active["doc_id"])
             if active.get("target_id") != ts_id or active.get("group_id") != ts.get("group_id"):
                 raise internal_error()
             owner = test_runs.latest_by_tsr_doc(active["doc_id"])

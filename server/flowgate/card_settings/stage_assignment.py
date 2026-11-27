@@ -782,6 +782,10 @@ def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[st
         return None
     if not result_has_body(kind_of(node), doc):
         return None
+    if plan.get("result_type") == "TSR":
+        from flowgate.card_settings.test_execution import report_ready
+        if not report_ready(doc):
+            return None  # queued/running reports have a body but are not finished results
     if plan.get("instruction_type") and report_baseline.is_baseline(attempt_id, doc):
         return None
     if legacy.earlier_result(attempt_id, node["node_key"], doc["doc_id"]):
@@ -789,7 +793,8 @@ def written_result(flow_id: str, node: dict, plan: dict, attempt_id: Optional[st
     return doc
 
 
-def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, plan: dict) -> Optional[str]:
+def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, plan: dict,
+                        *, author: Optional[dict] = None) -> Optional[str]:
     """A-4: the result stage's report is written already — no writer is asked (no AI, no manual write). The
     report is registered as the node's result with the node token (T-3 when the instruction spent it; a document that
     was submitted or judged already keeps its review state) and goes to this attempt's result review after the commit:
@@ -825,7 +830,7 @@ def take_written_result(ctx, node: dict, a: dict, issued_to: str, doc: dict, pla
     def follow() -> None:
         legacy.tell_graph(flow_id, doc_id, doc_type, token_id)
         if not person:
-            assigned_review.after_result_work(flow_id, run_id, node, doc_id, attempt_id, legacy.written_by(doc_id),
+            assigned_review.after_result_work(flow_id, run_id, node, doc_id, attempt_id, author or legacy.written_by(doc_id),
                                               assigned_review.HELD)
 
     ctx.jobs.append(follow)
