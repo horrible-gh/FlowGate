@@ -2221,6 +2221,7 @@ export default {
   },
   document_window: {
     untitled: '文書',
+    scenario_title: 'シナリオ',
     edit: '編集',
     editor: '文書本文',
     save: '保存',

@@ -459,6 +459,19 @@ export function followTestCardWindows(target: InspectorTarget | null): void {
 /** No window of the card is open any more. */
 export function releaseTestCardWindows(key: string): void { testCardWindowCards.delete(key) }
 
+/**
+ * F81-9: the Canvas card's 시나리오 button asks for the card's scenario window (a TS document always opens as the
+ * scenario, never as a 지시서 document window). The Canvas selects the card; the Frame's window host opens the window
+ * once the selected target is that card and its scenario can open. Another card selected drops the request.
+ */
+export interface TestCardScenarioRequest { readonly projectId: string; readonly flowId: string; readonly nodeKey: string }
+export const testCardScenarioRequest = shallowRef<TestCardScenarioRequest | null>(null)
+export function requestTestCardScenario(request: TestCardScenarioRequest): void { testCardScenarioRequest.value = { ...request } }
+/** Whether `target` is the card a scenario request names. */
+export function testCardScenarioRequested(request: TestCardScenarioRequest | null, target: InspectorTarget | null): boolean {
+  return !!request && !!target && target.projectId === request.projectId && target.flowId === request.flowId && target.nodeId === request.nodeKey
+}
+
 /** Consumers share refs, settings writes and event subscriptions. Inactive cards retain only their memory. */
 export function useTestCardSession(target: () => InspectorTarget | null): ComputedRef<TestCardContext | null> {
   const app = getCurrentInstance()?.appContext ?? fallbackApp

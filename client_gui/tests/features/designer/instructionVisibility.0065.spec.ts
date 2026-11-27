@@ -23,9 +23,11 @@ describe('0065 #33 instruction visibility', () => {
     const instruction = { ...line, ...metadata, instructionOmitted: omitted }
     expect(instructionVisible(omitted, instruction)).toBe(visible)
     const facts = { cardKind: 'test' as const, docId: null, docType: null, docReviewStatus: null, docStatus: null, nodeRun: null, nodeType: 'custom', cardDocuments: [instruction] }
-    for (const slots of [designCardSlots(facts, omitted), researchCardSlots(facts, omitted), taskCardSlots(facts, omitted), gateCardSlots(facts, omitted), testSpecSlots(null, facts, omitted)]) {
+    for (const slots of [designCardSlots(facts, omitted), researchCardSlots(facts, omitted), taskCardSlots(facts, omitted), gateCardSlots(facts, omitted)]) {
       expect(slots.some(slot => slot.key === 'instruction')).toBe(visible)
     }
+    // F81-9: a test card never has an instruction line, whatever the omission setting.
+    expect(testSpecSlots(null, facts).some(slot => (slot.key as string) === 'instruction')).toBe(false)
     const buttons = cardDocumentButtons({ cardDocuments: [instruction], document: null })
     expect(buttons.some(button => button.ownerSlot === 'instruction')).toBe(visible && !!instruction.docId)
   })
@@ -35,8 +37,9 @@ describe('0065 #33 instruction visibility', () => {
     const lines = reverse ? [scenario, instruction] : [instruction, scenario]
     const buttons = cardDocumentButtons({ cardDocuments: lines, document: null })
     expect(buttons.map(button => [button.ownerSlot, button.scenario])).toEqual([['scenario', true]])
-    expect(testSpecSlots(null, { cardKind: 'test', docId: null, docType: 'TS', docReviewStatus: null, docStatus: null, cardDocuments: lines }, true).map(slot => slot.key)).toEqual(['scenario', 'report'])
-    expect(cardDocumentButtons({ cardDocuments: lines.map(row => ({ ...row, instructionOmitted: false })), document: null }).map(button => button.ownerSlot)).toEqual(['instruction', 'scenario'])
+    expect(testSpecSlots(null, { cardKind: 'test', docId: null, docType: 'TS', docReviewStatus: null, docStatus: null, cardDocuments: lines }).map(slot => slot.key)).toEqual(['scenario', 'report'])
+    // F81-9: a used instruction of a TS document is not a button either — the test card has the 시나리오 only.
+    expect(cardDocumentButtons({ cardDocuments: lines.map(row => ({ ...row, instructionOmitted: false })), document: null }).map(button => [button.ownerSlot, button.scenario])).toEqual([['scenario', true]])
   })
   it('retains omission metadata across both transports', () => {
     const raw = { slot: 'instruction', doc_id: 'ds', instruction_omitted: true, has_body: false, body_state: 'readable' }

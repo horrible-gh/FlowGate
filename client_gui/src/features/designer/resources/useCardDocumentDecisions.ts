@@ -48,7 +48,7 @@ export function useCardDocumentDecisions(target: () => InspectorTarget | null) {
   function row(slot: string, docId: string | null | undefined) {
     const t = target(), view = resource.data.value
     const visible = !!t && t.nodeType !== null && t.nodeType !== 'gate' && t.ownership !== 'v01'
-      && ['instruction', 'report', 'requirement', 'plan'].includes(slot)
+      && ['instruction', 'scenario', 'report', 'requirement', 'plan'].includes(slot)
     const doc = view?.documents[slot]
     const matches = !!docId && doc?.doc_id === docId
     const fallback = t?.cardDocuments.find((line) => line.slot === slot && line.docId === docId)?.docReviewStatus
