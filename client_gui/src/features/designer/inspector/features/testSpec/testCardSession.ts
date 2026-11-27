@@ -71,7 +71,7 @@ function tsFailureParsed(failure: TsReviseFailure) {
   else if (code === 'unauthorized') kind = 'unauthorized'
   else if (code === 'token_kind_not_allowed') kind = 'config'
   else if (code === 'invalid_content' || code === 'invalid_request') kind = 'invalid'
-  else if (code === 'GROUP_AI_RUN_LOCKED' || code === 'workflow_revert_pending') kind = 'running'
+  else if (code === 'run_in_progress' || code === 'GROUP_AI_RUN_LOCKED' || code === 'workflow_revert_pending') kind = 'running'
   else if (code === 'flow_disposed') kind = 'disposed'
   else if (code === 'permission_denied') kind = 'forbidden'
   else if (code === 'not_editable') {
@@ -294,7 +294,7 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
     if (documentCommands.includes(operation) && kind === 'forbidden') documentDenied.value = true
     const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated', 'unauthorized', 'config', 'detached', 'uncertain', 'binding']
     const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation
-    const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
+    const key = error instanceof TsReviseFailure && code === 'run_in_progress' ? 'failure.scenario_running' : kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
     refusal.value = { operation, key, kind, status, code, message, fieldErrors, error }
   }
   /** T2 also uses this for its direct documentContentSave call, so raw saves share the guard/busy/refusal. */
