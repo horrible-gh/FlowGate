@@ -47,6 +47,7 @@ export type CardSettingsField =
   | 'restart'
   | 'review_ai'
   | 'review_count'
+  | 'case_review_count'
   | 'time_limit'
   | 'verify_max_runs'
   | 'verify_run_minutes'
@@ -59,7 +60,7 @@ export type CardSettingsField =
 /** The fields of each kind, in v7 order. */
 export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test' | 'plan', readonly CardSettingsField[]>> = {
   run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'],
-  test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'],
+  test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'case_review_count', 'result_cause', 'follow_scope'],
   plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
 }
 
@@ -69,7 +70,7 @@ export function cardSettingsSwitchOn(value: unknown): boolean {
 }
 
 /** Fields whose value is a number (sent as one). */
-const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'restart', 'review_count', 'time_limit']
+const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'case_review_count', 'restart', 'review_count', 'time_limit']
 
 /**
  * The two verification options of a work card, managed per card only (there is no system setting). A card with no
@@ -205,8 +206,8 @@ const integers = (choices: readonly unknown[] | null | undefined): number[] =>
 /** The options of a choice field, in the server's order; a value outside them stays shown, marked. */
 export function cardSettingsChoiceOptions(field: CardSettingsField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
   let options: SettingsOption[]
-  if (field === 'restart' || field === 'review_count' || field === 'instruction_review_count') {
-    options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field === 'instruction_review_count' ? 'review_count' : field, count), params: { n: count }, label: null }))
+  if (field === 'restart' || field === 'review_count' || field === 'instruction_review_count' || field === 'case_review_count') {
+    options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field === 'restart' ? 'restart' : 'review_count', count), params: { n: count }, label: null }))
   } else if (cardSettingsIsVerifyField(field)) {
     options = cardSettingsVerifyOptions(field, choices, current)
   } else if (field === 'time_limit') {

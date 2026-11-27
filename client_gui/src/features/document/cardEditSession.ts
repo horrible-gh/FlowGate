@@ -135,7 +135,7 @@ export function newIdempotencyKey(): string {
 /** codes the server rejects before anything is stored (everything below is REJECTED unless noted). */
 const KNOWN_REJECTIONS: ReadonlySet<string> = new Set([
   'unauthorized', 'token_kind_not_allowed', 'revision_conflict', 'slot_document_changed', 'no_document',
-  'idempotency_key_reused', 'GROUP_AI_RUN_LOCKED', 'permission_denied', 'card_binding_missing',
+  'idempotency_key_reused', 'GROUP_AI_RUN_LOCKED', 'run_in_progress', 'permission_denied', 'card_binding_missing',
   'expected_revision_missing', 'not_editable', 'invalid_content', 'invalid_request', 'workflow_revert_pending',
   'flow_disposed', 'node_not_found', 'flow_not_found',
 ])

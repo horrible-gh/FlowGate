@@ -68,6 +68,31 @@ def test_api_card_bound_document_by_doc_id_saves_through_revise_and_replays(chat
     assert meta["origin"] == "chat" and meta["node_key"] == "research" and meta["slot"] == "instruction"
 
 
+def test_chat_ts_document_save_uses_scenario_when_legacy_instruction_also_points_to_it(chat, monkeypatch):
+    from test_card_document_edit_0127 import _ts_env, _ts_post, TS_ID, TS_CASE
+
+    path, spec = _ts_env(chat.env, monkeypatch)
+    documents.update(TS_ID, {"status": "open", "doc_review_status": "approved"})
+    repository.insert(F, "ts", "instruction", "TS", TS_ID, True, 0, "user")
+    initial = path.read_text(encoding="utf-8")
+    revised = spec.replace_spec_cases(initial, [{**TS_CASE, "title": "Updated"}], title="TS")
+    saved, _ = api(chat, chat_tools.REVISE_DOC_TOOL,
+                   {"doc_id": TS_ID, "expected_revision": 0, "content": revised})
+    assert saved[0] == 200, saved
+    assert saved[1]["line"]["slot"] == "scenario"
+    assert documents.get_by_id(TS_ID)["doc_review_status"] == "approved"
+
+    response = _ts_post(chat.env, "test-spec", {"expected_doc_id": TS_ID, "expected_revision": 1,
+                                               "idempotency_key": "ts-add", "cases": [TS_CASE, {**TS_CASE, "case_id": "TC-002"}]})
+    assert response.status_code == 200, response.json()
+    assert documents.get_by_id(TS_ID)["doc_review_status"] == "approved"
+
+    repository.insert(F, "other-test", "scenario", "TS", TS_ID, False, 0, "user")
+    with pytest.raises(chat_documents.GraphApiError) as exc:
+        chat_documents._card_line(documents.get_by_id(TS_ID))
+    assert exc.value.code == "card_binding_missing"
+
+
 def test_cli_non_card_document_edit_conflict_replay_and_reread(chat):
     non_card()
     assert target.classify_card_slot(documents.get_by_id(D)) == target.NON_CARD

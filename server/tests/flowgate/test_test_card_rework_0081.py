@@ -71,6 +71,29 @@ def test_approved_text_add_delete_regenerates_report_and_preserves_comment(env, 
     assert "Keep this comment" in body(rid)
 
 
+@pytest.mark.parametrize("deleting", [False, True])
+def test_running_scenario_conflict_response_and_atomicity(env, monkeypatch, deleting):
+    from test_card_document_edit_0127 import _ts_env, _ts_post, TS_ID, TS_CASE
+
+    path, _ = _ts_env(env, monkeypatch)
+    before = path.read_bytes()
+    cases = [] if deleting else [{**TS_CASE, "title": "Updated"}]
+    payload = {"expected_doc_id": TS_ID, "expected_revision": 0,
+               "idempotency_key": "ts-running", "cases": cases}
+    monkeypatch.setattr(test_runs, "get_running_by_doc", lambda doc_id: {"run_id": "active"})
+    result = _ts_post(env, "test-spec", payload)
+    assert result.status_code == 409, result.json()
+    assert result.json()["error"]["code"] == "run_in_progress"
+    assert result.json()["error"]["message"]
+    assert path.read_bytes() == before
+    assert documents.get_by_id(TS_ID)["revision_no"] == 0
+
+    monkeypatch.setattr(test_runs, "get_running_by_doc", lambda doc_id: None)
+    result = _ts_post(env, "test-spec", payload)
+    assert result.status_code == 200, result.json()
+    assert documents.get_by_id(TS_ID)["revision_no"] == 1
+
+
 @pytest.mark.parametrize("phase", ["case_write", "test_run"])
 @pytest.mark.parametrize("name", ["Kim", "Test AI"])
 def test_remark_resolver_and_only_its_stage_reopens(env, monkeypatch, phase, name):
