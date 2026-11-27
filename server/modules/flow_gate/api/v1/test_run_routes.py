@@ -107,24 +107,28 @@ def post_test_results(body: TestResultsBody, request: Request):
     if isinstance(auth, JSONResponse):
         return auth
     try:
-        graph_source_hooks.reject_group_source(auth, "test_run")
+        graph_source_hooks.require_writable(auth, "test_run")
     except graph_source_hooks.GraphSourceError as exc:
         return JSONResponse(status_code=409, content={"ok": False, "error": exc.detail})
-    if not auth.get("_is_user_jwt"):
-        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    if not auth.get("_is_user_jwt") and (auth.get("action_scope") != "test_run" or auth.get("doc_ref") != body.doc_id):
+        return JSONResponse(status_code=403, content={"error": "test_run_scope_forbidden"})
     doc = db_docs.get_by_id(body.doc_id)
     if doc is None:
         return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": body.doc_id})
-    if not test_run_service.user_can_run_tests(
-        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
-    ):
+    allowed = (test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin")))
+        if auth.get("_is_user_jwt") else test_run_service.token_can_run_tests(
+            auth["issued_to"], doc.get("project_id") or ""))
+    if not allowed:
         return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    if not auth.get("_is_user_jwt") and (doc.get("type_code") != "TS" or auth.get("group_id") != doc.get("group_id")):
+        return JSONResponse(status_code=403, content={"error": "test_run_scope_forbidden"})
     locale = request.headers.get("x-locale") or "ko"
     try:
         recorded = test_run_service.record_spec_results(
             doc_id=body.doc_id,
             runner_id=auth.get("issued_to") or "system",
-            triggered_via="ui",
+            triggered_via="ui" if auth.get("_is_user_jwt") else "token",
             results=body.results,
             junit_xml=body.junit_xml,
             source_identity=body.source_identity,
@@ -259,9 +263,11 @@ def _post_spec_execution_in_session(ts_id: str, case_id: Optional[str], request:
         or not doc.get("group_id") or auth.get("group_id") != doc["group_id"]
     ):
         return JSONResponse(status_code=403, content={"error": "test_run_scope_forbidden"})
-    if not test_run_service.user_can_run_tests(
-        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
-    ):
+    allowed = (test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin")))
+        if auth.get("_is_user_jwt") else test_run_service.token_can_run_tests(
+            auth["issued_to"], doc.get("project_id") or ""))
+    if not allowed:
         return JSONResponse(status_code=403, content={"error": "permission_denied"})
     from modules.flow_gate.services import spec_execution_service
     try:

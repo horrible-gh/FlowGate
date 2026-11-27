@@ -89,6 +89,26 @@ class FakeWorld:
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     w = FakeWorld()
+    from modules.flow_gate.db import ai_providers
+    monkeypatch.setattr(ai_providers, "get_runnable_row",
+                        lambda pid, user: {"id": "p1", "enabled": True} if pid == "p1" else None)
+    from modules.flow_gate.db import ai_run_identity
+    monkeypatch.setattr(svc, "_next_run_id", lambda: "aiv2_20261127_000001")
+    monkeypatch.setattr(ai_run_identity, "claim", lambda record: None)
+    monkeypatch.setattr(ai_run_identity, "assert_owner", lambda record: None)
+    from modules.flow_gate.services import tr_self_check_progress
+    monkeypatch.setattr(tr_self_check_progress, "open_attempt", lambda *args, **kwargs: None)
+    # Scratch ownership/persistence are separate contracts from scope completion.
+    from modules.flow_gate.services.ai_invoke import carryover
+    monkeypatch.setattr(svc, "_create_scratch", lambda *args: tmp_path)
+    monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda *args: None)
+    monkeypatch.setattr(carryover, "bind_run_scratch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(svc, "_persist_run_record", lambda run: True)
+    from modules.flow_gate.db import operation_job
+    monkeypatch.setattr(operation_job, "get_group_freeze_claim", lambda group_id: None)
+    monkeypatch.setattr(svc.ai_settings_service, "personal_selectable", lambda user_id: [])
+    # Admission checks claims before launching the worker; this fixture has no DB.
+    monkeypatch.setattr(svc.git_service, "get_branch_merge_group_claim", lambda group_id: None)
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc.db_docs, "get_by_id", w.get_by_id)

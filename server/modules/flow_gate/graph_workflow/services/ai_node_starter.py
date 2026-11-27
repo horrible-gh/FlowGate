@@ -128,7 +128,16 @@ def start_ai_invoke(job: dict) -> dict:
     if parent is None:
         raise NodeNotStartable("the Flow has no root document for the AI to work from")
     project_id, flow_id = job.get("project_id") or "", job["flow_id"]
-    scope = "edit" if job.get("action_scope") == "edit" else "new"
+    test_execution = job.get("stage") == "result" and (job.get("result_doc_type") == "TSR" or job.get("doc_type") == "TS")
+    scope = "test_run" if test_execution else "edit" if job.get("action_scope") == "edit" else "new"
+    if test_execution:
+        from flowgate.card_documents import lines
+        line = lines.line_document(flow_id, job["node_key"], "scenario",
+                                   job["node"].get("node_type"), job["node"].get("doc_type")) or {}
+        parent = line.get("document")
+        if not parent or parent.get("type_code") != "TS":
+            raise NodeNotStartable("the card's scenario document is gone")
+        doc_ref = parent["doc_id"]
     if scope == "edit":
         parent = db_documents.get_by_id(job.get("target_doc_id") or "")
         if parent is None:
@@ -146,7 +155,14 @@ def start_ai_invoke(job: dict) -> dict:
         except Exception:
             token_service.revoke(issue["token_id"], reason="graph_node_not_open")
             raise
-        mention = mention_service.build_mention_from_token_rec(
+        mention = None
+        if test_execution:
+            from modules.flow_gate.services import test_run_service
+            mention = test_run_service._build_test_run_mention(
+                doc=parent, api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"],
+                locale=job.get("locale") or "ko", specification=True)
+        if not test_execution:
+            mention = mention_service.build_mention_from_token_rec(
             token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,

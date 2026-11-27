@@ -930,6 +930,16 @@ def _build_spec_result_mention(
         "type: TS (test specification, test_contract_version: 2)\n"
         f"title: {doc.get('title') or ''}\n\n"
         f"{continuous_block}"
+        "## Server assembled report contract\n"
+        "Do NOT write or upload TSR markdown. Record results and evidence per case; the server assembles the report.\n"
+        "A 409 report_server_generated is expected for any attempted TSR write: do not ask a question about it. "
+        "Continue with the result API below and let the server assemble the report.\n"
+        "Resolve open case remarks first, then execute unrun cases. Wait for all server runs to finish before ending.\n"
+        f"GET {api_base_url}/documents/{doc['doc_id']}/test-spec/remarks\n"
+        f"POST {api_base_url}/documents/test-results\n"
+        "Use the same Bearer and {doc_id, results: [{case_id, status, actual}], overall_comment} for incremental "
+        "result entry. This API keeps the token usable for later cases and regenerates TSR after each submission. "
+        "Completion means all case results are recorded and the server report is assembled, not a document submission.\n\n"
         "## AI/manual/external result entry\n"
         "---\n"
         "Read the approved TS. Verify ONLY the Cases listed under \"Cases you record\" and "
@@ -3352,6 +3362,26 @@ def _settle_execution_tsr(doc: dict, run: dict) -> None:
         logger.warning("settling the report of %s failed", run.get("run_id"), exc_info=True)
 
 
+def _card_tsr_for_ts(doc: dict) -> Optional[dict]:
+    """Prefer the scenario's own card report, including an untouched revision-zero slot."""
+    from flowgate.card_documents import repository
+    rows = repository.rows(doc.get("group_id"))
+    keys = {r["node_key"] for r in rows if r["slot"] == "scenario"
+            and r["doc_type"] == "TS" and r["doc_id"] == doc["doc_id"]}
+    reports = [r for r in rows if r["node_key"] in keys and r["slot"] == "report" and r["doc_type"] == "TSR"]
+    if not reports:
+        return None
+    if len(reports) != 1:
+        raise RuntimeError("tsr_card_slot_ambiguous")
+    report = db_docs.get_by_id(reports[0]["doc_id"])
+    if (not report or report.get("group_id") != doc.get("group_id")
+            or report.get("project_id") != doc.get("project_id") or report.get("type_code") != "TSR"
+            or report.get("target_id") not in (None, doc["doc_id"])
+            or report.get("superseded_by") or report.get("status") in {"cancelled", "archived"}):
+        raise RuntimeError("tsr_card_slot_invalid")
+    return report
+
+
 def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
     """The TSR document already holding this TS's report slot, if any.
 
@@ -3361,6 +3391,9 @@ def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
     the document the workflow actually tracks (cleaning up the existing orphan is the review
     admin work, deliberately not automated here).
     """
+    bound = _card_tsr_for_ts(doc)
+    if bound is not None:
+        return bound
     existing = [
         candidate
         for candidate in db_docs.get_documents_by_target_id(doc["doc_id"], types=("TSR",))
