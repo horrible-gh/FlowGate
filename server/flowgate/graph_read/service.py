@@ -69,8 +69,9 @@ def _read(scope, group, resource, view):
     snap.documents = [d for d in snap.documents if d.get("doc_id") in allowed]
     meta = {"flow_id": scope.flow_id, "project_id": scope.project_id,
             "scope": {"kind": "node" if scope.node_key else "group", "node_key": scope.node_key,
-                      "attempt_id": scope.attempt_id},
-            "capabilities": {"read": True, "write": False, "execute": False}}
+                      "attempt_id": scope.attempt_id}}
+    if scope.chat_mode is not None:
+        meta["chat_mode"] = scope.chat_mode
     if resource == "current":
         row = run_store.current_run(scope.flow_id)
         payload = run_service.get_run(row["run_id"])["run"] if row else None
