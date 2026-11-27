@@ -5,7 +5,7 @@
 //
 // Fields (`fields._FIELDS`, in v7 order): run — instruction use / omit, instruction_ai (the earlier change
 // O2 0007-TR §4-1: the 지시 AI, shown while the instruction is used), run_ai, restart, review_ai, review_count,
-// and under 고급 time_limit and review_basis; test — instruction and the 시나리오 작성 block's run_ai (작성 AI),
+// and under 고급 time_limit_sec and review_basis; test — instruction and the 시나리오 작성 block's run_ai (작성 AI),
 // review_ai and review_count. A new card and a done card are read and changed the same way; the card cannot
 // change while it runs (`locked`). the earlier change F2-1: the progress-after-review choice is no setting any
 // more (O1 0005-TR §1-1, §4-3 — the server always goes on as the run mode says).
@@ -13,11 +13,11 @@
 // The values: an AI is an id (none = the node's assignee AI / the project's default reviewer / for the 지시 AI the
 // run AI then the assignee AI, sent as null);
 // restart and review count are the server's repeat choices (-1 until done / until it passes, 0 none, n);
-// the time limit is minutes; the review basis is type / last.
+// the time limit is seconds (flowgate.v02test.0081: `time_limit_sec`, shown as [number][unit]); the review basis is type / last.
 //
 // plan: a Graph work plan (WP) card's settings — the AI pre-instruction writing switch
 // (`pre_instruction_auto`, true / false, off by default) and the same run block (run_ai shown as task AI, restart,
-// review_ai, review_count, time_limit, review_basis). They are the card's values only: not the plan's Steps' AI /
+// review_ai, review_count, time_limit_sec, review_basis). They are the card's values only: not the plan's Steps' AI /
 // review AI inside the WP document, nothing runs from them yet, and the switch deletes no Step's pre-instruction.
 import type { InspectorReadOnly } from '../../inspectorTarget'
 import { settingsReviewCountKey, type SettingsOption } from './settingsModel'
@@ -48,9 +48,13 @@ export type CardSettingsField =
   | 'review_ai'
   | 'review_count'
   | 'case_review_count'
-  | 'time_limit'
+  | 'time_limit_sec'
   | 'verify_max_runs'
-  | 'verify_run_minutes'
+  | 'verify_run_sec'
+  | 'auto_case_timeout_sec'
+  | 'ai_judge_mode'
+  | 'ai_judge_run_sec'
+  | 'ai_judge_runs'
   | 'review_basis'
   | 'after_review_exhausted'
   | 'pre_instruction_auto'
@@ -59,9 +63,9 @@ export type CardSettingsField =
 
 /** The fields of each kind, in v7 order. */
 export const CARD_SETTINGS_FIELDS: Readonly<Record<'run' | 'test' | 'plan', readonly CardSettingsField[]>> = {
-  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'],
-  test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'case_review_count', 'result_cause', 'follow_scope'],
-  plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'review_basis', 'after_review_exhausted'],
+  run: ['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit_sec', 'verify_max_runs', 'verify_run_sec', 'review_basis', 'after_review_exhausted'],
+  test: ['instruction', 'run_ai', 'review_ai', 'review_count', 'case_review_count', 'result_cause', 'follow_scope', 'auto_case_timeout_sec', 'ai_judge_mode', 'ai_judge_run_sec', 'ai_judge_runs'],
+  plan: ['pre_instruction_auto', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit_sec', 'review_basis', 'after_review_exhausted'],
 }
 
 /** a switch's value as shown: on only for a stored (or sent) true. */
@@ -70,21 +74,83 @@ export function cardSettingsSwitchOn(value: unknown): boolean {
 }
 
 /** Fields whose value is a number (sent as one). */
-const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'case_review_count', 'restart', 'review_count', 'time_limit']
+const NUMBER_FIELDS: readonly CardSettingsField[] = ['instruction_review_count', 'case_review_count', 'restart', 'review_count']
 
 /**
- * The two verification options of a work card, managed per card only (there is no system setting). A card with no
- * stored value shows the server's default (10 runs / 1 minute); the server's `choices` are the combo's presets and any
- * whole number inside the range below is a value too (the combo's custom entry, the number box beside it).
+ * flowgate.v02test.0081 (0029-T common contract): the time settings, kept in whole seconds and drawn as [number][unit ▾]
+ * (InspectorDurationInput). Every run card: the run time limit (1800..14400, default 14400) and one verification's time
+ * (60..1800, default 60); a test card's test run: one automatic case's time and one AI judgement's time (60..1800,
+ * default 120 each). A value outside the range is moved to the nearest edge before it is sent (the server does the same
+ * and answers `clamped: true`). The former minute fields (`time_limit`, `verify_run_minutes`) are gone.
  */
-export type CardSettingsVerifyField = 'verify_max_runs' | 'verify_run_minutes'
-export const VERIFY_FIELDS: readonly CardSettingsVerifyField[] = ['verify_max_runs', 'verify_run_minutes']
+export type CardSettingsDurationField = 'time_limit_sec' | 'verify_run_sec' | 'auto_case_timeout_sec' | 'ai_judge_run_sec'
+export const DURATION_FIELDS: readonly CardSettingsDurationField[] = ['time_limit_sec', 'verify_run_sec', 'auto_case_timeout_sec', 'ai_judge_run_sec']
+/** [lowest, highest] seconds of each time setting. */
+export const DURATION_RANGE: Readonly<Record<CardSettingsDurationField, readonly [number, number]>> = {
+  time_limit_sec: [1800, 14400],
+  verify_run_sec: [60, 1800],
+  auto_case_timeout_sec: [60, 1800],
+  ai_judge_run_sec: [60, 1800],
+}
+/** The contract's defaults (the server's `default` wins when it sends one). */
+export const DURATION_DEFAULT: Readonly<Record<CardSettingsDurationField, number>> = {
+  time_limit_sec: 14400,
+  verify_run_sec: 60,
+  auto_case_timeout_sec: 120,
+  ai_judge_run_sec: 120,
+}
+
+export function cardSettingsIsDurationField(field: string): field is CardSettingsDurationField {
+  return (DURATION_FIELDS as readonly string[]).includes(field)
+}
+
+/** The seconds a duration field's text stands for: a whole number, moved inside the range; else undefined (nothing is sent). */
+export function cardSettingsDurationValue(field: CardSettingsDurationField, text: string): number | undefined {
+  const trimmed = text.trim()
+  if (!/^[0-9]+$/.test(trimmed)) return undefined
+  const number = Number(trimmed)
+  if (!Number.isSafeInteger(number)) return undefined
+  const [low, high] = DURATION_RANGE[field]
+  return Math.min(high, Math.max(low, number))
+}
+
+/** A duration field's shown seconds (null: no value to show). */
+export function cardSettingsDurationSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && /^[0-9]+$/.test(value.trim())) return Number(value.trim())
+  return null
+}
+
+/**
+ * flowgate.v02test.0081: how a test card's AI judges the cases — `case_count` (the default: once per case, automatic cases
+ * left out, so no count is stored or shown) or `fixed` (`ai_judge_runs` times). Switching keeps the stored count.
+ */
+export const AI_JUDGE_MODES = ['case_count', 'fixed'] as const
+export const AI_JUDGE_MODE_DEFAULT = 'case_count'
+/** The contract's default AI judgement count (used when the server gives no `default` for `ai_judge_runs`). */
+export const AI_JUDGE_RUNS_DEFAULT = 5
+/** Whether the AI judgement count row is shown: only for the fixed mode. */
+export function cardSettingsJudgeRunsShown(mode: unknown): boolean {
+  return mode === 'fixed'
+}
+
+/**
+ * The count options with a 사용자 정의 entry, managed per card only (there is no system setting): a work card's verification
+ * count (default 10) and a test card's fixed AI judgement count (default 5; its choices are the verification count's). A
+ * card with no stored value shows the server's default; the server's `choices` are the combo's presets (the common presets
+ * below for the judgement count when it sends none) and any whole number inside the range below is a value too (the combo's custom entry, the
+ * number box beside it).
+ */
+export type CardSettingsVerifyField = 'verify_max_runs' | 'ai_judge_runs'
+export const VERIFY_FIELDS: readonly CardSettingsVerifyField[] = ['verify_max_runs', 'ai_judge_runs']
 /** The value of the combo's 사용자 정의 entry: it opens the number box, it is never sent. */
 export const VERIFY_CUSTOM = '__custom'
-/** The accepted whole numbers of each option (the server's range; `null` = no upper bound): count 1 or more, minutes 1..30 (1800 seconds at most). */
+/** The common count presets (1 · 2 · 3 · 5 · 10 times). */
+export const COUNT_PRESETS: readonly number[] = [1, 2, 3, 5, 10]
+/** The accepted whole numbers of each option (the server's range; `null` = no upper bound): 1 or more. */
 export const VERIFY_RANGE: Readonly<Record<CardSettingsVerifyField, readonly [number, number | null]>> = {
   verify_max_runs: [1, null],
-  verify_run_minutes: [1, 30],
+  ai_judge_runs: [1, null],
 }
 
 export function cardSettingsIsVerifyField(field: string): field is CardSettingsVerifyField {
@@ -103,11 +169,13 @@ export function cardSettingsVerifyCustomValue(field: CardSettingsVerifyField, te
 /**
  * The combo of a verification option: the presets (the default 10 runs / 1 minute among them; there is no blank system
  * defaults entry), the stored value when it is none of them (so the shown value stays the stored one), then the custom
- * entry. A preset or stored value is labelled with the `count.times` / `option.minutes` messages.
+ * entry. A preset or stored value is labelled with the `count.times` message.
  */
 export function cardSettingsVerifyOptions(field: CardSettingsVerifyField, choices: readonly unknown[] | null | undefined, current: unknown): SettingsOption[] {
-  const key = field === 'verify_max_runs' ? 'count.times' : 'option.minutes'
-  const presets = integers(choices)
+  const key = 'count.times'
+  const given = integers(choices)
+  // the fixed AI judgement count offers the verification count's presets when the server sends none
+  const presets = given.length || field !== 'ai_judge_runs' ? given : [...COUNT_PRESETS]
   const shown = typeof current === 'number' && Number.isInteger(current) && !presets.includes(current) ? [...presets, current].sort((a, b) => a - b) : presets
   return [
     ...shown.map((n) => ({ value: String(n), key, params: { n }, label: null })),
@@ -157,6 +225,7 @@ export function cardSettingsValueOf(field: CardSettingsField, text: string): unk
   if (cardSettingsIsVerifyField(field)) {
     return text === VERIFY_CUSTOM ? undefined : cardSettingsVerifyCustomValue(field, text)
   }
+  if (cardSettingsIsDurationField(field)) return cardSettingsDurationValue(field, text)
   if (NUMBER_FIELDS.includes(field)) {
     const number = Number(text)
     return text !== '' && Number.isInteger(number) ? number : undefined
@@ -210,12 +279,15 @@ export function cardSettingsChoiceOptions(field: CardSettingsField, choices: rea
     options = integers(choices).map((count) => ({ value: String(count), key: cardSettingsCountKey(field === 'restart' ? 'restart' : 'review_count', count), params: { n: count }, label: null }))
   } else if (cardSettingsIsVerifyField(field)) {
     options = cardSettingsVerifyOptions(field, choices, current)
-  } else if (field === 'time_limit') {
-    options = integers(choices).map((minutes) => ({ value: String(minutes), key: 'option.minutes', params: { n: minutes }, label: null }))
+  } else if (cardSettingsIsDurationField(field)) {
+    // drawn as [number][unit], never as a list: the value alone
+    options = []
   } else {
-    options = (choices ?? []).filter((choice): choice is string => typeof choice === 'string').map((choice) => ({ value: choice, key: `${field}.${choice}`, params: {}, label: null }))
+    const given = (choices ?? []).filter((choice): choice is string => typeof choice === 'string')
+    options = (field === 'ai_judge_mode' && given.length === 0 ? [...AI_JUDGE_MODES] : given).map((choice) => ({ value: choice, key: `${field}.${choice}`, params: {}, label: null }))
   }
   const shown = cardSettingsText(current)
+  if (cardSettingsIsDurationField(field)) return options
   if (shown !== '' && !options.some((option) => option.value === shown)) options.push({ value: shown, key: null, params: {}, label: shown })
   return options
 }

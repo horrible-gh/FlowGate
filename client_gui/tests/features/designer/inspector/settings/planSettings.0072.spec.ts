@@ -1,7 +1,7 @@
 /**
  * the settings tab of a Graph work plan (WP) card. `@/features/document` is mocked as a small
  * card settings server with the plan fields the server keeps (`fields.PLAN`: pre_instruction_auto, run_ai, restart,
- * review_ai, review_count, time_limit, review_basis); every other call of `@shared/api` is offline and recorded:
+ * review_ai, review_count, time_limit_sec (flowgate.v02test.0081: seconds, a [number][unit] box), review_basis); every other call of `@shared/api` is offline and recorded:
  *
  * - the top line is [switch] AI pre-instruction writing (the switch left of its name, its tooltip saying it is a card value, no
  *   writer runs from it yet and off keeps the Steps' pre-instructions), then the common 실행 설정 block — task AI ·
@@ -61,7 +61,7 @@ const PLAN_FIELDS: readonly FieldDef[] = [
   ['restart', 0, REPEAT],
   ['review_ai', null, null],
   ['review_count', 0, REPEAT],
-  ['time_limit', 60, [30, 45, 60, 90, 120, 180, 240]],
+  ['time_limit_sec', 14400, null],
   ['review_basis', 'type', ['type', 'last']],
   ['hold', false, [true, false]],
 ]
@@ -219,7 +219,8 @@ describe('the WP card’s settings form (flowgate.v02.0072 T#3)', () => {
     expect(rowLabels(w)).toEqual(['작업 AI', '재시작', '검수 AI', '검수 횟수', '실행 제한 시간', '검수 기준'])
     expect(shownOf(w, 'run_ai')).toBe('담당 AI')
     expect(shownOf(w, 'review_ai')).toBe('기본 검수 AI')
-    expect(shownOf(w, 'time_limit')).toBe('60분')
+    expect((w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]').element as HTMLInputElement).value).toBe('4')
+    expect((w.get('[data-test="inspector-run-settings-time_limit_sec-unit"]').element as HTMLSelectElement).value).toBe('hour')
     expect(shownOf(w, 'review_basis')).toBe('문서 타입 기본')
     // The run settings block and the switch are v0.2 parts (the common Select / Toggle), not a copied drawing.
     expect(toggle(w).classes()).toContain('ui-toggle')
@@ -328,14 +329,14 @@ describe('the run block of a WP card (flowgate.v02.0072 T#3)', () => {
     expect(select(w, 'review_ai').attributes('disabled')).toBeUndefined()
     await pick(w, 'review_ai', 'aip_sol')
     await openAdvanced(w)
-    await pick(w, 'time_limit', '120')
+    await w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]').setValue('2'); await w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]').trigger('focusout'); await flushPromises()
     await pick(w, 'review_basis', 'last')
     expect(writes).toEqual([
       [FLOW, 'gn_wp', 'run_ai', 'aip_opus'],
       [FLOW, 'gn_wp', 'restart', -1],
       [FLOW, 'gn_wp', 'review_count', 2],
       [FLOW, 'gn_wp', 'review_ai', 'aip_sol'],
-      [FLOW, 'gn_wp', 'time_limit', 120],
+      [FLOW, 'gn_wp', 'time_limit_sec', 7200],
       [FLOW, 'gn_wp', 'review_basis', 'last'],
     ])
     expect(shownOf(w, 'run_ai')).toBe('Claude Opus 5')

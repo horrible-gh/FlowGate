@@ -33,7 +33,11 @@
        card opens; a value picked in it keeps it open. It opens above its row when the Inspector has no room under it
        (else the body scrolls to show it, capped to the body). A ⚙ whose settings differ from their defaults carries a yellow dot. A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
        their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning, status or
-       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before. -->
+       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before.
+       flowgate.v02test.0081 (0029-T, 시안 v4): the time settings (실행 제한 시간 · 검증 1회 시간) are [number][unit ▾] boxes over
+       seconds (`time_limit_sec` / `verify_run_sec`). A test card has one ⚙ — beside the test run zone's 작업 AI, none in the case
+       writing zone — whose window (테스트 실행 시간 설정) holds 자동 케이스 · AI 판정 [케이스 수 | 고정] · 1회 시간, and 횟수 only while the
+       judgement is 고정; its rows stay in the window, so the AI tab keeps its rows. -->
   <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
@@ -139,13 +143,40 @@
               :style="gearMaxHeight !== null ? { maxHeight: `${gearMaxHeight}px` } : undefined"
               :data-place="gearPlace"
               role="dialog"
-              :aria-label="t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) })"
+              :aria-label="gearWindowTitle(item.role)"
               :data-for="item.role"
               data-test="inspector-ai-advanced"
             >
-              <div class="inspector-ai-pop-title">{{ t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) }) }}</div>
+              <div class="inspector-ai-pop-title">{{ gearWindowTitle(item.role) }}</div>
               <InspectorControlRow v-for="field in gearFields(item.role)" :key="field" :label="advancedLabel(field)" :hint="hintOf(field)">
+                <!-- flowgate.v02test.0081: a time setting is [number][unit ▾] (seconds); the AI judgement is [케이스 수 | 고정]. -->
+                <InspectorDurationInput
+                  v-if="cardSettingsIsDurationField(field)"
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="durationOf(field)"
+                  :min="DURATION_RANGE[field][0]"
+                  :max="DURATION_RANGE[field][1]"
+                  :disabled="locked || views[field].disabled"
+                  :label="advancedLabel(field)"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  :test-id="`inspector-run-settings-${field}`"
+                  @update:model-value="(seconds: number) => onAiChange(field, String(seconds))"
+                />
+                <InspectorSegment
+                  v-else-if="field === 'ai_judge_mode'"
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="views[field].value || AI_JUDGE_MODE_DEFAULT"
+                  :options="views[field].options.map((option) => ({ value: option.value, label: labelOf(option), title: null }))"
+                  :disabled="locked || views[field].disabled"
+                  :aria-label="advancedLabel(field)"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  :data-test="`inspector-run-settings-${field}`"
+                  @update:model-value="(value: string) => onAiChange(field, value)"
+                />
                 <Select
+                  v-else
                   :class="{ 'is-modified': fieldModified(field) }"
                   :model-value="selectValue(field)"
                   :options="optionsOf(field)"
@@ -246,6 +277,7 @@ import InspectorLockNote from '../../parts/InspectorLockNote.vue'
 import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
 import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRunSettingsFields } from '../../parts/InspectorRunSettings.vue'
 import InspectorSegment, { type InspectorSegmentOption } from '../../parts/InspectorSegment.vue'
+import InspectorDurationInput from '../../parts/InspectorDurationInput.vue'
 import { inspectorSettingsKind, type InspectorTarget } from '../../inspectorTarget'
 import { INSPECTOR_BODY } from '../../inspectorHost'
 import {
@@ -257,14 +289,21 @@ import {
   cardSettingsFailureKey,
   cardSettingsFailureText,
   cardSettingsInstructionAiShown,
+  cardSettingsDurationSeconds,
   cardSettingsIsAiField,
+  cardSettingsIsDurationField,
   cardSettingsIsVerifyField,
+  cardSettingsJudgeRunsShown,
   cardSettingsReviewOff,
   cardSettingsSwitchOn,
   cardSettingsText,
   cardSettingsValue,
   cardSettingsValueOf,
   cardSettingsVerifyCustomValue,
+  AI_JUDGE_MODE_DEFAULT,
+  AI_JUDGE_RUNS_DEFAULT,
+  DURATION_DEFAULT,
+  DURATION_RANGE,
   VERIFY_CUSTOM,
   VERIFY_RANGE,
   type CardSettingsField,
@@ -274,7 +313,7 @@ import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
 import { visibleReviewCountOptions } from './reviewCountModel'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, TEST_AI_ZONES, cardRoleRows, instructionWritten } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, TEST_AI_ZONES, TEST_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -338,6 +377,12 @@ type GearRole = keyof typeof AI_GEAR_FIELDS
  * the last row's), so no setting drops off the tab.
  */
 const gearGroups = computed(() => {
+  // flowgate.v02test.0081: a test card's one ⚙ is its test run work AI's — the time settings, 횟수 only while fixed.
+  if (kind.value === 'test') {
+    const judgeFixed = cardSettingsJudgeRunsShown(cardSettingsValue(card.node.value, card.pending.value, 'ai_judge_mode'))
+    const fields = (TEST_GEAR_FIELDS as readonly CardSettingsField[]).filter(field => aiFieldOf(field) && (field !== 'ai_judge_runs' || judgeFixed))
+    return (fields.length && roleRows.value.some(row => row.role === 'execution') ? { execution: fields } : {}) as Partial<Record<GearRole, CardSettingsField[]>>
+  }
   const rows = roleRows.value.map(row => row.role)
   const own = (role: GearRole) => (AI_GEAR_FIELDS[role] as readonly CardSettingsField[]).filter(field => aiFieldOf(field))
   const out: Partial<Record<GearRole, CardSettingsField[]>> = {}
@@ -354,10 +399,27 @@ const isInstructionReview = (field: CardSettingsField) => (AI_ADVANCED_FIELDS.in
 function advancedLabel(field: CardSettingsField): string {
   return isInstructionReview(field) ? t(`gui.inspector.ai.${field}`) : fieldLabel(field)
 }
-/** A field whose shown value (a sent one included) is not the server's default for it. */
+/** A field whose shown value (a sent one included) is not the server's default for it (the contract's when it sends none). */
 function fieldModified(field: CardSettingsField): boolean {
   const item = card.node.value?.fields[field]
-  return !!item && cardSettingsText(cardSettingsValue(card.node.value, card.pending.value, field)) !== cardSettingsText(item.default)
+  if (!item) return false
+  const fallback = cardSettingsIsDurationField(field)
+    ? DURATION_DEFAULT[field]
+    : field === 'ai_judge_mode'
+      ? AI_JUDGE_MODE_DEFAULT
+      : field === 'ai_judge_runs'
+        ? AI_JUDGE_RUNS_DEFAULT
+        : null
+  const value = cardSettingsValue(card.node.value, card.pending.value, field)
+  return cardSettingsText(value ?? fallback) !== cardSettingsText(item.default ?? fallback)
+}
+/** The ⚙ window's title: the AI's advanced settings, or the test card's 테스트 실행 시간 설정. */
+function gearWindowTitle(role: string): string {
+  return kind.value === 'test' ? t(k('test_zone.time_title')) : t('gui.inspector.ai.advanced_title', { role: roleLabel(role) })
+}
+/** A time setting's shown seconds (the one sent and not answered yet, else the read's), or null. */
+function durationOf(field: CardSettingsField): number | null {
+  return cardSettingsDurationSeconds(cardSettingsValue(card.node.value, card.pending.value, field))
 }
 const gearModified = (role: string) => gearFields(role).some(fieldModified)
 function gearTitle(role: string): string {
@@ -367,7 +429,20 @@ function gearTitle(role: string): string {
 /** The one ⚙ window open now (its AI role), or null; a card opens with none. */
 const gearOpen = ref<string | null>(null)
 function toggleGear(role: string) {
-  gearOpen.value = gearOpen.value === role ? null : role
+  if (gearOpen.value === role) return closeGear()
+  gearOpen.value = role
+}
+/**
+ * (0030-TR 3rd) Closes the ⚙ window by a click (outside it, or on its ⚙), taking what is being typed in it first. The
+ * window is dropped before the browser moves the focus for the click, so a box in it would never see its focus leave:
+ * the focused box is blurred here, while it is still in the page, which takes its value the way leaving it does
+ * ([number][unit] → seconds sent once). Esc does not come here: it closes without taking (a box that holds a typed
+ * value keeps that Esc to itself and puts the value back).
+ */
+function closeGear() {
+  const focused = document.activeElement
+  if (focused instanceof HTMLElement && focused.closest('.inspector-ai-pop')) focused.blur()
+  gearOpen.value = null
 }
 // (CH QA): only another card or tab closes the window. Each source is compared on its own:
 // a value saved from the window re-reads the Flow and hands down a new target object for the same card, which the
@@ -377,7 +452,7 @@ function onOutside(event: Event) {
   if (gearOpen.value === null) return
   const at = event.target as Element | null
   if (at?.closest?.('.inspector-ai-pop, .inspector-ai-gear')) return
-  gearOpen.value = null
+  closeGear()
 }
 function onKey(event: KeyboardEvent) {
   if (event.key === 'Escape') gearOpen.value = null
@@ -611,7 +686,7 @@ function failureOf(field: CardSettingsField): string | null {
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
 }
 
-const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted']
+const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit_sec', 'verify_max_runs', 'verify_run_sec', 'review_basis', 'after_review_exhausted']
 
 function fieldLabel(field: CardSettingsField): string {
   return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
@@ -628,7 +703,7 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
     if (name === 'after_review_exhausted' && !card.node.value?.fields.after_review_exhausted) continue
     if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     // flowgate.v02test.0053 0003-T: a card the server gives no 검증 option (a plan card, a v0.1 sequence row) draws none.
-    if (cardSettingsIsVerifyField(name) && (kind.value !== 'run' || source.value !== 'card' || !card.node.value?.fields[name])) continue
+    if ((name === 'verify_max_runs' || name === 'verify_run_sec') && (kind.value !== 'run' || source.value !== 'card' || !card.node.value?.fields[name])) continue
     const view = views.value[name]
     out[name] = {
       value: view.value,
@@ -637,6 +712,8 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
       disabled: view.disabled,
       reason: view.reason ? t(k(view.reason)) : planHint(name),
       failure: failureOf(name),
+      // flowgate.v02test.0081: the time settings are [number][unit] boxes over seconds
+      ...(cardSettingsIsDurationField(name) ? { duration: { min: DURATION_RANGE[name][0], max: DURATION_RANGE[name][1] } } : {}),
     }
   }
   return out
@@ -681,7 +758,12 @@ function hintOf(field: CardSettingsField): string | null {
   if (field === 'after_review_exhausted') return t(k(`after_review_exhausted.${views.value.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`))
   if (field === 'instruction_review_count') return t(k('after_review_exhausted.instruction_hint'))
   if (field === 'verify_max_runs') return t(k('verify.max_runs_hint'))
-  if (field === 'verify_run_minutes') return t(k('verify.run_minutes_hint'))
+  if (field === 'verify_run_sec') return t(k('verify.run_sec_hint'))
+  if (field === 'time_limit_sec') return t(k('time.time_limit_hint'))
+  if (field === 'auto_case_timeout_sec') return t(k('test_time.auto_case_hint'))
+  if (field === 'ai_judge_mode') return t(k(`test_time.mode_${views.value.ai_judge_mode.value === 'fixed' ? 'fixed' : 'case_count'}_hint`))
+  if (field === 'ai_judge_run_sec') return t(k('test_time.run_hint'))
+  if (field === 'ai_judge_runs') return t(k('test_time.runs_hint'))
   return field === 'review_count' ? planHint('review_count') : null
 }
 

@@ -33,15 +33,19 @@ const NODE: CardSettingsFacts = {
     instruction: { value: 'use', choices: ['use', 'omit'] },
     run_ai: { value: null, choices: null },
     restart: { value: 0, choices: [-1, 0, 1, 2] },
-    time_limit: { value: 60, choices: [30, 60, 120] },
+    time_limit_sec: { value: 14400, choices: null },
   },
 }
 
 describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () => {
   it('the fields of each kind follow v7 (T#2 fields._FIELDS)', () => {
     // flowgate.v02test.0053 0003-T: the two 검증 options follow the time limit.
-    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted'])
-    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count', 'result_cause', 'follow_scope'])
+    // flowgate.v02test.0081 (0029-T): the time settings are seconds (time_limit_sec · verify_run_sec); a test card keeps its
+    // test run's time settings (자동 케이스 · AI 판정 방식 · 1회 시간 · 고정 횟수).
+    expect(CARD_SETTINGS_FIELDS.run).toEqual(['instruction', 'instruction_ai', 'run_ai', 'restart', 'review_ai', 'review_count', 'time_limit_sec', 'verify_max_runs', 'verify_run_sec', 'review_basis', 'after_review_exhausted'])
+    expect(CARD_SETTINGS_FIELDS.test).toEqual(['instruction', 'run_ai', 'review_ai', 'review_count', 'case_review_count', 'result_cause', 'follow_scope', 'auto_case_timeout_sec', 'ai_judge_mode', 'ai_judge_run_sec', 'ai_judge_runs'])
+    expect(CARD_SETTINGS_FIELDS.plan).toContain('time_limit_sec')
+    for (const kind of ['run', 'test', 'plan'] as const) expect(CARD_SETTINGS_FIELDS[kind] as readonly string[]).not.toEqual(expect.arrayContaining(['time_limit']))
   })
 
   it('flowgate.v02.0056 F2-1: the progress-after-review field is in no kind and has no string (removed, not hidden)', () => {
@@ -87,8 +91,16 @@ describe('cardSettingsModel — fields and values (flowgate.v02.0053 T#7)', () =
     ['restart', '-1', -1],
     ['restart', '2', 2],
     ['review_count', '0', 0],
-    ['time_limit', '120', 120],
-    ['time_limit', '', undefined],
+    ['time_limit_sec', '5400', 5400],
+    ['time_limit_sec', '14400', 14400],
+    ['time_limit_sec', '600', 1800],
+    ['time_limit_sec', '20000', 14400],
+    ['time_limit_sec', '', undefined],
+    ['verify_run_sec', '60', 60],
+    ['verify_run_sec', '1801', 1800],
+    ['auto_case_timeout_sec', '30', 60],
+    ['ai_judge_run_sec', '2.5', undefined],
+    ['ai_judge_mode', 'fixed', 'fixed'],
     ['restart', 'x', undefined],
     ['instruction', 'omit', 'omit'],
     ['instruction_ai', '', null],
@@ -136,13 +148,13 @@ describe('cardSettingsModel — options (flowgate.v02.0053 T#7)', () => {
     expect(cardSettingsCountKey('restart', 3)).toBe('count.times')
   })
 
-  it('minutes and choices; a value outside the choices stays shown, as itself', () => {
-    expect(cardSettingsChoiceOptions('time_limit', [30, 60], 60)).toEqual([
-      { value: '30', key: 'option.minutes', params: { n: 30 }, label: null },
-      { value: '60', key: 'option.minutes', params: { n: 60 }, label: null },
-    ])
+  it('choices; a value outside the choices stays shown, as itself; a time setting has no list (flowgate.v02test.0081)', () => {
+    expect(cardSettingsChoiceOptions('time_limit_sec', null, 14400)).toEqual([])
+    expect(cardSettingsChoiceOptions('verify_run_sec', [60, 120], 75)).toEqual([])
     expect(cardSettingsChoiceOptions('review_basis', ['type', 'last'], 'type').map((option) => option.key)).toEqual(['review_basis.type', 'review_basis.last'])
-    expect(cardSettingsChoiceOptions('time_limit', [30, 60], 75).at(-1)).toEqual({ value: '75', key: null, params: {}, label: '75' })
+    expect(cardSettingsChoiceOptions('review_basis', ['type', 'last'], 'other').at(-1)).toEqual({ value: 'other', key: null, params: {}, label: 'other' })
+    expect(cardSettingsChoiceOptions('ai_judge_mode', null, 'case_count').map((option) => [option.value, option.key])).toEqual([['case_count', 'ai_judge_mode.case_count'], ['fixed', 'ai_judge_mode.fixed']])
+    expect(cardSettingsChoiceOptions('ai_judge_mode', ['case_count', 'fixed'], 'fixed').map((option) => option.value)).toEqual(['case_count', 'fixed'])
     expect(cardSettingsChoiceOptions('restart', null, null)).toEqual([])
   })
 })

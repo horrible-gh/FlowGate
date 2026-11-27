@@ -896,10 +896,18 @@ export default {
         restart: '재시작',
         review_ai: '검수 AI',
         review_count: '검수 횟수',
-        time_limit: '실행 제한 시간',
+        // flowgate.v02test.0081: the time settings are kept in seconds and drawn as [number][unit ▾].
+        time_limit_sec: '실행 제한 시간',
         // flowgate.v02test.0053 0003-T: the two 검증 options of a work card (실행 AI's advanced settings).
         verify_max_runs: '검증 최대 횟수',
-        verify_run_minutes: '검증 1회 최대 시간',
+        verify_run_sec: '검증 1회 시간',
+        // flowgate.v02test.0081: a test card's time settings (the test run work AI's ⚙).
+        auto_case_timeout_sec: '자동 케이스',
+        ai_judge_mode: 'AI 판정',
+        ai_judge_run_sec: '1회 시간',
+        ai_judge_runs: '횟수',
+        // flowgate.v02test.0081: the [number][unit ▾] boxes (InspectorDurationInput).
+        duration: { hour: '시간', minute: '분', second: '초', part_hour: '{n}시간', part_minute: '{n}분', part_second: '{n}초', clamped_min: '최소값 {value}에 맞췄습니다', clamped_max: '최대값 {value}에 맞췄습니다', amount: '{label} 숫자', unit: '{label} 단위' },
         review_basis: '검수 기준',
         // flowgate.v02.0053 T#7 — the 테스트 card's 시나리오 작성 block and a refused change's icon name.
         scenario_title: '시나리오 작성',

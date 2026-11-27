@@ -280,7 +280,7 @@ export const RUN_SETTINGS_SAMPLE: InspectorRunSettingsFields = {
   restart: { value: '1', options: [{ value: '0', label: '안 함' }, { value: '1', label: '1회' }, { value: '2', label: '2회' }] },
   review_ai: { value: 'sol', options: AI_OPTIONS },
   review_count: { value: '2', options: [{ value: '0', label: '안 함' }, { value: '1', label: '1회' }, { value: '2', label: '2회' }, { value: '-1', label: '통과할 때까지' }] },
-  time_limit: { value: '60', options: [{ value: '30', label: '30분' }, { value: '60', label: '60분' }] },
+  time_limit_sec: { value: '14400', options: [], duration: { min: 1800, max: 14400 } },
   review_basis: { value: 'type', options: [{ value: 'type', label: '문서 타입 기본' }, { value: 'last', label: '직전 반려 사유만' }] },
 }
 
@@ -290,7 +290,7 @@ export const RUN_SETTINGS_PARTIAL: InspectorRunSettingsFields = {
   review_ai: { value: 'sol', options: AI_OPTIONS },
   review_count: { value: '2', options: [{ value: '0', label: '안 함' }, { value: '1', label: '1회' }, { value: '2', label: '2회' }] },
   restart: { value: '', options: [], disabled: true, reason: '재시작은 아직 저장되지 않습니다' },
-  time_limit: { value: '', options: [], disabled: true, reason: '실행 제한 시간은 아직 저장되지 않습니다' },
+  time_limit_sec: { value: '', options: [], disabled: true, reason: '실행 제한 시간은 아직 저장되지 않습니다', duration: { min: 1800, max: 14400 } },
   review_basis: { value: '', options: [], disabled: true, reason: '검수 기준은 아직 저장되지 않습니다' },
 }
 
