@@ -8,6 +8,7 @@ import AiProvidersPanel from '@/features/ai/providers/AiProvidersPanel.vue'
 import * as api from '@/features/ai/api'
 import { AiRequestError } from '@/features/ai/api'
 import type { ProviderItem } from '@/features/ai/types'
+import { mockCliCatalog } from './cliCatalogMock'
 
 registerAppMessages(i18n)
 
@@ -43,6 +44,7 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     vi.restoreAllMocks()
     i18n.global.locale.value = 'ko'
     setCurrentUser({ username: 'member', email: null, isAdmin: false })
+    mockCliCatalog()
   })
 
   afterEach(() => {
@@ -157,13 +159,12 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
     const wrapper = await mountPanel()
 
     await wrapper.find('.detail-actions button').trigger('click')
+    // The command of a new AI is composed from the default kind (Claude) by the server catalog.
+    await flushPromises()
     const name = document.querySelector('#provider-name') as HTMLInputElement
     const save = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
     const ownerButtons = document.querySelectorAll('.dialog-form .segmented button') as NodeListOf<HTMLButtonElement>
 
-    const command = document.querySelector('#provider-command') as HTMLInputElement
-    command.value = 'claude -p'
-    command.dispatchEvent(new Event('input'))
     name.value = ' GPT-4o '
     name.dispatchEvent(new Event('input'))
     await flushPromises()
@@ -249,6 +250,7 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
+    await flushPromises()
 
     const input = document.querySelector('#provider-name') as HTMLInputElement
     const save = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
@@ -277,6 +279,14 @@ describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
       attachTo: document.body,
       global: { plugins: [i18n] },
     })
+    await flushPromises()
+    const kind = document.querySelector('#provider-kind') as HTMLSelectElement
+    kind.value = 'custom'
+    kind.dispatchEvent(new Event('change'))
+    const clearCommand = document.querySelector('#provider-command') as HTMLTextAreaElement
+    clearCommand.value = ''
+    clearCommand.dispatchEvent(new Event('input'))
+    await flushPromises()
 
     const saveBtn = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
     expect(saveBtn).toBeTruthy()
@@ -318,6 +328,7 @@ describe('AiProvidersPanel delete confirm and the Custom kind (0088 F07/F08)', (
     vi.restoreAllMocks()
     setCurrentUser({ username: 'member', email: null, isAdmin: false })
     mockLists()
+    mockCliCatalog()
   })
   afterEach(() => {
     setCurrentUser(null)
@@ -343,13 +354,12 @@ describe('AiProvidersPanel delete confirm and the Custom kind (0088 F07/F08)', (
     wrapper.unmount()
   })
 
-  it('labels the Custom kind in the current language and keeps the product names and the custom value', async () => {
+  it('labels the Custom kind in the current language and shows the catalog kinds by name', async () => {
     i18n.global.locale.value = 'ja'
     const wrapper = mount(AiProviderEditDialog, { props: { open: true, provider: null }, global: { plugins: [i18n] }, attachTo: document.body })
     await flushPromises()
     const options = () => Array.from(document.querySelectorAll<HTMLOptionElement>('#provider-kind option')).map((o) => [o.value, o.textContent?.trim()])
-    expect(options()).toContainEqual(['custom', 'カスタム'])
-    expect(options()).toContainEqual(['claude', 'Claude (Anthropic)'])
+    expect(options()).toEqual([['claude', 'Claude'], ['codex', 'Codex'], ['gemini', 'Gemini'], ['custom', 'カスタム']])
     i18n.global.locale.value = 'ko'
     await flushPromises()
     expect(options()).toContainEqual(['custom', '사용자 정의'])

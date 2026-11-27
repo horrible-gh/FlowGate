@@ -372,7 +372,8 @@ def worktree(doc: dict) -> Path:
     return source_fingerprint.resolve_worktree(*_group_of(doc))
 
 
-def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | None = None) -> dict:
+def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | None = None,
+                source: Path | None = None) -> dict:
     """Run Basis (preparing): copy the worktree to ``target`` and fingerprint it.
 
     The caller holds the Group's source lock around this call. A measurement failure is
@@ -380,7 +381,7 @@ def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | Non
     manifest rule's code. Nothing is written to the DB or the TS here.
     """
     try:
-        root = worktree(doc)
+        root = source if source is not None else worktree(doc)
         measured = source_fingerprint.copy_measured(root, target)
     except source_fingerprint.SourceFingerprintError as exc:
         raise ValueError("basis_capture_failed:" + exc.code) from exc

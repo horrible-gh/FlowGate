@@ -49,7 +49,8 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { toInspectorTarget } from '../inspector/inspectorTarget'
-import { openMergeWindow } from '../inspector/features/merge/mergeWindows'
+import { openMergeWindow, type MergeUndoHost } from '../inspector/features/merge/mergeWindows'
+import { useMergeAutoOpen, type MergeAutoCandidate } from '../inspector/features/merge/useMergeAutoOpen'
 import { OPEN_CARD_EVENT } from '../inspector/features/verification/verificationModel'
 import { openDocument } from '../inspector/openDocument'
 import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
@@ -136,8 +137,77 @@ watchEffect(() => {
     if (!current || latest?.status !== 'ready') return initial
     const run = props.center.runMarks(flowId).nodeRuns.get(nodeId)
     return toInspectorTarget({ projectId, graph: latest.graph as FlowGraph, node: { ...current, nodeRun: (run ? { ...current.nodeRun, ...run } : current.nodeRun) as FlowGraphNodeRun | null } })!
-  }, () => props.center.refreshFlow(flowId))
+  }, () => props.center.refreshFlow(flowId), mergeUndoHost(flowId, nodeId))
   pendingMerge.value = null
+})
+
+/** What the merge auto-open and [병합 취소] read of a card's node run. */
+interface CardRunFacts { status?: string | null; integrationStatus?: string | null; integrationReason?: string | null; attemptId?: string | null }
+/** A card's node run as the screen knows it: the run read's over the Canvas read's. */
+function cardRunOf(flowId: string, node: FlowGraphNode): CardRunFacts | null {
+  const run = props.center.runMarks(flowId).nodeRuns.get(node.id) as Record<string, unknown> | undefined
+  return (run ? { ...node.nodeRun, ...run } : node.nodeRun ?? null) as CardRunFacts | null
+}
+
+// flowgate.v02test.0084 (F84-8, 시안 jvj9ff9t §2): the merge window's [병합 취소] is the card's Graph Time Machine — the
+// session's own guard (the card menu item: a done card, the run idle, nothing else under way) and its outcome dialog.
+// The cards it takes back are this one and the cards below it that already ran; the done cards elsewhere stay.
+function mergeUndoHost(flowId: string, nodeId: string): MergeUndoHost {
+  return {
+    blocked() {
+      const item = props.center.cardMenu?.(flowId, nodeId).find((menuItem) => menuItem.key === 'time_machine')
+      if (!item) return 'unavailable'
+      return item.disabled ? item.reason ?? 'unavailable' : null
+    },
+    impact() {
+      const load = props.center.state.graphs?.[flowId]
+      if (load?.status !== 'ready') return { back: [], keep: [] }
+      const graph = load.graph as FlowGraph
+      const below = new Set<string>([nodeId])
+      for (let grew = true; grew;) {
+        grew = false
+        for (const edge of graph.edges) {
+          if (edge.edgeClass === 'reference' || !below.has(edge.source) || below.has(edge.target)) continue
+          below.add(edge.target)
+          grew = true
+        }
+      }
+      const ran = (node: FlowGraphNode) => { const status = cardRunOf(flowId, node)?.status; return !!status && status !== 'pending' }
+      const titleOf = (node: FlowGraphNode) => node.title || node.id
+      const self = graph.nodes.find((node) => node.id === nodeId)
+      const back = [...(self ? [titleOf(self)] : []), ...graph.nodes.filter((node) => node.id !== nodeId && below.has(node.id) && ran(node)).map(titleOf)]
+      const keep = graph.nodes.filter((node) => !below.has(node.id) && cardRunOf(flowId, node)?.status === 'done').map(titleOf)
+      return { back, keep }
+    },
+    async run() {
+      if (!props.center.askTimeMachine?.(flowId, nodeId)) return false
+      return props.center.confirmTimeMachine()
+    },
+  }
+}
+
+// flowgate.v02test.0084 (F84-8, 시안 jvj9ff9t §1): a conflict card of an open Flow whose automatic resolution runs out of
+// tries opens its merge window by itself, once (useMergeAutoOpen). The candidates are the open Flows' cards in a merge
+// conflict; the run's status, idle reason and event sequence make a candidate worth reading again.
+const mergeAutoCandidates = computed<MergeAutoCandidate[]>(() => {
+  const out: MergeAutoCandidate[] = []
+  for (const tab of props.center.state.tabs ?? []) {
+    const load = props.center.state.graphs?.[tab.flowId]
+    if (load?.status !== 'ready') continue
+    const run = props.center.runStatus?.(tab.flowId)?.run ?? null
+    const runSignature = [run?.runId ?? '', run?.status ?? '', run?.idleReason ?? '', run?.lastEventSeq ?? ''].join('|')
+    for (const node of (load.graph as FlowGraph).nodes) {
+      const nodeRun = cardRunOf(tab.flowId, node as FlowGraphNode)
+      if (nodeRun?.integrationStatus !== 'conflict' && nodeRun?.integrationStatus !== 'integrating') continue
+      out.push({ flowId: tab.flowId, nodeKey: node.id, attemptId: nodeRun.attemptId ?? null,
+        signature: `${runSignature}|${nodeRun.integrationStatus}|${nodeRun.integrationReason ?? ''}` })
+    }
+  }
+  return out
+})
+useMergeAutoOpen({
+  candidates: () => mergeAutoCandidates.value,
+  open: (flowId, nodeKey) => window.dispatchEvent(new CustomEvent('fg:open_card_merge', { detail: { flowId, nodeKey } })),
 })
 
 // flowgate.v02test.0052 (0008 task 1·4·6): the Git tab's [확인 카드로 이동] — show the card's Flow (opened when it is not) and

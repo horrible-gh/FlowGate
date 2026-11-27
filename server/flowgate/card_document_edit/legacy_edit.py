@@ -67,7 +67,7 @@ def edit(req):
             if req.recheck:
                 req.recheck()
             from .agent_rules import reject_response
-            final = inbox.document_service.is_final_approved(fresh)
+            final = fresh.get("type_code") not in {"TS", "TSR"} and inbox.document_service.is_final_approved(fresh)
             if not inbox.document_service.is_document_editable(fresh, final_approved=final):
                 message = "Modification not allowed after final approval." if final else f"Modification not allowed for status: {fresh.get('status')}"
                 reject_response(inbox._fail(422, message), fresh, legacy=True)

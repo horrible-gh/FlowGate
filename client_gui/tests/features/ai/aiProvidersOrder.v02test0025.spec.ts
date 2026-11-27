@@ -87,7 +87,8 @@ describe('v02test.0025 AI 목록 in my own order', () => {
   it('an administrator is told when the fallback order moved with the drag, and the system list is read again', async () => {
     const save = vi.spyOn(api, 'saveMyAiOrder').mockResolvedValue({ order: ['sys-remote', 'sys-local', 'my-remote', 'my-local'], system_order_changed: true })
     const wrapper = await mountPanel([], true)
-    expect(wrapper.find('[data-test="ai-order-hint"]').text()).toContain('폴백 순서')
+    // v02test.0096 F96-6: the drag hint above the list is gone; the drag itself still saves the fallback order.
+    expect(wrapper.find('[data-test="ai-order-hint"]').exists()).toBe(false)
     await wrapper.findAll('button.grip')[1].trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     expect(save).toHaveBeenCalledWith(['sys-remote', 'sys-local', 'my-remote', 'my-local'])

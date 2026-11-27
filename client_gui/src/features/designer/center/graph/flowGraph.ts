@@ -160,7 +160,7 @@ export interface FlowGraphNodeSlot {
 }
 
 export interface FlowGraphNodeRun extends RoleRunFields {
-  readonly intervention?: { readonly kind: string; readonly reason: string | null } | null
+  readonly intervention?: { readonly kind: string; readonly reason: string | null; readonly stop_detail?: string | null } | null
   readonly gate?: import('@/features/document').RunGateState | null
   readonly dispatchErrorCode?: string | null
   /** the failed AI call's short cause (node_run.dispatch.error_detail); absent when not sent. */

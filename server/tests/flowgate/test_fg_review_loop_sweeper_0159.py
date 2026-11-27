@@ -91,7 +91,8 @@ def test_no_restart_unlocks_card_and_explicit_step_resumes_rework(
     assert not legacy_adapter.node_running(FA, key)
     # No run read/settle hook is needed before the card read and explicit command.
     _read(env)
-    assert _wire(env, key)["intervention"] == {"kind": "needs_intervention", "reason": "review_not_passed:" + reason}
+    assert _wire(env, key)["intervention"] == {"kind": "needs_intervention", "reason": "review_not_passed:" + reason,
+                                               "stop_detail": row["stop_detail"]}   # F98-4: the closed loop's cause
     assert _sql(env["db"], "SELECT * FROM document_reviews") == history
     assert documents.get_by_id(doc) == original_doc
     hops = _first_hops(monkeypatch)

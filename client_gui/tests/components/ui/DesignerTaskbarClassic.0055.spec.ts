@@ -51,7 +51,7 @@ describe('classic taskbar style', () => {
     await menu.get('[data-group="ai"]').trigger('click')
     await flushPromises()
     expect(menu.get('[data-group="ai"]').attributes('aria-expanded')).toBe('true')
-    expect(menu.get('.start-classic-sub').findAll('.classic-card').map(b => b.attributes('data-card'))).toEqual(['my-ai', 'question-policy'])
+    expect(menu.get('.start-classic-sub').findAll('.classic-card').map(b => b.attributes('data-card'))).toEqual(['my-ai', 'ai-other', 'ai-policy'])
     expect(menu.get('[data-card="my-ai"] small').text()).toBe(String(i18n.global.t('gui.taskbar.my_ai_desc')))
     await menu.get('[data-group="settings"]').trigger('click')
     await flushPromises()
@@ -128,3 +128,4 @@ describe('classic taskbar style', () => {
     expect(document.querySelector('.ui-modeless-panel')?.getAttribute('data-taskbar-style')).toBe('classic')
   })
 })
+

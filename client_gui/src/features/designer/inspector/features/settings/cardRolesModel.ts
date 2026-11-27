@@ -2,6 +2,17 @@ import type { CardAiRoles, AiRole, AiRoleValue } from '@/features/document'
 import { REVIEW_COUNT_HIDDEN } from './reviewCountModel'
 const AI_ROLES = ['instruction', 'execution', 'review'] as const
 /**
+ * F81: a test card's AI tab has two zones — case writing and test run — each with its work AI · review AI · review
+ * count, and no instruction AI. These are the setting keys of each zone. The test run zone keeps the card's
+ * existing keys; the case writing keys are stored by the server-flow work, and until the card's settings answer carries
+ * them that zone shows (and changes) the same existing values — what an existing card's values are moved to both zones as.
+ */
+export const TEST_AI_ZONES = {
+  case_write: { execution: 'case_write_role', review: 'case_review_role', review_count: 'case_review_count' },
+  test_run: { execution: 'execution_role', review: 'review_role', review_count: 'review_count' },
+} as const
+export type TestAiZone = keyof typeof TEST_AI_ZONES
+/**
  * The AI tab's role rows, in instruction · 실행 · review order, for the roles the server gives the card (a WP card has no 지시 AI).
  * flowgate.v02.0113 T#4 (D revision §6.3): a card that omits its instruction keeps its 지시 AI row, `held` (off, its value kept).
  * flowgate.v02gui.0032 (decision 7): a card whose instruction already has a body never calls its 지시 AI (the written

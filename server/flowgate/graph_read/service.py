@@ -22,7 +22,7 @@ LINE_FIELDS = ("slot", "doc_type", "doc_id", "revision_no", "status", "doc_revie
 # : why a card waits is an object on the run read (``stage_view.node_wait_reason``,
 # ``node_approval.intervention``); ``scalar_fields`` alone dropped it, so a chat could not tell why a card stopped.
 WAIT_REASON_FIELDS = ("code", "role", "stage", "seq", "detail")
-INTERVENTION_FIELDS = ("kind", "reason")
+INTERVENTION_FIELDS = ("kind", "reason", "stop_detail")     # F98-4: stop_detail only when the loop told a cause
 # v02gui.0015 T2: the earlier attempts' uncommitted changes the card's attempt did not take (``uncarried_changes``).
 UNCARRIED_FIELDS = ("attempts", "files", "unknown")
 

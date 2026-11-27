@@ -112,15 +112,15 @@ def test_ai_cases_are_recorded_by_the_ai_worker_not_by_the_server_run(monkeypatc
     cases = [{**CASE, "case_id": "TC-1", "execution_mode": "automated", "automation_ref": "tests/test_x.py::test_a"},
              {**CASE, "case_id": "TC-2", "title": "AI", "execution_mode": "ai"},
              {**CASE, "case_id": "TC-3", "execution_mode": "manual", "required": False}]
-    assert test_run_service.result_entry_case_ids(cases) == ["TC-2", "TC-3"]
+    assert test_run_service.result_entry_case_ids(cases) == ["TC-1", "TC-2", "TC-3"]
     assert test_basis_service.locator(cases[1]) == {"capability": "ai"}
     assert all(case["execution_mode"] == "automated" for case in spec_execution_service.automated_selection(cases))
     results = spec.normalize_results([{"case_id": "TC-1", "status": "PASS"},
                                       {"case_id": "TC-2", "status": "FAIL", "execution_mode": "ai", "actual": "seen"}],
                                      submitted_by="worker", now="2026-10-25T00:00:00+09:00")
     kept, refused = test_run_service.refuse_server_run_results(cases, results)
-    assert [item["case_id"] for item in kept] == ["TC-2"]
-    assert [item["case_id"] for item in refused] == ["TC-1"]
+    assert [item["case_id"] for item in kept] == ["TC-1", "TC-2"]
+    assert refused == []
     rows = spec.map_results(cases, kept)["cases"]
     assert {row["case_id"]: row["status"] for row in rows}["TC-2"] == "FAIL"
     content = "---\ntest_contract_version: 2\n---\n" + spec.render_spec_body(cases, title="T")

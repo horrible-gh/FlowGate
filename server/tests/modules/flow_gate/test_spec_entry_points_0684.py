@@ -2,10 +2,9 @@
 
 (0684.0006-D), CH S6:
 
-* An automated Case gets its official result from a server run only. A person (UI) or a
-  test_run token may record results for manual/external Cases only; a result for an
-  automated Case -- one no server runner exists for too -- is refused item by item, with its
-  reason, and that Case stays NOT_RUN until the runner is extended.
+* Every Case accepts result edits. A code PASS requires the recorded server exit code
+  to be zero; an unsupported or unexecuted Case cannot accept a claimed PASS. Evidence
+  validation is atomic and a refused worker submission does not consume its token.
 * The test_run hand-off mention asks for the entered Cases only.
 * The TS view tells the screen which Cases are entered and what the newest server run did.
 * An unmanned chain whose next head is the TSR does not start a hop while the server run is
@@ -60,93 +59,56 @@ def _server_run_and_manual(env):
 # ── 1. Result intake: entered Cases only ───────────────────────────────────────
 
 
-def test_result_entry_cases_are_the_manual_and_external_ones_only(env):
+def test_result_entry_accepts_all_cases_subject_to_evidence(env):
     env.contents[TS_ID] = _spec_doc(CASE_TC1_AUTOMATED + CASE_TC2 + CASE_TC3 + CASE_TC4_CLIENT)
     cases = env.svc.load_spec_ts(TS_ID)[1]["cases"]
-    # TC-004 is automated with no server runner (.spec.ts): it is not entered either.
-    assert env.svc.result_entry_case_ids(cases) == ["TC-002", "TC-003"]
+    assert env.svc.result_entry_case_ids(cases) == ["TC-001", "TC-002", "TC-003", "TC-004"]
 
 
-def test_a_result_for_an_automated_case_without_a_runner_is_refused_and_stays_not_run(env):
+@pytest.mark.parametrize("case_id", ["TC-001", "TC-004"])
+def test_code_pass_without_server_exit_zero_is_rejected(env, case_id):
     env.contents[TS_ID] = _spec_doc(CASE_TC1_AUTOMATED + CASE_TC2 + CASE_TC3 + CASE_TC4_CLIENT)
-    recorded, outcome = _submit(env, [{"case_id": "TC-004", "status": "PASS"},
-                                      {"case_id": "TC-002", "status": "PASS"}])
-    assert recorded["refused"] == [{"case_id": "TC-004", "status": "PASS",
-                                    "reason": "automated_case_server_run_only"}]
-    cases = {c["case_no"]: c for c in env.db_test_runs.list_cases(recorded["run"]["run_id"])}
-    assert cases["TC-004"]["case_status"] == "NOT_RUN"
-    assert cases["TC-002"]["case_status"] == "PASS"
-    assert outcome["gate_passed"] is False  # a person's PASS never opens the gate for it
     with pytest.raises(HTTPException) as caught:
-        _submit(env, [{"case_id": "TC-004", "status": "PASS"}])
+        _submit(env, [{"case_id": case_id, "status": "PASS", "exit_code": 0}])
     assert caught.value.status_code == 422
-    assert caught.value.detail["error"] == "automated_results_server_only"
-    assert caught.value.detail["entry_case_ids"] == ["TC-002", "TC-003"]
-
-
-def test_a_mixed_submission_records_the_entered_cases_and_refuses_the_server_run_case(env):
-    _server_run_and_manual(env)
-    recorded, outcome = _submit(env, [{"case_id": "TC-001", "status": "PASS"},
-                                      {"case_id": "TC-002", "status": "PASS"}])
-    assert recorded["refused"] == [{"case_id": "TC-001", "status": "PASS",
-                                    "reason": "automated_case_server_run_only"}]
-    cases = {c["case_no"]: c for c in env.db_test_runs.list_cases(recorded["run"]["run_id"])}
-    assert cases["TC-002"]["case_status"] == "PASS"
-    assert cases["TC-001"]["case_status"] == "NOT_RUN"  # never recorded from an entry
-    assert outcome["overall"] == "NOT_RUN" and outcome["gate_passed"] is False
-    body = env.svc.spec_result_response(recorded["run"]["run_id"], outcome)
-    assert body["refused_results"][0]["case_id"] == "TC-001"
-    assert "Refused 1 result(s)" in body["message"]
-
-
-def test_a_submission_of_server_run_cases_only_is_refused_without_a_record(env):
-    _server_run_and_manual(env)
-    with pytest.raises(HTTPException) as caught:
-        _submit(env, [{"case_id": "TC-001", "status": "PASS"}])
-    detail = caught.value.detail
-    assert caught.value.status_code == 422
-    assert detail["error"] == "automated_results_server_only"
-    assert detail["refused_results"][0]["case_id"] == "TC-001"
-    assert detail["entry_case_ids"] == ["TC-002", "TC-003"]
+    assert caught.value.detail == {"error": "exit_zero_required", "case_id": case_id}
     assert env.db_test_runs.list_by_doc(TS_ID) == []
 
 
-def test_a_junit_report_for_a_server_run_case_is_refused_too(env):
+def test_mixed_submission_with_unproven_pass_is_atomic(env):
     _server_run_and_manual(env)
-    xml = ("<testsuite><testcase name='TC_001 forbidden'>"
+    with pytest.raises(HTTPException) as caught:
+        _submit(env, [{"case_id": "TC-001", "status": "PASS"},
+                      {"case_id": "TC-002", "status": "FAIL"}])
+    assert caught.value.detail["error"] == "exit_zero_required"
+    assert env.db_test_runs.list_by_doc(TS_ID) == []
+
+
+def test_junit_cannot_claim_server_exit_zero(env):
+    _server_run_and_manual(env)
+    xml = ("<testsuite><testcase name='TC_001 claimed'>"
            "<properties><property name='flowgate.case_id' value='TC-001'/></properties>"
            "</testcase></testsuite>")
     with pytest.raises(HTTPException) as caught:
         _submit(env, junit_xml=xml)
-    assert caught.value.detail["error"] == "automated_results_server_only"
+    assert caught.value.detail["error"] == "exit_zero_required"
 
 
-def test_the_inbox_token_records_entries_and_reports_what_it_refused(env, monkeypatch):
+def test_inbox_unproven_pass_does_not_consume_worker_token(env, monkeypatch):
     from unittest.mock import MagicMock
-
     from inbox_client import post_inbox
     from modules.flow_gate.api import inbox_routes
-
     _server_run_and_manual(env)
-    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: {**_token(14),
-                                                                            "continuation_target_seq": None})
+    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: {**_token(14), "continuation_target_seq": None})
     monkeypatch.setattr(env.svc, "token_can_run_tests", lambda *_a, **_k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda doc_id: env.docs.get(doc_id))
     consume = MagicMock()
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
-    resp = post_inbox({"action": "test_run", "project": "flowgate", "doc_id": TS_ID,
-                       "results": [{"case_id": "TC-001", "status": "PASS"},
-                                   {"case_id": "TC-002", "status": "PASS"}]})
-    data = resp.json()
-    assert resp.status_code == 201, data
-    assert [item["case_id"] for item in data["refused_results"]] == ["TC-001"]
-    consume.assert_called_once()
-
-    only_automated = post_inbox({"action": "test_run", "project": "flowgate", "doc_id": TS_ID,
-                                 "results": [{"case_id": "TC-001", "status": "PASS"}]})
-    assert only_automated.status_code == 422
-    assert only_automated.json()["error"] == "automated_results_server_only"
-    assert consume.call_count == 1  # a refused submission does not spend the token
+    response = post_inbox({"action": "test_run", "project": "flowgate", "doc_id": TS_ID,
+                          "results": [{"case_id": "TC-001", "status": "PASS"}]})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"] == "exit_zero_required"
+    consume.assert_not_called()
 
 
 def test_the_server_run_still_records_its_automated_result(env, monkeypatch, tmp_path):
@@ -185,7 +147,7 @@ def test_the_ts_view_names_entered_cases_and_the_newest_server_run(env, monkeypa
     _server_run_and_manual(env)
     result, _ = _approve_ts(env, monkeypatch, tmp_path)
     view = env.svc.describe_test_document(env.docs[TS_ID])
-    assert view["result_entry_case_ids"] == ["TC-002", "TC-003"]
+    assert view["result_entry_case_ids"] == ["TC-001", "TC-002", "TC-003"]
     assert view["last_execution"]["run_id"] == result["spec_execution"]["run_id"]
     assert view["last_execution"]["phase"] == "queued"
     env.svc.request_cancel(result["spec_execution"]["run_id"])

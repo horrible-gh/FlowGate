@@ -218,7 +218,7 @@ describe('v8 shared test card session (0071 T1)', () => {
     // Reading an existing report stays available while the scenario is written.
     expect(card.canOpen('report')).toBe(true)
   })
-  it('direct commands enforce readonly, disposal, AI and document edit guards in order; cancel still works', async () => {
+  it('direct commands enforce readonly, disposal and AI guards in order; an approval locks no edit (F81); cancel still works', async () => {
     await render(); const card = contexts.one
     target.value = { ...target.value, readOnly: 'revision' }; await flushPromises()
     expect(card.can('caseSave').reason).toBe('reason.read_only_revision')
@@ -229,9 +229,14 @@ describe('v8 shared test card session (0071 T1)', () => {
     expect(await card.enterResult({ case_id: 'TC-3', status: 'PASS' })).toBe(false)
     disposed = false; activity = { active: true, action_scope: 'edit', status: 'running', doc_ref: OTHER }; await card.reload()
     expect(card.can('caseDelete').reason).toBe('reason.ai_running')
+    expect(card.can('caseSave').reason).toBe('reason.ai_running')
+    expect(card.can('rewriteAll').reason).toBe('reason.ai_running')
+    // F81 (0001-R 3-3): an approved scenario (not editable) locks nothing; the server moves the approval back to working.
     activity = { active: false }; editable = false; await card.reload()
-    expect(card.can('caseSave').reason).toBe('guard.approved')
-    expect(await card.rewriteAll()).toBe(false)
+    expect(card.can('caseSave').reason).toBeNull()
+    expect(card.can('caseDelete').reason).toBeNull()
+    expect(card.can('caseAdd').reason).toBeNull()
+    expect(card.can('rewriteAll').reason).toBeNull()
     expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.run).not.toHaveBeenCalled(); expect(mocks.enter).not.toHaveBeenCalled()
     views.get(TS_DOC)!.active_run = liveRun('run-live'); disposed = true; activity = { active: true, action_scope: 'edit', status: 'running', doc_ref: OTHER }; await card.reload()
     expect(await card.cancel()).toBe(true)
@@ -332,14 +337,15 @@ it('a completed card bound to TSR still reads and runs its scenario TS', async (
   expect(await contexts.one.run()).toBe(true)
   expect(mocks.run).toHaveBeenCalledWith(TS_DOC)
 })
-it('a TSR document node uses the TS editability guard when saving scenario cases', async () => {
+it('a TSR document node reads the TS guard, and the TS approval no longer locks the case save (F81)', async () => {
   target.value = { ...base, nodeType: null, nodeId: `doc:${TSR_DOC}`, docId: TSR_DOC, docType: 'TSR', cardDocType: null, cardDocuments: [] }
   views.set(TSR_DOC, tsrDocument())
   mocks.guard.mockImplementation(async (id: string) => toReviewDocument({ doc_id: id, is_editable: id !== TS_DOC }))
   await render(); await flushPromises()
   expect(mocks.read).toHaveBeenCalledWith(TSR_DOC)
   expect(mocks.guard).toHaveBeenCalledWith(TS_DOC)
-  expect(contexts.one.can('caseSave').reason).toBe('guard.approved')
+  expect(contexts.one.can('caseSave').reason).not.toBe('guard.approved')
+  // a pin of no snapshot of this card is still refused before any request.
   expect(await contexts.one.saveCases(NO_PIN, () => [])).toBe(false)
   expect(mocks.save).not.toHaveBeenCalled()
 })

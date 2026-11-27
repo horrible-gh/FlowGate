@@ -201,7 +201,8 @@ describe('exhausted', () => {
     expect(w.find('[data-test="merge-window"]').attributes('data-screen')).toBe('needs_choice')
     const box = q(w, 'merge-auto-box')
     expect(box.attributes('data-auto-state')).toBe('exhausted')
-    expect(box.find('h4').text()).toBe('자동 해결 실패 · 3번 시도해도 풀지 못했습니다')
+    expect(box.find('h4').text()).toBe('자동 해결 실패 (3회)')
+    expect(box.find('[data-test="merge-auto-text"]').exists()).toBe(false)
     expect(box.find('h4').classes()).toContain('is-danger')
     expect(w.findAll('[data-test="merge-auto-file"]').map((row) => row.find('code').text())).toEqual(['src/queue.ts', 'src/other.ts'])
     expect(w.findAll('[data-test="merge-auto-hunks"]').map((row) => row.text())).toEqual(['12–18, 40행'])
@@ -214,8 +215,9 @@ describe('exhausted', () => {
     expect(rows[1].text()).toContain('2번째')
     expect(rows[1].text()).toContain('다시 얹고 AI로 해결')
     expect(rows[2].text()).toContain('다른 AI로 해결')
-    for (const test of ['merge-ai', 'merge-pick-open', 'merge-discard']) expect(q(w, test).exists()).toBe(true)
-    expect(q(w, 'merge-files').exists()).toBe(true)
+    // F84-8 (시안 jvj9ff9t §1): the automatic box is the one box (its files and tries); the buttons sit in the pinned footer.
+    for (const test of ['merge-ai', 'merge-pick-open', 'merge-discard']) expect(q(w, 'merge-foot').find(`[data-test="${test}"]`).exists()).toBe(true)
+    expect(q(w, 'merge-files').exists()).toBe(false)
     expect(api.act).not.toHaveBeenCalled()
   })
 
@@ -233,7 +235,7 @@ describe('exhausted', () => {
     i18n.global.locale.value = 'en'
     api.read.mockResolvedValue(await state({ auto_resolve: exhausted() }))
     const w = await mountTab()
-    expect(q(w, 'merge-auto-box').find('h4').text()).toBe('Automatic resolution failed · not solved in 3 tries')
+    expect(q(w, 'merge-auto-box').find('h4').text()).toBe('Automatic resolution failed (3 tries)')
     expect(w.find('[data-test="merge-auto-hunks"]').text()).toBe('lines 12–18, 40')
   })
 
@@ -388,5 +390,43 @@ describe('F84-6 count sentences', () => {
         expect(i18n.global.t(`gui.inspector.merge.${key}`, {}, { locale })).not.toContain('{count}')
       }
     }
+  })
+})
+
+
+describe('undo of an AI-resolved merge', () => {
+  it.each(['success', 'failure', 'blocked'])('confirms the impact and handles %s', async outcome => {
+    const { default: ConfirmDialog } = await import('@/components/ui/ConfirmDialog.vue')
+    api.read.mockResolvedValue(await state({ state: 'hidden', integration_status: 'integrated', actions: [],
+      auto_resolve: { state: 'succeeded', attempt: 1, max_attempts: 3,
+        attempts: [attempt(1, { result: 'resolved', ended_at: 'x' })] } }))
+    const target = toInspectorTarget(selection({ status: 'done', integrationStatus: 'integrated' }))!
+    const run = vi.fn().mockResolvedValue(outcome === 'success')
+    const refresh = vi.fn()
+    const win = { key: 'undo-test', target: () => target, refresh, minimized: false, raise: 0,
+      undo: { blocked: () => outcome === 'blocked' ? 'run_not_idle' : null,
+        impact: () => ({ back: ['Selected card', 'Join card'], keep: ['Parallel card'] }), run } }
+    mergeWindows.push(win)
+    const w = mount(MergeWindow, { props: { target, win }, attachTo: document.body,
+      global: { plugins: [i18n], stubs: { ModelessShell: { template: '<div><slot /></div>' } } } })
+    wrappers.push(w); await flushPromises()
+    const undo = q(w, 'merge-undo')
+    expect(undo.exists()).toBe(true)
+    if (outcome === 'blocked') {
+      expect(undo.attributes('disabled')).toBeDefined()
+      expect(q(w, 'merge-undo-reason').text()).not.toBe('')
+      expect(run).not.toHaveBeenCalled()
+      return
+    }
+    await undo.trigger('click')
+    const confirm = w.findAllComponents(ConfirmDialog).find(dialog => dialog.props('open'))!
+    expect(confirm).toBeDefined()
+    expect(document.body.textContent).toContain('Selected card, Join card')
+    expect(document.body.textContent).toContain('Parallel card')
+    confirm.vm.$emit('confirm'); await flushPromises()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalled()
+    expect(mergeWindows.some(entry => entry.key === win.key)).toBe(outcome !== 'success')
+    expect(q(w, 'merge-undo-failed').exists()).toBe(outcome === 'failure')
   })
 })

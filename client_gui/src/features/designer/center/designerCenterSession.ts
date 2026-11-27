@@ -30,7 +30,8 @@
 //
 // a Flow opened right after it was created may carry a default node
 // (`openFlow` option `seedNode`, the Shell gives a 요구사항 node). It is added to the Flow's draft
-// once the first Graph read shows it empty and editable — never to a Flow that has nodes. An Edge
+// once the first Graph read shows it empty and editable — never to a Flow that has nodes. F104-2: a seed still
+// waiting (archive state unknown) stays when its tab is closed, so a tab of the Flow opened again places it. An Edge
 // the work already went through (graph/edgeProgress.ts) is never removed.
 //
 // `activeSelection` gives the bottom Inspector the
@@ -606,8 +607,10 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
   // S3: the Graph definition a Graph Flow shows ('draft' | 'revision'), if chosen
   // (chosen by readGraph itself, never by a button).
   const graphViews = new Map<string, string>()
-  // default nodes of just created Flows, until their Graph is first shown.
+  // default nodes of just created Flows, until their Graph is first shown (kept over a tab close, see placeSeed).
   const seeds = new Map<string, CanvasNodeSpec>()
+  // F104-2: Flows whose default card's first draft save failed; the save notice goes once the draft is saved.
+  const seedSaves = new Set<string>()
   // per open Flow, the title state each card shows (by node id) — the version order's base.
   const titleStates = new Map<string, Map<string, FlowGraphTitleState>>()
   const titlesOf = (flowId: string) => {
@@ -716,6 +719,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
       if (state.projectId !== null && isOpen(state.projectId, flowId)) readWhenSaved(flowId)
     },
     settled: (flowId) => {
+      seedSaveSettled(flowId)
       if (state.projectId !== null && !savesBusy(flowId) && staleFlows.delete(flowId) && isOpen(state.projectId, flowId)) {
         readGraph(flowId, true)
       }
@@ -1092,6 +1096,88 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     setViewSelection(view, view.selectedNodeIds.filter((id) => shown.has(id)))
   }
 
+  /**
+   * F104-2: a just created Flow's default node (`seeds`). It goes onto the Flow's draft only once
+   * the Flow is known not archived: while the archive read has not answered, the Flow is read only
+   * (`isFlowReadOnly`) and the node would be refused without a word. So the seed stays and waits for
+   * that read; an archived Flow gets no node. Placing it, or its save, failing is told on the Canvas
+   * (the draft notice) instead of passing quietly. Never a second node: only on a Graph with nothing
+   * on it and no saved draft.
+   */
+  function placeSeed(flowId: string, graph: FlowGraph) {
+    const seed = seeds.get(flowId)
+    if (!seed) return
+    if (!(graph.draft?.editable === true && graph.draft.version === 0 && graph.nodes.length === 0)) {
+      seeds.delete(flowId)
+      return
+    }
+    if (isFlowReadOnly(flowId)) {
+      if (archiveStates[flowId] === true) {
+        seeds.delete(flowId)
+        return
+      }
+      const answered = archiveWaits.get(flowId)
+      if (answered) {
+        void answered.then(() => {
+          if (disposed || seeds.get(flowId) !== seed) return
+          // A read under way places it when it shows the Graph, or resumes it here when it fails (readGraph).
+          if (!pendingReads.has(flowId)) resumeSeed(flowId)
+        })
+        return
+      }
+      seeds.delete(flowId)
+      seedFailed(flowId, 'default_card_archive_unknown')
+      return
+    }
+    seeds.delete(flowId)
+    if (!drafts.seed(flowId, seed)) {
+      seedFailed(flowId, 'default_card_not_placed')
+      return
+    }
+    void drafts.saveBeforeRunCheck(flowId).then((saved) => {
+      if (saved) return
+      // The card is on the Canvas and the editor keeps retrying: told as not saved yet, not as missing.
+      seedSaves.add(flowId)
+      seedFailed(flowId, 'default_card_save_failed')
+      if (state.edits[flowId]?.status === 'idle') seedSaveSettled(flowId)
+    })
+  }
+
+  /**
+   * F104-2: a read shows cards on the Flow (e.g. the late commit of a lost seed save): a notice that the default card is
+   * missing is not true any more. The save notice is left to seedSaveSettled (a busy editor shows its unsaved card).
+   */
+  function dropSeedNotice(flowId: string) {
+    const edit = state.edits[flowId]
+    const notice = edit ? edit.notice : null
+    if (!edit || !notice || notice.kind !== 'error' || !notice.code.startsWith('default_card_') || notice.code === 'default_card_save_failed') return
+    if ((readyGraph(flowId)?.nodes.length ?? 0) > 0) edit.notice = null
+  }
+
+  /** F104-2: a waiting seed goes onto the Graph shown now (no read under way will show another). */
+  function resumeSeed(flowId: string) {
+    const shown = readyGraph(flowId)
+    if (shown && seeds.has(flowId)) placeSeed(flowId, shown)
+  }
+
+  /**
+   * F104-2: the draft of a Flow whose default card's first save failed has nothing waiting or refused any more (the
+   * editor's retry was stored, or a read reset it). The save notice goes: with a card on the Canvas nothing is missing;
+   * without one the card is told missing (drag it from the Palette). A notice of another action is left as it is.
+   */
+  function seedSaveSettled(flowId: string) {
+    if (!seedSaves.delete(flowId)) return
+    const edit = state.edits[flowId]
+    const notice = edit ? edit.notice : null
+    if (!edit || !notice || notice.kind !== 'error' || notice.code !== 'default_card_save_failed') return
+    edit.notice = (readyGraph(flowId)?.nodes.length ?? 0) > 0 ? null : { kind: 'error', code: 'default_card_not_placed' }
+  }
+
+  function seedFailed(flowId: string, code: string) {
+    const edit = state.edits[flowId]
+    if (edit && findFlowTab(tabsState(), flowId)) edit.notice = { kind: 'error', code }
+  }
+
   function readGraph(flowId: string, background = false) {
     const projectId = state.projectId
     if (projectId === null) return
@@ -1143,12 +1229,8 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
         drafts.graphLoaded(flowId, shown)
         // the run goes with the Graph it moves (a run event reads both again).
         runControl.read(flowId)
-        const seed = seeds.get(flowId)
-        if (seed) {
-          seeds.delete(flowId)
-          // Only on a Graph with nothing on it and no saved draft: never a second node.
-          if (graph.draft?.editable === true && graph.draft.version === 0 && graph.nodes.length === 0) drafts.seed(flowId, seed)
-        }
+        placeSeed(flowId, graph)
+        dropSeedNotice(flowId)
         // A retried Graph keeps the selection only when the selected Node still exists.
         const view = state.views[flowId]
         // the user's saved Viewport, unless this tab already has one.
@@ -1168,7 +1250,11 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
           readGraph(flowId, background)
           return
         }
-        if (keepShown && state.graphs[flowId]?.status === 'ready') return
+        if (keepShown && state.graphs[flowId]?.status === 'ready') {
+          // F104-2: a seed the archive answer left to this read is placed on the Graph kept on screen.
+          resumeSeed(flowId)
+          return
+        }
         const failure = readFailure(error)
         const cached = failure.network || (failure.httpStatus !== undefined && failure.httpStatus >= 500)
           ? readPending<FlowGraph>(pendingKey(projectId, flowId, 'canvas')) : null
@@ -1198,6 +1284,7 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     shownReads.clear()
     graphViews.clear()
     seeds.clear()
+    seedSaves.clear()
     holdWrites.clear()
     titleStates.clear()
     pairedSignals.clear()
@@ -1244,7 +1331,9 @@ export function createDesignerCenterSession(options: DesignerCenterSessionOption
     shownReads.delete(flowId)
     if (nodeSizes.value[flowId]) nodeSizes.value = Object.fromEntries(Object.entries(nodeSizes.value).filter(([id]) => id !== flowId))
     graphViews.delete(flowId)
-    seeds.delete(flowId)
+    // F104-2: a seed not placed yet (archive state unknown) is kept: the Flow's next tab places it (placeSeed checks the
+    // Graph is still empty with no saved draft, so never a second card).
+    seedSaves.delete(flowId)
     holdWrites.delete(flowId)
     titleStates.delete(flowId)
     pairedSignals.delete(flowId)

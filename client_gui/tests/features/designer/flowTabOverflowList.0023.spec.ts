@@ -146,6 +146,46 @@ describe('flow tab strip overflow (v02gui.0023)', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
+  /** flowgate.v02test.0100: the end tab's × hid behind ▾ because only the name button was scrolled into view. */
+  it('scrolls the whole active tab (with its ×) into view, not only its name button, while overflowing', async () => {
+    const had = Object.prototype.hasOwnProperty.call(Element.prototype, 'scrollIntoView')
+    const original = Element.prototype.scrollIntoView
+    const scrolled: Array<{ el: Element; options: unknown }> = []
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value(this: Element, options?: unknown) { scrolled.push({ el: this, options }) },
+    })
+    try {
+      const w = mountStrip()
+      await setWidths(w, 900, 300)
+      await nextTick()
+      scrolled.length = 0
+      await w.setProps({ activeFlowId: 'c' })
+      await nextTick(); await nextTick()
+      const tab = w.get('[data-test="designer-flow-tab"][data-flow-id="c"]').element
+      const button = tab.querySelector('[data-test="designer-flow-tab-button"]')
+      const close = tab.querySelector('[data-test="designer-flow-tab-close"]')
+      expect(close).not.toBeNull()
+      expect(scrolled.length).toBeGreaterThan(0)
+      const last = scrolled.at(-1)!
+      expect(last.el).toBe(tab)
+      expect(last.el).not.toBe(button)
+      expect(last.el.contains(close)).toBe(true)
+      expect(last.options).toEqual({ block: 'nearest', inline: 'nearest' })
+    } finally {
+      if (had) Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: original })
+      else delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView
+    }
+  })
+
+  it('keeps the end tab off the list button edge with scroll-padding-inline on the strip', () => {
+    const source = readFileSync(resolve(__dirname, '../../../src/features/designer/center/FlowTabStrip.vue'), 'utf8')
+    const block = (selector: string) => source.match(new RegExp(`\\n${selector.replace(/[.:-]/g, (c) => `\\${c}`)} \\{([^}]*)\\}`))?.[1] ?? ''
+    expect(block('.flow-tab-strip')).toContain('scroll-padding-inline: 6px;')
+    expect(block('.flow-tab-strip')).toContain('padding: 0 6px;')
+  })
+
   it('hides the strip scrollbar and keeps the 36px height on the bar', () => {
     const source = readFileSync(resolve(__dirname, '../../../src/features/designer/center/FlowTabStrip.vue'), 'utf8')
     const block = (selector: string) => source.match(new RegExp(`\\n${selector.replace(/[.:-]/g, (c) => `\\${c}`)} \\{([^}]*)\\}`))?.[1] ?? ''

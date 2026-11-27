@@ -51,11 +51,11 @@ describe('v02test.0055 내 AI window list (mine-only)', () => {
     wrapper.unmount()
   })
 
-  it('hides system AI from an administrator too and keeps the plain order hint', async () => {
+  it('hides system AI from an administrator too and shows no order hint', async () => {
     const wrapper = await mountPanel({ admin: true })
     expect(names(wrapper)).toEqual(['My agent', 'My local'])
     expect(wrapper.find('.mode-icon.owner.system').exists()).toBe(false)
-    expect(wrapper.get('[data-test="ai-order-hint"]').text()).not.toContain('폴백 순서')
+    expect(wrapper.find('[data-test="ai-order-hint"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

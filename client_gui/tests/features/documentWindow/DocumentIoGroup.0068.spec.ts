@@ -66,6 +66,18 @@ describe('information failure does not determine subscription lifetime', () => {
     expect(documentIoInfo(DOC).state).toBe('READY')
   })
 })
+describe('F81 a line keeps its upload off (a test card report)', () => {
+  it('turns upload off with the given tooltip whatever the document allows; download stays; without the prop it is as before', async () => {
+    wrapper = mount(DocumentIoGroup, { props: { docId: DOC, projectId: 'flowgate', groupId: 'flowgate.v02.0068', uploadOff: 'made again by the server' }, global: { plugins: [createPinia(), i18n] } })
+    await flushPromises()
+    const upload = wrapper.get('[data-test="document-io-upload"]')
+    expect((upload.element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.get('.document-io-slot').attributes('title')).toBe('made again by the server')
+    expect((wrapper.get('[data-test="document-io-download"]').element as HTMLButtonElement).disabled).toBe(false)
+    await wrapper.setProps({ uploadOff: null }); await flushPromises()
+    expect((wrapper.get('[data-test="document-io-upload"]').element as HTMLButtonElement).disabled).toBe(false)
+  })
+})
 describe('cache reset with the same mounted group', () => {
   it.each(['leave', 'forget'])('%s starts a new read without close or document-id change', async (kind) => {
     await draw()

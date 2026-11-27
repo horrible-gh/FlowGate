@@ -1,7 +1,7 @@
 <template>
   <p v-if="notice?.kind === 'error'" class="draft-action-notice" role="alert"
     data-test="designer-draft-notice" :data-code="notice.code">
-    {{ t('gui.designer.center.draft_action_failed', { code: notice.code }) }}
+    {{ t(noticeKey(notice.code), { code: notice.code }) }}
   </p>
 </template>
 
@@ -11,8 +11,14 @@ import type { DraftEditState } from './draftController'
 
 // 0156 T6 / Q589: a refused confirmation stores a notice before rereading the
 // graph. Keep that reason visible through the reread, until the next edit/action.
+// F104-2: a new Flow's default 요구사항 card that could not be placed (`default_card_*` codes) is told
+// with its own words: the card is missing and can be dragged from the Palette. Its first save failing
+// (`default_card_save_failed`) is told apart: the card is on the Canvas and the save is retried.
 defineProps<{ notice: DraftEditState['notice'] }>()
 const { t } = useI18n()
+const noticeKey = (code: string) => code === 'default_card_save_failed'
+  ? 'gui.designer.center.default_card_save_failed'
+  : code.startsWith('default_card_') ? 'gui.designer.center.default_card_failed' : 'gui.designer.center.draft_action_failed'
 </script>
 
 <style scoped>

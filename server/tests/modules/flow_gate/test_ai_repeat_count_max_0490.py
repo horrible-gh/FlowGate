@@ -297,12 +297,14 @@ def test_read_path_tracks_the_live_ceiling_on_both_sides(fake_settings):
     # WRITE: a value beyond today's ceiling is refused for a new request.
     with pytest.raises(ValueError, match="invalid_review_count_value"):
         workflow_decision_service.normalize_continuation_review_count_overrides({"5": 15})
-    # READ: the same out-of-range value degrades to the feature default rather than
-    # crashing an unmanned chain — symmetric with the write-path refusal, and with
-    # the pre-existing hand-edited-row tests' behavior at the (lower) default ceiling.
-    assert ai_invoke_service.resolve_review_count({"5": 15}, 5) == 0
-    assert ai_invoke_service._resolve_restart_max_attempts(15) == 2
-    # Raising the ceiling widens both sides together — nothing is hardcoded at 5.
+    # READ (v02test.0096 F96-11): a stored pick is read back against 1..30, not the stored
+    # default — a personal ceiling may be above it, and the read must not demote such a pick.
+    assert ai_invoke_service.resolve_review_count({"5": 15}, 5) == 15
+    assert ai_invoke_service._resolve_restart_max_attempts(15) == 16
+    # Beyond the hard maximum a hand-edited value still degrades to the feature default.
+    assert ai_invoke_service.resolve_review_count({"5": 31}, 5) == 0
+    assert ai_invoke_service._resolve_restart_max_attempts(31) == 2
+    # Raising the stored default widens the write side — nothing is hardcoded at 5.
     db_system_settings.set_value("ai_repeat_count_max", "15", "integer")
     assert ai_invoke_service.resolve_review_count({"5": 15}, 5) == 15
     assert ai_invoke_service._resolve_restart_max_attempts(15) == 16

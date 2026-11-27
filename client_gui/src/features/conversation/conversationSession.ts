@@ -157,6 +157,8 @@ export interface ConversationState {
   loadingOlder: boolean
   providers: ChatProvider[]
   providersStatus: LoadStatus
+  /** my default AI as the providers call names it (null = none); the AI picker lists it first (v02test.0096). */
+  defaultProviderId: string | null
   /** the open chat's AI (each chat keeps its own; a new chat starts on my default AI). */
   selectedProviderId: string
   /** how `selectedProviderId` was chosen (sent with the AI call). */
@@ -648,6 +650,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
     loadingOlder: false,
     providers: [],
     providersStatus: 'idle',
+    defaultProviderId: null,
     selectedProviderId: '',
     providerOrigin: 'default_fallback',
     chatProviderStatus: 'ready',
@@ -1422,6 +1425,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const relisted = providersShownProject === projectId
       state.providers = list.providers
       providersDefaultId = list.defaultProviderId
+      state.defaultProviderId = list.defaultProviderId
       const keep = list.providers.some((p) => p.id === state.selectedProviderId)
       state.selectedProviderId = keep
         ? state.selectedProviderId

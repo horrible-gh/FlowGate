@@ -41,6 +41,34 @@ CATEGORIES = ("normal", "negative", "boundary", "regression")
 # manual = a person checks it; external = recorded from outside. Only automated is server-run.
 EXECUTION_MODES = ("automated", "ai", "manual", "external")
 STATUSES = ("PASS", "FAIL", "BLOCKED", "NOT_RUN")
+
+# ── Scenario-case shape (F81) ────────────────────────────────────────────────────
+# A case is checked one of two ways: ``code`` (the server runs its command) or ``manual``
+# (someone checks it by hand and records the result). For a manual case ``checker`` says who
+# checks it. The four execution modes above are still read: a document or a stored result
+# written with them maps onto the two checks, and is written back in the new words on save.
+CHECK_METHODS = ("code", "manual")
+CHECKERS = ("ai", "human", "external")
+_CHECK_BY_MODE = {
+    "automated": ("code", None), "ai": ("manual", "ai"),
+    "manual": ("manual", "human"), "external": ("manual", "external"),
+}
+_MODE_BY_CHECKER = {"ai": "ai", "human": "manual", "external": "external"}
+# The result of a case as the screens and the APIs word it. The stored verdict column keeps
+# its four tokens (the gate reads them); ``BLOCKED`` is read and shown as ``skip``.
+CASE_RESULTS = ("not_run", "pass", "fail", "skip")
+_RESULT_BY_STATUS = {"NOT_RUN": "not_run", "PASS": "pass", "FAIL": "fail", "BLOCKED": "skip"}
+_STATUS_BY_RESULT = {value: key for key, value in _RESULT_BY_STATUS.items()}
+RESULT_ACTOR_KINDS = ("ai", "human")
+# A remark on a case: who wrote it, in which AI stage, and whether it is still open.
+REMARK_PHASES = ("case_write", "test_run")
+REMARK_STATES = ("open", "resolved")
+REMARK_AUTHOR_KINDS = ("ai", "human")
+MAX_REMARK_CHARS = 4000
+MAX_REMARK_REPLY_CHARS = 500
+# The tag a flow attachment carries when it is a case's evidence (meta field ``test_evidence``).
+EVIDENCE_TAG_KEY = "test_evidence"
+EVIDENCE_TAG_KINDS = ("input", "log", "output")
 EVIDENCE_KINDS = (
     "text", "log", "structured", "file", "attachment", "screenshot", "url", "manual_note",
 )
@@ -53,27 +81,41 @@ MAX_JUNIT_BYTES = 5 * 1024 * 1024
 
 # Canonical field keys (grammar tokens, never translated — the same convention as ``cmd``)
 # in render order, plus the aliases a human or an AI may type.
+# ``content`` / ``check`` / ``checker`` are the F81 case fields. A case is written with them;
+# ``requirement`` / ``precondition`` / ``execution_mode`` are read from a document saved
+# before them and are not written again (their text is carried in ``content`` / ``check``).
 SPEC_FIELDS = (
-    "category", "requirement", "execution_mode", "required", "precondition", "input",
-    "procedure", "expected", "check_points", "automation_ref", "run_command", "run_cwd",
+    "content", "procedure", "expected", "check", "checker", "run_command", "run_cwd",
+    "required", "category", "input", "check_points", "automation_ref",
     "test_assets",
 )
+# Read from an earlier document, never rendered.
+READ_ONLY_SPEC_FIELDS = ("requirement", "precondition", "execution_mode")
 # Optional fields rendered only when set, so a document without them round-trips unchanged.
 # run_command is the program and arguments that run an automated Case; the
 # test files it names, if any, are recorded in the run's basis. automation_ref (a target) and run_cwd (where it runs) are kept for Cases
 # saved with them; the editor no longer writes them for a new command.
-OPTIONAL_SPEC_FIELDS = ("automation_ref", "run_command", "run_cwd", "test_assets")
+OPTIONAL_SPEC_FIELDS = (
+    "content", "checker", "run_command", "category", "input", "check_points",
+    "automation_ref", "run_cwd", "test_assets",
+)
 # ``required`` is not listed: an absent flag means required (stop the next step on failure),
 # the same default the structured editor gives a new case and the client reads.
 REQUIRED_SPEC_FIELDS = (
     "category", "requirement", "execution_mode", "procedure", "expected", "check_points",
 )
+# What a case written with ``check`` must carry; the list above stays the rule of a case
+# still written with ``execution_mode`` (an earlier document reads exactly as it did).
+REQUIRED_CASE_FIELDS = ("procedure", "expected", "check")
 _FIELD_ALIASES = {
     "category": "category", "kind": "category", "분류": "category", "分類": "category",
     "requirement": "requirement", "requirements": "requirement",
     "requirement_ref": "requirement", "covers": "requirement", "대상": "requirement",
     "검증 대상": "requirement", "요구사항": "requirement", "対象": "requirement",
     "execution_mode": "execution_mode", "mode": "execution_mode",
+    "content": "content", "내용": "content", "内容": "content",
+    "check": "check", "확인": "check", "확인 방식": "check", "確認": "check",
+    "checker": "checker", "확인자": "checker", "確認者": "checker",
     "실행 방식": "execution_mode", "実行方式": "execution_mode",
     "required": "required", "필수": "required", "必須": "required",
     "precondition": "precondition", "preconditions": "precondition",
@@ -326,14 +368,82 @@ def parse_spec(content: str) -> dict:
     return {"contract_version": version, "title": title, "cases": cases, "errors": errors}
 
 
+def check_of_mode(mode: Any) -> tuple[Optional[str], Optional[str]]:
+    """``(check, checker)`` of an execution mode; ``(None, None)`` for an unknown one."""
+    return _CHECK_BY_MODE.get(str(mode or "").strip().lower(), (None, None))
+
+
+def mode_of_check(check: Any, checker: Any = None) -> Optional[str]:
+    """The execution mode the runner reads for a check (a manual case defaults to ``ai``)."""
+    word = str(check or "").strip().lower()
+    if word == "code":
+        return "automated"
+    if word == "manual":
+        return _MODE_BY_CHECKER.get(str(checker or "").strip().lower(), "ai")
+    return None
+
+
+def merged_content(case: dict) -> str:
+    """The case's content; an earlier case reads its requirement and precondition as one."""
+    own = str(case.get("content") or "").strip()
+    if own:
+        return own
+    return "\n".join(part for part in (
+        str(case.get("requirement") or "").strip(), str(case.get("precondition") or "").strip(),
+    ) if part)
+
+
+def case_check(case: dict) -> tuple[str, Optional[str]]:
+    """``(check, checker)`` of a case dict in either wording; ``check`` wins when both are set.
+
+    An unknown word is returned as it is so the validator can name it.
+    """
+    check = str(case.get("check") or "").strip().lower()
+    checker = str(case.get("checker") or "").strip().lower() or None
+    if check:
+        return check, (checker if check == "manual" else None)
+    mode = str(case.get("execution_mode") or "").strip().lower()
+    derived, who = check_of_mode(mode)
+    return (derived or mode), (checker or who if derived == "manual" else None)
+
+
+def case_result_of(status: Any) -> str:
+    """``not_run`` / ``pass`` / ``fail`` / ``skip`` of a stored verdict (BLOCKED reads as skip)."""
+    return _RESULT_BY_STATUS.get(str(status or "NOT_RUN").strip().upper(), "not_run")
+
+
+def status_of_case_result(result: Any) -> Optional[str]:
+    """The stored verdict of a case result word; ``None`` for an unknown one."""
+    return _STATUS_BY_RESULT.get(str(result or "").strip().lower())
+
+
 def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> dict:
     if not title:
         errors.append(_err("missing_field", f"{case_id}: title is required.",
                            case_id=case_id, field="title"))
-    for field in REQUIRED_SPEC_FIELDS:
+    # A case that names its execution_mode and no check is an earlier case: it keeps the
+    # rules it was written under. Every other case is judged as an F81 case.
+    earlier = "execution_mode" in values and "check" not in values
+    for field in (REQUIRED_SPEC_FIELDS if earlier else REQUIRED_CASE_FIELDS):
         if not (values.get(field) or "").strip():
             errors.append(_err("missing_field", f"{case_id}: required field '{field}' missing.",
                                case_id=case_id, field=field))
+    check, checker = case_check(values)
+    if not earlier:
+        if check and check not in CHECK_METHODS:
+            errors.append(_err(
+                "invalid_check",
+                f"{case_id}: check must be one of {', '.join(CHECK_METHODS)} (got '{check}').",
+                case_id=case_id, field="check",
+            ))
+        raw_checker = (values.get("checker") or "").strip().lower()
+        if raw_checker and raw_checker not in CHECKERS:
+            errors.append(_err(
+                "invalid_checker",
+                f"{case_id}: checker must be one of {', '.join(CHECKERS)} (got '{raw_checker}').",
+                case_id=case_id, field="checker",
+            ))
+            checker = None
     category = (values.get("category") or "").strip().lower()
     if category and category not in CATEGORIES:
         errors.append(_err(
@@ -342,13 +452,18 @@ def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> d
             case_id=case_id, field="category",
         ))
     mode = (values.get("execution_mode") or "").strip().lower()
-    if mode and mode not in EXECUTION_MODES:
+    if earlier and mode and mode not in EXECUTION_MODES:
         errors.append(_err(
             "invalid_execution_mode",
             f"{case_id}: execution_mode must be one of {', '.join(EXECUTION_MODES)} "
             f"(got '{mode}').",
             case_id=case_id, field="execution_mode",
         ))
+    if not earlier:
+        # The runner and the gate still read execution_mode; it follows the check.
+        mode = mode_of_check(check, checker) or ""
+    if check not in CHECK_METHODS:
+        check, checker = "", None
     required_raw = values.get("required")
     required = parse_bool(required_raw) if required_raw not in (None, "") else None
     if required_raw not in (None, "") and required is None:
@@ -367,6 +482,9 @@ def _build_case(case_id: str, title: str, values: dict, errors: list[dict]) -> d
         "title": title,
         "category": category or None,
         "requirement": values.get("requirement") or "",
+        "content": merged_content(values),
+        "check": check or None,
+        "checker": checker,
         "execution_mode": mode or None,
         "required": True if required is None else required,
         "precondition": values.get("precondition") or "",
@@ -454,13 +572,24 @@ def render_spec_body(cases: Iterable[dict], *, title: str, locale: str = "ko",
             continue
         case_id = normalize_case_id(str(case.get("case_id") or ""))
         out.append(f"### {case_id}: {str(case.get('title') or '').strip()}".rstrip())
+        check, checker = case_check(case)
         for field in SPEC_FIELDS:
             value = case.get(field)
-            if field == "required":
+            if field == "content":
+                value = merged_content(case)
+            elif field == "check":
+                value = check
+            elif field == "checker":
+                value = checker
+            elif field == "run_command" and check == "manual":
+                # A manual case has no command; one left from before it was manual is dropped.
+                value = ""
+            elif field == "required":
+                # Every case counts; only a case kept as optional says so.
                 parsed = parse_bool(value)
-                value = "true" if parsed is None and value in (None, "") else (
-                    "true" if parsed else ("false" if parsed is False else str(value))
-                )
+                if value in (None, "") or parsed is True:
+                    continue
+                value = "false" if parsed is False else str(value)
             if field in OPTIONAL_SPEC_FIELDS and not str(value or "").strip():
                 continue
             out.append(f"- {field}: {_render_value(value)}".rstrip())
@@ -618,7 +747,8 @@ def _normalize_evidence(raw: Any, case_ref: str, errors: list[dict]) -> list[dic
 
 def normalize_results(raw_results: Any, *, submitted_by: str, now: str,
                       default_source_identity: Optional[dict] = None,
-                      default_origin: str = "payload") -> list[dict]:
+                      default_origin: str = "payload",
+                      actor_kind: Optional[str] = None) -> list[dict]:
     """Validate an explicit result payload. Raises SpecResultError listing every problem."""
     if raw_results in (None, ""):
         return []
@@ -636,16 +766,38 @@ def normalize_results(raw_results: Any, *, submitted_by: str, now: str,
             continue
         raw_id = item.get("case_id")
         case_id = normalize_case_id(str(raw_id)) if raw_id not in (None, "") else ""
-        status = normalize_status(item.get("status"))
-        if status is None:
-            errors.append(_err(
-                "invalid_status",
-                f"{ref}: status must be one of {', '.join(STATUSES)} (got {item.get('status')!r}).",
-                case_id=case_id or None, field="status",
-            ))
-            continue
+        # F81: ``result`` (not_run / pass / fail / skip) is the case result as the case
+        # window records it; it wins over ``status`` and a skip must say why.
+        raw_result = item.get("result")
+        skip_reason = _clip(item.get("skip_reason"), 500).strip()
+        if raw_result not in (None, ""):
+            status = status_of_case_result(raw_result)
+            if status is None:
+                errors.append(_err(
+                    "invalid_status",
+                    f"{ref}: result must be one of {', '.join(CASE_RESULTS)} (got {raw_result!r}).",
+                    case_id=case_id or None, field="result",
+                ))
+                continue
+            if status == "BLOCKED" and not skip_reason:
+                errors.append(_err(
+                    "skip_reason_required", f"{ref}: a skipped case needs a one-line skip_reason.",
+                    case_id=case_id or None, field="skip_reason",
+                ))
+                continue
+        else:
+            status = normalize_status(item.get("status"))
+            if status is None:
+                errors.append(_err(
+                    "invalid_status",
+                    f"{ref}: status must be one of {', '.join(STATUSES)} (got {item.get('status')!r}).",
+                    case_id=case_id or None, field="status",
+                ))
+                continue
         mode = item.get("execution_mode")
         mode = str(mode).strip().lower() if mode not in (None, "") else None
+        if mode is None and item.get("check") not in (None, ""):
+            mode = mode_of_check(item.get("check"), item.get("checker"))
         if mode is not None and mode not in EXECUTION_MODES:
             errors.append(_err("invalid_execution_mode",
                                f"{ref}: execution_mode must be one of {', '.join(EXECUTION_MODES)}.",
@@ -663,6 +815,10 @@ def normalize_results(raw_results: Any, *, submitted_by: str, now: str,
             "checked_by": _clip(item.get("checked_by") or submitted_by, 200),
             "checked_at": _clip(item.get("checked_at") or now, 64),
             "note": _clip(item.get("note")),
+            "skip_reason": skip_reason if status == "BLOCKED" else "",
+            "result_by": normalize_result_by(
+                item.get("result_by"), default_kind=actor_kind,
+                default_name=item.get("checked_by") or submitted_by),
             "source_name": _clip(item.get("source_name") or item.get("test_name"), 500),
             "source_identity": identity,
             "origin": default_origin,
@@ -672,6 +828,19 @@ def normalize_results(raw_results: Any, *, submitted_by: str, now: str,
             "invalid_results", "; ".join(e["message"] for e in errors[:10]), errors
         )
     return out
+
+
+def normalize_result_by(raw: Any, *, default_kind: Optional[str] = None,
+                        default_name: Any = None) -> Optional[dict]:
+    """Who recorded a case result: ``{"kind": "ai" | "human", "name": <shown name>}``.
+
+    ``None`` when neither the item nor the caller says who (an imported report).
+    """
+    row = raw if isinstance(raw, dict) else {}
+    kind = str(row.get("kind") or default_kind or "").strip().lower()
+    if kind not in RESULT_ACTOR_KINDS:
+        return None
+    return {"kind": kind, "name": _clip(row.get("name") or default_name or "", 200)}
 
 
 def parse_junit_xml(xml_text: str, *, submitted_by: str, now: str,
@@ -809,12 +978,19 @@ def map_results(spec_cases: list[dict], results: list[dict], *,
             "automation_ref": case.get("automation_ref") or "",
             "run_command": case.get("run_command") or "",
             "spec_execution_mode": case.get("execution_mode"),
+            "content": merged_content(case),
+            "check": case_check(case)[0] or None,
+            "checker": case_check(case)[1],
+            "skip_reason": "",
+            "result_by": None,
         }
         if len(mapped) == 1:
             result = mapped[0]
             rows.append({
                 **base,
                 "status": result["status"],
+                "skip_reason": result.get("skip_reason") or "",
+                "result_by": result.get("result_by"),
                 "actual": result.get("actual") or "",
                 "evidence": result.get("evidence") or [],
                 "defect_ref": result.get("defect_ref") or "",
@@ -870,7 +1046,7 @@ def map_results(spec_cases: list[dict], results: list[dict], *,
                 **{k: carried.get(k) for k in (
                     "status", "actual", "evidence", "defect_ref", "execution_mode",
                     "checked_by", "checked_at", "note", "source_name", "source_identity",
-                    "mapping_conflict", "result_count",
+                    "mapping_conflict", "result_count", "skip_reason", "result_by",
                 )},
                 "result_origin": "carried",
                 "carried_from_run_id": carried.get("carried_from_run_id") or previous_run_id,
@@ -951,6 +1127,7 @@ _CASE_META_KEYS = (
     "check_points", "automation_ref", "run_command", "spec_execution_mode", "evidence",
     "defect_ref", "execution_mode", "checked_by", "checked_at", "note", "source_name", "source_identity",
     "result_origin", "mapping_conflict", "result_count", "carried_from_run_id",
+    "content", "check", "checker", "skip_reason", "result_by",
 )
 
 
@@ -963,7 +1140,7 @@ def stored_case_to_row(stored: dict) -> dict:
         meta = json.loads(stored.get("case_meta") or "{}")
     except (TypeError, ValueError):
         meta = {}
-    return {
+    row = {
         "case_id": stored.get("case_no"),
         "title": stored.get("case_title") or "",
         "expected": stored.get("expect") or "",
@@ -971,6 +1148,131 @@ def stored_case_to_row(stored: dict) -> dict:
         "actual": stored.get("actual") or "",
         **{key: meta.get(key) for key in _CASE_META_KEYS},
     }
+    # A row stored before the F81 fields reads them from what it has.
+    if not row.get("check"):
+        row["check"], who = check_of_mode(row.get("spec_execution_mode") or row.get("execution_mode"))
+        row["checker"] = row.get("checker") or who
+    if row.get("content") is None:
+        row["content"] = merged_content(row)
+    row["skip_reason"] = row.get("skip_reason") or ""
+    row["result"] = case_result_of(row["status"])
+    return row
+
+
+def case_result_counts(rows: Iterable[dict]) -> dict:
+    """The scenario list's tally in the case-result words (the report's own numbers)."""
+    counts = {"total": 0, **{word: 0 for word in CASE_RESULTS}}
+    for row in rows:
+        counts["total"] += 1
+        counts[case_result_of(row.get("status"))] += 1
+    return counts
+
+
+# ── Remarks and evidence tags: shapes only ───────────────────────────────────────
+
+
+def normalize_remark(raw: Any, *, author_kind: str, author_name: str,
+                     default_phase: str = "case_write") -> dict:
+    """Validate a new remark. Raises SpecResultError (``invalid_remark``)."""
+    row = raw if isinstance(raw, dict) else {}
+    text = str(row.get("text") or "").strip()
+    if not text:
+        raise SpecResultError("invalid_remark", "A remark needs its text.")
+    if len(text) > MAX_REMARK_CHARS:
+        raise SpecResultError("invalid_remark", f"A remark is at most {MAX_REMARK_CHARS} characters.")
+    phase = str(row.get("phase") or default_phase).strip().lower()
+    if phase not in REMARK_PHASES:
+        raise SpecResultError(
+            "invalid_remark", f"phase must be one of {', '.join(REMARK_PHASES)} (got '{phase}').")
+    kind = str(author_kind or "").strip().lower()
+    if kind not in REMARK_AUTHOR_KINDS:
+        raise SpecResultError(
+            "invalid_remark", f"author kind must be one of {', '.join(REMARK_AUTHOR_KINDS)}.")
+    return {"text": text, "phase": phase, "author_kind": kind,
+            "author_name": _clip(author_name or "", 200)}
+
+
+def normalize_remark_state(raw: Any) -> str:
+    state = str(raw or "").strip().lower()
+    if state not in REMARK_STATES:
+        raise SpecResultError(
+            "invalid_remark", f"state must be one of {', '.join(REMARK_STATES)} (got '{state}').")
+    return state
+
+
+def normalize_remark_reply(raw: Any) -> str:
+    """The AI's one-line answer to a remark (newlines folded)."""
+    return _clip(" ".join(str(raw or "").split()), MAX_REMARK_REPLY_CHARS)
+
+
+def shape_remark(row: dict) -> dict:
+    """A stored remark as the API answers it."""
+    return {
+        "remark_id": row.get("remark_id"),
+        "case_id": row.get("case_id"),
+        "text": row.get("body") or "",
+        "phase": row.get("phase"),
+        "state": row.get("state") or "open",
+        "author": {"kind": row.get("author_kind"), "name": row.get("author_name") or ""},
+        "ai_reply": row.get("ai_reply") or None,
+        "resolved_by": (row.get("ai_reply") or None) if row.get("state") == "resolved" else None,
+        "created_at": row.get("created_at"),
+        "resolved_at": row.get("resolved_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def remark_counts(remarks: Iterable[dict]) -> dict:
+    """``{case key: {"open": n, "resolved": m}}`` of shaped or stored remarks."""
+    out: dict[str, dict] = {}
+    for remark in remarks:
+        entry = out.setdefault(case_id_key(remark.get("case_id") or ""), {"open": 0, "resolved": 0})
+        entry["resolved" if remark.get("state") == "resolved" else "open"] += 1
+    return out
+
+
+def normalize_evidence_tag(raw: Any) -> dict:
+    """The ``test_evidence`` meta of a flow attachment: case, kind and which attempt.
+
+    ``{"case_id": "TC-001", "kind": "input" | "log" | "output", "attempt": 1}``. Raises
+    SpecResultError (``invalid_evidence_tag``).
+    """
+    row = raw if isinstance(raw, dict) else {}
+    case_id = normalize_case_id(str(row.get("case_id") or ""))
+    kind = str(row.get("kind") or "").strip().lower()
+    attempt = row.get("attempt", 1)
+    if not case_id:
+        raise SpecResultError("invalid_evidence_tag", "An evidence tag needs its case_id.")
+    if kind not in EVIDENCE_TAG_KINDS:
+        raise SpecResultError(
+            "invalid_evidence_tag",
+            f"kind must be one of {', '.join(EVIDENCE_TAG_KINDS)} (got '{kind}').")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise SpecResultError("invalid_evidence_tag", "attempt must be an integer from 1.")
+    return {"case_id": case_id, "kind": kind, "attempt": attempt}
+
+
+def evidence_counts(tags: Iterable[dict]) -> dict:
+    """``{case key: {"input": n, "log": n, "output": n, "total": n}}`` of each case's latest attempt."""
+    latest: dict[str, int] = {}
+    kept: list[dict] = []
+    for tag in tags:
+        try:
+            item = normalize_evidence_tag(tag)
+        except SpecResultError:
+            continue
+        key = case_id_key(item["case_id"])
+        latest[key] = max(latest.get(key, 0), item["attempt"])
+        kept.append(item)
+    out: dict[str, dict] = {}
+    for item in kept:
+        key = case_id_key(item["case_id"])
+        if item["attempt"] != latest[key]:
+            continue
+        entry = out.setdefault(key, {**{kind: 0 for kind in EVIDENCE_TAG_KINDS}, "total": 0})
+        entry[item["kind"]] += 1
+        entry["total"] += 1
+    return out
 
 
 def load_result_meta(raw: Any) -> dict:
@@ -1057,7 +1359,7 @@ def _cell(value: Any) -> str:
 
 def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: dict,
                            unmapped: list[dict], conflicts: list[dict], title: str,
-                           locale: str = "ko") -> str:
+                           locale: str = "ko", overall_comment: Optional[str] = None) -> str:
     s = _REPORT_STRINGS.get(locale) or _REPORT_STRINGS["ko"]
     overall = summary.get("overall") or "NOT_RUN"
     lines = [
@@ -1124,6 +1426,9 @@ def render_report_markdown(*, doc: dict, run: dict, rows: list[dict], summary: d
             )
     else:
         lines.append(f"- {s['none']}")
+    if overall_comment:
+        heading = {"ko": "총평", "ja": "総評", "en": "Overall comment"}.get(locale, "총평")
+        lines.extend(["", "## " + heading, "", str(overall_comment).strip()])
     lines.extend(["", s["footer"].format(run_id=run.get("run_id")), ""])
     return "\n".join(lines)
 

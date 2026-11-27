@@ -185,6 +185,8 @@ def _commit_revision(ctx, inp):
     doc, built, req = inp.current, inp.built, inp.req
     if ctx.doc_id != doc["doc_id"]:
         raise internal_error()
+    from flowgate.card_documents import test_approval_carry
+    approvals = test_approval_carry.capture(doc)
     updates = dict(built.row_updates)
     extras = req.transport_extras.get("row_updates", {})
     if set(updates) - ({"title", "meta", "filename", "rejection_history", "commit_message"} if req.actor.kind == "worker" else {"title", "meta", "filename"}) or set(extras) - {"rejection_history"}:
@@ -227,7 +229,11 @@ def _commit_revision(ctx, inp):
     body_replace(inp)
     for task in built.transaction_tasks:
         task()
-    saved_doc = {**doc, **updates, "revision_no": doc["revision_no"] + 1, "updated_at": now, "file_path": rel}
+    if doc.get("type_code") == "TS":
+        from modules.flow_gate.services.test_card_changes import saved
+        saved(doc, inp.body.text or "", built.stored_bytes.decode("utf-8"))
+    saved_doc = documents.get_by_id(doc["doc_id"])
+    test_approval_carry.preserve(approvals, saved_doc)
     return ContactPlan(doc["project_id"], doc.get("group_id"), saved_doc, req.actor.user_id,
                        req.origin.token_id if req.actor.kind == "worker" else None,
                        type_tasks=list(built.type_tasks))

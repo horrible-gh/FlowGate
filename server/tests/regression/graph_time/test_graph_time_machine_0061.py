@@ -395,3 +395,29 @@ def test_v01_restore_route_preserves_existing_empty_return_point(monkeypatch):
     assert fn(SimpleNamespace(doc_id="doc", destination_seq=None), current_user={"user_id": "u"}) == {
         "ok": True, "restored": [], "stopped_at": None, "stopped_doc_id": None, "reached_front": False,
         "root_status": "wf_in_progress", "return_point_cleared": False}
+
+
+def test_integrated_conflict_join_can_rewind_without_rewinding_other_parent(snapshot):
+    join = snapshot.attempts[2]
+    join.update(input_source="integration_head", input_commit="merge-B")
+    result = impact.calculate(snapshot, "A")
+    assert result["allowed"]
+    assert result["impact"]["node_keys"] == ["A", "C", "D", "J"]
+    assert result["impact"]["integration_head_inputs"] == [
+        {"attempt_id": "j", "node_key": "J", "input_commit": "merge-B", "selected": True}]
+    assert "b" not in {a["attempt_id"] for a in result["impact"]["attempts"]}
+
+
+def test_integrated_input_outside_scope_is_carried_to_git_validation(snapshot):
+    snapshot.attempts[1].update(input_source="integration_head", input_commit="merge-A")
+    result = impact.calculate(snapshot, "A")
+    assert result["allowed"]
+    assert result["impact"]["integration_head_inputs"] == [
+        {"attempt_id": "b", "node_key": "B", "input_commit": "merge-A", "selected": False}]
+
+
+@pytest.mark.parametrize("missing", ["input_commit", "input_attempt_ids"])
+def test_integrated_join_with_missing_input_evidence_still_refuses(snapshot, missing):
+    snapshot.attempts[2].update(input_source="integration_head", input_commit="merge-B")
+    snapshot.attempts[2][missing] = None
+    assert "integration_head_input" in codes(impact.calculate(snapshot, "A"))

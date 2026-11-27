@@ -590,17 +590,16 @@ def _utc_instant(value):
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
-def review_loop_owner(loop_row: dict, *, now=None) -> Optional[str]:
-    """Read-only R4 ownership using the sweeper's evidence and grace boundary."""
+def review_loop_owner(loop_row: dict, *, now=None, include_recent: bool = True) -> Optional[str]:
+    """Read-only sweeper ownership, optionally excluding the time-based grace."""
     from datetime import timezone
 
     held = _restart_held_run_ids()
     if held is None:
         return "remote_hold"
     instant = _utc_instant(now) if now is not None else datetime.now(timezone.utc)
-    return review_loop_owner_evidence(
-        loop_row, held=held,
-        before=instant - timedelta(seconds=REVIEW_LOOP_SWEEP_GRACE_SEC), now=instant)
+    before = instant - timedelta(seconds=REVIEW_LOOP_SWEEP_GRACE_SEC) if include_recent else None
+    return review_loop_owner_evidence(loop_row, held=held, before=before, now=instant)
 
 
 def review_loop_owner_evidence(loop_row: dict, *, held, before, now=None,
@@ -969,10 +968,15 @@ def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> di
     # flowgate.v02test.0025: in the caller's display order (AI 관리 list) when they saved one. Only
     # the order of this list changes -- the default and every fallback chain stay as they were.
     providers = ai_settings_service.apply_user_order(user_id, (effective.get("providers") or []) + personal)
+    # flowgate.v02test.0096: each brief says whose AI it is ("user" = the caller's own, "system" = a system AI), so
+    # the composer's AI picker can group 내 AI / 시스템 AI. Display only; nothing secret rides on it.
+    personal_ids = {p.get("id") for p in personal}
     return {
         "ok": True,
         "project": project_id,
-        "providers": [oracle._provider_brief(provider) for provider in providers],
+        "providers": [{**oracle._provider_brief(provider),
+                       "owner": "user" if provider.get("id") in personal_ids else "system"}
+                      for provider in providers],
         "default_provider_id": (ai_settings_service.personal_default_id(user_id, personal)
                                 or effective.get("default_provider_id")),
         # the only metadata endpoint every execution
@@ -2774,7 +2778,7 @@ def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[in
     also widens what a read accepts — the earlier change the earlier implementation
     """
     restart_count = continuation_restart_max_attempts
-    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    choices = ai_execution_policy_service.stored_repeat_count_choices(allow_zero=True)
     if isinstance(restart_count, bool) or restart_count not in choices:
         restart_count = RESTART_MAX_ATTEMPTS_DEFAULT
     if restart_count == -1:

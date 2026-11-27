@@ -2,11 +2,11 @@
   <!-- flowgate.v02.0068 T#1 — the [업로드][다운로드] group of one document, connected: the Inspector's document line
        and the document window's header both draw this, so both go through the one coordinator (documentIo). -->
   <DocumentIoButtons
-    :upload="view.upload"
+    :upload="upload"
     :download="view.download"
     :upload-title="uploadTitle"
     :data-doc="docId"
-    @upload="documentIoUpload(docId, { context: { projectId, groupId }, card: card ?? null })"
+    @upload="!uploadOff && documentIoUpload(docId, { context: { projectId, groupId }, card: card ?? null })"
     @download="documentIoDownload(docId)"
   />
 </template>
@@ -46,14 +46,21 @@ const props = defineProps<{
    * the window's standalone edit target; without either the upload targets the document itself (the server decides).
    */
   card?: DocumentEditTarget | null
+  /**
+   * F81: the line keeps its [업로드] off and says why (the tooltip), whatever the document allows — a test card's
+   * report is made again by the server from the case results, so an uploaded file would be overwritten.
+   */
+  uploadOff?: string | null
 }>()
 
 const view = computed(() => documentIoButtons(props.docId))
+const upload = computed(() => (props.uploadOff ? { ...view.value.upload, enabled: false, busy: false } : view.value.upload))
 
 const { t: gt } = useI18n({ useScope: 'global' })
 const { t: wt } = useI18n({ useScope: 'local', messages: workPlanWindowMessages, inheritLocale: true })
 /** A work plan's upload tooltip (no new wording: the plan window's and the group's own); null for any other document. */
 const uploadTitle = computed<string | null>(() => {
+  if (props.uploadOff) return props.uploadOff
   if (!documentIoIsWorkPlan(props.docId)) return null
   const reason = view.value.upload.reason
   if (reason === 'locked' || reason === 'step_pending') return wt(`json.blocked.${reason}`)

@@ -74,7 +74,7 @@
         </InspectorControlRow>
       </InspectorBlock>
       <InspectorBlock
-        v-if="panel === 'ai' && legacyAiShown && instructionAiShown"
+        v-if="panel === 'ai' && legacyAiShown && instructionAiShown && kind !== 'test'"
         :locked="locked"
         class="inspector-settings-line"
         data-test="settings-instruction-ai"
@@ -93,7 +93,26 @@
         </InspectorControlRow>
       </InspectorBlock>
       <template v-if="panel === 'ai' && card.node.value?.aiRoles">
-        <InspectorBlock v-for="item in roleRows" :key="item.role" :locked="locked" class="inspector-ai-role" :class="{ 'is-gear-open': gearOpen === item.role }" :data-role="item.role" :data-held="item.held ? 'true' : undefined" :data-written="item.written ? 'true' : undefined">
+        <!-- F81: a test card's AI tab is two zones — case writing, then test run — of the same rows (work AI · review AI ·
+             review count) under a zone title; there is no instruction AI row. The setting keys of each zone: cardRolesModel TEST_AI_ZONES. -->
+        <template v-if="kind === 'test'">
+          <div class="inspector-ai-zone" data-test="ai-zone" data-zone="case_write">{{ t(k('test_zone.case_write')) }}</div>
+          <InspectorBlock v-for="item in shownRoleRows" :key="`case_write:${item.role}`" :locked="locked" class="inspector-ai-role" data-zone="case_write" :data-role="item.role" :data-key="TEST_AI_ZONES.case_write[item.role as 'execution' | 'review']">
+            <div class="inspector-ai-role-line">
+              <InspectorControlRow :label="roleLabel(item.role)">
+                <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
+                <InspectorFailureIcon v-if="failureOf(item.field)" :name="t(k('failed'))" :reason="failureOf(item.field)!" />
+              </InspectorControlRow>
+            </div>
+          </InspectorBlock>
+          <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-zone-review-count" data-zone="case_write" :data-key="TEST_AI_ZONES.case_write.review_count">
+            <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
+              <Select :model-value="views.review_count.value" :options="optionsOf('review_count')" :disabled="locked || views.review_count.disabled" :aria-label="t(runKey('review_count'))" @update:model-value="(value: string) => onAiChange('review_count', value)" />
+            </InspectorControlRow>
+          </InspectorBlock>
+          <div class="inspector-ai-zone" data-test="ai-zone" data-zone="test_run">{{ t(k('test_zone.test_run')) }}</div>
+        </template>
+        <InspectorBlock v-for="item in shownRoleRows" :key="item.role" :locked="locked" class="inspector-ai-role" :class="{ 'is-gear-open': gearOpen === item.role }" :data-role="item.role" :data-held="item.held ? 'true' : undefined" :data-written="item.written ? 'true' : undefined">
           <div class="inspector-ai-role-line">
             <InspectorControlRow :label="roleLabel(item.role)">
               <AiRoleSelect plain :model-value="item.selected" :providers="card.node.value.aiRoles.options" :label="roleLabel(item.role)" :display-name="item.displayName" :state="item.state" :cause="item.cause" :disabled="item.held || roleDisabled(item.field)" @update:model-value="value => changeRole(item.field, value)" />
@@ -175,8 +194,20 @@
           </InspectorControlRow>
         </InspectorBlock>
       </template>
+      <!-- F81: the older form of a test card draws the same two zones (the case writing block, then the test run block). -->
+      <InspectorRunSettings v-if="panel === 'ai' && legacyAiShown && kind === 'test'"
+        layout="scenario"
+        :title="t(k('test_zone.case_write'))"
+        data-zone="case_write"
+        :fields="runFields"
+        :labels="runLabels"
+        :locked="locked"
+        @update:field="onChange"
+      />
       <InspectorRunSettings v-if="(panel === 'ai' && legacyAiShown) || source === 'sequence'"
         :layout="kind === 'test' ? 'scenario' : 'run'"
+        :title="kind === 'test' ? t(k('test_zone.test_run')) : undefined"
+        :data-zone="kind === 'test' ? 'test_run' : undefined"
         :fields="runFields"
         :hide-missing="!!card.node.value?.aiRoles"
         :labels="runLabels"
@@ -243,7 +274,7 @@ import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
 import { visibleReviewCountOptions } from './reviewCountModel'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, TEST_AI_ZONES, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -280,9 +311,11 @@ const instructionReviewFields = computed(() => AI_ADVANCED_FIELDS.instructionRev
 /** flowgate.v02gui.0032: a written instruction shows its 지시 AI as 사용하지 않음 (held). */
 const instructionHasBody = computed(() => instructionWritten(props.target.cardDocuments))
 const roleRows = computed(() => cardRoleRows(card.node.value?.aiRoles, cardSettingsValue(card.node.value, card.pending.value, 'instruction'), card.pending.value, instructionHasBody.value))
+/** F81: a test card has no instruction AI row; its rows are drawn once per zone. */
+const shownRoleRows = computed(() => kind.value === 'test' ? roleRows.value.filter(item => item.role !== 'instruction') : roleRows.value)
 function roleLabel(role: string): string {
   if (role === 'execution' && kind.value === 'plan') return t(k('plan.run_ai'))
-  if (role === 'execution' && kind.value === 'test') return t('gui.designer.inspector.run_settings.writer_ai')
+  if (role === 'execution' && kind.value === 'test') return t(k('test_zone.work_ai'))
   return t(`gui.aiRoles.${role}`)
 }
 function roleDisabled(field: string): boolean {
@@ -585,7 +618,7 @@ function fieldLabel(field: CardSettingsField): string {
 }
 
 /** the WP card names its run AI task AI; the other cards keep the common names. */
-const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}) }))
+const runLabels = computed<Partial<Record<InspectorRunSettingsField, string>>>(() => ({ after_review_exhausted: t(k('after_review_exhausted.label')), ...(kind.value === 'plan' ? { run_ai: t(k('plan.run_ai')) } : {}), ...(kind.value === 'test' ? { run_ai: t(k('test_zone.work_ai')) } : {}) }))
 
 const runFields = computed<InspectorRunSettingsFields>(() => {
   const out: Partial<Record<InspectorRunSettingsField, InspectorRunSettingsFields[InspectorRunSettingsField]>> = {}
@@ -700,6 +733,8 @@ function reload() {
 </script>
 
 <style scoped>
+/* F81: a test card's zone title (case writing / test run) over its rows. */
+.inspector-ai-zone { margin: 6px 2px 0; color: var(--fg2-muted); font-size: 11.5px; font-weight: 600; }
 .inspector-settings {
   display: flex;
   flex-direction: column;

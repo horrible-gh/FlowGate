@@ -9,7 +9,8 @@ export * from './documentWindowModel'
 export { documentHistoryVerdictKey, documentHistoryWhen } from './documentHistoryModel'
 // the scenario table shares the document window's result glyph.
 export { default as TestMarkBadge } from './TestMarkBadge.vue'
-export { testVerdictMark, TEST_PENDING_MARK } from './specialDocumentModel'
+export { default as TestScenarioList } from './TestScenarioList.vue'
+export { testVerdictMark, TEST_PENDING_MARK, testScenarioRows } from './specialDocumentModel'
 export * from './slotWriteWindows'
 export * from './documentAiWindows'
 // the document upload / download: the coordinator (documentIo), the edit state registry it
@@ -36,3 +37,9 @@ export { openWorkPlanEditWindow, type WorkPlanEditRequest } from '@/features/wor
 export { setWorkPlanEditOpener, type WorkPlanEditOpener } from '@/features/workPlanWindow/workPlanEditWindows'
 
 export * from './tsEditSession'
+
+export { default as TestEvidenceFiles } from './TestEvidenceFiles.vue'
+// F81 case window v8: the evidence rows (one per kind) and the kind's modeless evidence window, over one shared listing.
+export { default as TestEvidenceRows } from './TestEvidenceRows.vue'
+export { default as TestEvidenceWindow } from './TestEvidenceWindow.vue'
+export { useTestEvidence, testEvidenceKinds, type TestEvidence, type TestEvidenceSource } from './testEvidenceModel'

@@ -105,6 +105,9 @@ class Tr2Rule:
 def _base_rule_for(doc, request=None):
     from modules.flow_gate import template_provision
     code = doc.get("type_code")
+    if code == "TSR":
+        from .errors import GraphApiError
+        raise GraphApiError(409, "report_server_generated", {"doc_id": doc["doc_id"]})
     if code == "CH":
         return None
     if code == "WP":

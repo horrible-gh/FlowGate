@@ -397,7 +397,8 @@ def test_an_ai_card_whose_rework_is_spent_needs_intervention_and_a_memo_rework_a
     write_line(env, b, "report", "## 결과\n\n본문\n")
     run = _read(env)
     shown = {n["node_key"]: n for n in run["node_runs"]}
-    assert shown[a]["intervention"] == {"kind": "needs_intervention", "reason": NOT_PASSED}
+    assert shown[a]["intervention"] == {"kind": "needs_intervention", "reason": NOT_PASSED,
+                                        "stop_detail": "ended"}            # F98-4: the closed loop's cause
     assert (shown[a]["status"], shown[b]["status"], shown[a2]["status"]) == ("review", "done", "pending")
     assert (run["status"], run["idle_reason"]) == ("idle", "needs_intervention")
     assert (_run_row(env)["status"], _run_row(env)["idle_reason"]) == ("idle", "needs_intervention")
