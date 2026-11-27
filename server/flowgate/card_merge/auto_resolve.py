@@ -62,6 +62,8 @@ def wire(row):
         return None
     d = row["data"]
     out = {k: d[k] for k in ("state", "attempt", "max_attempts", "attempts", "unresolved")}
+    out["phase"] = d.get("phase")
+    out["waiting"] = d.get("waiting")
     out["count"] = len(sessions.remaining_conflicts(row["merge_id"]))
     return out
 
@@ -317,6 +319,43 @@ def finish_attempt(row, result, reason=None):
         log.exception("Automatic resolution outcome recorded; notification failed for %s", row["merge_id"])
 
 
+def provider_identity(provider):
+    """Keep nullable names nullable, including legacy stringified nulls."""
+    from modules.flow_gate.db import ai_providers
+    def text(value):
+        value = value.strip() if isinstance(value, str) else None
+        return value if value and value.lower() not in ("none", "null") else None
+    provider = provider or {}
+    pid = text(provider.get("id"))
+    if not pid:
+        return None
+    name = text(provider.get("name"))
+    if not name:
+        name = text(ai_providers.get_name_any(pid))
+    return {"id": pid, "name": name}
+
+
+def wait_for_run(row, run_id, *, refused=False):
+    """Persist admission backpressure separately from actual attempt history."""
+    d = row["data"]
+    if refused:
+        d["pending_attempt"] = d["attempts"].pop()
+        d["resume_phase"] = "prepare"  # attempt 2 already replayed; do not replay it twice
+    elif d["phase"] != "waiting_for_run":
+        d["resume_phase"] = d["phase"]
+    waiting = d.get("waiting") or {}
+    changed = d["phase"] != "waiting_for_run" or waiting.get("run_id") != run_id
+    d.update(phase="waiting_for_run", ai_run_id=None,
+             waiting={"reason": "run_in_progress", "run_id": run_id,
+                      "since": waiting.get("since") or now_iso()})
+    if changed:
+        save(row)
+        try:
+            notify(row)
+        except Exception:
+            log.exception("Automatic resolution wait notification failed for %s", row["merge_id"])
+
+
 def providers(row):
     from modules.flow_gate.services import ai_invoke_service as ai
     from modules.flow_gate.db import groups
@@ -325,14 +364,16 @@ def providers(row):
     user = group.get("owner_id") or (run_store.run_by_id(row["run_id"]) or {}).get("started_by")
     catalog = ai.list_runtime_providers(group["project_id"], user)
     chosen = _default_provider(row["group_id"], row["node_key"]) or {"id": catalog.get("default_provider_id")}
-    candidates = catalog.get("providers") or []
+    candidates = [p for p in (catalog.get("providers") or [])
+                  if p.get("id") and str(p["id"]).strip().lower() not in ("none", "null")]
     if row["data"]["attempt"] == 3:
-        used = {a["provider"]["id"] for a in row["data"]["attempts"] if a.get("provider")}
+        # The current attempt may already hold its selection after a 409 wait.
+        # Only completed earlier attempts exclude a provider from this attempt.
+        used = {a["provider"]["id"] for a in row["data"]["attempts"][:-1] if a.get("provider")}
         chosen = next((p for p in candidates if p.get("id") not in used), None)
     else:
         chosen = next((p for p in candidates if p.get("id") == chosen.get("id")), chosen)
-    return group, user, ({"id": chosen["id"], "name": chosen.get("name") or chosen["id"]}
-                         if chosen and chosen.get("id") else None)
+    return group, user, provider_identity(chosen)
 
 
 def launch(row, group, user, provider):
@@ -449,6 +490,17 @@ def step(row):
         save(row)
         notify(row)
     lease = group_ai_leases.get_active(row["group_id"])
+    if d["phase"] == "waiting_for_run":
+        if lease:
+            wait_for_run(row, lease.get("run_id"))
+            return
+        pending = d.pop("pending_attempt", None)
+        if pending:
+            pending["started_at"] = now_iso()  # admission wait is not execution time
+            d["attempts"].append(pending)
+        d["phase"] = d.pop("resume_phase", "next")
+        d.pop("waiting", None)
+        save(row)
     if d["attempts"] and d["phase"] not in ("next", "waiting", "launching"):
         started = datetime.fromisoformat(d["attempts"][-1]["started_at"])
         if (datetime.now(timezone.utc) - started).total_seconds() >= TIMEOUT:
@@ -456,6 +508,7 @@ def step(row):
             return
     if d["phase"] == "next":
         if lease:
+            wait_for_run(row, lease.get("run_id"))
             return
         no = len(d["attempts"]) + 1
         if no > 3:
@@ -479,15 +532,30 @@ def step(row):
         else:
             group, user, provider = providers(row)
             if provider is None:
+                d["attempts"][-1]["reason_code"] = "no_other_ai" if d["attempt"] == 3 else "no_available_ai"
                 finish_attempt(row, "no_other_ai" if d["attempt"] == 3 else "ai_error",
                                "다른 AI 없음" if d["attempt"] == 3 else "사용 가능한 AI 없음")
                 return
             d["attempts"][-1]["provider"] = provider
+            d["attempts"][-1]["reason_code"] = None if provider.get("name") else "provider_name_unavailable"
             if d["attempt"] == 2:
                 d["attempts"][-1]["mode"] = "rebase_ai"
             d["phase"] = "launching"
             save(row)
-            launch(row, group, user, provider)
+            try:
+                launch(row, group, user, provider)
+            except Exception as exc:
+                detail = getattr(exc, "detail", None)
+                # Admission raises HTTPException, not GitServiceError. Match the
+                # structured code only; other 409s remain actual errors.
+                if (getattr(exc, "status_code", None) == 409
+                        and isinstance(detail, dict) and detail.get("code") == "run_in_progress"):
+                    fresh = assert_running(merge_id)
+                    if fresh["version"] != row["version"] or fresh["data"].get("ai_run_id"):
+                        raise
+                    wait_for_run(row, detail.get("run_id"), refused=True)
+                else:
+                    raise
             return
     if d["phase"] in ("launching", "waiting"):
         run_id = d.get("ai_run_id")
@@ -500,6 +568,16 @@ def step(row):
                 cancel(row)
             return  # never overlap a worker, even while cancellation is settling
         record = (ai.get_run_record(run_id) or ai_invoke_runs.get(run_id)) if run_id else None
+        actual = (record or {}).get("provider")
+        if not isinstance(actual, dict):
+            actual = {"id": (record or {}).get("provider_id"),
+                      "name": (record or {}).get("provider_name")}
+        if actual.get("id"):
+            identity = provider_identity(actual)
+            if identity and identity != d["attempts"][-1].get("provider"):
+                d["attempts"][-1]["provider"] = identity
+                d["attempts"][-1]["reason_code"] = None if identity["name"] else "provider_name_unavailable"
+                save(row)
         if record and record.get("status") not in (None, "finished"):
             if elapsed >= TIMEOUT:
                 d["timed_out"] = True
