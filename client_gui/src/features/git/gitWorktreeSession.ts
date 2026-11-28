@@ -29,6 +29,7 @@
 // refreshWorkBase(); never on render, a window / tab change, an E1 / E8 re-read or polling. Its
 // context is watched synchronously (not with the batched context watcher): every project / Flow /
 // gate change voids the value and the running read at once, A → B → A within one turn too.
+import { subscribeAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, effectScope, inject, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import type { FlowChangeEntry, ProjectGitStatus } from '@/features/project'
 import { worktreeErrorOf } from './api'
@@ -819,18 +820,25 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
     }
   }
 
+  let providerRequest = 0
+  const stopProviderChanges = subscribeAiProvidersChanged(() => {
+    if (disposed) return
+    providersFor = null
+    void loadProviders()
+  })
   async function loadProviders(): Promise<void> {
     const pid = projectId()
     if (!pid || providersFor === pid) return
     providersFor = pid
+    const request = ++providerRequest
     try {
       const providers = await src().fetchProviders(pid)
-      if (disposed || projectId() !== pid) return
+      if (disposed || projectId() !== pid || request !== providerRequest) return
       const id = providers.defaultProviderId
       state.providerId = id && providers.providerIds.includes(id) ? id : null
     } catch {
       // No list = no default AI (rank 12); asked again on the next gate opening.
-      if (projectId() === pid) providersFor = null
+      if (projectId() === pid && request === providerRequest) providersFor = null
     }
   }
 
@@ -1602,6 +1610,7 @@ export function createGitWorktreeSession(options: GitWorktreeSessionOptions): Gi
   }
 
   function dispose(): void {
+    stopProviderChanges()
     stopExecutionPoll()
     disposed = true
     nextGeneration()

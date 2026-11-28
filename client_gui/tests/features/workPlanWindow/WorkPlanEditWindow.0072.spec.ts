@@ -1,3 +1,4 @@
+import { emitAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { pairedDesignBody } from '../../../src/features/workPlanWindow/workPlanEditModel'
 /**
  * the v0.2 work plan edit window (features/workPlanWindow), mounted by DocumentWindows with
@@ -147,6 +148,23 @@ async function open(extra: Partial<Parameters<typeof openWorkPlanEditWindow>[0]>
 
 const wpReads = () => api.getRequest.mock.calls.filter(([path]) => path === WP_PATH).length
 const lastPut = () => api.putRequest.mock.calls.at(-1)?.[1] as { base_revision_no: number; body: Record<string, any>; capability_warning_acks?: string[] }
+
+describe('AI list changes (v02test.0108)', () => {
+  it('updates choices while keeping the unsaved note and base revision', async () => {
+    await open()
+    await type(q('wp-edit-step-note', row('c_t2|result')!) as HTMLInputElement, 'unsaved note')
+    answer = { ...answer, revision_no: 99, registered_providers: [{ id: 'new', name: 'New AI' }] }
+    emitAiProvidersChanged()
+    await flushPromises()
+    const select = q('wp-edit-step-provider', row('c_t2|main')!) as HTMLSelectElement
+    expect([...select.options].map(option => option.textContent)).toContain('New AI')
+    expect((q('wp-edit-step-note', row('c_t2|result')!) as HTMLInputElement).value).toBe('unsaved note')
+    expect(q('wp-edit-dirty')).not.toBeNull()
+    await click(q('wp-edit-save'))
+    expect(lastPut().base_revision_no).toBe(2)
+    expect(lastPut().body.steps.find((step: any) => step.key === 'TR#2').note).toBe('unsaved note')
+  })
+})
 
 describe('opening (modeless, read once)', () => {
   it('reads the plan once and the Flow’s AI run; draws quantities, cards and rows', async () => {
