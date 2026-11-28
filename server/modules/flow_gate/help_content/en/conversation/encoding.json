@@ -1,5 +1,12 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Body encoding",
+  "summary": "Use a UTF-8 file to send conversation and document bodies.",
+  "purpose": "Use a UTF-8 file to send conversation and document bodies.",
+  "request": {
+    "transport": "Put the per-token probe below on the last line of the file. Read that file and send ASCII-escaped JSON. If supplying `body_chars` and `body_sha256`, compute them from that same file including the probe.",
+    "probe": "{{probe}}"
+  },
+  "response": "A matching probe is removed before saving and bypasses the corruption heuristic.",
+  "errors": "If the probe is broken, fix the transport and resend. Without a probe, a fingerprint mismatch or intentionally unchanged text can be accompanied by `force_encoding_reason` with at least 10 non-whitespace characters."
 }

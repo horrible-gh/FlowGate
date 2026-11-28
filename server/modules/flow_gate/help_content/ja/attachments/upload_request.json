@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "添付の承認依頼",
+  "summary": "生成したファイル1件を添付承認の対象として送ります。",
+  "purpose": "生成したファイル1件を添付承認の対象として送ります。",
+  "request": "{{route:attachments.upload_request}} に `multipart/form-data` で `file` と、ファイル名とメモを含む JSON の `meta` を送ります。制約は `attachments/request_rules` を参照します。",
+  "response": "応答はすぐに `pending` になります。承認待ちの間も作業を続けます。",
+  "errors": "サイズ、拡張子、対象、上限のエラーは `attachments/request_rules` を確認します。"
 }

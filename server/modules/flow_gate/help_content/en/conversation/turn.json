@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Append a conversation turn",
+  "summary": "Append one reply to the conversation you read.",
+  "purpose": "Append one reply to the conversation you read.",
+  "request": "{{route:conversation.turn}}. Send `body` with `based_on_seq` set to the `head_seq` from your last read. See `conversation/encoding` for transport and `attachments/link` for file links. Supply a one-line English `commit_message` when the worktree has uncommitted changes.",
+  "response": "Turns are stored in order. `dry_run: true` checks links and encoding without registering a turn or consuming the token.",
+  "errors": "For `422 commit_message_required`, supply the message and retry. See the linked help for attachment and encoding errors."
 }

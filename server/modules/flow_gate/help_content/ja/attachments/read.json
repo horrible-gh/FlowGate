@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "文書添付の参照",
+  "summary": "文書の添付を一覧取得または参照し、権限があればソースへコピーします。",
+  "purpose": "文書の添付を一覧取得または参照し、権限があればソースへコピーします。",
+  "request": "{{route:attachments.document.list}}、{{route:attachments.document.read}}、{{route:attachments.document.copy}} を使います。コピー時は呼び出し元の作業ツリーからの相対パスを `target_path` に指定します。",
+  "response": "一覧に文書の添付が表示されます。ソースツールではコピー後のファイルを参照できます。",
+  "errors": "権限エラーの場合はトークンの添付権限を確認します。コピーには `read_write` が必要です。"
 }

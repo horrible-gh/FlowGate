@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "カード文書の編集",
+  "summary": "スロットに紐づく文書の新しいリビジョンを保存します。",
+  "purpose": "スロットに紐づく文書の新しいリビジョンを保存します。",
+  "request": "{{route:chat.slot_document}} で最新の本文と識別子を取得し、`expected_doc_id`、`expected_revision`、`content` 全体、`idempotency_key` を {{route:chat.slot_document.revise}} で送ります。",
+  "response": "同じ文書に新しいリビジョンが保存されます。",
+  "errors": "文書やリビジョンが変わった場合はスロットを再取得し、最新の本文に変更を適用します。読取モードで拒否された場合は結果を報告します。"
 }

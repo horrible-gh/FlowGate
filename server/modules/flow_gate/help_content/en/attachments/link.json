@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Link a shared flow file",
+  "summary": "Link an approved shared file from the current flow in a conversation.",
+  "purpose": "Link an approved shared file from the current flow in a conversation.",
+  "request": "Send {{route:attachments.flow.list}} with the current flow ID and the same work Bearer. Copy the listed `key` into `[name](fg-attachment:key)`.",
+  "response": "Use the list’s read or copy URLs for selected files. Links inside inline code or code fences are examples. Pending files are absent from the list.",
+  "errors": "An unknown key or a key from another flow returns `422 attachment_link_unknown` with `unknown_keys`, including on `dry_run`. Check the current list for the key."
 }

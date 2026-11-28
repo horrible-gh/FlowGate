@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "本文を取得できない文書",
+  "summary": "本文の取得状態を確認し、読めた内容を根拠にします。",
+  "purpose": "本文の取得状態を確認し、読めた内容を根拠にします。",
+  "request": "{{route:document.read}} の `content_state` を確認し、必要に応じて再取得します。",
+  "response": "`readable` は取得成功で、ヘッダーだけなら空文書です。`file_path_missing` はパス未登録、`file_not_found` はファイルなし、`path_unresolved` は保存先でパスを解決できない状態です。",
+  "errors": "取得できない状態を記録し、確認済みの資料で進めます。本文がなければ判断できない場合は文書に紐づく質問を使います。"
 }

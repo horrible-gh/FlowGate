@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "List flows and documents",
+  "summary": "Use the list APIs to retrieve flows, group documents, and document types.",
+  "purpose": "Use the list APIs to retrieve flows, group documents, and document types.",
+  "request": "{{route:list.groups}}, {{route:list.group}}, {{route:list.group_documents}}, or {{route:list.doc_types}} for project flows, group details, group documents, or document types respectively.",
+  "response": "The list APIs return live data. Group details include the name, module, status, dates, and document count.",
+  "errors": "For `404` on a missing or unreadable target, check project and group identifiers and read permissions."
 }

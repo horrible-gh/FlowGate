@@ -1,5 +1,9 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "문서 첨부 읽기",
+  "summary": "문서에 첨부된 파일을 나열하거나 읽고, 권한이 있으면 소스로 복사합니다.",
+  "purpose": "문서에 첨부된 파일을 나열하거나 읽고, 권한이 있으면 소스로 복사합니다.",
+  "request": "{{route:attachments.document.list}}, {{route:attachments.document.read}}, {{route:attachments.document.copy}}. 복사 요청에 호출자 워크트리 기준 `target_path`를 넣습니다.",
+  "response": "목록에는 문서 첨부가 표시됩니다. 프로젝트 소스 도구에서는 복사된 파일을 조회합니다.",
+  "errors": "권한 오류가 발생하면 토큰의 첨부 권한을 확인합니다. 복사에는 `read_write`가 필요합니다."
 }

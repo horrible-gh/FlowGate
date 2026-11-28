@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "Flow と文書の一覧取得",
+  "summary": "一覧 API から Flow、グループ文書、文書タイプを取得します。",
+  "purpose": "一覧 API から Flow、グループ文書、文書タイプを取得します。",
+  "request": "{{route:list.groups}}、{{route:list.group}}、{{route:list.group_documents}}、{{route:list.doc_types}} は順にプロジェクトの Flow、グループ詳細、グループ文書、文書タイプを返します。",
+  "response": "各 API が実データを返します。グループ詳細には名前、モジュール、状態、日付、文書数が含まれます。",
+  "errors": "対象が存在しないか参照できず `404` が返った場合は、プロジェクトとグループの識別子および参照権限を確認します。"
 }

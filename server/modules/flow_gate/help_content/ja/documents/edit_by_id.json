@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "文書 ID で編集",
+  "summary": "プロジェクトにある既存文書を ID で編集します。",
+  "purpose": "プロジェクトにある既存文書を ID で編集します。",
+  "request": "{{route:chat.document}} の最新 `revision_no` を `expected_revision` に指定し、`content` 全体を {{route:chat.document.revise}} で送ります。新規文書は {{route:chat.document.create}} に `title` と `content` を送ります。",
+  "response": "編集時は ID を維持してリビジョン番号を増やします。ヘッダーを省略すると既存のヘッダーを維持します。",
+  "errors": "`revision_conflict` の場合は再取得して変更を適用します。`404 document_not_found` の場合は ID を確認します。読取モードでの拒否は結果を報告します。"
 }
