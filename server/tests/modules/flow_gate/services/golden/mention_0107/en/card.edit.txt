@@ -1,0 +1,32 @@
+## What to do now
+Task: Rework the card document from the rejection findings
+Before completion: Address each rejection finding / Prepare the complete body and verify what will be saved
+Submit/complete: once, at the end, after the required work.
+Final format: Include rejection_response, rejection identity and expected_revision
+
+## Edit
+Read and edit source, then submit the result as a document. For TR, use Self-check.
+
+## Values for this call
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+Flow: F1(Example) · demo.test.0001
+Card: F1-2(Example card)
+Target document: demo.test.0001.0004-TR · TR · Original title
+Revision: 2
+Submission action: edit
+Expected revision: 2
+Edit reason: rejected
+Rejection reference: rejection_id=golden-rejection
+Reference documents: demo.test.0001.0001-R
+Self-check: 60s / 10
+Workspace: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## Help
+GET https://example.invalid/flowgate/api/v1/help
+Read first: notices, submit/format, submit/changed_files, documents/access
+When needed: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, submit/self_check, attachments/upload_request
+
+## Materials
+---
+Original {{token}} material. 사용자 원문 / 原文

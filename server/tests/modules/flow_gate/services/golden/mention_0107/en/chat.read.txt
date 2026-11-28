@@ -1,0 +1,27 @@
+## What to do now
+Task: Answer the last user message
+Before completion: No additional prerequisites
+Submit/complete: once, at the end, after the required work.
+Final format: Follow the turn body/based_on_seq contract / Keep the assigned probe on the last line of submitted body/content
+
+## Mode: Read
+Read source and documents. If a task exceeds this mode, state what remains and the mode it needs in one line.
+
+## Values for this call
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+Flow: F1(Example) · flow_id demo.test.0001
+Conversation: demo.test.0001.0002-CH · Start reading after_seq=0
+Window end: through_seq=5
+idempotency_key: golden-turn
+display_name: Example AI
+Workspace: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## Help
+GET https://example.invalid/flowgate/api/v1/help (Index; help/items/{name}[/{child}])
+Read first: notices, conversation/read, conversation/turn, conversation/encoding
+When needed: documents/list, documents/partial, documents/unreadable, attachments/link, source_tools, cards/state, cards/ai_options, attachments/upload_request, cards/questions, cards/recovery, question/policy
+
+## Materials
+---
+Original {{token}} material. 사용자 원문 / 原文

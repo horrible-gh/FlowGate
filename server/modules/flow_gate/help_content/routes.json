@@ -328,5 +328,10 @@
     "method": "GET",
     "path": "/document/{doc_id}/relations",
     "api": "v1"
+  },
+  "source.tools": {
+    "method": "GET",
+    "path": "/help/tools",
+    "api": "v1"
   }
 }

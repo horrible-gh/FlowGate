@@ -22,15 +22,16 @@ def test_disabled_is_byte_identical(mode, locale):
     assert result.text == legacy
     assert result.fallback_reason == "switch_disabled"
 
-@pytest.mark.parametrize("mode", [mode for mode in mention.MODES if mode.startswith("chat.")])
+@pytest.mark.parametrize("mode", mention.MODES)
 @pytest.mark.parametrize("locale", ("ko", "en", "ja"))
-def test_chat_assets_pending(mode, locale):
-    assert loader.load_mention(mode, locale)[0] is None
+def test_all_assets_ready(mode, locale):
+    asset, applied, reasons = loader.load_mention(mode, locale)
+    assert asset is not None and applied == locale and not reasons
 
 
-@pytest.mark.parametrize("mode", ("card.read", "card.edit"))
+@pytest.mark.parametrize("mode", mention.MODES)
 @pytest.mark.parametrize("locale", ("ko", "en", "ja"))
-def test_card_asset_contract(mode, locale):
+def test_asset_contract(mode, locale):
     asset, applied, reasons = loader.load_mention(mode, locale)
     assert applied == locale and not reasons
     body = asset["body"]
