@@ -80,6 +80,7 @@
 // F96-6: only my own values (내 값) stay here, one column. F96-13: the title AI is a personal setting only (the
 // administrator's 환경 설정 no longer has it). F96-11: the max repeat count is a personal setting only, 1~30, with no system ceiling.
 // Each value is saved as soon as it changes and a failed save puts the previous value back (v02test.0089).
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -123,7 +124,10 @@ function dismissToast(id: string | number): void {
 }
 
 // Every read stands alone: the AI lists only feed the title AI choices; a failed one leaves fewer choices.
+let loadRequest = 0
+useAiProvidersChanged(() => { void load() })
 async function load(): Promise<void> {
+  const request = ++loadRequest
   loading.value = true
   const [system, mine, myOrder] = await Promise.allSettled([
     isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
@@ -131,7 +135,7 @@ async function load(): Promise<void> {
     fetchMyAiOrder(),
     loadPreferences(),
   ])
-  if (disposed) return
+  if (disposed || request !== loadRequest) return
   if (system.status === 'fulfilled') systemList.value = system.value.providers ?? []
   if (mine.status === 'fulfilled') myList.value = mine.value.providers ?? []
   if (myOrder.status === 'fulfilled') order.value = myOrder.value.order ?? []
