@@ -1,0 +1,26 @@
+{
+  "chat.read": {
+    "enabled": false,
+    "verification": null
+  },
+  "chat.execute": {
+    "enabled": false,
+    "verification": null
+  },
+  "chat.edit": {
+    "enabled": false,
+    "verification": null
+  },
+  "chat.edit_once": {
+    "enabled": false,
+    "verification": null
+  },
+  "card.read": {
+    "enabled": false,
+    "verification": null
+  },
+  "card.edit": {
+    "enabled": false,
+    "verification": null
+  }
+}

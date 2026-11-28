@@ -19,10 +19,15 @@ def guidance(base, raw_token, *, kind="new", can_write=False, unanswered=None,
         f"Authorization: Bearer {raw_token}"])
 
 
-def compose(sections, *, kind, locale="ko", **facts):
+def compose(sections, *, kind, locale="ko", mention=None, **facts):
     from modules.flow_gate.services import terminal_prompt
     if isinstance(sections, str):
         sections = [sections]
     # Caller-owned values, guards and policy text are opaque; never rewrite them.
-    return terminal_prompt.prepare("\n\n".join(section for section in sections if section),
+    legacy = terminal_prompt.prepare("\n\n".join(section for section in sections if section),
                                   kind=kind, locale=locale, **facts)
+
+    if mention is None:
+        return legacy
+    from .mention import render_mention
+    return render_mention(legacy, locale=locale, **mention).text

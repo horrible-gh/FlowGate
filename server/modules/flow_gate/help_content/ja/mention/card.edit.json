@@ -1,0 +1,8 @@
+{
+  "locale": "ja",
+  "status": "pending",
+  "title": "card.edit",
+  "summary": "メンションテンプレート作成待ち",
+  "purpose": "呼び出し値の組み立て",
+  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+}
