@@ -204,7 +204,7 @@ def test_a_spawn_that_fails_after_creating_processes_ends_nothing_unproved(world
         # Nothing was learnt and the tree cannot be seen (Job / marker scan unreadable).
         live, learnt = None, {}
         monkeypatch.setattr(proof, "windows_job_state", lambda name, **kw: proof.UNKNOWN)
-        monkeypatch.setattr(proof, "marker_scan", lambda run_id: (proof.UNKNOWN, ()))
+        monkeypatch.setattr(proof, "marker_scan", lambda run_id, started_at=None: (proof.UNKNOWN, ()))
 
     def failing_spawn(*args, **kwargs):
         raise executor.OwnershipError("selfcheck_process_owner_unavailable", ownership=learnt)

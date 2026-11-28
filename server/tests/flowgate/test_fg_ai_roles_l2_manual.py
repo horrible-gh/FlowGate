@@ -113,7 +113,7 @@ def test_g12_k1_a_person_test_card_writes_ts_then_tsr_and_both_are_approved_by_t
     key = _person_card(env, "TS")
     ia = one(env, key, "instruction")
     assert (ia["plan_instruction_type"], ia["plan_result_type"]) == ("TS", "TSR")
-    ts = save_instruction(env, key, "## 시험 시나리오\n\n사람이 쓴 TS\n")
+    ts = save_instruction(env, key, "---\ntest_contract_version: 2\n---\n## Test Specification\n### TC-001: Scenario\n- category: normal\n- requirement: R-1\n- execution_mode: manual\n- required: true\n- procedure: Inspect\n- expected: Visible\n- check_points: UI\n")
     assert _review_status(ts) == "approved"
     assert one(env, key, "result")["actor"] == "person"
     tsr = write_line(env, key, "report", "## 시험 결과\n\n사람이 쓴 TSR\n")
@@ -138,7 +138,7 @@ def test_k2_the_token_step_type_and_the_result_type_follow_the_plan(env, decided
     [node_token] = [t["token_id"] for t in tokens(env, key) if t["stage"] is None]
     token = {"token_id": node_token, "group_id": FA}
     assert settings.token_step_type(token) == "TS"                          # the instruction stage writes the TS
-    save_instruction(env, key, "## TS\n\n본문\n")
+    save_instruction(env, key, "---\ntest_contract_version: 2\n---\n## Test Specification\n### TC-001: Scenario\n- category: normal\n- requirement: R-1\n- execution_mode: manual\n- required: true\n- procedure: Inspect\n- expected: Visible\n- check_points: UI\n")
     assert settings.token_step_type(token) == "TSR"                         # the result stage writes the TSR
     node = {"node_key": key, "node_type": "document", "doc_type": "TS"}
     assert settings.result_type(FA, node) == "TSR"

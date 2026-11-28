@@ -1,0 +1,12 @@
+{
+  "locale": "ja",
+  "title": "文書の登録回答を読む",
+  "summary": "文書の登録回答を読む",
+  "purpose": "文書の登録回答を読む",
+  "request": {
+    "route": "{{route:document.read}}",
+    "details": "対象文書をGETします。triggered_byとtarget_idの参照文書も同じ方法で読みます。"
+  },
+  "response": "answersのid、doc_id、Q、Aを確認します。A=nullは未回答です。",
+  "errors": "文書を読めない場合はdocuments/unreadableを参照します。"
+}

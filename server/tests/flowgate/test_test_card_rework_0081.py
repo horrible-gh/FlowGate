@@ -71,6 +71,29 @@ def test_approved_text_add_delete_regenerates_report_and_preserves_comment(env, 
     assert "Keep this comment" in body(rid)
 
 
+@pytest.mark.parametrize("deleting", [False, True])
+def test_running_scenario_conflict_response_and_atomicity(env, monkeypatch, deleting):
+    from test_card_document_edit_0127 import _ts_env, _ts_post, TS_ID, TS_CASE
+
+    path, _ = _ts_env(env, monkeypatch)
+    before = path.read_bytes()
+    cases = [] if deleting else [{**TS_CASE, "title": "Updated"}]
+    payload = {"expected_doc_id": TS_ID, "expected_revision": 0,
+               "idempotency_key": "ts-running", "cases": cases}
+    monkeypatch.setattr(test_runs, "get_running_by_doc", lambda doc_id: {"run_id": "active"})
+    result = _ts_post(env, "test-spec", payload)
+    assert result.status_code == 409, result.json()
+    assert result.json()["error"]["code"] == "run_in_progress"
+    assert result.json()["error"]["message"]
+    assert path.read_bytes() == before
+    assert documents.get_by_id(TS_ID)["revision_no"] == 0
+
+    monkeypatch.setattr(test_runs, "get_running_by_doc", lambda doc_id: None)
+    result = _ts_post(env, "test-spec", payload)
+    assert result.status_code == 200, result.json()
+    assert documents.get_by_id(TS_ID)["revision_no"] == 1
+
+
 @pytest.mark.parametrize("phase", ["case_write", "test_run"])
 @pytest.mark.parametrize("name", ["Kim", "Test AI"])
 def test_remark_resolver_and_only_its_stage_reopens(env, monkeypatch, phase, name):
@@ -286,3 +309,85 @@ def test_ui_pass_uses_real_output_files_and_returns_current_report(env, monkeypa
     assert data["tsr_doc_id"] == rid
     assert [c["case_status"] for c in data["cases"]] == ["PASS", "PASS"]
     assert "Keep this comment" in body(rid)
+
+
+def record_result(doc, comment):
+    cases = spec.parse_spec(runs._read_doc_content_or_empty(doc))["cases"]
+    rows = spec.map_results(cases, [])["cases"]
+    rows[0].update(status="FAIL", actual=comment, result_origin="reported")
+    run = test_runs.insert_spec_run(
+        doc_id=doc["doc_id"], revision_no=doc["revision_no"], triggered_via="ui",
+        runner_id="user", rows=rows, status="failed", overall="FAIL",
+        result_meta=json.dumps({"overall_comment": comment}), case_passed=0,
+        case_failed=1, error=None, locale="en", case_meta=[spec.case_row_to_meta(row) for row in rows],
+    )
+    rid = runs.assemble_tsr(doc, run, [], run_chain=False)
+    test_runs.set_run_tsr_doc(run["run_id"], rid)
+    return run, rid
+
+
+@pytest.mark.parametrize("has_prior_result", [False, True])
+def test_scenario_save_after_execution_failed_without_result(env, monkeypatch, has_prior_result):
+    from test_card_document_edit_0127 import _ts_env, _ts_post, TS_ID, TS_CASE
+
+    path, _ = _ts_env(env, monkeypatch)
+    doc = documents.get_by_id(TS_ID)
+    monkeypatch.setattr(runs, "_register_tsr_result", lambda *args: None)
+    prior, rid = record_result(doc, "Prior result") if has_prior_result else (None, None)
+    failed = test_runs.insert_run(
+        doc_id=TS_ID, revision_no=0, triggered_via="token", runner_id="user", cases=[],
+        contract_version=2, result_meta=json.dumps({"run_kind": "spec_execution"}),
+    )
+    test_runs.finish_run(run_id=failed["run_id"], status="failed", tsr_doc_id=rid,
+                         error="basis_capture_failed:source_busy")
+    failed_row = test_runs.get_run(failed["run_id"])
+    assert test_runs.latest_by_doc(TS_ID) == failed_row
+    assert test_runs.latest_spec_run(TS_ID) == (test_runs.get_run(prior["run_id"]) if prior else None)
+
+    edited = {**TS_CASE, "title": "Updated after failure"}
+    extra = {**TS_CASE, "case_id": "TC-002", "title": "Case to delete"}
+    for revision, cases in enumerate(([edited, extra], [edited, extra], [edited])):
+        response = _ts_post(env, "test-spec", {
+            "expected_doc_id": TS_ID, "expected_revision": revision,
+            "idempotency_key": f"after-failure-{revision}", "cases": cases,
+        })
+        assert response.status_code == 200, response.json()
+        assert documents.get_by_id(TS_ID)["revision_no"] == revision + 1
+        assert [c["case_id"] for c in spec.parse_spec(path.read_text(encoding="utf-8"))["cases"]] == [
+            c["case_id"] for c in cases
+        ]
+        if rid:
+            assert "Updated after failure" in body(rid)
+            assert ("TC-002" in body(rid)) == (len(cases) == 2)
+            assert "Prior result" in body(rid)
+        else:
+            assert runs._active_tsr_for_ts(doc) is None
+
+    assert test_runs.get_run(failed["run_id"]) == failed_row
+    latest, new_rid = record_result(documents.get_by_id(TS_ID), "New result")
+    assert test_runs.latest_spec_run(TS_ID)["run_id"] == latest["run_id"]
+    if rid:
+        assert new_rid == rid
+    assert "New result" in body(new_rid)
+    assert "FAIL" in next(line for line in body(new_rid).splitlines() if "| TC-001 |" in line)
+    assert "Prior result" not in body(new_rid)
+
+
+def test_scenario_save_commits_when_report_regeneration_fails(env, monkeypatch, caplog):
+    from test_card_document_edit_0127 import _ts_env, _ts_post, TS_ID, TS_CASE
+
+    path, _ = _ts_env(env, monkeypatch)
+
+    def fail(doc):
+        assert documents.get_by_id(TS_ID)["revision_no"] == 1
+        raise OSError("report storage unavailable")
+
+    monkeypatch.setattr(changes, "regenerate", fail)
+    response = _ts_post(env, "test-spec", {
+        "expected_doc_id": TS_ID, "expected_revision": 0,
+        "idempotency_key": "failed-report-refresh", "cases": [{**TS_CASE, "title": "Saved"}],
+    })
+    assert response.status_code == 200, response.json()
+    assert spec.parse_spec(path.read_text(encoding="utf-8"))["cases"][0]["title"] == "Saved"
+    assert "TSR regeneration deferred after scenario save" in caplog.text
+    assert "report storage unavailable" in caplog.text

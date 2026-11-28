@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "カード実行を計画",
+  "summary": "カード実行を計画",
+  "purpose": "カード実行を計画",
+  "request": {
+    "route": "{{route:cards.canvas}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GETで現在の配置を確認します。カード実行の依頼や大きな変更では、カードと配置位置の計画を示し、承認後に配置します。直接編集はチャット終了時にコミットされ、カード作業は専用作業領域で実行・マージされます。"
+  },
+  "response": "変更は1カードに1件とします。指示にはユーザー要件、確認したファイルと行、決定、完了基準、除外範囲を記載します。cards/ai_optionsで候補を見て実行・レビューのAIと回数を決めます。自分で指示を書く場合はinstructionをnot_usedにします。配置後はAIとレビュー回数の根拠を伝えます。",
+  "errors": "graph_run_lockedではcards/stateで実行状態を確認します。"
+}

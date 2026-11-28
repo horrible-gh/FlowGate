@@ -1,0 +1,25 @@
+{
+  "locale": "ko",
+  "title": "문서에 질의 등록",
+  "summary": "문서에 질의 등록",
+  "purpose": "문서에 질의 등록",
+  "request": {
+    "route": "{{route:question.register}}",
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "details": "문서에 연결되는 질의 데이터입니다. question/policy와 question/precheck를 먼저 적용합니다. title/body를 작성하고 보기가 필요하면 options를 담은 질의 한 건을 보냅니다. 선택 시 새 시도가 필요한 보기는 label과 requires=new_attempt를 사용합니다. 전송은 conversation/encoding을 따릅니다. 이번 토큰에 바인딩된 문서는 {{doc_id}}입니다. 이 문서 번호를 요청 경로에 사용합니다.",
+    "example": {
+      "asker_kind": "ai",
+      "questions": [
+        {
+          "title": "인수 기준",
+          "body": "이 카드에서 확인할 결과 기준을 알려 주십시오."
+        }
+      ]
+    }
+  },
+  "response": "added_item_ids는 새 질의입니다. 새 시도가 필요한 답이 선택되면 실제로 새 시도가 열릴 때까지 개입 대기 상태입니다. reused_answer는 question/precheck를 참고합니다.",
+  "errors": "409 existing_answer_requires_reason의 처리는 question/precheck를 봅니다. 422 전송 오류는 conversation/encoding을 확인합니다."
+}

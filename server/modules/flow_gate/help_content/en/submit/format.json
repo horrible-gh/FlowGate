@@ -1,0 +1,60 @@
+{
+  "locale": "en",
+  "title": "Submission format",
+  "summary": "Submission format",
+  "purpose": "Submission format",
+  "request": {
+    "route": "{{route:submit.inbox}}",
+    "workflow": {
+      "details": "For a dedicated workflow decision or sequence edit, use the instructions and request body supplied for that task.",
+      "decision": "{{route:workflow.worker_decide}}",
+      "sequence_update": "{{route:workflow.worker_sequence_update}}"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "edit": {
+      "action": "edit",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "edit_reason": "user_comment",
+      "expected_revision": "<current revision_no>",
+      "content": "<complete document>",
+      "commit_message": "docs(help): summarize the migration"
+    },
+    "new": {
+      "action": "new",
+      "project": "{{project}}",
+      "module": "{{module}}",
+      "group_name": "{{group_id}}",
+      "doc_type": "<type>",
+      "prev_doc_id": "<previous document ID>",
+      "title": "<title>",
+      "content": "<document>"
+    },
+    "review": {
+      "action": "review",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "verdict": "pass | issues | hold",
+      "findings": [
+        {
+          "locus": "<section>",
+          "note": "<finding>"
+        }
+      ],
+      "comment": "<optional overall comment>"
+    },
+    "details": "Use the payload for the token’s action. edit_reason is rejected or user_comment. Keep the existing header for edit and send the current revision_no as expected_revision. Send content or an absolute doc_path in this token’s scratch directory. For a file-based review, doc_path points to JSON with verdict/findings/comment. TR commit_message is one ASCII English line up to 200 characters. On edit it may be omitted to retain a valid saved message. See submit/changed_files.",
+    "encoding": {
+      "line": "{{probe}}",
+      "reference": "conversation/encoding",
+      "fields": "body_chars, body_sha256"
+    },
+    "remote_cli": "For remote CLI, write the complete body (including review JSON where applicable) to a UTF-8 file in the current working directory. Read it into content and compute body_chars and body_sha256 from that same file. Remote CLI uses content instead of doc_path.",
+    "rejected_edit": "With edit_reason=rejected, provide a nonempty rejection_response separate from content. Carry through the rejection_id or review_id supplied in the mention."
+  },
+  "response": "Use dry_run=true to validate without registering. Inspect change_summary on save.",
+  "errors": "On revision conflict reread the latest body. On invalid_commit_message check the TR message format. For encoding refusal see conversation/encoding. A blank rejection_response is rejected with 422 and an unresolved rejection target with 409."
+}

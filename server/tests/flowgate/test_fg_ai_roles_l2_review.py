@@ -303,7 +303,7 @@ def test_g11_k1_an_ai_test_card_writes_ts_then_tsr_reviewed_by_b_and_reworked_by
     assert (ia["actor"], ia["provider_id"], ia["plan_instruction_type"], ia["plan_result_type"]) == ("ai", A, "TS", "TSR")
     [job] = env["jobs"]
     assert (job["result_doc_type"], job["provider_id"]) == ("TS", A)        # K-1: A writes the TS in the stage
-    ts = _ai_writes_instruction(env, monkeypatch, provider=A, body="## 시험 시나리오\n\nA가 쓴 TS\n")
+    ts = _ai_writes_instruction(env, monkeypatch, provider=A, body="---\ntest_contract_version: 2\n---\n## Test Specification\n### TC-001: Scenario\n- category: normal\n- requirement: R-1\n- execution_mode: manual\n- required: true\n- procedure: Inspect\n- expected: Visible\n- check_points: UI\n")
     assert _review_status(ts) == "approved"                                  # the system's approval of the TS
     [rjob] = env["jobs"]
     assert (rjob["provider_id"], rjob["result_doc_type"], rjob["ref_doc_ids"]) == (X, "TSR", [f"{FA}.0001-R", ts])

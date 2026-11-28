@@ -1,0 +1,12 @@
+{
+  "locale": "ko",
+  "title": "문서의 등록 답변 읽기",
+  "summary": "문서의 등록 답변 읽기",
+  "purpose": "문서의 등록 답변 읽기",
+  "request": {
+    "route": "{{route:document.read}}",
+    "details": "대상 문서를 GET합니다. triggered_by와 target_id가 가리키는 문서도 같은 방식으로 읽습니다."
+  },
+  "response": "answers의 id, doc_id, Q, A를 확인합니다. A=null이면 미답변입니다.",
+  "errors": "문서를 읽을 수 없으면 documents/unreadable을 봅니다."
+}

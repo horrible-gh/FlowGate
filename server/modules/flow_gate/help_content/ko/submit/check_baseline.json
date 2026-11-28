@@ -1,0 +1,32 @@
+{
+  "locale": "ko",
+  "title": "기준 실행 비교",
+  "summary": "기준 실행 비교",
+  "purpose": "기준 실행 비교",
+  "request": {
+    "route": "{{route:self_check.read}}",
+    "query_param": "baseline_run_id",
+    "how": "변경 후 실행을 read_self_check 할 때 baseline_run_id 에 제품 파일을 고치기 전에 돌린 기준선 실행 id 를 함께 주면 baseline_comparison 이 붙는다. reusable=false 이면 reasons 를 TR 에 적고 비교 근거로 쓰지 않는다. 기준선과 변경 후 실행은 같은 명령·같은 호스트·같은 worker 조건으로 돌린다.",
+    "conditions": "재사용 조건: 같은 Group, 기준선이 정상 종료(시간 초과·취소·실패·복구 아님), 요약 complete, 실행 중 소스 변동 없음, 기준선의 실행 전·후 HEAD가 작업 시작 때 기록된 변경 전 기준점과 같고 작업 트리가 깨끗함(기준점은 작업 단위의 첫 발급임이 입증될 때만 기록하며, 앞선 발급이 기준점을 남기지 못한 작업은 계속 없음. 기준점이 없거나 현재 HEAD의 조상이 아니면 불가), 명령(program·args·cwd·정책 버전) 동일, 환경 증거 전 범주(범주마다 필수 하위 항목 전부, env 는 HOST_KEYS 전부)와 호스트 식별자 동일(없거나 빠지면 불가), 실행 수준 테스트 정의(pytest 설정·conftest·세션/자동 fixture·테스트 트리 플러그인과 그것들이 읽는 데이터) 동일."
+  },
+  "response": {
+    "field": "baseline_comparison",
+    "details": "pytest 실행이 정상 종료되면 출력 맨 끝의 결과 블록이 result_summary(건수·실패 목록·항목별 테스트 정의 증거)와 environment_evidence(도구 버전·호스트 능력·환경 값·설치 의존성·적용 worker)로 저장된다. 판정은 지금처럼 status·exit_code·timed_out·소스 변동이며, 요약은 보강 증거일 뿐 통과의 근거가 아니다.",
+    "statuses": {
+      "none": "블록이 없다(구조화 결과 없음). 아무것도 추정하지 않는다.",
+      "incomplete": "블록이 깨졌거나 잘렸거나 둘 이상이거나 수집·완료 건수가 다르거나, 블록의 종료 상태가 비정상(0·1 이외)이거나 건수끼리 모순된다. 믿지 않는다.",
+      "mismatch": "실제 종료 코드와 블록의 종료 상태 또는 실패 목록이 어긋난다. 어느 쪽도 성공으로 올리지 않는다.",
+      "complete": "수집 = 완료이고 잘림·불일치가 없다. 기준선 비교에 쓸 수 있다."
+    },
+    "comparison": {
+      "new_failures": "변경 후에만 실패한 항목(새 테스트 포함). 이번 변경의 결함 후보다.",
+      "existing_failures": "양쪽 모두 실패했고 테스트 정의 증거가 같은 항목만. 성공으로 바꾸지 않고 따로 표시한다.",
+      "definition_changed_failures": "양쪽 모두 실패했지만 테스트 본문·fixture·모듈 전역 값·보조 함수·데이터가 바뀌었거나 확인할 수 없는 항목. 기존 실패가 아니며 신규 실패 후보와 같은 수준으로 TR에 변경 사유를 적는다.",
+      "resolved_or_gone": "기준선에서만 실패한 항목. 해소인지 삭제·이름 변경인지는 구분하지 않는다."
+    },
+    "advisory": "비교 결과는 참고 증거다. TR·검수 통과 기준, required gate, 반려 규칙은 바뀌지 않는다. 기존 실패를 xfail 처리하거나 목록에서 빼지 않는다."
+  },
+  "errors": {
+    "details": "비교 불가 사유와 조건을 확인합니다."
+  }
+}

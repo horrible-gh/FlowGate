@@ -1,0 +1,25 @@
+{
+  "locale": "en",
+  "title": "Run conversation commands",
+  "summary": "Run commands in the current Flow worktree from a conversation with a live run. API providers use `run_command`.",
+  "purpose": "Run commands in the current Flow worktree from a conversation with a live run. API providers use `run_command`.",
+  "request": {
+    "submit": "{{route:chat.commands}}",
+    "fields": "Provide the executable name in `program`, individual arguments in the `args` array, and a worktree-relative `cwd`. The example uses `timeout_seconds` for the execution deadline and `wait_seconds` for the initial response wait. Shell syntax and inline scripts are unavailable.",
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "server/tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "wait_seconds": 60
+    }
+  },
+  "response": {
+    "poll": "{{route:chat.command}}",
+    "details": "On `terminal=false`, poll with the same Bearer and `wait=60` until `terminal=true`. Results include status, exit code, output, timeout and rejection details. Command requests do not consume the token."
+  },
+  "errors": "The user command policy runs, queues for approval or rejects a request. Report a rejection and avoid resending the same command. Execute mode allows permitted read, test and build commands. Commands that modify files receive `chat_command_execute_mode_denied`."
+}

@@ -1,0 +1,9 @@
+{
+  "locale": "ja",
+  "title": "会話履歴の参照",
+  "summary": "ターンを前向きまたは後ろ向きに読みます。",
+  "purpose": "ターンを前向きまたは後ろ向きに読みます。",
+  "request": "{{route:conversation.turns}}。前方には `after_seq` と `include_head=1`、過去のターンには `before_seq` を使います。`after_seq=start` より前の文脈は `before_seq=start+1` から取得します。 最初はメンションの `after_seq` から読みます。選択範囲内では `next_after_seq` をたどり、指定された `through_seq` の境界を維持します。",
+  "response": "`next_after_seq` または `prev_before_seq` で続けます。逆方向の取得はトークンを消費せず、前方の既読位置も更新しません。 大きな作業段階の後とターン送信直前に、最後に読んだ番号より後を `include_head=1` で再取得します。初回の `through_seq` と `limit` を外し、`next_after_seq` が空になるまで読みます。新しいユーザーメッセージを反映し、最後の応答の `head_seq` を `based_on_seq` に入れます。",
+  "errors": "方向パラメーターを両方指定した場合は片方だけで再取得します。"
+}

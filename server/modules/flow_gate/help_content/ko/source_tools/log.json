@@ -1,0 +1,95 @@
+{
+  "locale": "ko",
+  "title": "log",
+  "summary": "merge-base 이후 상대 ref 쪽 커밋을 최신순으로 조회한다.",
+  "purpose": "merge-base 이후 상대 ref 쪽 커밋을 최신순으로 조회한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "log"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "선택적 소스 루트 상대 경로."
+      },
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>."
+      },
+      {
+        "name": "max_count",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "반환할 최대 커밋 수. 양의 정수."
+      },
+      {
+        "name": "side",
+        "type": "string",
+        "required": false,
+        "default": "target",
+        "description": "target=merge-base..target_ref(기본값) / head=merge-base..HEAD. HEAD 쪽에만 있는 커밋은 side=head 로 조회한다."
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main",
+      "path": "server/app.py",
+      "max_count": 20
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "log",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "target_ref": "origin/main",
+      "side": "target",
+      "commits": [
+        {
+          "sha": "fedcba9876543210fedcba9876543210fedcba98",
+          "subject": "fix: update app"
+        }
+      ],
+      "total": 1,
+      "truncated": false
+    },
+    "details": [
+      "merge-base 이후 target_ref 쪽 커밋만 최신순으로 반환한다(side=head 를 주면 HEAD 쪽으로 바뀐다).",
+      "서버 상한은 1000개이며 제한되면 truncated=true다.",
+      "side=head 는 authorized group worktree HEAD에만 있는 커밋(target_ref 에는 없음)을, side=target(기본값)은 target_ref 쪽 변경을 본다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "ref가 없거나 merge-base/log git 명령이 실패했다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "ref, path, max_count 형식이 잘못됐거나 side 가 head/target 이 아니다(reason=invalid_side)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    }
+  ]
+}

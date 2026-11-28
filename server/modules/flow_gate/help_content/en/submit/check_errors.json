@@ -1,0 +1,139 @@
+{
+  "locale": "en",
+  "title": "Self-check errors and recovery",
+  "summary": "Self-check errors and recovery",
+  "purpose": "Self-check errors and recovery",
+  "request": {
+    "details": "Read the run via submit/self_check and look for error.code or error_code."
+  },
+  "response": "Follow the guidance for the matching error and reason.",
+  "errors": {
+    "table": [
+      {
+        "category": "execution",
+        "code": "selfcheck_quota_exhausted",
+        "guidance": "The verification allowance is exhausted. Judge the last run's result."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_request",
+        "guidance": "The request is not an object or carries a field other than program/args/cwd/timeout_seconds/parallel_share -> send only those five."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_share",
+        "guidance": "parallel_share is not an integer of at least 1 (at most 64) -> send the worker count your command uses as an integer, or omit it (default 1)."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_cpu_limit_violation",
+        "guidance": "The error_code of a failed run (POSIX host): a process of the run widened its processor set beyond the granted processors and the tree was ended. Do not use its result as evidence -> keep the command from changing processor affinity and run it again."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_program",
+        "guidance": "program is not a single executable name (path, separator or control character) -> pass only the executable name in program and move options/targets to args."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_args",
+        "guidance": "args is not an array of strings or exceeds the count (256) / length (8192) limit -> resend a shorter array of strings."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_timeout",
+        "guidance": "timeout_seconds must be a positive integer; omit for the card limit."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_shell_operator",
+        "guidance": "args contains a shell operator such as |, &&, ;, > or < -> split the work into separate runs, one command each."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_inline_execution",
+        "guidance": "Inline code execution such as python -c or node -e -> pass a test file or script path in args."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_program_denied",
+        "guidance": "The executable is denied by policy (shells, git, network/delete/system tools, ...) -> use a test/lint/build executable instead; do not try to work around it."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_executable_not_found",
+        "guidance": "program cannot be found (not installed, or the whole command such as 'pytest -q ...' was put in program) -> write the bare name and move the rest to args; if it is not installed, report that."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_cwd",
+        "guidance": "cwd is not an existing relative directory inside the managed worktree (absolute path, drive, outside) -> use a worktree-relative path or '.'."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_disabled",
+        "guidance": "Self-check is disabled for this project -> report the returned reason in the TR and do not look for another execution path."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_already_running",
+        "guidance": "A run is already active in this Group. The run slot is one per Group, not per TR, so it may belong to another TR or to a draft run (before its TR exists). Read details.self_check_run_id and the run summary (tr_doc_id, draft, status, created_at, same_owner) -> if same_owner is true, read it and wait for it to finish, or cancel it, then run again. If false (details.reason_code = selfcheck_foreign_run), this token cannot cancel it: follow its status through the group_read path and wait; if it stays, report that and the run summary in the TR."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_owner_scope_closed",
+        "guidance": "This token belongs to an ended managed provider/hop scope, or has no active binding on this server. It cannot become an independent run -> do not retry the old request; check the current execution and its new token."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_source_busy",
+        "guidance": "Another source operation holds the project source lock -> retry after that operation finishes."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_cancel_unconfirmed",
+        "guidance": "The cancel was recorded (details.cancel.accepted) but the run is not confirmed stopped: no control for it exists in this server, and neither the owning server's end nor the absence of the whole process tree is proved (details.cancel.reason; the reason-specific code is details.reason_code). The run keeps its state and protection -> do not repeat the cancel; follow its status with read, and if it stays, report the run summary and the reason in the TR."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_foreign_run",
+        "guidance": "The details.reason_code of selfcheck_already_running: the run holding the slot belongs to another TR or another draft token, so this token's read/cancel paths do not see it (selfcheck_run_not_found) -> follow its status through details.run.group_read_path and wait; if it stays, report the run summary in the TR. Do not try to cancel it."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_ownership_unknown",
+        "guidance": "The server owning the run is unknown (nothing recorded) or its end is not proved (lookup failure, another node, no instance row). It is the details.reason_code of cancel_unconfirmed or the code of a refused re-verification. The run keeps its state and protection -> do not repeat the request; report the run summary and the reason in the TR. There is no forced release without proof."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_tree_unproven",
+        "guidance": "The owning server's end is proved but the run's whole process tree (target, supervisor, group / Job, run marker) is not proved empty (a member remains, or it cannot be seen). It is the details.reason_code of cancel_unconfirmed or the code of a refused re-verification. The run stays recovery_incomplete and the Group's G protected -> do not repeat; report the reason. The server's periodic reaper ends it once the proof holds."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_owner_alive",
+        "guidance": "Re-verification refused: the server owning the run (or this server's worker) is alive. Its owner ends it, so the server does not release it instead -> follow its status with read."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_reverify_not_applicable",
+        "guidance": "Not a re-verification target. Ownership re-verification applies only to an active run in recovery_incomplete (console user, project.document.update) -> read the status of an ended or unprotected run instead."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_state_conflict",
+        "guidance": "The run's state changed while it was being judged (another recovery, cancel or the worker wrote first) -> read its current state again, then ask once more if still needed."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_lock_lost",
+        "guidance": "The error_code of a failed run: the Group lock (G) disappeared during the run, so another operation may have entered the same worktree, and the run was stopped. Do not use its result (exit_code, tails) as evidence -> run it again."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_worktree_unavailable",
+        "guidance": "The managed worktree of this TR is unavailable -> report the returned reason; do not route around it with another path or a copy."
+      }
+    ]
+  }
+}

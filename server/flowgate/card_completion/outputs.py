@@ -99,7 +99,7 @@ def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> l
     out: list[str] = []
     live = False
     for line in card_lines_of(flow_id, node):
-        if line.get("slot") != slots.INSTRUCTION or str(line.get("doc_type") or "").strip().upper() != wanted:
+        if line.get("slot") != slots.preparation_slot(node.get("node_type"), node.get("doc_type")) or str(line.get("doc_type") or "").strip().upper() != wanted:
             continue
         doc_id = line.get("doc_id")
         if not doc_id or doc_id == result_doc_id or not is_target(line):
@@ -107,7 +107,7 @@ def pending_outputs(flow_id: str, node: dict, result_doc_id: Optional[str]) -> l
         live = True
         from flowgate.card_documents import decision_repository
         doc = legacy.document(doc_id)
-        projected = decision_repository.projection(flow_id, node["node_key"], slots.INSTRUCTION, doc)
+        projected = decision_repository.projection(flow_id, node["node_key"], line["slot"], doc)
         status = projected.get("doc_review_status", line.get("doc_review_status"))
         if status not in APPROVED and doc_id not in out:
             out.append(doc_id)

@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "カードの分岐と合流",
+  "summary": "カードの分岐と合流",
+  "purpose": "カードの分岐と合流",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": "POSTのlinksにsourceとtargetを列挙します。card:0..card:4はcards配列順、$afterは基準、$endは確認または合流カードです。既存node_keyを始点にできます。joinには未開始の作業・確認カードを指定します。リンクは最大30本で、cards=[]はlinksと併用します。"
+  },
+  "response": "linksがすべての接続を定義します。gate=falseで確認カードの再利用もjoinもなければ$endを省略します。合流カードの後続接続と所有権は維持されます。",
+  "errors": "422 chat_cards_graph_invalidのissuesを確認します。循環を解消し、全新規カードに到達でき、$endがある場合はそこにつながるようにします。"
+}

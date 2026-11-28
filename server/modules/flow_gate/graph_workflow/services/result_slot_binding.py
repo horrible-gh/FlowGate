@@ -61,8 +61,14 @@ def apply_job(job):
 
 def check_job(job):
     binding = job.get("result_slot_binding")
-    if binding and snapshot(job["flow_id"], job["run_id"], job["node"]) != binding:
-        raise refused("dispatch_binding_changed")
+    if binding:
+        current = snapshot(job["flow_id"], job["run_id"], job["node"])
+        if job.get("result_doc_type") == "TSR" and current:
+            # Server progress may revise the report before the test worker starts.
+            # The slot and attempt identities must still match; it is not a markdown CAS.
+            current = {**current, "revision_no": binding["revision_no"]}
+        if current != binding:
+            raise refused("dispatch_binding_changed")
 
 
 def mapped(token_id):

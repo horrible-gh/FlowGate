@@ -293,11 +293,18 @@ class ExecutionRootResolver:
                     from modules.flow_gate.services import graph_source_hooks
                     token = tokens.get_by_id(token_id)
                     if not token or token.get("doc_ref") != doc["doc_id"] or token.get("group_id") != group_id:
-                        raise ValueError("execution_token_binding_changed")
+                        raise ValueError("basis_capture_failed:execution_token_binding_changed")
                     graph_source_hooks.require_writable(token, "test_run")
                     source = graph_source_hooks.source_root(token)
+                try:
+                    group_basis = test_basis_service.resolve(current_doc, cases) if source is not None else None
+                except test_basis_service.BasisUnverifiable as exc:
+                    raise ValueError("basis_capture_failed:" + exc.code) from exc
                 basis = test_basis_service.measure_run(current_doc, cases, root,
                     run_id=run["run_id"], **({"source": source} if source is not None else {}))
+                if source is not None:
+                    basis["binding"].update(execution_token_id=token_id,
+                                            group_basis_id=group_basis["basis_id"])
             finally:
                 if lock is not None:
                     lock_manager.release(*lock)
@@ -342,6 +349,14 @@ def _command_args(loc: dict, junit_path: Path) -> list[str]:
     return args
 
 
+def _automatic_timeout(active) -> int:
+    from modules.flow_gate.services import test_run_service as runner
+    run_id = getattr(active, "run_id", None)
+    run = db_test_runs.get_run(run_id) if run_id else None
+    doc = db_docs.get_by_id(run["doc_id"]) if run else None
+    return runner.automatic_case_timeout(doc) if doc else 120
+
+
 class ExistingRunnerAdapter:
     @staticmethod
     def run_pytest(nodeid: str, root: Path, scratch: Path, active) -> tuple[str, str, int | None, str]:
@@ -361,7 +376,7 @@ class ExistingRunnerAdapter:
                                        policy=process_runner.CHILD_ENV_POLICY_DEFAULT)
         argv = [_python(env), "-m", "pytest", nodeid, "-q", "-p", "no:cacheprovider",
                 "--junitxml=" + str(junit_path)]
-        timeout = runner.CASE_TIMEOUT_SEC
+        timeout = _automatic_timeout(active)
         cancelled = active.cancel_event if active is not None else threading.Event()
         try:
             control, _ownership = executor.spawn(argv, root, env, timeout,
@@ -425,7 +440,7 @@ class ExistingRunnerAdapter:
         env = {key: value for key, value in env.items() if key.upper() != "PATH"}
         env["PATH"] = path_value
         argv = [resolved.executable, *resolved.argv_prefix, *args]
-        timeout = runner.CASE_TIMEOUT_SEC
+        timeout = _automatic_timeout(active)
         cancelled = active.cancel_event if active is not None else threading.Event()
         try:
             control, _ownership = executor.spawn(argv, cwd, env, timeout,
@@ -614,7 +629,7 @@ def execute(run: dict) -> None:
         # result is recorded under the executed Basis either way; this decides its gate.
         live = None
         if results and not active.cancel_event.is_set():
-            live = test_basis_service.live_state(db_docs.get_by_id(doc["doc_id"]), spec_cases)
+            live = test_basis_service.run_live_state(db_docs.get_by_id(doc["doc_id"]), basis, spec_cases)
         with runner._get_run_lock(run_id):
             if active.cancel_event.is_set():
                 merge_run_meta(run_id, phase=PHASE_FINISHED)

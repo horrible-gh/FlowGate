@@ -1,0 +1,13 @@
+{
+  "locale": "en",
+  "title": "Card roles and settings",
+  "summary": "Card roles and settings",
+  "purpose": "Card roles and settings",
+  "request": {
+    "route": "{{route:cards.roles}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET settings_version, context, options and settings choices. {{route:cards.roles.update}} with changed roles/settings and expected_settings_version. Send the GET context as expected_context when applicable. Use from_group for a user-named group. Explicit roles override it. A null setting restores the default."
+  },
+  "response": "Changes to the card placed by this chat are saved atomically. GET again to confirm the applied selections.",
+  "errors": "On 403 chat_card_not_owned check the returned node keys. On 409 gate_context_changed or node_settings_locked refresh the state. On 422 role_not_applicable, ai_not_selectable, setting_not_applicable or not_a_choice inspect the allowed values."
+}

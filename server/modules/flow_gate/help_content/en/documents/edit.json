@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Edit a card document",
+  "summary": "Save a revision of the document bound to a card slot.",
+  "purpose": "Save a revision of the document bound to a card slot.",
+  "request": "Read the latest body and identifiers with {{route:chat.slot_document}}, then POST `expected_doc_id`, `expected_revision`, the complete `content`, and `idempotency_key` to {{route:chat.slot_document.revise}}.",
+  "response": "A new revision is stored on the same document.",
+  "errors": "If the document or revision changed, reread the slot and apply the edits to the latest content. Report read-mode refusals."
+}

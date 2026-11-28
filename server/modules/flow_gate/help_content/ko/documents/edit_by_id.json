@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "문서 ID로 수정",
+  "summary": "프로젝트의 기존 문서를 ID로 수정합니다.",
+  "purpose": "프로젝트의 기존 문서를 ID로 수정합니다.",
+  "request": "{{route:chat.document}}의 최신 `revision_no`를 `expected_revision`으로 사용하고, 전체 `content`를 {{route:chat.document.revise}}로 보냅니다. 새 문서는 {{route:chat.document.create}}에 `title`과 `content`를 보냅니다.",
+  "response": "수정 시 ID는 유지되고 리비전이 올라갑니다. 헤더를 생략하면 기존 헤더를 유지합니다.",
+  "errors": "`revision_conflict`이면 다시 읽고 변경을 적용합니다. `404 document_not_found`는 대상 ID를 확인합니다. 읽기 모드 거절은 결과를 보고합니다."
+}

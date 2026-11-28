@@ -1,0 +1,78 @@
+{
+  "locale": "ja",
+  "title": "glob",
+  "summary": "globパターンに一致するファイルパス一覧を取得する。",
+  "purpose": "globパターンに一致するファイルパス一覧を取得する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "glob"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "pattern",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "ファイルパスパターン。例: **/*.py"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "パターンを展開する基準ディレクトリ。空の場合はソースルート。"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意のコミットツリーrefです。省略またはnullは未コミット変更を含む作業ツリーです。merge_previewのhead、target_sha、merge_base、merge_treeを使えます。"
+      }
+    ],
+    "example": {
+      "pattern": "**/*.py"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "glob",
+      "server_ts": "2026-07-29T13:34:31+09:00",
+      "paths": [
+        "server/modules/flow_gate/db/events.py",
+        "server/modules/flow_gate/db/documents.py"
+      ],
+      "total": 2
+    },
+    "details": [
+      "pathsのソースルート相対パスはreadにそのまま使えます。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "pathが存在しないか、ディレクトリではない。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "pathがソースルート外である。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにgrepスコープがない(globはgrepスコープを共有する)。"
+    }
+  ]
+}

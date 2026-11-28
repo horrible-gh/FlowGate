@@ -1,0 +1,32 @@
+{
+  "locale": "en",
+  "title": "Compare a baseline run",
+  "summary": "Compare a baseline run",
+  "purpose": "Compare a baseline run",
+  "request": {
+    "route": "{{route:self_check.read}}",
+    "query_param": "baseline_run_id",
+    "how": "When you read_self_check an after-change run, pass baseline_run_id with the id of the baseline run made before your first product file change; the answer gains baseline_comparison. On reusable=false write the reasons in the TR and do not use that comparison as evidence. Run the baseline and the after-change run with the same command, on the same host, with the same worker setting.",
+    "conditions": "Reuse needs: the same Group, a baseline that ended normally (not timed out, cancelled, failed or recovered), a complete summary, no source change during the run, the baseline's HEAD before and after equal to the pre-change anchor recorded when the work started with a clean tree (it is recorded only when the issue is proven to be the work unit's first; a unit whose earlier issue left no anchor stays without one. No anchor, or an anchor that is not an ancestor of the current HEAD, means no reuse), the same command (program, args, cwd, policy version), every environment evidence category (with all its required sub-items, env holding every HOST_KEYS variable) and the host identifier equal (missing or partial means no reuse), and the same run-level test definition (pytest settings, conftest, session/autouse fixtures, test-tree plugins and the data they read)."
+  },
+  "response": {
+    "field": "baseline_comparison",
+    "details": "When a pytest run ends normally, the result block at the very end of its output is stored as result_summary (counts, failures, per-item test definition evidence) and environment_evidence (tool versions, host capabilities, environment values, installed dependencies, applied workers). The verdict stays status, exit_code, timed_out and source change; the summary is supporting evidence only, never a reason to pass.",
+    "statuses": {
+      "none": "No block (no structured result). Nothing is guessed.",
+      "incomplete": "The block is broken, cut, truncated, repeated, collected and completed counts differ, its exit status is abnormal (not 0 or 1), or its counts contradict each other. Not trusted.",
+      "mismatch": "The actual exit code and the block's exit status or failure list disagree. Neither side is promoted to success.",
+      "complete": "Collected = completed, nothing truncated or mismatched. Usable for a baseline comparison."
+    },
+    "comparison": {
+      "new_failures": "Failing only after the change (new tests included): candidates for defects of this change.",
+      "existing_failures": "Failing on both sides with equal test definition evidence only. Shown apart, never turned into a pass.",
+      "definition_changed_failures": "Failing on both sides, but the test body, fixtures, module-level values, helpers or data changed or cannot be confirmed. Not existing failures: report the reason for the change in the TR, at the level of a new failure.",
+      "resolved_or_gone": "Failing only in the baseline. Whether resolved, deleted or renamed is not told apart."
+    },
+    "advisory": "The comparison is advisory evidence. TR / review pass criteria, required gates and rejection rules are unchanged. Do not mark existing failures xfail or drop them from the list."
+  },
+  "errors": {
+    "details": "Check the comparison status and its eligibility conditions."
+  }
+}

@@ -243,8 +243,8 @@ def test_locales_are_actually_translated():
 # ── H10 index / bulk regression ──────────────────────────────────────────────
 
 def test_submit_area_lists_the_self_check_leaves_for_tr_authoring_only():
-    assert {"self_check", "check_http"} <= _listed_leaves(_ctx())
-    assert {"self_check", "check_http"} <= _listed_leaves(_ctx(action_scope="new"))
+    assert {"self_check", "check_errors"} <= _listed_leaves(_ctx())
+    assert {"self_check", "check_errors"} <= _listed_leaves(_ctx(action_scope="new"))
     assert "self_check" not in _listed_leaves(_ctx(action_scope="review"))
     # The old flat name is not an item for a worker any more.
     assert help_catalog.decide_visibility("tr_self_check", _ctx()).reason == "unknown_item"
@@ -254,7 +254,12 @@ def test_self_check_leaf_shape_is_the_usual_content_envelope():
     item = help_catalog.build_child("submit", "self_check", _ctx("ko"))
     assert item["name"] == "submit" and item["child"] == "self_check"
     assert item["form"] == "content"
-    assert item["content"]["role"]
+    assert item["content"]["request"]["edit"]["run"].startswith("POST ")
+    assert item["content"]["response"]["success_status"]["run"] == 202
+    assert item.get("content_source") != "legacy"
+    alias = help_catalog.build_child("submit", "check_http", _ctx("ko"))
+    assert alias["name_info"]["canonical"] == "submit/self_check"
+    assert alias["content"] == item["content"]
     json.dumps(item, ensure_ascii=False)
 
 

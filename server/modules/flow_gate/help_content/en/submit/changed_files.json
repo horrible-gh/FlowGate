@@ -1,0 +1,13 @@
+{
+  "locale": "en",
+  "title": "Changed-files format",
+  "summary": "Changed-files format",
+  "purpose": "Changed-files format",
+  "request": {
+    "details": "Under ## Changed Files or the Korean heading, list one repository-relative path per bullet. Use forward slashes. Include created, modified and deleted files. For a rename use the resulting path. The maximum is 200 entries.",
+    "example": "## Changed Files\n\n- server/app.py",
+    "empty_case": "## Changed Files\n\nNone"
+  },
+  "response": "The server compares the list with actual workspace changes.",
+  "errors": "On mismatch or scope refusal check for missing or extra paths and verify the heading. Use an unnumbered heading and relative paths without dot segments."
+}

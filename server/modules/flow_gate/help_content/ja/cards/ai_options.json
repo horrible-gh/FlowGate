@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "カードのAI候補",
+  "summary": "カードのAI候補",
+  "purpose": "カードのAI候補",
+  "request": {
+    "route": "{{route:cards.ai_options}}",
+    "authorization": "Bearer {{token}}",
+    "details": "配置前にGETします。ユーザーが指定したAIグループはrole_groupsで探します。"
+  },
+  "response": "optionsのid、name、kindからAIを選びます。role_groupsはfrom_groupに使います。",
+  "errors": "アクセスが拒否されたら、対象Flowとチャットトークンを確認します。"
+}

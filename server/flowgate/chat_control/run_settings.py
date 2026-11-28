@@ -1,22 +1,10 @@
-"""Run settings of the cards a chat placed: review count, restarts, time limit (seq 15-17),
-and the two verification options (``verify_max_runs`` / ``verify_run_minutes``, a run card only).
+"""Chat settings for card placement and roles PATCH.
 
-The chat's card role API wrote only the three AI roles, so a chat could neither read nor change a card's review count:
-it had to ask the user to set it in the Inspector AI tab. The same three run values the AI tab shows next to the roles
-are opened here, and nothing else (hold, merge, assignee, instruction use, review basis, ... stay a person's):
-
-- ``FIELDS``: ``review_count``, ``restart``, ``time_limit``, ``verify_max_runs``, ``verify_run_minutes``. A card has those
-  of its kind (``fields.fields_of``): a work card (T, run kind) all five, a test card (TS) only ``review_count``. Another
-  one is 422 ``setting_not_applicable``. The two verification options take any whole number inside their range (``fields``), their
-  ``choices`` are the screen combo's presets; ``null`` takes the card default (10 runs / 1 minute) back.
-- The values are the person's screen's (``fields.check_value`` with ``legacy.repeat_choices()`` / the time limit
-  minutes): a value the screen cannot pick is 422 with the field's ``choices``. ``null`` takes the default back (no
-  stored row), as the person's PATCH does.
-- ``view``: the card settings read narrowed to these fields (value, stored, default, choices), for the chat's GET.
-- ``write``: inside the caller's Flow guard; every value checked before anything is written. The caller moves the
-  settings version once and writes one ``chat_card_setting_audit`` row per requested field (``audit``).
-- Used by the card role PATCH (``card_roles.change``: ``settings`` next to ``roles``) and a placement (``service.place``:
-  ``settings`` per card).
+Run cards expose time_limit_sec (1800..14400) and verify_run_sec (60..1800).
+Legacy minute keys are accepted on input and multiplied by 60; responses use only
+seconds. Times clamp to boundaries, integers are required, null restores defaults.
+TS exposes its four execution-only budget settings alongside review_count.
+Every requested setting is checked before writes and audited in the caller's guard.
 """
 from __future__ import annotations
 
@@ -27,7 +15,8 @@ from flowgate.card_settings import legacy_adapter as legacy
 from flowgate.card_settings import repository
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 
-FIELDS = ("review_count", "restart", "time_limit", "verify_max_runs", "verify_run_minutes")
+FIELDS = ("review_count", "restart", "time_limit_sec", "verify_max_runs", "verify_run_sec",
+          "auto_case_timeout_sec", "ai_judge_mode", "ai_judge_run_sec", "ai_judge_runs")
 UNAVAILABLE = "chat_card_settings_unavailable"
 VIEW_KEYS = ("value", "stored", "default", "choices")
 
@@ -43,10 +32,17 @@ def parse(raw: Any, field: str) -> dict:
         return {}
     if not isinstance(raw, dict):
         raise _invalid([{"field": field, "reason": "not_an_object"}])
+    raw = {**{fields.setting_input(k, v)[0]: fields.setting_input(k, v)[1]
+              for k, v in raw.items() if k in fields.LEGACY_SECONDS},
+           **{k: v for k, v in raw.items() if k not in fields.LEGACY_SECONDS}}
     errors = [{"field": f"{field}.{name}", "reason": "not_a_chat_setting", "settings": list(FIELDS)}
               for name in sorted(set(raw) - set(FIELDS))]
     for name in FIELDS:
         value = raw.get(name)
+        if name == "ai_judge_mode":
+            if name in raw and value is not None and value not in ("case_count", "fixed"):
+                errors.append({"field": f"{field}.{name}", "reason": "not_a_choice"})
+            continue
         if name in raw and value is not None and (isinstance(value, bool) or not isinstance(value, int)):
             errors.append({"field": f"{field}.{name}", "reason": "not_an_integer"})
     if errors:
@@ -121,6 +117,8 @@ def write(flow_id: str, node_key: str, kind: Optional[str], requested: dict, use
             changed.append(name)
     stored = repository.values(flow_id, node_key)
     after = {name: _state(kind, stored, name, choices) for name in checked}
+    for name, value in checked.items():
+        after[name]["clamped"] = name in fields.SECOND_RANGES and value != requested.get(name)
     return changed, before, after
 
 

@@ -28,6 +28,7 @@ invisible to the scan; on non-Linux POSIX the scan is UNKNOWN, so such runs stay
 from __future__ import annotations
 
 import json
+import math
 import os
 import signal
 import time
@@ -248,16 +249,52 @@ def _proc_stat_table() -> Optional[tuple[list, bool]]:
     return rows, complete
 
 
-def marker_scan(run_id: str) -> tuple[str, tuple]:
+def _run_start_epoch(value: str | float | None) -> Optional[float]:
+    """Unknown or timezone-free timestamps cannot justify skipping a process."""
+    try:
+        if isinstance(value, str):
+            stamp = datetime.fromisoformat(value)
+            if stamp.tzinfo is None:
+                return None
+            value = stamp.timestamp()
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if math.isfinite(value) and value > 0 else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _process_predates_run(pid: int, started_at: float) -> bool:
+    """Use a strict two-second margin for /proc's coarse boot timestamp."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        # comm may contain spaces and closing parentheses; field 22 is index 19
+        # after the final ')' (field 3, state).
+        fields = stat[stat.rindex(")") + 2:].split()
+        ticks = int(fields[19])
+        hz = os.sysconf("SC_CLK_TCK")
+        boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        if ticks < 0 or hz <= 0 or boot <= 0:
+            return False
+        return boot + ticks / hz < started_at - 2.0
+    except (OSError, ValueError, IndexError, StopIteration, OverflowError):
+        return False
+
+
+def marker_scan(run_id: str, started_at: str | float | None = None) -> tuple[str, tuple]:
     """Linux: ``(state, PIDs)`` of processes whose environment carries this run's marker.
 
     An environ we may not read counts as UNKNOWN when the process is ours (same UID) and is
     skipped otherwise (a run's processes inherit the server's UID; a non-dumpable or other
-    user's process is the documented residual limit). Gone-while-reading is skipped.
+    user's process is the documented residual limit). An unreadable same-UID process
+    is skipped only when it provably predates started_at by more than two seconds.
+    Missing/invalid timestamps retain UNKNOWN. Gone-while-reading is skipped.
     """
     if os.name == "nt" or not run_id or not executor._proc_usable():
         return UNKNOWN, ()
     needle = f"{MARKER_ENV}={run_id}".encode("utf-8")
+    run_start = _run_start_epoch(started_at)
     me, uid = os.getpid(), os.getuid()
     try:
         entries = os.listdir("/proc")
@@ -274,6 +311,8 @@ def marker_scan(run_id: str) -> tuple[str, tuple]:
         except PermissionError:
             try:
                 if os.stat(f"/proc/{name}").st_uid == uid:
+                    if run_start is not None and _process_predates_run(int(name), run_start):
+                        continue
                     return UNKNOWN, ()
             except (FileNotFoundError, ProcessLookupError):
                 pass
@@ -386,7 +425,7 @@ def tree_state(row: dict) -> Proof:
     if row.get("supervisor_pid"):
         parts["supervisor"] = executor.identity_state(row["supervisor_pid"], row.get("supervisor_start_identity"))
     if marker:
-        parts["marker"] = marker_scan(row.get("self_check_run_id"))[0]
+        parts["marker"] = marker_scan(row.get("self_check_run_id"), row.get("started_at"))[0]
     return _combine(parts)
 
 
@@ -395,8 +434,8 @@ def terminate_tree(row: dict, *, wait: float = 3.0) -> Proof:
 
     Only what is proved to be this run's is signalled: the named Job (Windows), or the
     target's group when every member is owned (:func:`posix_group_members`). Marker-only
-    processes outside the group and a live supervisor are not signalled; they keep the
-    tree MATCH (the supervisor is waited for, it exits on its own once its server is gone).
+    processes outside the group are signalled after their marker and start identity are
+    checked again through a pinned PID handle. The supervisor is allowed to reap children.
     Call it only once the owning server is proved dead, or from the owning server itself.
     """
     tree = tree_state(row)
@@ -418,12 +457,46 @@ def terminate_tree(row: dict, *, wait: float = 3.0) -> Proof:
                     if state == MATCH and owned:
                         _signal_group(int(pgid), signal.SIGKILL)
                         _wait_group_gone(int(pgid), 2.0)
+    if os.name != "nt":
+        _terminate_marked(row)
     deadline = time.monotonic() + wait
     tree = tree_state(row)
     while tree.state == MATCH and time.monotonic() < deadline:
         time.sleep(.1)
         tree = tree_state(row)
     return tree
+
+
+def _terminate_marked(row: dict) -> None:
+    """Include descendants that called setsid; never signal a reused PID.
+
+    Pin each identity with pidfd before re-reading its marker. Unavailable/denied
+    pidfds retain the run's protection; a numeric PID alone grants no authority.
+    """
+    rid = row.get("self_check_run_id")
+    if _marker(row).get("kind") != "posix_marker":
+        return
+    state, pids = marker_scan(rid, row.get("started_at"))
+    if state != MATCH:
+        return
+    needle = f"{MARKER_ENV}={rid}".encode("utf-8")
+    for pid in pids:
+        if pid in (os.getpid(), row.get("supervisor_pid")):
+            continue
+        fd = None
+        try:
+            identity = executor.start_identity(pid)
+            fd = os.pidfd_open(pid)
+            if executor.identity_state(pid, identity) != MATCH:
+                continue
+            if needle not in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
+                continue
+            signal.pidfd_send_signal(fd, signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass  # tree_state remains the authority, not successful signal delivery
+        finally:
+            if fd is not None:
+                os.close(fd)
 
 
 def _signal_group(pgid: int, sig: int) -> None:

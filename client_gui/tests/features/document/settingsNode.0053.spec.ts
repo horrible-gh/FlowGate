@@ -24,7 +24,7 @@ const RAW = {
   fields: {
     instruction: { value: 'omit', stored: 'omit', default: 'use', choices: ['use', 'omit'] },
     run_ai: { value: null, stored: null, default: null, choices: null },
-    time_limit: { value: 60, stored: null, default: 60, choices: [30, 45, 60, 90, 120, 180, 240] },
+    time_limit_sec: { value: 14400, stored: null, default: 14400, choices: null },
   },
 }
 
@@ -43,7 +43,7 @@ describe('card settings read (flowgate.v02.0053 T#5)', () => {
       fields: {
         instruction: { value: 'omit', stored: 'omit', default: 'use', choices: ['use', 'omit'] },
         run_ai: { value: null, stored: null, default: null, choices: null },
-        time_limit: { value: 60, stored: null, default: 60, choices: [30, 45, 60, 90, 120, 180, 240] },
+        time_limit_sec: { value: 14400, stored: null, default: 14400, choices: null },
       },
     })
   })

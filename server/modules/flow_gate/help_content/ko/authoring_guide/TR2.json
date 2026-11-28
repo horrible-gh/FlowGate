@@ -1,0 +1,7 @@
+{
+  "locale": "ko",
+  "title": "반영안 작성",
+  "summary": "반영안 작성",
+  "purpose": "반영안 작성",
+  "body": "canonical JSON(document.json)에 tr2_version=1, source_t2_doc_id와 edit_spec의 termination/edits/deferred/gate를 제출합니다. 변경은 edit/create_file로 제안합니다. baseline_fingerprint는 서버가 계산합니다. ready_to_apply에는 edit가 한 건 이상이며 gate.apply=false입니다."
+}

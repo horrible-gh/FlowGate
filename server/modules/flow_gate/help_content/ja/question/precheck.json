@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "過去の回答を検索",
+  "summary": "過去の回答を検索",
+  "purpose": "過去の回答を検索",
+  "request": {
+    "search": "{{route:question.search}}?q=<keyword>&limit=10",
+    "detail": "{{route:question.search_item}}",
+    "details": "question/policyを適用し、判断が必要なときに検索します。語は文字どおりのOR検索で関連度順です。次ページは同一プロジェクト・検索語・版のnext_cursorを使います。next_before_idは順位の基準点です。 このトークンに関連付けられた文書は {{doc_id}} です。リクエストパスにはこの文書 ID を使います。"
+  },
+  "response": "行にはanswer_id、doc_id、seq、title、author_label、score、matched_terms、answer_previewがあります。詳細で全文と出典を読み、現在の指示と方針に合う回答を使います。HTTP 200 reused_answerとcontinue_with_existing_answerでは既存回答で続行します。",
+  "errors": "409 existing_answer_requires_reasonでは既存回答を使うかrejected_answer_idとreuse_rejection_reasonを付けて再登録します。直接一括登録はこの拒否で一括中止されます。文書と同時の登録では文書を保持しitem_resultsに結果を返します。"
+}

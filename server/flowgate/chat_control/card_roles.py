@@ -62,12 +62,14 @@ BODY_KEYS = frozenset({"roles", "settings", "expected_settings_version", "expect
 STATE_KEYS = ("state", "outcome", "source", "provider_id", "display_name", "cause", "selected")
 NEXT_AFTER_READ = ("To change a role or a run setting send PATCH (set_card_roles) with `roles` and / or `settings` and "
                    "this settings_version (and context). Pick provider_id only from `options` and a setting value only "
-                   "from its `choices`.")
+                   "from its `choices` or documented seconds range.")
 NEXT_AFTER_CHANGE = ("Read the card's roles again (GET / get_card_roles): only that read showing the new selection "
                      "confirms the change. Tell the user what changed.")
 SETTING_NOTE = ("review_count: AI reviews of the result (0 none, -1 until it passes); restart: restarts after a failed "
-                "run (-1 until done); time_limit: minutes per run; verify_max_runs: verifications one card may use (default "
-                "10); verify_run_minutes: longest minutes of one verification, 1..30 (default 1). "
+                "run (-1 until done); time_limit_sec: 1800..14400 seconds (default 14400); "
+                "verify_max_runs: verification count (default 10); verify_run_sec: 60..1800 seconds (default 60). "
+                "TS: auto_case_timeout_sec=120, ai_judge_mode=case_count or fixed, ai_judge_run_sec=120, "
+                "ai_judge_runs=5 (positive integer). Times are clamped to their range. "
                 "null in a change takes the default back.")
 
 
@@ -300,7 +302,8 @@ def change(caller: authz.Caller, node_key: Any, body: Any) -> dict:
             flow_id, node_key, settings_req, settings_before, settings_after, changed_settings, version,
             {"token_id": caller.scope.token_id, "ai_run_id": caller.scope.ai_run_id, "chat_doc_id": caller.chat_doc_id},
             user_id) if settings_req else []
-        return {"changed_roles": changed, "audit_ids": audit_ids,
+        return {"clamped": any(v.get("clamped", False) for v in settings_after.values()),
+                "changed_roles": changed, "audit_ids": audit_ids,
                 "changed_settings": changed_settings, "setting_audit_ids": setting_audit_ids,
                 **({"from_group": group_id, "applied_roles": sorted(roles)} if group_id else {})}
 

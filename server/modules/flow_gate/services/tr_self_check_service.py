@@ -92,6 +92,7 @@ def public(row: dict) -> dict:
             # when the request entered the queue (None for a pre-queue run).
             "enqueued_at")
     result = {key: row.get(key) for key in keep}
+    result["stop_reason"] = stop_reason(row)
     result["stdout_tail"] = _redact(result["stdout_tail"])
     result["stderr_tail"] = _redact(result["stderr_tail"])
     # (D 5): the result block summary and its environment evidence. Evidence only --
@@ -890,6 +891,10 @@ def _finish(run_id: str, ctx: lock_manager.ExecutionContext | None, lock_key: st
 def _finish_locks(run_id: str, ctx: lock_manager.ExecutionContext, lock_key: str, runtime: Path,
                   terminal: dict | None, keeper: "_LockKeeper | None", attempt_lock: str | None) -> None:
     """The end of ``_finish`` for a run that holds its Group's G (a pre-queue worktree run)."""
+    current = db_runs.get_run(run_id)
+    if current and current.get("error_code") == "selfcheck_marked_ended":
+        lock_manager.selfcheck_release_recovered(current["project_id"], current["group_id"], run_id)
+        return
     if ctx.lock_lost:
         _log.warning("selfcheck %s lost its Group lock during the run", run_id)
     # A missing terminal commit keeps the Group lock (protected) for startup recovery.
@@ -1108,6 +1113,46 @@ def _cancel(run_id: str, lookup) -> dict:
     return {**public(row), "cancel": cancel}
 
 
+def stop_deadline(row: dict):
+    """Shared card/reaper deadline from the admitted timeout, never current settings."""
+    from datetime import datetime, timedelta, timezone
+    if not row.get("started_at"):
+        return None
+    try:
+        started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        seconds = int(row.get("verify_timeout_sec") or row["timeout_seconds"])
+        return started + timedelta(seconds=seconds + 60)
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return None
+
+
+def stop_overdue(row: dict) -> bool:
+    """Retry cancelled runs at the same persisted deadline displayed by the card."""
+    from datetime import datetime, timezone
+    deadline = stop_deadline(row)
+    return bool(row.get("cancel_requested") and deadline is not None
+                and datetime.now(timezone.utc) >= deadline)
+
+
+def stop_reason(row: dict, reason: str | None = None) -> str | None:
+    """Public, bounded reason codes; reads do not reconcile or kill anything."""
+    if row.get("status") not in _ACTIVE or not row.get("cancel_requested"):
+        return None
+    reason = reason or row.get("recovery_reason")
+    server = proof.owner_server_state(proof.owner_instance_of(row))
+    if server.detail.get("cause") == "other_node":
+        return "host_changed"
+    if reason in ("host_changed", "processes_remain", "owner_alive", "release_unconfirmed"):
+        return reason
+    if reason in (proof.TREE_UNPROVEN, "process_terminate_failed"):
+        return "processes_remain"
+    if server.state == proof.MATCH and (not server.detail.get("self") or _worker_alive(row["self_check_run_id"])):
+        return "owner_alive"
+    return "ownership_unknown" if not server.gone and server.state != proof.MATCH else "release_unconfirmed"
+
+
 def _worker_alive(run_id: str) -> bool:
     return any(t.name == f"selfcheck-{run_id}" and t.is_alive() for t in threading.enumerate())
 
@@ -1124,6 +1169,9 @@ def _cancel_unowned(row: dict) -> tuple[str, str | None]:
     run's state nor its protection, except that a run already fenced by the CAS keeps G
     protected as recovery_incomplete (the same hold as ``recover()``)."""
     rid = row["self_check_run_id"]
+    if row.get("recovery_state") == "incomplete":
+        outcome, reason = _reprove(row)
+        return ("stopped", None) if outcome == RELEASED else ("unconfirmed", reason)
     if row.get("recovery_state") != "none":
         return "unconfirmed", f"recovery_{row.get('recovery_state')}"
     server = proof.owner_server_state(proof.owner_instance_of(row))
@@ -1298,7 +1346,7 @@ def _recover_row(row: dict, fallback: set[str]) -> None:
     # release_verdict re-proves the server, kills only a verified own tree, re-checks both.
     verdict = proof.release_verdict(current, terminate=True)
     if verdict.decision == proof.RELEASE:
-        if _end_recovered(row, requeue=True) is not None:
+        if _end_recovered(row) is not None:
             return
     _hold_recovery_incomplete(current, verdict.reason or proof.TREE_UNPROVEN, fallback)
 
@@ -1322,23 +1370,15 @@ def _release_recovered(row: dict, finished: dict) -> None:
         _log.warning("selfcheck %s: releasing Group lock failed", row["self_check_run_id"], exc_info=True)
 
 
-def _end_recovered(row: dict, *, requeue: bool) -> dict | None:
-    """End a ``recovering`` run whose owner and tree were just proved gone. 0053 1-B: with
-    ``requeue`` (its owning server is gone -- a restart), a queue run whose snapshot is still
-    there and that no one asked to cancel is queued again -- "cleaned up by the recovery rules,
-    then put back". Anything else (a run of this server whose worker is gone, e.g. a failed
-    spawn) ends failed(interrupted_by_restart) as before. None when the CAS lost."""
-    from modules.flow_gate.services import tr_self_check_queue as queue
+def _end_recovered(row: dict) -> dict | None:
+    """End a recovering run after owner/tree proof; never requeue its old snapshot.
+
+    Cancel requests end cancelled; other interrupted executions end failed with
+    interrupted_by_restart. Return None if the terminal CAS loses.
+    """
     rid = row["self_check_run_id"]
-    if (requeue and _is_queue_run(row) and not row.get("cancel_requested")
-            and queue.snapshot_exists(row)):
-        again = db_runs.requeue_recovered(rid, proof.owner_marker(rid))
-        if again is not None:
-            _log.warning("selfcheck %s: interrupted run queued again from its snapshot", rid)
-            _emit(again)
-            queue.wake()
-            return again
-    finished = db_runs.finish_recovered_interrupted(rid)
+    finished = (db_runs.finish_recovered_cancelled(rid) if row.get("cancel_requested")
+                else db_runs.finish_recovered_interrupted(rid))
     if finished is None:
         return None
     _release_recovered(row, finished)
@@ -1391,7 +1431,14 @@ def _reprove(row: dict) -> tuple[str, str | None]:
     server = proof.owner_server_state(proof.owner_instance_of(row))
     own = server.state == proof.MATCH and bool(server.detail.get("self"))
     if own:
-        if _worker_alive(rid) or (row["status"] == "pending" and state == "none"):
+        overdue = stop_overdue(row)
+        alive = _worker_alive(rid)
+        if overdue and alive and row["status"] == "pending":
+            # A spawn may already be between its durable stamp and Popen. Try killing,
+            # but never release while that worker can still create the stamped process.
+            tree = proof.terminate_tree(row)
+            return KEPT, proof.OWNER_ALIVE if tree.state == proof.ABSENT else proof.TREE_UNPROVEN
+        if (alive and not overdue) or (row["status"] == "pending" and state == "none" and not overdue):
             return KEPT, proof.OWNER_ALIVE
     elif server.state == proof.MATCH:
         return KEPT, proof.OWNER_ALIVE
@@ -1416,9 +1463,9 @@ def _reprove(row: dict) -> tuple[str, str | None]:
             verdict = proof.release_verdict(current, terminate=True)
             ok, reason = verdict.decision == proof.RELEASE, verdict.reason or proof.TREE_UNPROVEN
         if ok:
-            # The run is ended (or, a queue run with its snapshot, queued again); a leftover G
-            # of a pre-queue run is a terminal run's, reclaimed by the gate.
-            if _end_recovered(current, requeue=not own) is None:
+            # Interrupted executions end after proof; waiting requests remain queued.
+            # A leftover legacy G is a terminal run's, reclaimed by the gate.
+            if _end_recovered(current) is None:
                 return KEPT, "state_changed"
             return RELEASED, None
         _hold_recovery_incomplete(current, reason, set())
@@ -1438,7 +1485,9 @@ def _reap_terminal_g(lock: dict) -> bool:
     protected attempt W of such a run is reached the same way and freed with its G."""
     rid = gate.run_id_of(lock)
     run = db_runs.get_run(rid) if rid else None
-    if run is None or run["status"] in _ACTIVE or proof.tree_state(run).state != proof.ABSENT:
+    if run is None or run["status"] in _ACTIVE:
+        return False
+    if run.get("error_code") != "selfcheck_marked_ended" and proof.tree_state(run).state != proof.ABSENT:
         return False
     lock_manager.selfcheck_release_recovered(run["project_id"], run["group_id"], rid)
     _log.warning("selfcheck %s: ended run's protected G released, tree proved empty", rid)

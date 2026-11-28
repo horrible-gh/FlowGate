@@ -1,0 +1,30 @@
+## What to do now
+Task: Write the first body of the existing empty card
+Before completion: Preserve the existing document header / Prepare the complete body and verify what will be saved
+Submit/complete: once, at the end, after the required work.
+Final format: Follow the edit/expected_revision/edit_reason contract
+
+## Read
+Read source and submit the result as a document.
+
+## Values for this call
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+Flow: F1(Example) · demo.test.0001
+Card: F1-2(Example card)
+Target document: demo.test.0001.0003-D · D · Original title
+Revision: 0
+Submission action: edit
+Expected revision: 0
+Edit reason: user_comment
+Reference documents: demo.test.0001.0001-R
+Workspace: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## Help
+GET https://example.invalid/flowgate/api/v1/help
+Read first: notices, submit/format, documents/access
+When needed: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, attachments/upload_request
+
+## Materials
+---
+Original {{token}} material. 사용자 원문 / 原文

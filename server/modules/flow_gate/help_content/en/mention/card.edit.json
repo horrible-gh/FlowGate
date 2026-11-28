@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Edit",
+  "summary": "Read and edit source, then submit the result as a document. For TR, use Self-check.",
+  "purpose": "Values for this call",
+  "body": "{{task_block}}\n\n## Edit\nRead and edit source, then submit the result as a document. For TR, use Self-check.\n\n## Values for this call\nAuthorization: Bearer {{token}}\nFlow: {{flow_name}} · {{flow_id}}\nCard: {{card_ref}}\nTarget document: {{doc_id}} · {{doc_type}} · {{doc_title}}\nRevision: {{revision_no}}\nSubmission action: {{submit_action}}\nExpected revision: {{expected_revision}}\nEdit reason: {{edit_reason}}\nRejection reference: {{rejection_ref}}\nNext document header values: {{next_header}}\nReference documents: {{reference_doc_ids}}\nSelf-check: {{self_check}}\nWorkspace: {{workspace}}\nprobe: {{probe}}\n\n## Help\n{{route:help.index}}\nRead first: {{help_first}}\nWhen needed: {{help_more}}\n\n{{materials}}"
+}

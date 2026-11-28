@@ -1,0 +1,78 @@
+{
+  "locale": "ko",
+  "title": "glob",
+  "summary": "글롭 패턴에 맞는 파일 경로 목록을 얻는다.",
+  "purpose": "글롭 패턴에 맞는 파일 경로 목록을 얻는다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "glob"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "pattern",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "파일 경로 패턴. 예: **/*.py"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "패턴을 전개할 기준 디렉터리. 비우면 소스 루트."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "커밋 트리를 지정하는 선택적 ref입니다. 생략 또는 null은 미커밋 변경을 포함한 작업 트리입니다. merge_preview의 head, target_sha, merge_base, merge_tree를 사용할 수 있습니다."
+      }
+    ],
+    "example": {
+      "pattern": "**/*.py"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "glob",
+      "server_ts": "2026-07-29T13:34:31+09:00",
+      "paths": [
+        "server/modules/flow_gate/db/events.py",
+        "server/modules/flow_gate/db/documents.py"
+      ],
+      "total": 2
+    },
+    "details": [
+      "paths는 소스 루트 기준이며 read에 그대로 넣을 수 있습니다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "path 가 없거나 디렉터리가 아니다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "path 가 소스 루트를 벗어난다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 grep 스코프가 없다(glob 은 grep 스코프를 공유한다)."
+    }
+  ]
+}
