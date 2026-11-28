@@ -13,7 +13,17 @@ export const VERIFICATION_SHOWN_POLL_MS = 5000
 /** How often a hidden line is read again when no run says when it would appear (ms). */
 export const VERIFICATION_IDLE_POLL_MS = 30000
 
-export type VerificationButton = 'force_stop' | 'retry_stop' | 'go' | 'cancel_waiting'
+export type VerificationButton = 'force_stop' | 'retry_stop' | 'mark_ended' | 'go' | 'cancel_waiting'
+
+/** flowgate.v02test.0084 #13 — the stop reasons the line names; any other code the server sends reads as `unknown`. */
+export const VERIFICATION_STOP_REASONS = ['host_changed', 'processes_remain', 'owner_alive'] as const
+export type VerificationStopReason = (typeof VERIFICATION_STOP_REASONS)[number] | 'unknown'
+
+/** The `종료 실패` line's reason key, or null (another state, or a server that sends no reason). */
+export function verificationStopReason(verification: CardVerification | null): VerificationStopReason | null {
+  if (!verification || verification.state !== 'stop_failed' || !verification.stopReason) return null
+  return VERIFICATION_STOP_REASONS.find((reason) => reason === verification.stopReason) ?? 'unknown'
+}
 
 export interface VerificationRowView {
   readonly state: Exclude<CardVerificationState, 'hidden'>
@@ -24,6 +34,8 @@ export interface VerificationRowView {
   readonly focus: boolean
   /** The buttons in order before a confirmation is asked. */
   readonly buttons: readonly VerificationButton[]
+  /** `종료 실패` only: why the stop could not be confirmed, shown as one short phrase beside the badge. */
+  readonly reason: VerificationStopReason | null
 }
 
 const TONES: Record<VerificationRowView['state'], SlotStateTone> = {
@@ -42,6 +54,7 @@ export function verificationRowView(verification: CardVerification | null, canGo
   const buttons: VerificationButton[] = []
   if (state === 'overdue' && can('force_stop')) buttons.push('force_stop')
   if (state === 'stop_failed' && can('force_stop')) buttons.push('retry_stop')
+  if (state === 'stop_failed' && can('mark_ended')) buttons.push('mark_ended')
   if (state === 'waiting') {
     if (canGo && verification.blocker) buttons.push('go')
     if (can('cancel_waiting')) buttons.push('cancel_waiting')
@@ -52,16 +65,23 @@ export function verificationRowView(verification: CardVerification | null, canGo
     danger: state === 'overdue' || state === 'stop_failed',
     focus: state === 'waiting',
     buttons,
+    reason: verificationStopReason(verification),
   }
 }
 
-/** The action a button asks for; a confirmation ([확인] [취소]) is asked first for [강제 종료] and [취소] only. */
+/**
+ * The action a button asks for; a confirmation is asked first for [강제 종료] and [취소] ([확인] [취소] in place) and for
+ * [끝난 것으로 처리] (a dialog: it cannot be undone and processes may remain).
+ */
 export const BUTTON_ACTION: Readonly<Record<Exclude<VerificationButton, 'go'>, CardVerificationAction>> = {
   force_stop: 'force_stop',
   retry_stop: 'force_stop',
+  mark_ended: 'mark_ended',
   cancel_waiting: 'cancel_waiting',
 }
-export const CONFIRMED_BUTTONS: readonly VerificationButton[] = ['force_stop', 'cancel_waiting']
+export const CONFIRMED_BUTTONS: readonly VerificationButton[] = ['force_stop', 'cancel_waiting', 'mark_ended']
+/** The confirmed buttons asked in a dialog rather than in place. */
+export const DIALOG_BUTTONS: readonly VerificationButton[] = ['mark_ended']
 
 const stamp = (value: string | null | undefined): number | null => {
   if (!value) return null

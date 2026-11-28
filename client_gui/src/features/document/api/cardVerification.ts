@@ -9,8 +9,12 @@
 //   verification = { flow_id, node_key, visible, state: hidden | overdue | waiting | stopped | cancelled | stop_failed,
 //                    run: { self_check_run_id, status, started_at, enqueued_at, finished_at, show_at, elapsed_seconds } | null,
 //                    blocker: run + { flow_id, node_key, label, project_id } | null,
-//                    actions: [force_stop | cancel_waiting] }
+//                    actions: [force_stop | cancel_waiting | mark_ended],
+//                    stop_reason: host_changed | processes_remain | owner_alive | <other> | absent (stop_failed only) }
+//   mark ended    POST /api/v1/flows/{flow_id}/nodes/{node_key}/self-check/runs/{run_id}/mark-ended      -> { verification }
 //
+// flowgate.v02test.0084 #13: `stop_reason` says why a stop could not be confirmed and `mark_ended` (stop_failed only)
+// records the run as ended by a person. Both are optional: an older server sends neither and the line works as before.
 // `stopped` / `cancelled` come from an action only (the next read hides them). Refusals are the Graph envelope:
 // 409 selfcheck_not_waiting (the request started: read again) / selfcheck_not_running / selfcheck_not_supported,
 // 404 selfcheck_run_not_found / node_not_found, 403 flow_access_denied.
@@ -27,7 +31,7 @@ const count = (value: unknown): number | null => (typeof value === 'number' && N
 
 export const cardVerificationStates = ['hidden', 'overdue', 'waiting', 'stopped', 'cancelled', 'stop_failed'] as const
 export type CardVerificationState = (typeof cardVerificationStates)[number]
-export const cardVerificationActions = ['force_stop', 'cancel_waiting'] as const
+export const cardVerificationActions = ['force_stop', 'cancel_waiting', 'mark_ended'] as const
 export type CardVerificationAction = (typeof cardVerificationActions)[number]
 
 export interface CardVerificationRun {
@@ -57,6 +61,8 @@ export interface CardVerification {
   readonly run: CardVerificationRun | null
   readonly blocker: CardVerificationBlocker | null
   readonly actions: readonly CardVerificationAction[]
+  /** Why the last stop could not be confirmed (the server's code as sent), or null when the server says nothing. */
+  readonly stopReason: string | null
 }
 
 function run(raw: unknown): CardVerificationRun | null {
@@ -98,13 +104,18 @@ export function toCardVerification(raw: unknown, flowId = '', nodeKey = ''): Car
     actions: Array.isArray(row.actions)
       ? cardVerificationActions.filter((action) => (row.actions as unknown[]).includes(action))
       : [],
+    stopReason: text(row.stop_reason) ?? text(record(row.run).stop_reason),
   }
 }
 
 const verificationPath = (flowId: string, nodeKey: string) =>
   `${API}/flows/${encodeURIComponent(flowId)}/nodes/${encodeURIComponent(nodeKey)}/self-check`
 
-const ACTION_PATH: Record<CardVerificationAction, string> = { force_stop: 'force-stop', cancel_waiting: 'cancel-waiting' }
+const ACTION_PATH: Record<CardVerificationAction, string> = {
+  force_stop: 'force-stop',
+  cancel_waiting: 'cancel-waiting',
+  mark_ended: 'mark-ended',
+}
 
 /** Reads a card's verification line. */
 export async function cardVerificationRead(flowId: string, nodeKey: string): Promise<CardVerification> {
@@ -112,7 +123,7 @@ export async function cardVerificationRead(flowId: string, nodeKey: string): Pro
   return toCardVerification(record(response.data).verification, flowId, nodeKey)
 }
 
-/** Presses [강제 종료] / [취소] for the exact run the line was drawn for; answers the line after it. */
+/** Presses [강제 종료] / [취소] / [끝난 것으로 처리] for the exact run the line was drawn for; answers the line after it. */
 export async function cardVerificationAct(
   flowId: string,
   nodeKey: string,
