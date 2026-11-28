@@ -1,0 +1,82 @@
+{
+  "locale": "ja",
+  "title": "move",
+  "summary": "通常ファイルを移動または改名します。",
+  "purpose": "通常ファイルを移動または改名します。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "move"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "source_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "移動元の通常ファイルの相対パスです。"
+      },
+      {
+        "name": "target_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "移動先の相対パスです。必要な親ディレクトリを作成します。"
+      }
+    ],
+    "example": {
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
+      "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。",
+      "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "move",
+      "moved": true,
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py",
+      "size": 42
+    },
+    "details": [
+      "内容とGitステージングを保持します。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "`source_not_found`"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "`target_exists / move_failed`"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "`same_path / unsafe_move_path / invalid_move_path`"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "`move_access_denied`"
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "`atomic_move_unavailable`"
+    }
+  ]
+}

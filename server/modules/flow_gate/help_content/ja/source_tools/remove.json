@@ -1,0 +1,86 @@
+{
+  "locale": "ja",
+  "title": "remove",
+  "summary": "ファイルまたは空ディレクトリを1つ削除する。",
+  "purpose": "ファイルまたは空ディレクトリを1つ削除する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "remove"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "削除するファイル、空ディレクトリまたは痕跡ディレクトリのソースルートからの相対パス。"
+      },
+      {
+        "name": "recursive",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "空ディレクトリはこの指定なしでも削除できる。内容のあるディレクトリを丸ごと削除する。ツールが残した痕跡(.test-tmp-*、ドットディレクトリ、node_modules など)と判定されるパスにのみ許可され、それ以外は422になる。"
+      }
+    ],
+    "example": {
+      "path": "app/obsolete.py",
+      "recursive": false
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
+      "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。",
+      "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "remove",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/obsolete.py",
+      "removed": true,
+      "continuation": {
+        "ment": "作業レポートに変更ファイルを記録します。",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "削除したパスを変更ファイル節に記載します。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "パスが存在しないか、空でないディレクトリにrecursiveを指定していない。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "グループ作業領域を使用できない。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "読み取り専用/ロックで削除できない。再試行しても同じ結果(503ではない)。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "ルート・.git・ディレクトリ別名、ルート外、または内容のある通常ソースの再帰削除である。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにremoveスコープがない。"
+    }
+  ]
+}

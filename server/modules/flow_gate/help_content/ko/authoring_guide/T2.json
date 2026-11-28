@@ -1,0 +1,7 @@
+{
+  "locale": "ko",
+  "title": "반영지시 작성",
+  "summary": "반영지시 작성",
+  "purpose": "반영지시 작성",
+  "body": "TR2의 edit-spec으로 표현할 변경을 Markdown으로 지시합니다. 대상 파일, 변경 목적, 안전 조건과 검증 기준을 적습니다."
+}

@@ -1,5 +1,17 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 3
+  "title": "등록 시험 명령",
+  "summary": "등록 시험 명령",
+  "purpose": "등록 시험 명령",
+  "request": {
+    "details": "아래 등록 명령 원문을 확인합니다. 명령이 비어 있으면 저장소의 스크립트·설정·기존 결과에서 근거를 찾습니다. 실행 절차는 submit/self_check와 해당 테스트 지시를 따릅니다."
+  },
+  "response": {
+    "original": "{{test_commands}}",
+    "host_os": "{{test_host_os}}",
+    "shell": "{{test_shell}}",
+    "engine_recipe_route": "{{route:test_commands.engine_recipes}}",
+    "engine_recipe_details": "TS 준비 단계를 쓰기 전에 엔진 레시피를 조회합니다. 시험 대상에 맞는 엔진(예: engine=pytest)의 setup을 그대로 사용합니다. 해당 레시피가 없으면 직접 작성합니다. 성공한 시험의 준비 단계는 자동으로 등록됩니다."
+  },
+  "errors": "명령을 결정할 수 없으면 test_command_missing을 보고합니다."
 }

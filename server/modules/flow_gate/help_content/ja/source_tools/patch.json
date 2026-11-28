@@ -1,0 +1,156 @@
+{
+  "locale": "ja",
+  "title": "patch",
+  "summary": "ファイル内で完全一致する文字列を検索し、該当部分を置き換える。",
+  "purpose": "ファイル内で完全一致する文字列を検索し、該当部分を置き換える。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "patch"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "ソースルートからの相対パス。"
+      },
+      {
+        "name": "old_string",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "置換対象の文字列。空文字列は指定できない。"
+      },
+      {
+        "name": "new_string",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "置換後の文字列。"
+      },
+      {
+        "name": "replace_all",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "一致する複数箇所を一度に置換するか。"
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "ファイルの読み書きに使用するエンコーディング。"
+      },
+      {
+        "name": "base_sha256",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意。編集の基準にしたファイル内容のsha256(read応答のsource_sha256、直前のwrite/patch応答のsha256)。ディスクと異なれば409(reason=base_changed)で何も書き込まない。"
+      },
+      {
+        "name": "allow_mask_substitution",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "原文の値を '***' に置き換える変更を意図した場合のみtrue。reasonが必要で、サーバー監査ログに残る。"
+      },
+      {
+        "name": "allow_replacement_char",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "ディスクになかったU+FFFDを意図的に入れる場合のみtrue。reasonが必要。"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "allow_* フラグを使う理由。フラグがtrueなら必須。"
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "old_string": "old text",
+      "new_string": "new text",
+      "replace_all": false,
+      "encoding": "utf-8"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
+      "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。",
+      "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "patch",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "replacements": 1,
+      "size_before": 18342,
+      "size_after": 18342,
+      "bytes_written": 18342,
+      "encoding": "utf-8",
+      "eol": "lf",
+      "eol_normalized": false,
+      "continuation": {
+        "ment": "作業レポートに変更ファイルを記録します。",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "行番号ではなく、文字列の完全一致で検索する。",
+      "変更しないバイトはそのまま保つため、改行形式が異なるファイルでも全体変更にならない。部分変更にはwriteではなくこのツールを使う。",
+      "成功応答のsha256は保存後ファイルのハッシュ(次の編集のbase_sha256に使う)。.py/.jsonならpost_write_checkに構文チェック結果が入る。マスク・U+FFFDチェックはnew_stringだけでなく変更行全体を見る。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "ファイルが存在しない、ディレクトリである、またはold_stringに一致する文字列がない。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "replace_allなしで2箇所以上に一致する。"
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "変更後の結果がサーバー上限を超える。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "テキストファイルではない、old_stringとnew_stringが同じ、エンコードできない、またはパスがソースルート外である。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにwriteスコープがない。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "base_sha256を送ったがディスクの内容が異なる(reason=base_changed, details.current_sha256)。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "原文の値を '***' に置き換えた行がある(reason=masked_substitution_suspect, details.lines)、またはディスクになかったU+FFFDが新たに入った(reason=replacement_char_introduced)。行の内容は応答に含めない。"
+    }
+  ]
+}

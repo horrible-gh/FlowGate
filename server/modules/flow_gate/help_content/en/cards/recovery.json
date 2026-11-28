@@ -1,5 +1,13 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Recover a Flow",
+  "summary": "Recover a Flow",
+  "purpose": "Recover a Flow",
+  "request": {
+    "route": "{{route:cards.recovery_basis}}",
+    "authorization": "Bearer {{token}}",
+    "details": "{{route:cards.recovery_basis}} for restart or {{route:cards.node_basis}} for a card retry. POST to {{route:cards.restart}} or {{route:cards.retry}} with a new request_id and the unchanged expected_context. Reuse both on transport retry."
+  },
+  "response": "Distinguish new_attempt, existing_attempt and group_head. A new card attempt uses predecessor results or the inspected group HEAD. Use actual_basis for materialized input. If restart is pending while stopping, send the same request again to continue.",
+  "errors": "On changed context or a conflicting request_id, refresh the basis. Check the error reason for holds, gates or required merges."
 }

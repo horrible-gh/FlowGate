@@ -1,0 +1,83 @@
+{
+  "locale": "ko",
+  "title": "show",
+  "summary": "커밋 하나의 메타데이터·변경 파일 통계·patch를 조회한다.",
+  "purpose": "커밋 하나의 메타데이터·변경 파일 통계·patch를 조회한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "show"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "sha",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "조회할 commit의 hex id(4~64자). 옵션형 문자열이나 revspec은 거절된다."
+      }
+    ],
+    "example": {
+      "sha": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "show",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "sha": "fedcba9876543210fedcba9876543210fedcba98",
+      "parents": [
+        "0123456789abcdef0123456789abcdef01234567"
+      ],
+      "author_name": "Jane Doe",
+      "author_email": "jane@example.com",
+      "author_date": "2026-07-29T13:20:00+09:00",
+      "subject": "fix: update app",
+      "files": [
+        {
+          "path": "server/app.py",
+          "insertions": 3,
+          "deletions": 1
+        }
+      ],
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "HEAD/index/working tree를 바꾸지 않는 read-only 조회다(cat-file/show/diff-tree).",
+      "patch는 diff와 같은 1 MiB 상한에서 잘리며 truncated로 알린다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "sha가 없거나 이 저장소의 commit이 아니다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "sha 형식이 잘못됐다(reason=invalid_sha) 또는 요청에 show가 허용하지 않는 필드가 있다(reason=unknown_field)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "git show/diff-tree 명령이 실패했다."
+    }
+  ]
+}

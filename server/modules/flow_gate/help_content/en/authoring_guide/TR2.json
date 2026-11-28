@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Writing an apply proposal",
+  "summary": "Writing an apply proposal",
+  "purpose": "Writing an apply proposal",
+  "body": "Submit canonical JSON (document.json) with tr2_version=1, source_t2_doc_id and edit_spec with termination, edits, deferred and gate. Propose edit/create_file entries. The server computes baseline_fingerprint. For ready_to_apply include at least one edit and gate.apply=false."
+}

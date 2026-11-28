@@ -1,5 +1,13 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "カードの役割と設定",
+  "summary": "カードの役割と設定",
+  "purpose": "カードの役割と設定",
+  "request": {
+    "route": "{{route:cards.roles}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GETでsettings_version、context、optionsと設定のchoicesを確認します。{{route:cards.roles.update}}に変更するroles/settingsとexpected_settings_versionを送ります。GETのcontextはexpected_contextとして送れます。ユーザー指定のグループはfrom_groupを使い、明示のrolesが優先されます。nullは既定値に戻します。"
+  },
+  "response": "このチャットが配置したカードの変更を一括保存します。保存後に再度GETして適用された選択を確認します。",
+  "errors": "403 chat_card_not_ownedでは応答のnode_keyを確認します。409 gate_context_changedまたはnode_settings_lockedでは状態を再取得します。422 role_not_applicable、ai_not_selectable、setting_not_applicable、not_a_choiceでは許容値を確認します。"
 }

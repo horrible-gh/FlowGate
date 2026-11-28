@@ -1,0 +1,82 @@
+{
+  "locale": "ko",
+  "title": "move",
+  "summary": "일반 파일을 이동하거나 이름을 바꿉니다.",
+  "purpose": "일반 파일을 이동하거나 이름을 바꿉니다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "move"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "source_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "이동할 일반 파일의 상대경로입니다."
+      },
+      {
+        "name": "target_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "목표 상대경로입니다. 필요한 상위 디렉터리를 만듭니다."
+      }
+    ],
+    "example": {
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
+      "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요.",
+      "write/patch/move/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "move",
+      "moved": true,
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py",
+      "size": 42
+    },
+    "details": [
+      "파일 내용과 Git 스테이징을 보존합니다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "`source_not_found`"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "`target_exists / move_failed`"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "`same_path / unsafe_move_path / invalid_move_path`"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "`move_access_denied`"
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "`atomic_move_unavailable`"
+    }
+  ]
+}

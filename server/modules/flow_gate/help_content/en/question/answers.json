@@ -1,5 +1,12 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Read document answers",
+  "summary": "Read document answers",
+  "purpose": "Read document answers",
+  "request": {
+    "route": "{{route:document.read}}",
+    "details": "GET the target document. Read documents referenced by triggered_by and target_id the same way."
+  },
+  "response": "Read id, doc_id, Q and A in answers. A=null means unanswered.",
+  "errors": "If the document is unreadable, see documents/unreadable."
 }

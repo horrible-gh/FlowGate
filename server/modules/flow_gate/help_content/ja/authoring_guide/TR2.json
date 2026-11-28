@@ -1,0 +1,7 @@
+{
+  "locale": "ja",
+  "title": "反映案の作成",
+  "summary": "反映案の作成",
+  "purpose": "反映案の作成",
+  "body": "canonical JSON(document.json)にtr2_version=1、source_t2_doc_id、termination/edits/deferred/gateを含むedit_specを提出します。変更はedit/create_fileで提案します。baseline_fingerprintはサーバーが計算します。ready_to_applyではeditを1件以上としgate.apply=falseを指定します。"
+}

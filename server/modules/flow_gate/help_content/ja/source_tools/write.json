@@ -1,0 +1,143 @@
+{
+  "locale": "ja",
+  "title": "write",
+  "summary": "ファイルを新規作成、または内容を丸ごと置き換える。",
+  "purpose": "ファイルを新規作成、または内容を丸ごと置き換える。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "write"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "ソースルートからの相対パス。親ディレクトリは必要に応じて自動作成される。"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "ファイルの全内容を丸ごと書き込む。"
+      },
+      {
+        "name": "mode",
+        "type": "string",
+        "required": false,
+        "default": "overwrite",
+        "description": "create=新規ファイルのみ(存在時409) / overwrite=全体置換 / append=末尾に追記。"
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "エンコーディング。表現できない文字がある場合は422。"
+      },
+      {
+        "name": "base_sha256",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意。編集の基準にしたファイル内容のsha256(read応答のsource_sha256、直前のwrite/patch応答のsha256)。ディスクと異なれば409(reason=base_changed)で何も書き込まない。"
+      },
+      {
+        "name": "allow_mask_substitution",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "原文の値を '***' に置き換える変更を意図した場合のみtrue。reasonが必要で、サーバー監査ログに残る。"
+      },
+      {
+        "name": "allow_replacement_char",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "ディスクになかったU+FFFDを意図的に入れる場合のみtrue。reasonが必要。"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "allow_* フラグを使う理由。フラグがtrueなら必須。"
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "content": "<ファイル全体の内容>",
+      "mode": "create|overwrite|append",
+      "encoding": "utf-8"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
+      "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。",
+      "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "write",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "bytes_written": 18342,
+      "created": false,
+      "continuation": {
+        "ment": "作業レポートに変更ファイルを記録します。",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "このツールはファイル全体を上書きする。一部だけ変更する場合はpatchを使う。",
+      "成功応答のcontinuation.mentは次の行動指示である。変更したファイルを作業レポートに要約して残す。",
+      "成功応答のsha256は保存後ファイルのハッシュ(次の編集のbase_sha256に使う)。.py/.jsonならpost_write_checkに構文チェック結果が入る。失敗しても書き込みは完了しているので直ちに直す。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "mode=createでファイルがすでに存在する。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "グループ作業領域を使用できない(別グループのマージセッションが開いているか、ワークツリー準備に失敗)。理由はerror.details.causeに入る。"
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "contentがサーバー上限を超える。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "パスがソースルート外か、contentを指定encodingで表現できない。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにwriteスコープがない(調査専用段階)。"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "base_sha256を送ったがディスクの内容が異なる(reason=base_changed, details.current_sha256)。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "原文の値を '***' に置き換えた行がある(reason=masked_substitution_suspect, details.lines)、またはディスクになかったU+FFFDが新たに入った(reason=replacement_char_introduced)。行の内容は応答に含めない。"
+    }
+  ]
+}

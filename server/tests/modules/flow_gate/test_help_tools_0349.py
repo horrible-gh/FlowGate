@@ -76,11 +76,11 @@ def test_list_read_write_read_none_shapes(monkeypatch, token_rec, expected_kind,
 def test_query_locale_precedes_x_locale_and_invalid_folds_ko(monkeypatch):
     client = _client(monkeypatch, {"project": "flowgate", "action_scope": "review"})
     preferred = client.get("/api/v1/help/tools?locale=en", headers={"x-locale": "ja"})
-    assert preferred.json()["tools"][0]["summary"] == "Read a file"
+    assert preferred.json()["tools"][0]["summary"] == "Read a single file from the remote project source tree."
 
     invalid = client.get("/api/v1/help/tools?locale=zh", headers={"x-locale": "ja"})
     assert invalid.status_code == 200
-    assert invalid.json()["tools"][0]["summary"] == "파일 읽기"
+    assert invalid.json()["tools"][0]["summary"] == "원격 프로젝트 소스의 파일 하나를 읽는다."
 
     # The full sentence of the same tool is still served, per tool, one call deeper.
     detail = client.get("/api/v1/help/tools/read?locale=en").json()["tool"]
@@ -94,17 +94,14 @@ def test_detail_read_and_write_contracts(monkeypatch, name):
     assert response.status_code == 200
     body = response.json()
     tool = body["tool"]
-    assert tool["name"] == name
-    assert tool["method"] == "POST"
-    assert tool["path"] == f"/remote/{name}"
-    assert tool["example_request"]["url"].endswith(f"/remote/{name}")
-    assert tool["example_request"]["headers"]["Authorization"] == "Bearer <YOUR_TOKEN>"
-    assert tool["request_fields"]
+    assert tool["title"] == name
+    assert tool["request"]["route"].endswith("/remote/{name}")
+    assert tool["request"]["path_parameters"] == {"name": name}
+    assert tool["request"]["headers"]["Authorization"] == "Bearer <YOUR_TOKEN>"
+    assert tool["request"]["fields"]
+    assert tool["response"]["example"]["op"] == name
     assert tool["errors"]
-    assert tool["cautions"]
-    assert len(body["notes"]) == (5 if name == "write" else 3)
-    if name == "write":
-        assert any("scratch directory" in note and "0382" in note for note in body["notes"])
+    assert body["language"]["resolved_locale"] == "en"
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
@@ -112,10 +109,10 @@ def test_detail_read_and_write_contracts(monkeypatch, name):
 def test_diff_log_details_render_in_every_catalog_locale(monkeypatch, locale, name):
     client = _client(monkeypatch, {"project": "flowgate", "action_scope": "review"})
     tool = client.get(f"/api/v1/help/tools/{name}?locale={locale}").json()["tool"]
-    assert tool["name"] == name and tool["scope"] == "read"
-    assert tool["example_request"]["body"]["target_ref"] == "origin/main"
-    assert tool["example_response"]["merge_base"]
-    assert tool["summary"] and tool["request_fields"] and tool["errors"] and tool["cautions"]
+    assert tool["title"] == name
+    assert tool["request"]["example"]["target_ref"] == "origin/main"
+    assert tool["response"]["example"]["merge_base"]
+    assert tool["summary"] and tool["request"]["fields"] and tool["errors"]
 
 
 def test_detail_unknown_is_404_before_availability_check(monkeypatch):

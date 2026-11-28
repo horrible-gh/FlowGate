@@ -1,0 +1,82 @@
+{
+  "locale": "en",
+  "title": "move",
+  "summary": "Move or rename a regular file.",
+  "purpose": "Move or rename a regular file.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "move"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "source_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Source-root-relative path of the regular file to move."
+      },
+      {
+        "name": "target_path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Source-root-relative target. Missing parent directories are created."
+      }
+    ],
+    "example": {
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools.",
+      "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch.",
+      "After write, patch, move, or remove succeeds, summarize the changed source files in the task report."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "move",
+      "moved": true,
+      "source_path": "app/old.py",
+      "target_path": "lib/new.py",
+      "size": 42
+    },
+    "details": [
+      "File bytes and Git staging are preserved."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "source_not_found"
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "target_exists / move_failed"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "same_path / unsafe_move_path / invalid_move_path"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "move_access_denied"
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "atomic_move_unavailable"
+    }
+  ]
+}

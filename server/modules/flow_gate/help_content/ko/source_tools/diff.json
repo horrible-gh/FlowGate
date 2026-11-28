@@ -1,0 +1,73 @@
+{
+  "locale": "ko",
+  "title": "diff",
+  "summary": "merge-base 이후 상대 ref 쪽 변경 patch를 조회한다.",
+  "purpose": "merge-base 이후 상대 ref 쪽 변경 patch를 조회한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "diff"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "선택적 소스 루트 상대 경로."
+      },
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>."
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main",
+      "path": "server/app.py"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "diff",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "target_ref": "origin/main",
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "HEAD와 target_ref의 merge-base부터 target_ref까지만 비교한다. HEAD 쪽 고유 변경은 포함하지 않는다.",
+      "patch는 1 MiB에서 잘리며 truncated로 알린다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "ref가 없거나 merge-base/diff git 명령이 실패했다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "ref 또는 path 형식이 잘못됐다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    }
+  ]
+}

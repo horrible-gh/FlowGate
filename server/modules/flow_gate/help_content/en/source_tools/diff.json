@@ -1,0 +1,73 @@
+{
+  "locale": "en",
+  "title": "diff",
+  "summary": "Return the target ref patch since its merge base with HEAD.",
+  "purpose": "Return the target ref patch since its merge base with HEAD.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "diff"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional source-root-relative path."
+      },
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Target ref; option-shaped values and revspecs are forbidden. Omitted: the token group's work base (the project base without a group) start point — origin/<branch> when origin is ahead, else <branch>."
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main",
+      "path": "server/app.py"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "diff",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "target_ref": "origin/main",
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "Only merge-base-to-target_ref changes are compared; HEAD-only changes are excluded.",
+      "The patch is capped at 1 MiB and truncation is reported."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "The ref is missing or the merge-base/diff git command failed."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The ref or path has an invalid form."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the read scope."
+    }
+  ]
+}

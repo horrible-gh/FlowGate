@@ -1,5 +1,13 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Search prior answers",
+  "summary": "Search prior answers",
+  "purpose": "Search prior answers",
+  "request": {
+    "search": "{{route:question.search}}?q=<keyword>&limit=10",
+    "detail": "{{route:question.search_item}}",
+    "details": "Apply question/policy and search when user judgment is required. Literal terms are ORed and ranked by relevance. Paginate with next_cursor for the same project, query and version. Legacy next_before_id is a ranked anchor."
+  },
+  "response": "Rows contain answer_id, doc_id, seq, title, author_label, score, matched_terms and answer_preview. Open detail for text and provenance. Reuse answers applicable to the current instructions and policy. HTTP 200 reused_answer and continue_with_existing_answer mean proceed using the existing answer.",
+  "errors": "On 409 existing_answer_requires_reason use the answer or resubmit with rejected_answer_id and reuse_rejection_reason. Direct batch registration is atomic on this rejection. Document-accompanied registration keeps the document and reports item_results."
 }

@@ -1,0 +1,143 @@
+{
+  "locale": "en",
+  "title": "write",
+  "summary": "Create a file or replace its entire content.",
+  "purpose": "Create a file or replace its entire content.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "write"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Path relative to the source root. Parent directories are created as needed."
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Complete file content written as a whole."
+      },
+      {
+        "name": "mode",
+        "type": "string",
+        "required": false,
+        "default": "overwrite",
+        "description": "create=new files only (409 if present) / overwrite=replace all / append=add at end."
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "Encoding. Characters that cannot be represented in it return 422."
+      },
+      {
+        "name": "base_sha256",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional. sha256 of the content your edit is based on (read's source_sha256, or the sha256 of the previous write/patch response). If the disk differs, 409 (reason=base_changed) and nothing is written."
+      },
+      {
+        "name": "allow_mask_substitution",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "true only when replacing original text with '***' is intended. Requires reason; recorded in the server audit log."
+      },
+      {
+        "name": "allow_replacement_char",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "true only when adding U+FFFD that is not on disk is intended. Requires reason."
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Why an allow_* flag is used. Required when a flag is true."
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "content": "<complete file content>",
+      "mode": "create|overwrite|append",
+      "encoding": "utf-8"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools.",
+      "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch.",
+      "After write, patch, move, or remove succeeds, summarize the changed source files in the task report."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "write",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "bytes_written": 18342,
+      "created": false,
+      "continuation": {
+        "ment": "Record the changed files in the work report.",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "This tool overwrites the entire file. Use patch to change only part of it.",
+      "continuation.ment in a success response gives the next action. Summarize changed files in the task report.",
+      "sha256 in a success response is the hash of the stored file (use it as the next base_sha256). For .py/.json, post_write_check carries a syntax check; a failure does not undo the write, so fix it right away."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "mode=create was requested but the file already exists."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "The group workspace is unavailable (another group's merge session is open or worktree preparation failed). The reason is in error.details.cause."
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "content exceeds the server limit."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The path escapes the source root or content cannot be represented in the requested encoding."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the write scope (investigation-only step)."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "base_sha256 was sent and the disk content differs (reason=base_changed, details.current_sha256)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "A line replaces original text with '***' (reason=masked_substitution_suspect, details.lines), or adds U+FFFD that is not on disk (reason=replacement_char_introduced). Line text is never echoed."
+    }
+  ]
+}

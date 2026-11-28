@@ -1,5 +1,83 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 3
+  "title": "TR 자체 검증 실행",
+  "summary": "TR 자체 검증 실행",
+  "purpose": "TR 자체 검증 실행",
+  "request": {
+    "edit": {
+      "run": "{{route:self_check.run}}",
+      "list": "{{route:self_check.list}}",
+      "read": "{{route:self_check.read}}",
+      "cancel": "{{route:self_check.cancel}}"
+    },
+    "draft": {
+      "run": "{{route:self_check.draft.run}}",
+      "list": "{{route:self_check.draft.list}}",
+      "read": "{{route:self_check.draft.read}}",
+      "cancel": "{{route:self_check.draft.cancel}}"
+    },
+    "authorization": "Bearer {{token}}",
+    "limits": "{{self_check}}",
+    "fields": {
+      "program": "실행 파일 이름 하나. 예: pytest. 명령 문자열 전체 금지.",
+      "args": "옵션과 대상 경로의 문자열 배열. 기본 [].",
+      "cwd": "관리 워크트리 기준 상대 경로. 기본 \".\".",
+      "timeout_seconds": "실행 제한 시간(초), 양의 정수. 생략하면 카드 한도이며, 큰 값은 카드 한도로 줄인다.",
+      "parallel_share": "이 실행이 쓸 처리기(worker) 수 희망, 1 이상 정수. 기본 1. 실행은 받은 예약 수만큼의 처리기에서만 돈다."
+    },
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": "{{timeout_seconds}}",
+      "parallel_share": 1
+    },
+    "details": "edit에는 토큰에 바인딩된 tr_doc_id를, new에는 draft 경로를 사용합니다. draft 실행은 토큰 소유이며 TR 저장 시 문서에 연결됩니다.",
+    "command": "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다."
+  },
+  "response": {
+    "success_status": {
+      "run": 202,
+      "read": 200,
+      "cancel": 200,
+      "list": 200
+    },
+    "states": [
+      "queued",
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "result_fields": [
+      "self_check_run_id",
+      "status",
+      "exit_code",
+      "timed_out",
+      "stdout_tail",
+      "stderr_tail",
+      "source_changed_during_run",
+      "worktree_state_changed",
+      "error_code",
+      "result_summary",
+      "environment_evidence"
+    ],
+    "details": [
+      "TR 작성(new)·수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
+      "run_self_check → self_check_run_id 수신 → 작업을 계속하고 필요할 때 read_self_check로 결과 조회. 필요하면 cancel_self_check.",
+      "exit_code 가 0 이 아닌 completed 는 전송 실패가 아니라 실제 검증 실패일 수 있다. stdout_tail/stderr_tail 을 읽고 → 범위 안에서 코드를 고치고 → 새 run_self_check 를 실행하는 것이 정상 절차다.",
+      "status=failed 는 실행 자체가 실패한 것이다. error_code 를 아래 오류 표로 해석한다.",
+      "source_changed_during_run / worktree_state_changed 가 true 이면 실행 중 소스나 워크트리 상태가 바뀐 것이므로 결과를 그대로 믿지 말고 안정된 뒤 다시 실행한다."
+    ]
+  },
+  "errors": {
+    "details": [
+      "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
+      "요청·실행 오류 코드는 submit/check_errors를 확인합니다. 경로 오류는 error.code, 인증 거절은 http_status와 error_message를 확인합니다."
+    ]
+  }
 }

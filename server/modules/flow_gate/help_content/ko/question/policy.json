@@ -1,5 +1,10 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 3
+  "title": "사용자 질의 방침",
+  "summary": "사용자 질의 방침",
+  "purpose": "사용자 질의 방침",
+  "body": {
+    "label": "사용자가 작성한 원문",
+    "original": "{{question_policy}}"
+  }
 }
