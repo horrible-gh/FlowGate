@@ -230,6 +230,10 @@ def get_run_detail(run_id: str) -> dict:
     payload["succeeded"] = ai_run_succeeded(payload)
     payload["source_access"] = chat_source_access(token_id)
     payload["command_access"] = chat_command_access(token_id)
+    # F107-14: read-only marker of a run that was sent to a remote Agent (it carried a
+    # `remote_job`, live or persisted). A server-local CLI run and an API run never have one,
+    # so the chat shows the dying-message box for the remote CLI path only.
+    payload["remote_cli"] = isinstance((record if record is not None else row).get("remote_job"), dict)
     from modules.flow_gate.db import chat_ai_leases
     payload["observed_during_card_run"] = chat_ai_leases.observation(run_id)
     payload["doc_title"] = None

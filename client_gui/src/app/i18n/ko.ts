@@ -1477,6 +1477,11 @@ export default {
       remote_path_invalid: '에이전트가 작업 디렉터리 경로를 사용할 수 없습니다. 원격 작업 디렉터리를 확인하세요',
       remote_agent_rejected: '에이전트가 실행을 거절했습니다',
       remote_agent_failed: '에이전트가 실행을 시작하지 못했습니다',
+      // F107-14: the last message of a run that ended without a reply turn (preview box under run_no_reply).
+      dying_title: '마지막 메세지 · 대화에 등록되지 않음',
+      dying_more: '… 외 {n}줄',
+      dying_open: '전체 보기',
+      dying_work_folder: '작업 폴더/…',
     },
     participants: {
       all: '참여자 {count}명',

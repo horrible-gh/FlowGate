@@ -149,8 +149,9 @@
     </div>
   </div>
 
+  <div v-else class="tl-status-group">
+  <!-- F107-14: one root for the line and its last-message box; `display: contents` keeps both laid out as before. -->
   <div
-    v-else
     ref="rootEl"
     class="tl-status"
     :class="[`tl-status--${activity.tone}`, { 'tl-status--running': running, 'tl-status--flow-wait': activity.code === 'follow_up_flow_waiting' }]"
@@ -206,13 +207,34 @@
     >{{ copyState === 'done' ? '✓' : copyState === 'failed' ? '✕' : '⧉' }}</button>
     <span v-if="copyState !== 'idle'" class="tl-sr" role="status">{{ copyLabel }}</span>
   </div>
+  <!-- F107-14: a remote CLI run that ended without a reply turn left its last message on the run record only.
+       Its content lines (marks removed, secrets and local paths masked) run on as one paragraph clamped to
+       3 screen lines; "… 외 n줄" counts the original lines the clamp does not show whole (measured). The
+       whole text opens in the AI notification detail window (modeless, one at a time), never in place. -->
+  <div
+    v-if="dying"
+    class="tl-dying"
+    data-test="tl-dying"
+    role="group"
+    :aria-label="t('gui.conversation.status.dying_title')"
+  >
+    <div class="tl-dying-head">{{ t('gui.conversation.status.dying_title') }}</div>
+    <p ref="dyingTextEl" class="tl-dying-text" data-test="tl-dying-text"><template v-for="(line, i) in dying.lines" :key="i"><span class="tl-dying-line" data-test="tl-dying-line">{{ line }}</span>{{ i < dying.lines.length - 1 ? ' ' : '' }}</template></p>
+    <div class="tl-dying-foot">
+      <span v-if="dyingMore > 0" class="tl-dying-more" data-test="tl-dying-more">{{ t('gui.conversation.status.dying_more', { n: dyingMore }) }}</span>
+      <button type="button" class="tl-act-btn tl-dying-open" data-test="tl-dying-open" @click="openDying">{{ t('gui.conversation.status.dying_open') }}</button>
+    </div>
+  </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyToClipboard } from '../../core/interaction/clipboard'
 import { formatTimelineTime, summarizeChange } from './timeline'
+import { dyingMessagePreview, hiddenDyingLines } from './dyingMessage'
+import { openAiNotificationDetail } from '@/features/designer/top/notifications/aiNotificationDetailWindow'
 import type { CommandDecision, TimelineActivityEntry } from './types'
 
 const props = defineProps<{
@@ -351,6 +373,89 @@ const statusText = computed(() => {
   if (known && a.text) return `${known} (${a.text})`
   return known || a.text || a.code || ''
 })
+
+// ── F107-14: the last message of a run that ended without a reply turn ──
+/** the preview under a `run_no_reply` line, or null (no message, or not a remote CLI run: the badge stays alone). */
+const dying = computed(() => {
+  const a = props.activity
+  if (a.kind !== 'status' || a.code !== 'run_no_reply' || !a.runResult?.lastMessage) return null
+  return dyingMessagePreview(a.runResult.lastMessage, t('gui.conversation.status.dying_work_folder'))
+})
+
+const dyingTextEl = ref<HTMLElement | null>(null)
+/** original lines the 3-line clamp leaves out, measured on screen; null until the box has a layout. */
+const dyingHidden = ref<number | null>(null)
+/** before any layout only the lines the character cap kept out of the DOM are known to be missing. */
+const dyingMore = computed(() => {
+  const preview = dying.value
+  if (!preview) return 0
+  return dyingHidden.value ?? preview.totalLines - preview.lines.length + (preview.lastLineCut ? 1 : 0)
+})
+
+/**
+ * the width of the "…" the clamp draws, measured in the paragraph's font by a hidden probe next to it
+ * (outside the paragraph, so its size and the ResizeObserver are untouched); 1em when nothing measures.
+ */
+function ellipsisWidth(el: HTMLElement): number {
+  const em = Number.parseFloat(getComputedStyle(el).fontSize) || 11
+  const host = el.parentElement
+  if (!host) return em
+  const probe = document.createElement('span')
+  probe.textContent = '…'
+  probe.setAttribute('aria-hidden', 'true')
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit;line-height:inherit'
+  host.appendChild(probe)
+  const width = probe.getBoundingClientRect().width
+  probe.remove()
+  return width > 0 ? width : em
+}
+
+/**
+ * counts the lines the clamped paragraph does not show whole (see hiddenDyingLines): folded past the
+ * third row, or reaching under the "…" the clamp draws at the end of the third row.
+ */
+function measureDying(): void {
+  const el = dyingTextEl.value
+  const preview = dying.value
+  if (!el || !preview) return
+  const spans = Array.from(el.querySelectorAll<HTMLElement>('.tl-dying-line'))
+  const rect = el.getBoundingClientRect()
+  const hidden = hiddenDyingLines(preview, spans.map((span) => span.getClientRects()),
+    { bottom: rect.bottom, right: rect.right, ellipsis: ellipsisWidth(el) })
+  if (hidden != null) dyingHidden.value = hidden
+}
+
+// the count follows the box width (panel resize, dock moves) and a box shown after being hidden.
+let dyingResize: ResizeObserver | null = null
+watch(dyingTextEl, (el) => {
+  dyingResize?.disconnect()
+  dyingResize = null
+  if (el && typeof ResizeObserver !== 'undefined') {
+    dyingResize = new ResizeObserver(() => measureDying())
+    dyingResize.observe(el)
+  }
+})
+watch(dying, () => {
+  dyingHidden.value = null
+  void nextTick(measureDying)
+})
+onMounted(() => { void nextTick(measureDying) })
+onBeforeUnmount(() => { dyingResize?.disconnect(); dyingResize = null })
+
+/** [전체 보기]: the existing detail window shows this run (another run's press replaces its content). */
+function openDying(): void {
+  const a = props.activity
+  if (a.kind !== 'status' || !a.runResult) return
+  const run = a.runResult
+  openAiNotificationDetail({
+    run_id: run.runId,
+    doc_ref: run.docRef ?? a.chatId ?? null,
+    end_reason: run.endReason,
+    outcome: run.outcome ?? null,
+    provider_name: run.providerName ?? null,
+    finished_at: run.finishedAt ?? null,
+  })
+}
 
 // ── the earlier change C: copy of a failure (same icon, feedback and wording as a message's copy) ──
 const FAILED_COMMANDS = new Set(['failed', 'timed_out', 'cancelled', 'rejected'])
@@ -790,6 +895,54 @@ async function copyError(): Promise<void> {
 .tl-status-time {
   flex: 0 0 auto;
   color: var(--fg2-muted-2);
+}
+
+.tl-status-group {
+  display: contents;
+}
+
+/* F107-14: the last-message box under the no-reply badge — at most 3 lines, never expanded in place. */
+.tl-dying {
+  align-self: center;
+  box-sizing: border-box;
+  width: min(92%, 560px);
+  padding: 6px 9px;
+  border: 1px solid var(--fg2-status-warning-border);
+  border-radius: 8px;
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
+  font-size: 11px;
+}
+
+.tl-dying-head {
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+
+.tl-dying-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  max-height: calc(1.45em * 3);
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.tl-dying-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.tl-dying-more {
+  margin-right: auto;
+  color: var(--fg2-muted);
 }
 
 /* C: the message copy button (TimelineMessage .tl-copy), same look and feedback. */
