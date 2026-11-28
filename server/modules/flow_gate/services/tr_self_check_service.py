@@ -1144,13 +1144,13 @@ def stop_reason(row: dict, reason: str | None = None) -> str | None:
     server = proof.owner_server_state(proof.owner_instance_of(row))
     if server.detail.get("cause") == "other_node":
         return "host_changed"
-    if reason in ("host_changed", "processes_remain", "owner_alive"):
+    if reason in ("host_changed", "processes_remain", "owner_alive", "release_unconfirmed"):
         return reason
     if reason in (proof.TREE_UNPROVEN, "process_terminate_failed"):
         return "processes_remain"
     if server.state == proof.MATCH and (not server.detail.get("self") or _worker_alive(row["self_check_run_id"])):
         return "owner_alive"
-    return "ownership_unknown" if not server.gone and server.state != proof.MATCH else "processes_remain"
+    return "ownership_unknown" if not server.gone and server.state != proof.MATCH else "release_unconfirmed"
 
 
 def _worker_alive(run_id: str) -> bool:

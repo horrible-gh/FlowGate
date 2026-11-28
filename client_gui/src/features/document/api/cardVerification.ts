@@ -10,7 +10,7 @@
 //                    run: { self_check_run_id, status, started_at, enqueued_at, finished_at, show_at, elapsed_seconds } | null,
 //                    blocker: run + { flow_id, node_key, label, project_id } | null,
 //                    actions: [force_stop | cancel_waiting | mark_ended],
-//                    stop_reason: host_changed | processes_remain | owner_alive | <other> | absent (stop_failed only) }
+//                    stop_reason: host_changed | processes_remain | owner_alive | release_unconfirmed | <other> | absent (stop_failed only) }
 //   mark ended    POST /api/v1/flows/{flow_id}/nodes/{node_key}/self-check/runs/{run_id}/mark-ended      -> { verification }
 //
 // flowgate.v02test.0084 #13: `stop_reason` says why a stop could not be confirmed and `mark_ended` (stop_failed only)

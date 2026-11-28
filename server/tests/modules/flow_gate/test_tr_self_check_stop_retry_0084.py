@@ -90,6 +90,31 @@ def test_foreign_host_never_killed_and_reason_is_public(retry, monkeypatch):
     assert not calls
 
 
+@pytest.mark.parametrize('owner_state', [proof.MATCH, proof.ABSENT])
+def test_stop_without_process_evidence_is_unconfirmed(retry, monkeypatch, owner_state):
+    row, calls = retry
+    monkeypatch.setattr(proof, 'owner_server_state',
+                        lambda owner: proof.Proof(owner_state, detail={'self': True}))
+    assert service.stop_reason(row) == 'release_unconfirmed'
+    assert calls == []
+
+
+@pytest.mark.parametrize('reason', ['processes_remain', proof.TREE_UNPROVEN, 'process_terminate_failed'])
+def test_stop_with_process_evidence_keeps_process_reason(retry, reason):
+    row, calls = retry
+    assert service.stop_reason(row, reason) == 'processes_remain'
+    row['recovery_reason'] = reason
+    assert service.stop_reason(row) == 'processes_remain'
+    assert calls == []
+
+
+def test_saved_release_unconfirmed_remains_public(retry):
+    row, calls = retry
+    row['recovery_reason'] = 'release_unconfirmed'
+    assert service.stop_reason(row) == 'release_unconfirmed'
+    assert calls == []
+
+
 def test_force_stop_keeps_error_reason(retry, monkeypatch):
     row, calls = retry
     monkeypatch.setattr(service, '_controls', {})

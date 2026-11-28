@@ -16,7 +16,7 @@ export const VERIFICATION_IDLE_POLL_MS = 30000
 export type VerificationButton = 'force_stop' | 'retry_stop' | 'mark_ended' | 'go' | 'cancel_waiting'
 
 /** flowgate.v02test.0084 #13 — the stop reasons the line names; any other code the server sends reads as `unknown`. */
-export const VERIFICATION_STOP_REASONS = ['host_changed', 'processes_remain', 'owner_alive'] as const
+export const VERIFICATION_STOP_REASONS = ['host_changed', 'processes_remain', 'owner_alive', 'release_unconfirmed'] as const
 export type VerificationStopReason = (typeof VERIFICATION_STOP_REASONS)[number] | 'unknown'
 
 /** The `종료 실패` line's reason key, or null (another state, or a server that sends no reason). */

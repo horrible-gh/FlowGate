@@ -15,6 +15,7 @@ export default {
     reason: {
       host_changed: '서버가 바뀌어 확인할 수 없음',
       processes_remain: '남은 프로세스가 있음',
+      release_unconfirmed: '종료 확인이 아직 안 됨',
       owner_alive: '검증 작업이 아직 끝나지 않음',
       unknown: '종료를 확인하지 못함',
     },
@@ -40,6 +41,7 @@ export default {
     reason: {
       host_changed: 'Cannot check: the server changed',
       processes_remain: 'Processes remain',
+      release_unconfirmed: 'Stop not yet confirmed',
       owner_alive: 'The verification job has not ended',
       unknown: 'Could not confirm the stop',
     },
@@ -65,6 +67,7 @@ export default {
     reason: {
       host_changed: 'サーバーが変わったため確認できません',
       processes_remain: 'プロセスが残っています',
+      release_unconfirmed: '終了をまだ確認できていません',
       owner_alive: '検証ジョブがまだ終わっていません',
       unknown: '終了を確認できません',
     },
