@@ -1471,6 +1471,11 @@ export default {
       remote_path_invalid: 'Agent が作業ディレクトリのパスを使用できません。リモート作業ディレクトリを確認してください',
       remote_agent_rejected: 'Agent が実行を拒否しました',
       remote_agent_failed: 'Agent が実行を開始できませんでした',
+      // F107-14: the last message of a run that ended without a reply turn (preview box under run_no_reply).
+      dying_title: '最後のメッセージ · 会話に登録されていません',
+      dying_more: '… ほか {n} 行',
+      dying_open: '全文を見る',
+      dying_work_folder: '作業フォルダ/…',
     },
     participants: {
       all: '参加者 {count}人',
