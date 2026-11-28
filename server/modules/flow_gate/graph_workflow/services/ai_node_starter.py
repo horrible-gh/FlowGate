@@ -152,7 +152,7 @@ def start_ai_invoke(job: dict) -> dict:
                 "token_id": issue["token_id"], "action_scope": scope, "doc_ref": doc_ref,
                 "issued_to": job["issued_to"], "ai_run_id": ai_run_id,
             },
-            card_locale=job.get("locale"), card_node=card_node,
+            card_locale=job.get("locale"), card_node=job.get("node"),
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
             # the instruction stage's edit writes the line's empty document for the first time —

@@ -122,23 +122,7 @@ def _chat_lookup_sections(
     *, base: str, raw_token: str, project: str, group_name: str,
     source_access: Optional[str] = None,
 ) -> list[str]:
-    """Read-only source + document search block for the chat mention.
-
-    's symptom: asked to check something in the source, the chat worker had no
-    API for anything outside its own CH document, so it guessed at a local directory
-    and reported the guess as fact. The scopes were never the problem — a chat token
-    already resolves to ["read", "grep"] (glob shares grep's scope), and verify_bearer
-    accepts it on /search/documents* — the mention simply never said so (the review finding
-    1/4). So this adds text, not permission.
-
-    The source section is the same builder N/NR mentions use, asked for a "CH" step so
-    it renders its read/search-only variant, behind the same source-mode gate: when the
-    project runs in local mode there is no remote source API to advertise (finding 3).
-    Document search stays either way — it reads storage, not the source tree.
-
-    Kept deliberately small. the earlier implementation.0010 rejected a chat mention padded with
-    non-chat sections, and compactness is still the rule here (finding 9).
-    """
+    """Legacy source and document lookup, gated by the token capability."""
     # Lazy: mention_service pulls in the full mention stack, and this module is
     # imported by the invoke path at request time.
     from modules.flow_gate.services import mention_service
@@ -146,23 +130,7 @@ def _chat_lookup_sections(
     sections: list[str] = []
     source_included = mention_service._include_remote_source_crud(project)
     if source_included:
-        # build_conversation_mention has no locale parameter of its own (chat mention
-        # stays English-only by design — see its docstring); pin "en" explicitly rather
-        # than falling through to the shared function's ko default.
-        #
-        # action_scope must be "chat", not the default "new": passing
-        # the real scope is what keeps this judge matching whatever remote_tool_service
-        # actually grants a chat token, instead of guessing from the step type alone.
-        # Under 0392's chat=none policy the two diverged — default "new" judged "read"
-        # while a real chat token got "none" — so this call used to render the section
-        # empty. the earlier implementation/the review flips that policy: kind_for_step now returns "read"
-        # for "chat" at the same early branch as "review"/"workflow_decide", so the
-        # section renders the four read-only tools, still matching what the token can
-        # actually call.
-        # the just-issued token's real capability, when known, wins over
-        # the generic chat default (kind_for_step("chat", ...) always answers "read",
-        # blind to this user's edit/edit_once setting). None/damaged falls through to
-        # that same default via _remote_source_crud_section's own kind=None branch.
+        # Preserve the legacy locale and use the issued token capability.
         section = mention_service._remote_source_crud_section(
             base, raw_token, "CH", "en", action_scope="chat",
             kind=source_access if source_access in ("read", "read_write") else None,
@@ -184,16 +152,12 @@ def _chat_lookup_sections(
     if source_included:
         search_lines += [
             "",
-            # Finding 5: every remote path is root-relative and the server picks the root
-            # (this group's worktree, else the project branch checkout). Naming an
-            # absolute path here would just give the worker a new wrong thing to trust.
             "Source paths are relative to the project source root, which the server resolves",
             "on its own (this group's worktree, otherwise the project branch checkout). Do not",
             "guess local absolute paths or search your own filesystem — use the APIs above.",
         ]
     search_lines += [
         "",
-        # Finding 8: a successful edit consumes the token and its remote grant dies with it.
         "Submitting your turn consumes this token, so finish all reading and searching first.",
     ]
     sections.append("## Document search and lookup rules\n---\n" + "\n".join(search_lines))
@@ -287,9 +251,6 @@ def _fold_notice(
         f"GET {api_base}/conversation/{doc_id}/turns?before_seq={first}",
         f"Authorization: Bearer {raw_token}",
         "If `prev_before_seq` is not null, call again with that value to keep going further back.",
-        # Said again here on purpose. The paragraph above carries the same rule, but the
-        # place where "am I allowed to read further back" is actually decided is this
-        # one.
         "Paging back does not consume this token either.",
     ]
 
@@ -484,9 +445,7 @@ def build_conversation_mention(
     lines += ["", brief("chat.current_mode", source_access=source_access,
                         command_access=command_access, one_shot_claimed=one_shot_claimed,
                         locale=_locale(locale))]
-    # Right behind the paragraph that named the starting point, and ahead of the reply
-    # instructions: said in that order the worker reads the two as one thought. Appended
-    # at the end of the document it reads the first half and moves on (scenario 11).
+    # Keep the selected range and earlier-page access together.
     if folded > 0:
         lines += [""] + _fold_notice(
             api_base=api_base,
@@ -668,6 +627,28 @@ def compose_rework_mention(base: str, doc: dict, reject_reason: Optional[str], *
     Both chunks already end in a blank line, so joining on "\n" leaves exactly one blank line
     between every pair.
     """
+    from modules.flow_gate.services import terminal_prompt, mention_service
+    _, task = terminal_prompt.split(base)
+    if task and "mention" in task:
+        loc = task["locale"]
+        reason = reject_reason or doc.get("rejection_reason") or ""
+        prior = _rejection_history(doc)[:-1]
+        heading = {"ko": "반려 사유", "en": "Rejection reason", "ja": "差し戻し理由"}[loc]
+        history_heading = {"ko": "이전 반려 이력", "en": "Prior rejection history", "ja": "以前の差し戻し履歴"}[loc]
+        values = task["mention"]["values"]
+        old_reason = doc.get("rejection_reason") or ""
+        old_section = f"## {heading}\n---\n{old_reason}"
+        materials = values.get("materials") or ""
+        if old_reason and materials.startswith(old_section):
+            materials = materials[len(old_section):].lstrip("\n")
+        values["materials"] = materials
+        chunks = [f"## {heading}\n---\n{reason}"] if reason else []
+        if prior:
+            chunks.append(f"## {history_heading}\n---\n" + "\n".join(
+                f"- [{item.get('rejected_at', '')}] {item.get('reason', '')}" for item in prior))
+        if handoff:
+            chunks.append(handoff)
+        return mention_service.add_card_materials(task, "\n\n".join(chunks))
     section = build_rejection_section(_rejection_history(doc), reject_reason or doc.get("rejection_reason"))
     leading = [chunk for chunk in (section, handoff) if chunk]
     return "\n".join(leading) + "\n" + base if leading else base
@@ -872,7 +853,10 @@ def prepend_pre_instruction_section(
     :func:`modules.flow_gate.services.work_plan_attachment_service.resolve_pre_instruction`,
     which raises rather than returning an invalid one. This function only formats.
     """
-    loc = _locale(locale)
+    from modules.flow_gate.services import terminal_prompt, mention_service
+    _, task = terminal_prompt.split(mention_text)
+    compact = bool(task and "mention" in task)
+    loc = task["locale"] if compact else _locale(locale)
     parts: list[str] = []
     if text and text.strip():
         parts.append(text.strip())
@@ -886,6 +870,8 @@ def prepend_pre_instruction_section(
     if not body:
         return mention_text
     section = f"## {_PRE_INSTRUCTION_SECTION_HEADER[loc]}\n---\n{body}"
+    if compact:
+        return mention_service.add_card_materials(task, section)
     if not mention_text:
         return section
     return section + SECTION_SEPARATOR + mention_text

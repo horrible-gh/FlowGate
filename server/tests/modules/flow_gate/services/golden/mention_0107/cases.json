@@ -1,0 +1,629 @@
+{
+  "description": "Fixed synthetic inputs. Limits count Unicode code points including material; each initial limit is chars + max(64, ceil(chars * 0.05)). Raising a limit requires a review reason. No live token or deployment verification. Card limits corrected after review 2883: replace raw catalog keys on the task line with localized first_write/rework phrases; same margin formula.",
+  "cases": [
+    {
+      "file": "en/card.edit.txt",
+      "mode": "card.edit",
+      "locale": "en",
+      "kind": "rework",
+      "facts": {
+        "mode": "card.edit",
+        "kind": "rework",
+        "doc_type": "TR",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0004-TR",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 2,
+        "submit_action": "edit",
+        "expected_revision": 2,
+        "edit_reason": "rejected",
+        "reference_doc_ids": "demo.test.0001.0001-R",
+        "rejection_ref": "rejection_id=golden-rejection"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "TR",
+        "self_check": "60s / 10"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1231,
+      "max_chars": 1295
+    },
+    {
+      "file": "en/card.read.txt",
+      "mode": "card.read",
+      "locale": "en",
+      "kind": "first_write",
+      "facts": {
+        "mode": "card.read",
+        "kind": "first_write",
+        "doc_type": "D",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0003-D",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 0,
+        "submit_action": "edit",
+        "expected_revision": 0,
+        "edit_reason": "user_comment",
+        "reference_doc_ids": "demo.test.0001.0001-R"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "D"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1073,
+      "max_chars": 1137
+    },
+    {
+      "file": "en/chat.edit.txt",
+      "mode": "chat.edit",
+      "locale": "en",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1204,
+      "max_chars": 1268
+    },
+    {
+      "file": "en/chat.edit_once.txt",
+      "mode": "chat.edit_once",
+      "locale": "en",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit_once",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1267,
+      "max_chars": 1331
+    },
+    {
+      "file": "en/chat.execute.txt",
+      "mode": "chat.execute",
+      "locale": "en",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.execute",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1216,
+      "max_chars": 1280
+    },
+    {
+      "file": "en/chat.read.txt",
+      "mode": "chat.read",
+      "locale": "en",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.read",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1163,
+      "max_chars": 1227
+    },
+    {
+      "file": "ja/card.edit.txt",
+      "mode": "card.edit",
+      "locale": "ja",
+      "kind": "rework",
+      "facts": {
+        "mode": "card.edit",
+        "kind": "rework",
+        "doc_type": "TR",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0004-TR",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 2,
+        "submit_action": "edit",
+        "expected_revision": 2,
+        "edit_reason": "rejected",
+        "reference_doc_ids": "demo.test.0001.0001-R",
+        "rejection_ref": "rejection_id=golden-rejection"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "TR",
+        "self_check": "60s / 10"
+      },
+      "workspace": "/workspace/example",
+      "chars": 909,
+      "max_chars": 973
+    },
+    {
+      "file": "ja/card.read.txt",
+      "mode": "card.read",
+      "locale": "ja",
+      "kind": "first_write",
+      "facts": {
+        "mode": "card.read",
+        "kind": "first_write",
+        "doc_type": "D",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0003-D",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 0,
+        "submit_action": "edit",
+        "expected_revision": 0,
+        "edit_reason": "user_comment",
+        "reference_doc_ids": "demo.test.0001.0001-R"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "D"
+      },
+      "workspace": "/workspace/example",
+      "chars": 788,
+      "max_chars": 852
+    },
+    {
+      "file": "ja/chat.edit.txt",
+      "mode": "chat.edit",
+      "locale": "ja",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 978,
+      "max_chars": 1042
+    },
+    {
+      "file": "ja/chat.edit_once.txt",
+      "mode": "chat.edit_once",
+      "locale": "ja",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit_once",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1004,
+      "max_chars": 1068
+    },
+    {
+      "file": "ja/chat.execute.txt",
+      "mode": "chat.execute",
+      "locale": "ja",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.execute",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 938,
+      "max_chars": 1002
+    },
+    {
+      "file": "ja/chat.read.txt",
+      "mode": "chat.read",
+      "locale": "ja",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.read",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 903,
+      "max_chars": 967
+    },
+    {
+      "file": "ko/card.edit.txt",
+      "mode": "card.edit",
+      "locale": "ko",
+      "kind": "rework",
+      "facts": {
+        "mode": "card.edit",
+        "kind": "rework",
+        "doc_type": "TR",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0004-TR",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 2,
+        "submit_action": "edit",
+        "expected_revision": 2,
+        "edit_reason": "rejected",
+        "reference_doc_ids": "demo.test.0001.0001-R",
+        "rejection_ref": "rejection_id=golden-rejection"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "TR",
+        "self_check": "60s / 10"
+      },
+      "workspace": "/workspace/example",
+      "chars": 909,
+      "max_chars": 973
+    },
+    {
+      "file": "ko/card.read.txt",
+      "mode": "card.read",
+      "locale": "ko",
+      "kind": "first_write",
+      "facts": {
+        "mode": "card.read",
+        "kind": "first_write",
+        "doc_type": "D",
+        "attachment_request": true,
+        "question_policy": false,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0003-D",
+        "probe": "fg-probe:golden-𠮷",
+        "card_ref": "F1-2(Example card)",
+        "doc_title": "Original title",
+        "revision_no": 0,
+        "submit_action": "edit",
+        "expected_revision": 0,
+        "edit_reason": "user_comment",
+        "reference_doc_ids": "demo.test.0001.0001-R"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文",
+        "doc_type": "D"
+      },
+      "workspace": "/workspace/example",
+      "chars": 789,
+      "max_chars": 853
+    },
+    {
+      "file": "ko/chat.edit.txt",
+      "mode": "chat.edit",
+      "locale": "ko",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 986,
+      "max_chars": 1050
+    },
+    {
+      "file": "ko/chat.edit_once.txt",
+      "mode": "chat.edit_once",
+      "locale": "ko",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.edit_once",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 1011,
+      "max_chars": 1075
+    },
+    {
+      "file": "ko/chat.execute.txt",
+      "mode": "chat.execute",
+      "locale": "ko",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.execute",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 952,
+      "max_chars": 1016
+    },
+    {
+      "file": "ko/chat.read.txt",
+      "mode": "chat.read",
+      "locale": "ko",
+      "kind": "chat",
+      "facts": {
+        "mode": "chat.read",
+        "kind": "chat",
+        "doc_type": "",
+        "attachment_request": true,
+        "question_policy": true,
+        "unanswered": true,
+        "current_run": true
+      },
+      "values": {
+        "token": "FAKE-GOLDEN-TOKEN",
+        "base_url": "https://example.invalid/flowgate/api/v1",
+        "flow_id": "demo.test.0001",
+        "flow_name": "F1(Example)",
+        "doc_id": "demo.test.0001.0002-CH",
+        "probe": "fg-probe:golden-𠮷",
+        "after_seq": 0,
+        "through_seq": 5,
+        "idempotency_key": "golden-turn",
+        "display_name": "Example AI"
+      },
+      "localized": {
+        "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
+      },
+      "workspace": "/workspace/example",
+      "chars": 918,
+      "max_chars": 982
+    }
+  ]
+}

@@ -952,12 +952,7 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         # tells the worker to prefer a supplied workflow_type_counts value, without the
         # mention ever showing that value.
         "type_counts": "workflow_type_counts 제시값",
-        # (rejected: "where did the run provider go?"): the run provider picked on
-        # screen — a different value from the multi-select candidates (providers). rev2 (review
-        # finding 2): it is NOT the value to copy into the plan's defaults.provider_id. Doing so
-        # would silently assign every created step to that provider — step assignment belongs to
-        # the post-creation editor. This line only tells the worker "the provider running this
-        # mention right now", and default_provider_rule below states that to the worker directly.
+        # The running provider is distinct from the step-assignment candidates.
         "default_provider": "실행 프로바이더",
         "providers": "후보 공급자",
         # ("so there is no way to pass any note to the planner?"): the planner
@@ -975,20 +970,13 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
-        # (review finding 4): the run provider is independent of the candidate
-        # multi-select, so a provider outside the candidates can arrive. If the section carrying
-        # it also held only the tail's "do not write a non-candidate provider into
-        # steps[].provider_id", the worker would read two conflicting orders in one section with
-        # no way to tell which wins. One line pinning down what each value is for removes that.
+        # Only candidates may be assigned to newly created steps.
         "default_provider_rule": (
             "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 "
             "아닙니다 — steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 "
             "있는 값만 적으십시오."
         ),
-        # (review finding 3): writing the value down without saying where to
-        # preserve it gives no guarantee the note survives into the final plan on the AI path.
-        # completion criterion 2 ("an AI-proposed plan must also preserve the input in
-        # defaults.note") reaches the worker through this one line and no other.
+        # Explain how the supplied note informs the plan.
         "note_rule": (
             "위 '전달 멘트'는 작업계획을 쓸 때 참고할 입력 요구사항입니다. 참조 문서와 함께 "
             "읽고, 모든 단계에 공통으로 붙는 defaults.note 와 각 단계의 steps[].note 를 새로 "
