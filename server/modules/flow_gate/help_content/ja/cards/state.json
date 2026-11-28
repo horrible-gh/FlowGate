@@ -1,0 +1,12 @@
+{
+  "locale": "ja",
+  "title": "現在のFlow状態",
+  "summary": "現在のFlowのキャンバスと実行状態を参照します。",
+  "purpose": "カードの配置と現在の実行状態を確認するときに使用します。",
+  "request": {
+    "canvas": "{{route:cards.canvas}}",
+    "current_run": "{{route:cards.run_current}}"
+  },
+  "response": "保存済みの状態を返します。Flowとカードはflow_nameとcard_nameで表示します。",
+  "errors": "認証に失敗した場合やFlowを参照できない場合は、応答のエラーを確認します。"
+}

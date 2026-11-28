@@ -1,0 +1,15 @@
+{
+  "locale": "en",
+  "areas": {
+    "notices": "Notices",
+    "conversation": "Conversation history and turns",
+    "documents": "Read and edit documents",
+    "attachments": "Read and share attachments",
+    "source_tools": "Source file tools",
+    "cards": "Place and run cards",
+    "question": "Questions and answers",
+    "submit": "Save and verify results",
+    "design_template": "Design document templates",
+    "authoring_guide": "Document authoring"
+  }
+}

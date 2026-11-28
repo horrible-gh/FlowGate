@@ -1,0 +1,15 @@
+{
+  "locale": "ko",
+  "areas": {
+    "notices": "주의사항",
+    "conversation": "대화 읽기와 턴 제출",
+    "documents": "문서 조회와 편집",
+    "attachments": "첨부 읽기와 공유",
+    "source_tools": "소스 파일 도구",
+    "cards": "카드 배치와 실행",
+    "question": "질의 등록과 답변",
+    "submit": "결과 저장과 검증",
+    "design_template": "설계 문서 템플릿",
+    "authoring_guide": "문서 작성 지침"
+  }
+}

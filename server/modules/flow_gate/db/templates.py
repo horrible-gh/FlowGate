@@ -31,6 +31,7 @@ def list_document_types(
     project_id: str | None = None,
     series: str | None = None,
     locale: str = "ko",
+    include_locales: bool = False,
 ) -> list[dict]:
     store = get_store()
     # Build WHERE conditions for the outer query
@@ -92,7 +93,8 @@ def list_document_types(
         ORDER  BY dt.series, dt.sort_order, dt.type_code
     """
     try:
-        return store._fetch_all(sql, params)
+        rows = store._fetch_all(sql, params)
+        return _type_field_locales(store, rows, locale) if include_locales else rows
     except Exception:
         # Fallback for environments where document_type_names table does not yet exist
         fallback_sql = "SELECT * FROM document_types WHERE 1=1"
@@ -106,7 +108,8 @@ def list_document_types(
             fallback_sql += " AND series = ?"
             fallback_params.append(series)
         fallback_sql += " ORDER BY series, sort_order, type_code"
-        return store._fetch_all(fallback_sql, fallback_params)
+        rows = store._fetch_all(fallback_sql, fallback_params)
+        return _type_field_locales(store, rows, locale) if include_locales else rows
 
 
 def create_document_type(data: dict[str, Any]) -> dict:
@@ -456,3 +459,25 @@ def set_template_active(template_id: int, project_id: str, is_active: int) -> bo
         [is_active, template_id, project_id],
     )
     return True
+
+
+def _type_field_locales(store, rows, locale):
+    """Expose provenance per field without changing the console list contract."""
+    result = []
+    for original in rows:
+        row = dict(original)
+        for field, table in (("type_name", "document_type_names"), ("description", "document_type_descriptions")):
+            resolved = None
+            for candidate in dict.fromkeys((locale, "ko")):
+                values = store._fetch_one(
+                    f"SELECT {field} FROM {table} WHERE document_type_id = ? AND locale = ?",
+                    [row["id"], candidate])
+                if values and values.get(field):
+                    row[field] = values[field]
+                    resolved = candidate
+                    break
+            row[field + "_locale"] = resolved
+            if resolved is None:
+                row[field] = row["type_code"] if field == "type_name" else ""
+        result.append(row)
+    return result
