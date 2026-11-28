@@ -179,6 +179,21 @@
     "path": "/workflow/{doc_id}/decide",
     "api": "v1"
   },
+  "workflow.worker_decide": {
+    "method": "POST",
+    "path": "/workflow/decide",
+    "api": "v1"
+  },
+  "workflow.worker_sequence_update": {
+    "method": "PATCH",
+    "path": "/workflow/sequence",
+    "api": "v1"
+  },
+  "test_commands.engine_recipes": {
+    "method": "GET",
+    "path": "/test-commands/help",
+    "api": "v1"
+  },
   "workflow.advance": {
     "method": "POST",
     "path": "/workflow/{doc_id}/advance",

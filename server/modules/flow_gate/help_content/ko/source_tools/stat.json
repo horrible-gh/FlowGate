@@ -1,0 +1,68 @@
+{
+  "locale": "ko",
+  "title": "stat",
+  "summary": "경로의 존재 여부와 종류·크기 등 메타데이터를 조회한다.",
+  "purpose": "경로의 존재 여부와 종류·크기 등 메타데이터를 조회한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "stat"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "메타데이터를 조회할 소스 루트 기준 상대 경로."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "커밋 트리를 지정하는 선택적 ref입니다. 생략 또는 null은 미커밋 변경을 포함한 작업 트리입니다. merge_preview의 head, target_sha, merge_base, merge_tree를 사용할 수 있습니다."
+      }
+    ],
+    "example": {
+      "path": "app/main.py"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "stat",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "exists": true,
+      "type": "file",
+      "size": 18342,
+      "mtime": "2026-07-29T13:30:00+09:00",
+      "eol": "lf",
+      "binary": false
+    },
+    "details": [
+      "바이너리 여부는 파일 앞 64KB 안에 NUL 바이트가 있는지로 판정한다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "경로가 소스 루트를 벗어나거나 형식이 잘못됐다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    }
+  ]
+}

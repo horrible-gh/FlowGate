@@ -1,5 +1,13 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Answer card questions",
+  "summary": "Answer card questions",
+  "purpose": "Answer card questions",
+  "request": {
+    "route": "{{route:cards.questions}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET with optional doc_id and include_answered. To answer on the user’s behalf, POST body and/or selected_option_ids to {{route:cards.question_answer}} before submitting the turn. Reading mode can answer with document-create permission."
+  },
+  "response": "Read item_id, seq, body, options, answered and the associated card. responder_error_code explains automatic-answer failure. Report whether card_resume shows resumes_after_chat_run, other pending questions or run_not_resumable.",
+  "errors": "On 409 question_already_answered inspect the stored answer. Clarify which question is intended if ambiguous."
 }

@@ -1,5 +1,20 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Read group self-check runs",
+  "summary": "Read group self-check runs",
+  "purpose": "Read group self-check runs",
+  "request": {
+    "routes": [
+      "{{route:self_check.group.list}}",
+      "{{route:self_check.group.read}}"
+    ],
+    "authorization": "Bearer {{token}}"
+  },
+  "response": {
+    "details": "The run slot is one per Group. Any work token of this Group (new, edit, review) reads the summary of the run holding it through group_read / group_list (another Group's run answers 404). Read only: only the owning TR's edit token or the owning draft token cancels it. A cancel response's cancel field tells the request being accepted apart from the run being confirmed stopped."
+  },
+  "errors": {
+    "status": 404,
+    "details": "Check the group of the requested run_id."
+  }
 }

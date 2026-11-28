@@ -1,5 +1,13 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 3
+  "title": "카드 분기와 합류",
+  "summary": "카드 분기와 합류",
+  "purpose": "카드 분기와 합류",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": " POST에 links의 source/target을 명시합니다. card:0..card:4는 cards 배열 순서, $after는 기준, $end는 확인 또는 합류 카드입니다. 기존 node_key는 출발점으로 쓸 수 있습니다. join에는 시작 전인 기존 작업/확인 카드의 node_key를 지정합니다. 최대 30개 링크이며 cards=[]는 links와 함께 사용합니다."
+  },
+  "response": "links는 전체 연결을 정의합니다. gate=false에서 재사용 확인 카드나 join이 없으면 $end를 생략합니다. 합류 카드의 기존 후속 연결과 소유권은 유지됩니다.",
+  "errors": "422 chat_cards_graph_invalid의 issues를 확인합니다. 순환을 제거하고 새 카드가 모두 도달 가능하며 $end가 있을 때 모두 그곳에 연결되는지 확인합니다."
 }

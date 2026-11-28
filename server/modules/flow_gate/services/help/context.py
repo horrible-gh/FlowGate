@@ -54,6 +54,8 @@ def dynamic_values(ctx, spec):
     if "test_commands" in spec.get("placeholders", {}):
         from modules.flow_gate.services import test_command_service
         values["test_commands"] = test_command_service.build_verified_commands_block(ctx.get("project") or "")
+        values["test_host_os"] = test_command_service.current_os()
+        values["test_shell"] = test_command_service.current_shell()
     if "tool_permissions" in spec.get("placeholders", {}):
         values["tool_permissions"] = [{k:row[k] for k in ("name", "scope", "method", "path") if k in row}
                                      for row in tool_rows(ctx)]

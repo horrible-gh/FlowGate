@@ -1,5 +1,13 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "変更ファイル一覧の形式",
+  "summary": "変更ファイル一覧の形式",
+  "purpose": "変更ファイル一覧の形式",
+  "request": {
+    "details": "## Changed Filesまたは韓国語の見出しを使い、リポジトリルート相対パスを1行1項目の箇条書きにします。区切りは/です。新規・変更・削除を列挙し、改名は変更後のパスを書きます。最大200件です。",
+    "example": "## Changed Files\n\n- server/app.py",
+    "empty_case": "## Changed Files\n\nNone"
+  },
+  "response": "サーバーは作業領域の実際の変更と照合します。",
+  "errors": "不一致や範囲の拒否では不足・余分なパスと見出しを確認します。番号なしの見出しとドット区間のない相対パスを使います。"
 }

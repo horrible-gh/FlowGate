@@ -1,0 +1,84 @@
+{
+  "locale": "en",
+  "title": "resolve_base_dirty",
+  "summary": "Apply recorded decisions to tracked base changes.",
+  "purpose": "Apply recorded decisions to tracked base changes.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "resolve_base_dirty"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "decisions",
+        "type": "array",
+        "required": true,
+        "default": null,
+        "description": "List each path and its commit or discard action."
+      },
+      {
+        "name": "complete",
+        "type": "boolean",
+        "required": true,
+        "default": null,
+        "description": "Whether the report covers the complete baseline."
+      },
+      {
+        "name": "commit_message",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Supply a message when a complete report commits files."
+      }
+    ],
+    "example": {
+      "decisions": [
+        {
+          "path": "app/main.py",
+          "action": "commit"
+        }
+      ],
+      "complete": true,
+      "commit_message": "fix: resolve base changes"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools.",
+      "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch.",
+      "After write, patch, move, or remove succeeds, summarize the changed source files in the task report."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "resolve_base_dirty",
+      "status": "resolved",
+      "remaining": [],
+      "commit": "0123456789abcdef"
+    },
+    "details": [
+      "Project and worktree come from the run token. complete=false returns partial; an incomplete complete=true returns dirty."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "An invalid decision rejects the entire request."
+    },
+    {
+      "http_status": 409,
+      "code": "git_busy",
+      "when": "Another Git operation owns the lock."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "Check the dedicated action token."
+    }
+  ]
+}

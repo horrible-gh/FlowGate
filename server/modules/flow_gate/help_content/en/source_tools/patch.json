@@ -1,0 +1,156 @@
+{
+  "locale": "en",
+  "title": "patch",
+  "summary": "Replace exact matching text within a file.",
+  "purpose": "Replace exact matching text within a file.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "patch"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Path relative to the source root."
+      },
+      {
+        "name": "old_string",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Exact text to replace. An empty string is forbidden."
+      },
+      {
+        "name": "new_string",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Replacement text."
+      },
+      {
+        "name": "replace_all",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Whether to replace every match at once."
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "Encoding used to read and write the file."
+      },
+      {
+        "name": "base_sha256",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional. sha256 of the content your edit is based on (read's source_sha256, or the sha256 of the previous write/patch response). If the disk differs, 409 (reason=base_changed) and nothing is written."
+      },
+      {
+        "name": "allow_mask_substitution",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "true only when replacing original text with '***' is intended. Requires reason; recorded in the server audit log."
+      },
+      {
+        "name": "allow_replacement_char",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "true only when adding U+FFFD that is not on disk is intended. Requires reason."
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Why an allow_* flag is used. Required when a flag is true."
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "old_string": "old text",
+      "new_string": "new text",
+      "replace_all": false,
+      "encoding": "utf-8"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools.",
+      "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch.",
+      "After write, patch, move, or remove succeeds, summarize the changed source files in the task report."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "patch",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "replacements": 1,
+      "size_before": 18342,
+      "size_after": 18342,
+      "bytes_written": 18342,
+      "encoding": "utf-8",
+      "eol": "lf",
+      "eol_normalized": false,
+      "continuation": {
+        "ment": "Record the changed files in the work report.",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "Matching uses exact text, not line numbers.",
+      "Untouched bytes are preserved, so files with different line endings do not become whole-file changes. Use this tool instead of write for partial edits.",
+      "sha256 in a success response is the hash of the stored file (use it as the next base_sha256). For .py/.json, post_write_check carries a syntax check. The masking/U+FFFD checks judge the whole changed lines, not just new_string."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The file is missing, is a directory, or contains no exact old_string match."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "Two or more matches exist without replace_all."
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "The resulting file exceeds the server limit."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The file is not text, old_string equals new_string, encoding fails, or the path escapes the source root."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the write scope."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "base_sha256 was sent and the disk content differs (reason=base_changed, details.current_sha256)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "A line replaces original text with '***' (reason=masked_substitution_suspect, details.lines), or adds U+FFFD that is not on disk (reason=replacement_char_introduced). Line text is never echoed."
+    }
+  ]
+}

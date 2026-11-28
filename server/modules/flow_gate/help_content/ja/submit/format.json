@@ -1,5 +1,58 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "結果の提出形式",
+  "summary": "結果の提出形式",
+  "purpose": "結果の提出形式",
+  "request": {
+    "route": "{{route:submit.inbox}}",
+    "workflow": {
+      "details": "作業順序の決定または変更を行う専用タスクでは、そのタスクの指示とリクエスト本文に従います。",
+      "decision": "{{route:workflow.worker_decide}}",
+      "sequence_update": "{{route:workflow.worker_sequence_update}}"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "edit": {
+      "action": "edit",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "edit_reason": "user_comment",
+      "expected_revision": "<current revision_no>",
+      "content": "<complete document>",
+      "commit_message": "docs(help): summarize the migration"
+    },
+    "new": {
+      "action": "new",
+      "project": "{{project}}",
+      "module": "{{module}}",
+      "group_name": "{{group_id}}",
+      "doc_type": "<type>",
+      "prev_doc_id": "<previous document ID>",
+      "title": "<title>",
+      "content": "<document>"
+    },
+    "review": {
+      "action": "review",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "verdict": "pass | issues | hold",
+      "findings": [
+        {
+          "locus": "<section>",
+          "note": "<finding>"
+        }
+      ],
+      "comment": "<optional overall comment>"
+    },
+    "details": "トークンの操作に合う形式を使います。edit_reasonはrejectedまたはuser_commentです。editでは既存ヘッダーを保持し、現在のrevision_noをexpected_revisionに指定します。文書はcontentまたはトークンのscratch内の絶対doc_pathで送ります。ファイルでレビューする場合はverdict/findings/commentのJSONをdoc_pathで指定します。TRのcommit_messageはASCII英語1行、最大200文字です。有効な保存済みメッセージを保持するeditでは省略できます。submit/changed_filesを参照します。",
+    "encoding": {
+      "line": "{{probe}}",
+      "reference": "conversation/encoding",
+      "fields": "force_encoding_reason"
+    }
+  },
+  "response": "dry_run=trueは登録せず検証します。保存応答のchange_summaryを確認します。",
+  "errors": "リビジョン競合時は最新本文を読み直します。invalid_commit_messageではTRメッセージ形式を、文字コード拒否ではconversation/encodingを確認します。"
 }

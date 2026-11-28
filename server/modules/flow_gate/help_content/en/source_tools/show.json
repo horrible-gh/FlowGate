@@ -1,0 +1,83 @@
+{
+  "locale": "en",
+  "title": "show",
+  "summary": "Inspect one commit's metadata, per-file change stats, and patch.",
+  "purpose": "Inspect one commit's metadata, per-file change stats, and patch.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "show"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "sha",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Hex id of the commit to inspect (4-64 chars). Option-shaped strings and revspecs are rejected."
+      }
+    ],
+    "example": {
+      "sha": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "show",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "sha": "fedcba9876543210fedcba9876543210fedcba98",
+      "parents": [
+        "0123456789abcdef0123456789abcdef01234567"
+      ],
+      "author_name": "Jane Doe",
+      "author_email": "jane@example.com",
+      "author_date": "2026-07-29T13:20:00+09:00",
+      "subject": "fix: update app",
+      "files": [
+        {
+          "path": "server/app.py",
+          "insertions": 3,
+          "deletions": 1
+        }
+      ],
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "A read-only inspection that never changes HEAD, the index, or the working tree (cat-file/show/diff-tree).",
+      "The patch is capped at the same 1 MiB limit as diff, and truncation is reported."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The sha is missing or is not a commit in this repository."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The sha has an invalid form (reason=invalid_sha), or the request carries a field show does not allow (reason=unknown_field)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the read scope."
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "The git show/diff-tree command failed."
+    }
+  ]
+}

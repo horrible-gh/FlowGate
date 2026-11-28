@@ -1,0 +1,73 @@
+{
+  "locale": "en",
+  "title": "merge_preview",
+  "summary": "Simulate a 3-way merge of the authorized group worktree's HEAD onto target_ref without making any change, and report conflicted files, whether the merge is clean, and the resulting tree oid (merge_tree).",
+  "purpose": "Simulate a 3-way merge of the authorized group worktree's HEAD onto target_ref without making any change, and report conflicted files, whether the merge is clean, and the resulting tree oid (merge_tree).",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "merge_preview"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Target ref; option-shaped values and revspecs are forbidden. Omitted: the token group's work base (the project base without a group) start point — origin/<branch> when origin is ahead, else <branch>."
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "merge_preview",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "clean": false,
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "head": "fedcba9876543210fedcba9876543210fedcba98",
+      "target_ref": "origin/main",
+      "target_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "merge_tree": "abcdef0123456789abcdef0123456789abcdef01",
+      "conflicts": [
+        "server/app.py"
+      ],
+      "truncated": false
+    },
+    "details": [
+      "Uses only git merge-tree --write-tree and never changes HEAD, the index, or the working tree (it may leave merged tree/blob objects in the object database internally, but none are reachable from any ref).",
+      "conflicts is populated only when clean=false; if it exceeds 200 (_MAX_CONFLICT_FILES) it is truncated and truncated=true.",
+      "This is a preview, not an actual merge -- actually merging requires human intervention or a different procedure, not this tool.",
+      "merge_tree is the candidate merge result tree oid. Regardless of whether the merge is clean, pass it directly as the ref to read/grep/glob to inspect that tree's merge result; conflicted files include <<<<<<< / ======= / >>>>>>> markers.",
+      "See a conflicted path from five angles at once -- current worktree: read(path) (ref omitted, includes uncommitted changes) / worker branch's committed HEAD: read(path, ref=head) / target/main: read(path, ref=target_sha) / common base: read(path, ref=merge_base) / candidate merge result: read(path, ref=merge_tree). Pass this response's head/target_sha/merge_base/merge_tree straight through as ref, and the same ref works for grep/glob/stat too."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "The ref is missing or the merge-base/rev-parse/merge-tree git command failed."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "target_ref has an invalid form, or the request carries a field merge_preview does not allow (reason=unknown_field)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the read scope."
+    }
+  ]
+}

@@ -1,0 +1,143 @@
+{
+  "locale": "ko",
+  "title": "write",
+  "summary": "파일을 새로 만들거나 내용을 통째로 바꾼다.",
+  "purpose": "파일을 새로 만들거나 내용을 통째로 바꾼다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "write"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "소스 루트 기준 상대 경로. 상위 디렉터리는 필요하면 자동 생성된다."
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "파일 전체 내용. 통째로 쓴다."
+      },
+      {
+        "name": "mode",
+        "type": "string",
+        "required": false,
+        "default": "overwrite",
+        "description": "create=새 파일만(있으면 409) / overwrite=통째 교체 / append=끝에 덧붙임."
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "인코딩. 이 인코딩으로 표현할 수 없는 문자가 있으면 422."
+      },
+      {
+        "name": "base_sha256",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "선택. 수정의 기준이 된 파일 내용의 sha256(read 응답의 source_sha256, 직전 write/patch 응답의 sha256). 디스크와 다르면 409(reason=base_changed)이며 아무것도 쓰지 않는다."
+      },
+      {
+        "name": "allow_mask_substitution",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "원문 값을 '***'로 바꾸는 변경을 의도한 경우에만 true. reason이 함께 있어야 하며 서버 감사 로그에 남는다."
+      },
+      {
+        "name": "allow_replacement_char",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "디스크에 없던 U+FFFD를 의도적으로 넣는 경우에만 true. reason이 함께 있어야 한다."
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "allow_* 플래그를 쓴 이유. 플래그가 true면 필수."
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "content": "<파일 전체 내용>",
+      "mode": "create|overwrite|append",
+      "encoding": "utf-8"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
+      "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요.",
+      "write/patch/move/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "write",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "bytes_written": 18342,
+      "created": false,
+      "continuation": {
+        "ment": "작업 레포트에 변경 파일을 기록합니다.",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "이 도구는 파일 전체를 덮어쓴다. 일부만 바꾸려면 patch를 쓴다.",
+      "성공 응답의 continuation.ment는 다음 행동 지시다. 변경한 파일을 작업 레포트에 요약해 남긴다.",
+      "성공 응답의 sha256은 저장된 파일의 해시다(다음 수정의 base_sha256로 쓴다). .py/.json이면 post_write_check에 구문 검사 결과가 실린다. 실패해도 쓰기는 이미 끝났으므로 바로 고친다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "mode=create 인데 파일이 이미 있다."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "그룹 작업 공간을 쓸 수 없다(다른 그룹의 병합 세션이 열려 있거나 워크트리 준비 실패). error.details.cause 에 이유가 실린다."
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "content 가 서버 상한을 넘는다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "경로가 소스 루트를 벗어나거나, content 를 요청 encoding 으로 표현할 수 없다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 write 스코프가 없다(조사 전용 단계)."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "base_sha256를 보냈는데 디스크 내용이 다르다(reason=base_changed, details.current_sha256)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "원문 값을 '***'로 바꾼 줄이 있다(reason=masked_substitution_suspect, details.lines) 또는 디스크에 없던 U+FFFD가 새로 들어갔다(reason=replacement_char_introduced). 줄 내용은 응답에 싣지 않는다."
+    }
+  ]
+}

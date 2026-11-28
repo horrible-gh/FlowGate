@@ -1,5 +1,17 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "登録済みテストコマンド",
+  "summary": "登録済みテストコマンド",
+  "purpose": "登録済みテストコマンド",
+  "request": {
+    "details": "下の登録済みコマンド原文を確認します。空の場合はリポジトリのスクリプト、設定、既存結果を根拠にします。実行はsubmit/self_checkと対象のテスト指示に従います。"
+  },
+  "response": {
+    "original": "{{test_commands}}",
+    "host_os": "{{test_host_os}}",
+    "shell": "{{test_shell}}",
+    "engine_recipe_route": "{{route:test_commands.engine_recipes}}",
+    "engine_recipe_details": "TSの準備手順を書く前にエンジンレシピを取得します。試験対象に合うエンジン（例 engine=pytest）のsetupをそのまま使います。該当するレシピがなければ準備手順を作成します。試験が成功すると自動で登録されます。"
+  },
+  "errors": "コマンドを決められなければtest_command_missingを報告します。"
 }

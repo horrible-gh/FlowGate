@@ -1,0 +1,128 @@
+{
+  "locale": "en",
+  "title": "read",
+  "summary": "Read a single file from the remote project source tree.",
+  "purpose": "Read a single file from the remote project source tree.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "read"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Path relative to the source root. Absolute paths and '..' are forbidden."
+      },
+      {
+        "name": "max_bytes",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "Maximum bytes to read. If omitted, the whole file is read unless it exceeds the server limit, which returns 413."
+      },
+      {
+        "name": "offset",
+        "type": "integer",
+        "required": false,
+        "default": 0,
+        "description": "Zero-based byte position where reading starts."
+      },
+      {
+        "name": "length",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "Maximum byte-window length. When used with max_bytes, the smaller value applies."
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "Decoding charset. Undecodable characters are replaced."
+      },
+      {
+        "name": "start_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1-based line number to start reading from. Must be sent together with end_line, and never together with offset/length/max_bytes."
+      },
+      {
+        "name": "end_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1-based, inclusive line number to stop reading at. Must satisfy start_line <= end_line. Past EOF, only the available lines are returned."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional committed-tree ref. Omit or send null for the worktree, including uncommitted changes. Accepts head, target_sha, merge_base and merge_tree from merge_preview."
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "start_line": 1,
+      "end_line": 40,
+      "encoding": "utf-8"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "read",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "content": "<lines 1-40>",
+      "encoding": "utf-8",
+      "size": 18342,
+      "start_line": 1,
+      "end_line": 40,
+      "returned_start_line": 1,
+      "returned_end_line": 40,
+      "total_lines": 512,
+      "returned_bytes": 1180,
+      "eof": false,
+      "truncated": true
+    },
+    "details": [
+      "Use source_sha256 from read as the base hash for an edit."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The path does not exist or is not a regular file."
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "max_bytes was omitted and the file exceeds the server limit (a line selector is judged against the same whole-file size)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The path escapes the source root or has an invalid form, the request carries a field read does not allow (reason=unknown_field), or start_line/end_line is invalid (reason=invalid_line_range) or combined with offset/length/max_bytes (reason=line_and_byte_selector)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the read scope."
+    }
+  ]
+}

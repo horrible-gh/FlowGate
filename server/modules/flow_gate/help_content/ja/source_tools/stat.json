@@ -1,0 +1,68 @@
+{
+  "locale": "ja",
+  "title": "stat",
+  "summary": "パスの存在有無と種類・サイズなどのメタデータを取得する。",
+  "purpose": "パスの存在有無と種類・サイズなどのメタデータを取得する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "stat"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "メタデータを取得するソースルートからの相対パス。"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意のコミットツリーrefです。省略またはnullは未コミット変更を含む作業ツリーです。merge_previewのhead、target_sha、merge_base、merge_treeを使えます。"
+      }
+    ],
+    "example": {
+      "path": "app/main.py"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "stat",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "exists": true,
+      "type": "file",
+      "size": 18342,
+      "mtime": "2026-07-29T13:30:00+09:00",
+      "eol": "lf",
+      "binary": false
+    },
+    "details": [
+      "バイナリ判定はファイル先頭64KB以内にNULバイトがあるかで決まる。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "パスがソースルート外か形式が正しくない。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにreadスコープがない。"
+    }
+  ]
+}

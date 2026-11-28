@@ -1,0 +1,83 @@
+{
+  "locale": "ja",
+  "title": "show",
+  "summary": "commit1件のメタデータ・変更ファイルの統計・patchを取得する。",
+  "purpose": "commit1件のメタデータ・変更ファイルの統計・patchを取得する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "show"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "sha",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "取得するcommitのhex id(4〜64文字)。option形式の文字列やrevspecは拒否される。"
+      }
+    ],
+    "example": {
+      "sha": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "show",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "sha": "fedcba9876543210fedcba9876543210fedcba98",
+      "parents": [
+        "0123456789abcdef0123456789abcdef01234567"
+      ],
+      "author_name": "Jane Doe",
+      "author_email": "jane@example.com",
+      "author_date": "2026-07-29T13:20:00+09:00",
+      "subject": "fix: update app",
+      "files": [
+        {
+          "path": "server/app.py",
+          "insertions": 3,
+          "deletions": 1
+        }
+      ],
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "HEAD/index/working treeを変更しないread-only参照である(cat-file/show/diff-tree)。",
+      "patchはdiffと同じ1 MiB上限で切り詰められ、truncatedで示す。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "shaが存在しないか、このリポジトリのcommitではない。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "shaの形式が正しくない(reason=invalid_sha)、またはshowが許可しないフィールドがリクエストに含まれる(reason=unknown_field)。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このtokenにread scopeがない。"
+    },
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "git show/diff-treeコマンドが失敗した。"
+    }
+  ]
+}

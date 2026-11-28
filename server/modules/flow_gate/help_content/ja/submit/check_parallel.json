@@ -1,5 +1,33 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "自己検証の並列実行",
+  "summary": "自己検証の並列実行",
+  "purpose": "自己検証の並列実行",
+  "request": {
+    "routes": [
+      "{{route:self_check.run}}",
+      "{{route:self_check.draft.run}}"
+    ],
+    "field": "parallel_share",
+    "details": [
+      "pytest の並列は大きな選択でだけ -n <分> --dist loadfile で使い、parallel_share を同じ数にする。server/tests の pytest は実行ごとの worker スロットプール(サイズ R)を分け合い、実際の worker を空きスロット数に下げる。入れ子の pytest は残りのスロットだけを使い、なければスロットなしで直列に動く。内部で pytest を何度も起動するスクリプトより pytest の直接実行を使う。",
+      "固定ポートの接続統合テスト、同じソースに成果物を書くビルド・型検査、単一・少数ファイルの選択は並列にしない。"
+    ]
+  },
+  "response": {
+    "fields": [
+      "cpu_share_requested",
+      "cpu_reservation",
+      "enqueued_at",
+      "queue"
+    ],
+    "details": [
+      "ホストのすべての Self-check 実行(直列・pytest 以外のコマンドを含み、TS 実行は除く)は処理器(論理プロセッサ)を予約する。希望は parallel_share(既定 1)で、割り当てられた予約 R は応答の cpu_reservation である。予約の合計はホスト上限を超えず、1 を超える分は直列予備分を残せる範囲でだけ与える。",
+      "実行のプロセスツリー全体を OS が R 個の処理器だけに限定する(Windows Job の処理器限定、POSIX supervisor の処理器集合)。ツールの協力に関係なく同時に実行される worker は R を超えない。R より多くの worker を作るツールは失敗せず遅くなる。",
+      "要求は容量で拒否されずキューに入り、すぐに status queued で応答される。その時点のワークツリーの写しで実行され、Group ロックを取らない。処理器の予約 R はキューが実行を始めるときに決まり(cpu_reservation)、空きがなければ待つ。結果は read_self_check で確認する。同じカードの新しい要求は、まだ始まっていない以前の要求を取り消す。"
+    ]
+  },
+  "errors": {
+    "details": "予約・処理器エラーはsubmit/check_errorsを参照します。"
+  }
 }

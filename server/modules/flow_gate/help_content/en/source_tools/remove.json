@@ -1,0 +1,86 @@
+{
+  "locale": "en",
+  "title": "remove",
+  "summary": "Delete a single file or empty directory.",
+  "purpose": "Delete a single file or empty directory.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "remove"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Path of the file, empty directory or artifact directory to delete, relative to the source root."
+      },
+      {
+        "name": "recursive",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Empty directories need no recursive flag. Delete a nonempty directory. Allowed only for paths judged tool artifacts (.test-tmp-*, dot directories, node_modules, …); anything else returns 422."
+      }
+    ],
+    "example": {
+      "path": "app/obsolete.py",
+      "recursive": false
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools.",
+      "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch.",
+      "After write, patch, move, or remove succeeds, summarize the changed source files in the task report."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "remove",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/obsolete.py",
+      "removed": true,
+      "continuation": {
+        "ment": "Record the changed files in the work report.",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "Report a removed path in the changed-files section."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The path does not exist, or is a nonempty directory and recursive was not set."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "The group workspace is unavailable."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "The path is read-only or locked and cannot be deleted. Retrying will not help (this is not a 503)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The path is root, .git, a directory alias, outside root, or a nonempty source directory requested recursively."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the remove scope."
+    }
+  ]
+}
