@@ -2,7 +2,8 @@
 // (settingsChoicesRead — the settings tab's read; the project's default first), the opinion, and [실행] — the only
 // place the AI is called (documentAiStart: edit · single · the pinned AI · the opinion, no review loop). The run
 // started is followed by documentAiWindows (trackDocumentAiRun) until it ends; the opener hears the end.
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
+import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
 import { documentAiErrorOf, documentAiStart, settingsChoicesRead, type SettingsProvider } from '@/features/document'
 import { documentAiFailure, documentAiMessages, documentAiPhase, documentAiRunnable, type DocumentAiFailure, type DocumentAiPhase } from './documentAiModel'
 import {
@@ -48,10 +49,18 @@ export function useDocumentAi(win: () => DocumentAiWindowState): DocumentAiState
     return activity.docRef === win().docId ? 'busy_this' : 'busy_other'
   })
 
+  let disposed = false
+  let choicesRequest = 0
+  onScopeDispose(() => { disposed = true })
+  useAiProvidersChanged(() => { void readChoices() })
+
   async function readChoices(): Promise<void> {
+    const request = ++choicesRequest
+    const projectId = win().request.projectId
     choicesState.value = 'loading'
     try {
-      const choices = await settingsChoicesRead(win().request.projectId)
+      const choices = await settingsChoicesRead(projectId)
+      if (disposed || request !== choicesRequest || projectId !== win().request.projectId) return
       providers.value = choices.providers
       if (!choices.providers.some((provider) => provider.id === providerId.value)) {
         const preferred = choices.providers.find((provider) => provider.id === choices.defaultProviderId) ?? choices.providers[0]
@@ -59,6 +68,7 @@ export function useDocumentAi(win: () => DocumentAiWindowState): DocumentAiState
       }
       choicesState.value = 'ready'
     } catch {
+      if (disposed || request !== choicesRequest) return
       choicesState.value = 'error'
     }
   }

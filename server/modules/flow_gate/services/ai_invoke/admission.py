@@ -2208,8 +2208,7 @@ def start_run(
     chat_timeout_sec = None
     if action_scope == "chat":
         from modules.flow_gate.services import chat_doc_settings_service
-        minutes = chat_doc_settings_service.get_settings(issued_to, doc_ref)["timeout_minutes"]
-        chat_timeout_sec = minutes * 60 if minutes is not None else None
+        chat_timeout_sec = chat_doc_settings_service.get_settings(issued_to, doc_ref)["timeout_seconds"]
         timeout_sec = chat_timeout_sec
     # only a Graph node's own single 'new' run opens the no-output retry
     # path with its card's restart pick; every other single run stays one-shot.

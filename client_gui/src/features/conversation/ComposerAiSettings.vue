@@ -1,25 +1,12 @@
 <template>
-  <!-- AI tab of the ⚙ settings window (flowgate.v02test.0096 ④): this chat's AI, the 📌 pins of 자주 쓰는 AI (the same
-       pins the AI picker and AI 관리 use, card ①'s composable) and my own 최대 반복 횟수 / 제목 짓기 AI with the system
-       values beside them (the existing /me/ai-preferences API). Every change here is saved at once.
-       F96-8: the same one-line rows as the 대화 / 음성 tabs (label left, value right, the window's --csx-* sizes); the
-       system value sits next to the stepper. F96-13: the title AI has no 자동 choice; 답한 AI 그대로 is the default. -->
+  <!-- AI tab of the ⚙ settings window (flowgate.v02test.0096 ④): the 📌 pins of 자주 쓰는 AI (the same pins the AI
+       picker and AI 관리 use, card ①'s composable), the 채팅 최대 시간 row the window puts in the default slot
+       (F108-6: a per-chat setting saved with the 대화 tab's values) and my own 제목 짓기 AI (the existing
+       /me/ai-preferences API). Every change here is saved at once.
+       F96-8: the same one-line rows as the 대화 / 음성 tabs (label left, value right, the window's --csx-* sizes).
+       F96-13: the title AI has no 자동 choice; 답한 AI 그대로 is the default. F108-6: no "이 대화의 AI" (the composer's
+       AI picker does that) and no 최대 반복 (AI 관리 › 기타 설정 keeps it). -->
   <div class="cas" data-test="conv-ai-settings">
-    <label class="cas-row">
-      <span class="cas-label">{{ t('gui.conversation.settings.ai_this_chat') }}</span>
-      <select
-        class="cas-select"
-        data-test="conv-setting-ai"
-        :value="selectedId"
-        :title="selectedName"
-        :disabled="disabled || providers.length === 0"
-        @change="emit('select-provider', ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-if="!providers.some((p) => p.id === selectedId)" value="" disabled>{{ selectedName }}</option>
-        <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-      </select>
-    </label>
-
     <div class="cas-row is-top">
       <span class="cas-label">{{ t('gui.conversation.settings.ai_pinned') }}</span>
       <div class="cas-value">
@@ -52,42 +39,14 @@
       </div>
     </div>
 
+    <slot />
+
     <div v-if="prefsState === 'loading'" class="cas-note">{{ t('gui.conversation.settings.ai_prefs_loading') }}</div>
     <div v-else-if="prefsState === 'error'" class="cas-note is-error" role="alert" data-test="conv-setting-prefs-error">
       {{ t('gui.conversation.settings.ai_prefs_failed') }}
       <button type="button" class="cas-link" @click="loadPrefs">{{ t('gui.conversation.retry') }}</button>
     </div>
     <template v-else-if="prefs">
-      <div class="cas-row">
-        <span class="cas-label">{{ t('gui.conversation.settings.ai_repeat') }}</span>
-        <span class="cas-stepper">
-          <button
-            type="button"
-            class="cas-icon"
-            data-test="conv-setting-repeat-decrease"
-            :aria-label="t('gui.conversation.settings.ai_repeat_decrease')"
-            :disabled="saving || prefs.repeat_count_max_effective <= prefs.repeat_count_min"
-            @click="stepRepeat(-1)"
-          >−</button>
-          <b aria-live="polite" data-test="conv-setting-repeat-value">{{ prefs.repeat_count_max_effective }}</b>
-          <button
-            type="button"
-            class="cas-icon"
-            data-test="conv-setting-repeat-increase"
-            :aria-label="t('gui.conversation.settings.ai_repeat_increase')"
-            :disabled="saving || prefs.repeat_count_max_effective >= prefs.repeat_count_hard_max"
-            @click="stepRepeat(1)"
-          >＋</button>
-          <button
-            v-if="prefs.repeat_count_max !== null"
-            type="button"
-            class="cas-link"
-            data-test="conv-setting-repeat-reset"
-            :disabled="saving"
-            @click="resetRepeat"
-          >{{ t('gui.conversation.settings.ai_repeat_reset') }}</button>
-        </span>
-      </div>
       <label class="cas-row">
         <span class="cas-label">{{ t('gui.conversation.settings.ai_title') }}</span>
         <select
@@ -117,18 +76,13 @@ import type { ChatProvider, MyAiPrefs } from './types'
 
 const props = defineProps<{
   providers: readonly ChatProvider[]
-  selectedId: string
-  disabled?: boolean
 }>()
-
-const emit = defineEmits<{ 'select-provider': [providerId: string] }>()
 
 const { t } = useI18n()
 const { user } = useCurrentUser()
 const favorites = useAiFavorites(() => user.value?.username)
 
 const nameOf = (id: string) => props.providers.find((p) => p.id === id)?.name ?? id
-const selectedName = computed(() => (props.selectedId ? nameOf(props.selectedId) : t('gui.conversation.composer.provider_none')))
 
 // ── 📌 pins (shared with the AI picker and AI 관리) ─────────────────────────────────────
 const pinnedRows = computed(() => favorites.pinned.value.map((id) => ({ id, name: nameOf(id) })))
@@ -141,7 +95,7 @@ function addPin(event: Event): void {
   if (id) favorites.setPinned(id, true)
 }
 
-// ── my repeat limit and title AI (/me/ai-preferences) ───────────────────────────────────
+// ── my title AI (/me/ai-preferences) ────────────────────────────────────────────────────
 // F96-5: the same load / save logic as AI 관리 › 기타 설정 (내 값), from the shared composable.
 const saveError = ref('')
 const control = useMyAiPreferences<MyAiPrefs>({
@@ -158,8 +112,6 @@ const clearingError = <A extends unknown[]>(fn: (...args: A) => void) => (...arg
   saveError.value = ''
   fn(...args)
 }
-const stepRepeat = clearingError(control.stepRepeat)
-const resetRepeat = clearingError(control.resetRepeat)
 const chooseTitle = clearingError(control.chooseTitle)
 
 const fixedTitle = computed<TitleChoice[]>(() => [
@@ -296,35 +248,6 @@ onBeforeUnmount(control.dispose)
 .cas-x:hover {
   color: var(--fg2-text);
   background: var(--fg2-control-surface);
-}
-
-.cas-stepper {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  color: var(--fg2-text);
-}
-
-.cas-stepper > b {
-  min-width: 14px;
-  text-align: center;
-}
-
-.cas-icon {
-  min-width: 24px;
-  height: 24px;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius-sm);
-  background: var(--fg2-control-surface);
-  color: var(--fg2-text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.cas-icon:disabled {
-  cursor: not-allowed;
-  opacity: var(--fg2-control-disabled-opacity);
 }
 
 .cas-link {

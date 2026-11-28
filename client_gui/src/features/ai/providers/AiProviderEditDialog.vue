@@ -5,18 +5,25 @@
         <h2 :id="titleId" class="dialog-title">
           {{ isEdit ? t('gui.ai.providers.edit_title') : t('gui.ai.providers.add_title') }}
         </h2>
+        <!-- 사용 여부 lives in the title row (F108-4): the state word, then the switch. -->
+        <div class="header-switch">
+          <span class="header-switch-state" :class="{ on: form.enabled }">
+            {{ form.enabled ? t('gui.ai.providers.connection_on') : t('gui.ai.providers.connection_off') }}
+          </span>
+          <Toggle v-model="form.enabled" :aria-label="t('gui.ai.providers.field_enabled')" :disabled="saving" />
+        </div>
       </div>
     </template>
 
-    <!-- One 4-column grid (mockup v7): every row lines up on the same columns. -->
+    <!-- Body order (F108-4): 이름 → 실행 방식 → 모델 구성 → 커맨드. -->
     <div class="dialog-form">
-      <div v-if="saveError" class="form-error c4" role="alert">{{ saveError }}</div>
-      <div v-if="validationMessages.length" class="form-error c4" role="alert">
+      <div v-if="saveError" class="form-error" role="alert">{{ saveError }}</div>
+      <div v-if="validationMessages.length" class="form-error" role="alert">
         <div v-for="message in validationMessages" :key="message">{{ message }}</div>
       </div>
-      <div v-if="composeNotice" class="form-error c4" role="alert">{{ composeNotice }}</div>
+      <div v-if="composeNotice" class="form-error" role="alert">{{ composeNotice }}</div>
 
-      <div class="form-group c4">
+      <div class="form-group">
         <div class="label-row">
           <label class="form-label" for="provider-name">{{ t('gui.ai.providers.field_name') }} *</label>
           <span class="label-spacer" />
@@ -24,9 +31,11 @@
             {{ t('gui.ai.providers.name_auto_reset') }}
           </button>
         </div>
+        <!-- data-modal-autofocus: the title-row switch is the first focusable, but opening starts on the name. -->
         <Input
           id="provider-name"
           v-model="form.name"
+          data-modal-autofocus
           :disabled="saving"
           :invalid="!!nameError"
           :aria-describedby="nameError ? 'provider-name-error' : undefined"
@@ -38,7 +47,7 @@
       </div>
 
       <!-- Owner: only when adding, and only when more than one list can take the new AI -->
-      <div v-if="!isEdit && ownerChoices.length > 1" class="form-group c4">
+      <div v-if="!isEdit && ownerChoices.length > 1" class="form-group">
         <span class="form-label">{{ t('gui.ai.owned.field_owner') }}</span>
         <div class="segmented" role="radiogroup" :aria-label="t('gui.ai.owned.field_owner')">
           <button
@@ -56,20 +65,24 @@
         </div>
       </div>
 
-      <div class="form-group c2">
-        <label class="form-label" for="provider-exec">{{ t('gui.ai.providers.field_exec_type') }}</label>
-        <Select
-          id="provider-exec"
-          :model-value="execValue"
-          :options="execOptions"
-          :disabled="saving"
-          @update:model-value="onExecChange"
-        />
-      </div>
-
-      <template v-if="form.exec_type === 'cli'">
-        <!-- Local CLI keeps the cell empty so the rows below do not move up. -->
-        <div class="form-group c2" :class="{ ghost: !isRemoteCli }" :aria-hidden="isRemoteCli ? undefined : 'true'">
+      <!-- 실행 방식 takes the full row; only a remote CLI splits it with the target Agent. -->
+      <div class="form-row">
+        <div class="form-group" :class="{ 'span-all': !isRemoteCli }">
+          <label class="form-label" for="provider-exec">{{ t('gui.ai.providers.field_exec_type') }}</label>
+          <Select
+            id="provider-exec"
+            :model-value="execValue"
+            :options="execOptions"
+            :disabled="saving"
+            @update:model-value="onExecChange"
+          />
+        </div>
+        <div
+          v-if="form.exec_type === 'cli'"
+          class="form-group"
+          :class="{ ghost: !isRemoteCli }"
+          :aria-hidden="isRemoteCli ? undefined : 'true'"
+        >
           <label class="form-label" for="provider-agent">{{ t('gui.ai.providers.field_target_agent') }} *</label>
           <Select
             id="provider-agent"
@@ -81,107 +94,137 @@
           />
           <small v-if="isRemoteCli && agentNote" class="field-hint text-warn" role="alert">{{ agentNote }}</small>
         </div>
+      </div>
 
-        <div class="form-group" :class="isCustom ? 'c2' : 'c1'">
-          <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
-          <Select
-            id="provider-kind"
-            :model-value="uiKind"
-            :options="cliKindOptions"
-            :disabled="saving || preparing"
-            @update:model-value="onKindChange"
-          />
-        </div>
-        <template v-if="entry">
-          <div class="form-group c1">
-            <label class="form-label" for="provider-version">{{ t('gui.ai.providers.field_version') }}</label>
+      <template v-if="form.exec_type === 'cli'">
+        <!-- 모델 구성: 종류 on the first line, 버전 · 모델 · 추론도 on the second. -->
+        <section class="model-group" role="group" aria-labelledby="provider-model-group">
+          <h3 id="provider-model-group" class="group-title">{{ t('gui.ai.providers.group_model') }}</h3>
+          <div class="form-group">
+            <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
             <Select
-              id="provider-version"
-              :model-value="selection.version"
-              :options="entry.versions.map(plainOption)"
-              :disabled="saving"
-              @update:model-value="setSelection('version', $event)"
+              id="provider-kind"
+              :model-value="uiKind"
+              :options="cliKindOptions"
+              :disabled="saving || preparing"
+              @update:model-value="onKindChange"
             />
           </div>
-          <div class="form-group c1">
-            <label class="form-label" for="provider-model-name">{{ t('gui.ai.providers.field_model') }}</label>
-            <Select
-              id="provider-model-name"
-              :model-value="selection.model"
-              :options="entry.models.map(modelOption)"
-              :disabled="saving"
-              @update:model-value="setSelection('model', $event)"
-            />
-          </div>
-          <div class="form-group c1">
-            <label class="form-label" for="provider-effort">{{ t('gui.ai.providers.field_effort') }}</label>
-            <Select
-              id="provider-effort"
-              :model-value="selection.effort"
-              :options="entry.efforts.map(plainOption)"
-              :disabled="saving"
-              @update:model-value="setSelection('effort', $event)"
-            />
-          </div>
-        </template>
-
-        <span class="switch-label">{{ t('gui.ai.providers.field_cli_command') }}</span>
-        <div class="switch-cell">
-          <Toggle
-            :model-value="commandVisible"
-            :aria-label="t('gui.ai.providers.view_command')"
-            :disabled="saving || isCustom"
-            @update:model-value="showCommand = $event"
-          />
-        </div>
-        <template v-if="commandVisible">
-          <div v-if="entry" class="form-group c4">
-            <label class="form-label" for="provider-executable">{{ t('gui.ai.providers.field_executable') }}</label>
-            <Input
-              id="provider-executable"
-              class="mono"
-              :model-value="selection.executable"
-              :disabled="saving"
-              :invalid="composeState === 'invalid_executable'"
-              @update:model-value="setExecutable"
-            />
-          </div>
-          <div class="form-group c4">
-            <div class="label-row">
-              <label class="form-label" for="provider-command">{{ t('gui.ai.providers.field_command') }}</label>
-              <span class="command-chip" :class="{ edited: !isCustom && !commandAuto }">{{ commandChip }}</span>
-              <span class="label-spacer" />
-              <button v-if="showCommandReset" type="button" class="link-btn" :disabled="saving" @click="resetCommand">
-                {{ t('gui.ai.providers.command_reset') }}
-              </button>
+          <div v-if="entry" class="model-row">
+            <div class="form-group">
+              <label class="form-label" for="provider-version">{{ t('gui.ai.providers.field_version') }}</label>
+              <Input
+                id="provider-version"
+                :model-value="selection.version"
+                list="provider-version-suggestions"
+                maxlength="64"
+                :disabled="saving"
+                @update:model-value="setSelection('version', $event)"
+              />
+              <datalist id="provider-version-suggestions">
+                <option v-for="value in entry.versions" :key="value" :value="value">{{ value }}</option>
+              </datalist>
             </div>
-            <textarea
-              id="provider-command"
-              v-model="form.cli_command"
-              class="command-input"
-              spellcheck="false"
-              :disabled="saving"
-              @input="onCommandInput"
-            />
+            <div class="form-group">
+              <label class="form-label" for="provider-model-name">{{ t('gui.ai.providers.field_model') }}</label>
+              <Input
+                id="provider-model-name"
+                :model-value="selection.model"
+                list="provider-model-name-suggestions"
+                maxlength="64"
+                :disabled="saving"
+                @update:model-value="setSelection('model', $event)"
+              />
+              <datalist id="provider-model-name-suggestions">
+                <option v-for="value in entry.models" :key="value" :value="value">{{ kindLabel(value) }}</option>
+              </datalist>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="provider-effort">{{ t('gui.ai.providers.field_effort') }}</label>
+              <Select
+                id="provider-effort"
+                :model-value="selection.effort"
+                :options="entry.efforts.map(plainOption)"
+                :disabled="saving"
+                @update:model-value="setSelection('effort', $event)"
+              />
+            </div>
           </div>
-        </template>
+        </section>
+
+        <!-- 커맨드: the one-line preview is always shown; 직접 편집 opens the editor below it
+             (사용자 정의 keeps the editor open). The two conditions are separate on purpose. -->
+        <div class="form-group command-block">
+          <div class="label-row">
+            <span id="provider-command-preview-label" class="form-label">{{ t('gui.ai.providers.command_preview') }}</span>
+            <span class="command-chip" :class="{ edited: !isCustom && !commandAuto }">{{ commandChip }}</span>
+            <span class="label-spacer" />
+            <button v-if="showCommandReset" type="button" class="link-btn" :disabled="saving" @click="resetCommand">
+              {{ t('gui.ai.providers.command_reset') }}
+            </button>
+            <button
+              v-if="!isCustom"
+              type="button"
+              class="link-btn command-edit-btn"
+              :aria-expanded="commandVisible"
+              :disabled="saving"
+              @click="showCommand = !showCommand"
+            >
+              {{ showCommand ? t('gui.ai.providers.command_edit_close') : t('gui.ai.providers.command_edit') }}
+            </button>
+          </div>
+          <div
+            class="command-preview"
+            role="textbox"
+            aria-readonly="true"
+            aria-labelledby="provider-command-preview-label"
+            :title="form.cli_command"
+          >{{ form.cli_command || '—' }}</div>
+          <div v-if="commandVisible" class="command-editor">
+            <div v-if="entry" class="form-group">
+              <label class="form-label" for="provider-executable">{{ t('gui.ai.providers.field_executable') }}</label>
+              <Input
+                id="provider-executable"
+                class="mono"
+                :model-value="selection.executable"
+                :disabled="saving"
+                :invalid="composeState === 'invalid_executable'"
+                @update:model-value="setExecutable"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="provider-command">{{ t('gui.ai.providers.field_command') }}</label>
+              <textarea
+                id="provider-command"
+                v-model="form.cli_command"
+                class="command-input"
+                spellcheck="false"
+                :disabled="saving"
+                @input="onCommandInput"
+              />
+            </div>
+          </div>
+        </div>
       </template>
 
       <!-- An AI saved as API before API was retired keeps its own fields so editing it does not lose them. -->
       <template v-else>
-        <div class="form-group c2">
-          <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
-          <Select id="provider-kind" v-model="form.kind" :options="apiKindOptions" :disabled="saving" />
-        </div>
-        <div class="form-group c4">
+        <section class="model-group" role="group" aria-labelledby="provider-model-group">
+          <h3 id="provider-model-group" class="group-title">{{ t('gui.ai.providers.group_model') }}</h3>
+          <div class="form-group">
+            <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
+            <Select id="provider-kind" v-model="form.kind" :options="apiKindOptions" :disabled="saving" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="provider-model">{{ t('gui.ai.providers.field_api_model') }}</label>
+            <Input id="provider-model" v-model="form.api_model" :disabled="saving" />
+          </div>
+        </section>
+        <div class="form-group">
           <label class="form-label" for="provider-base-url">{{ t('gui.ai.providers.field_api_base_url') }}</label>
           <Input id="provider-base-url" v-model="form.api_base_url" :disabled="saving" />
         </div>
-        <div class="form-group c4">
-          <label class="form-label" for="provider-model">{{ t('gui.ai.providers.field_api_model') }}</label>
-          <Input id="provider-model" v-model="form.api_model" :disabled="saving" />
-        </div>
-        <div class="form-group c4">
+        <div class="form-group">
           <label class="form-label" for="provider-api-key">
             {{ t('gui.ai.providers.field_api_key') }}
             <span v-if="form.api_key_set" class="key-hint">({{ t('gui.ai.providers.key_configured') }})</span>
@@ -199,11 +242,6 @@
           </label>
         </div>
       </template>
-
-      <span class="switch-label">{{ t('gui.ai.providers.field_enabled') }}</span>
-      <div class="switch-cell">
-        <Toggle v-model="form.enabled" :aria-label="t('gui.ai.providers.field_enabled')" :disabled="saving" />
-      </div>
     </div>
 
     <template #footer>
@@ -319,7 +357,6 @@ const commandVisible = computed(() => isCustom.value || showCommand.value)
 
 const kindLabel = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1)
 const plainOption = (value: string) => ({ value, label: value })
-const modelOption = (value: string) => ({ value, label: kindLabel(value) })
 
 const cliKindOptions = computed(() => [
   ...Object.keys(catalog.value).map((value) => ({ value, label: kindLabel(value) })),
@@ -415,11 +452,16 @@ function onKindChange(kind: string) {
 
 function setSelection(field: 'version' | 'model' | 'effort', value: string) {
   selection.value = { ...selection.value, [field]: value }
-  void compose()
+  if (field === 'effort') void compose()
+  else scheduleCompose()
 }
 
 function setExecutable(value: string) {
   selection.value = { ...selection.value, executable: value }
+  scheduleCompose()
+}
+
+function scheduleCompose() {
   clearExecutableTimer()
   composeSeq += 1 // a typed character makes any composition in flight stale
   composeState.value = 'pending'
@@ -713,41 +755,70 @@ function onSave() {
 </script>
 
 <style scoped>
+/* F108-4: spacing follows ModalShell (24px side gutter of .ui-modal-body), type follows the shared
+   --fg2-fs-* scale and every colour is a --fg2-* token; nothing below hardcodes a hex value. */
 .dialog-header {
-  padding: 16px 20px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px 14px;
   border-bottom: 1px solid var(--fg2-line);
 }
 
 .dialog-title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fg2-fs-title);
   font-weight: 800;
   color: var(--fg2-text);
 }
 
-.dialog-form {
-  padding: 16px 22px 18px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  column-gap: 10px;
-  row-gap: 14px;
+.header-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.c4 { grid-column: 1 / -1; }
-.c2 { grid-column: span 2; }
-.c1 { grid-column: span 1; }
+.header-switch-state {
+  font-size: var(--fg2-fs-sub);
+  font-weight: 650;
+  color: var(--fg2-text-3);
+  white-space: nowrap;
+}
 
-.ghost { visibility: hidden; }
+.header-switch-state.on {
+  color: var(--fg2-status-success-fg);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 0 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-row > .span-all { grid-column: 1 / -1; }
+
+/* Local CLI: the target Agent field stays in the DOM (its state is kept) but takes no room. */
+.ghost { display: none; }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
 .form-label {
-  font-size: 12.5px;
+  font-size: var(--fg2-fs-sub);
   font-weight: 650;
   color: var(--fg2-muted);
   white-space: nowrap;
@@ -757,6 +828,7 @@ function onSave() {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 18px;
   white-space: nowrap;
 }
 
@@ -766,64 +838,102 @@ function onSave() {
   padding: 0;
   border: 0;
   background: none;
-  color: #9cc0ff;
-  font-size: 12px;
+  color: var(--fg2-focus);
+  font-size: var(--fg2-fs-sub);
   cursor: pointer;
 }
+
+.link-btn:hover:not(:disabled) { text-decoration: underline; }
 
 .link-btn:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-/* label in column 1, switch where the 버전 column starts */
-.switch-label {
-  grid-column: 1 / 2;
+/* 모델 구성: one soft card around 종류 / 버전 · 모델 · 추론도. */
+.model-group {
   display: flex;
-  align-items: center;
-  min-height: 22px;
-  font-size: 12.5px;
-  font-weight: 650;
-  color: var(--fg2-muted);
-  white-space: nowrap;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-inset-radius);
+  background: var(--fg2-inset-bg);
 }
 
-.switch-cell {
-  grid-column: 2 / -1;
-  display: flex;
-  align-items: center;
-  min-height: 22px;
+.group-title {
+  margin: 0;
+  font-size: var(--fg2-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--fg2-text-3);
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .command-chip {
   padding: 1px 7px;
-  border: 1px solid #37588f;
-  border-radius: 9px;
-  color: #9cc0ff;
-  font-size: 11px;
+  border: 1px solid var(--fg2-status-info-border);
+  border-radius: var(--fg2-control-radius-pill);
+  background: var(--fg2-status-info-bg);
+  color: var(--fg2-status-info-fg);
+  font-size: var(--fg2-fs-xs);
+  font-weight: 600;
 }
 
 .command-chip.edited {
-  border-color: #6b5320;
-  color: var(--fg2-amber-dim, #d97706);
+  border-color: var(--fg2-status-warning-border);
+  background: var(--fg2-status-warning-bg);
+  color: var(--fg2-status-warning-fg);
 }
 
 .mono,
+.command-preview,
 .command-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
+  font-size: var(--fg2-fs-sub);
+}
+
+.command-preview {
+  height: var(--fg2-control-h-md);
+  line-height: calc(var(--fg2-control-h-md) - 2px);
+  padding: 0 var(--fg2-control-pad-x);
+  border: 1px solid var(--fg2-line);
+  border-radius: var(--fg2-control-radius);
+  background: var(--fg2-control-surface-flat);
+  color: var(--fg2-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 직접 편집 opens under the preview, which stays visible. */
+.command-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
 }
 
 .command-input {
   width: 100%;
   min-height: 76px;
-  padding: 8px 10px;
+  padding: 8px var(--fg2-control-pad-x);
   border: 1px solid var(--fg2-line-strong);
   border-radius: var(--fg2-control-radius);
   background: var(--fg2-control-surface);
   color: var(--fg2-text);
   line-height: 1.45;
   resize: vertical;
+}
+
+.command-input:hover:not(:disabled) {
+  border-color: var(--fg2-control-hover-border);
 }
 
 .command-input:focus-visible {
@@ -837,63 +947,63 @@ function onSave() {
 }
 
 .key-hint {
-  font-size: 11px;
-  color: #79d799;
+  font-size: var(--fg2-fs-xs);
+  color: var(--fg2-status-success-fg);
   margin-left: 4px;
 }
 
 .text-warn {
-  color: var(--fg2-amber-dim, #d97706);
+  color: var(--fg2-status-warning-fg);
   font-weight: 600;
 }
 
 .field-hint {
   display: block;
-  margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--fg2-fs-xs);
 }
 
 .segmented {
   display: inline-flex;
   align-self: flex-start;
   padding: 3px;
-  border-radius: 8px;
+  border-radius: var(--fg2-control-radius);
   border: 1px solid var(--fg2-line);
-  background: #0a1726;
+  background: var(--fg2-inset-bg);
 }
 
 .segmented button {
-  height: 28px;
+  height: var(--fg2-control-h-sm);
   padding: 0 14px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--fg2-control-radius-sm);
   background: none;
-  color: #9fb3c8;
-  font-size: 12.5px;
+  color: var(--fg2-text-2);
+  font-size: var(--fg2-fs-sub);
   font-weight: 650;
   cursor: pointer;
 }
 
 .segmented button.on {
-  background: linear-gradient(180deg, #1c4e84, #153b65);
-  color: #edf6ff;
+  background: var(--fg2-status-info-bg);
+  box-shadow: inset 0 0 0 1px var(--fg2-status-info-border);
+  color: var(--fg2-text);
 }
 
 .form-error {
   white-space: pre-line;
   padding: 8px 12px;
-  border-radius: 6px;
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #fca5a5;
-  font-size: 12px;
+  border-radius: var(--fg2-control-radius);
+  background: var(--fg2-status-danger-bg);
+  border: 1px solid var(--fg2-status-danger-border);
+  color: var(--fg2-status-danger-fg);
+  font-size: var(--fg2-fs-sub);
 }
 
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 14px 20px;
+  padding: 14px 24px;
   border-top: 1px solid var(--fg2-line);
 }
 </style>

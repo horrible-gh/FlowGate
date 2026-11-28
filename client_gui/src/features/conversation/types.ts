@@ -390,7 +390,10 @@ export interface ProviderList {
  * checkpoint (null = none). The checkpoint applies only while the context setting is "체크포인트 사용".
  */
 export interface ChatDocSettings {
-  timeoutMinutes?: number | null
+  /** 채팅 최대 시간 in seconds (null = 제한 없음, 60~604800). */
+  timeoutSeconds?: number | null
+  /** 명령 실행 제한 in seconds (null = not set, shown as 300; 0 = 제한 없음; 1~1800). */
+  commandTimeoutSeconds?: number | null
   providerId: string | null
   checkpointSeq: number | null
   /** 'include' = send from the checkpoint message, 'exclude' = from the next message; null without a checkpoint. */
@@ -400,7 +403,8 @@ export interface ChatDocSettings {
 export type CheckpointKind = 'include' | 'exclude'
 
 export interface ChatDocSettingsPatch {
-  timeout_minutes?: number | null
+  timeout_seconds?: number | null
+  command_timeout_seconds?: number | null
   provider_id?: string | null
   context_checkpoint_seq?: number | null
   context_checkpoint_kind?: CheckpointKind
@@ -414,7 +418,9 @@ export type SourceAccessMode = 'read_only' | 'execute' | 'edit' | 'edit_once'
 
 /** GET/PATCH /me/chat-settings. */
 export interface ChatSettings {
-  timeoutMinutes?: number | null
+  /** The open chat's per-chat 채팅 최대 시간 / 명령 실행 제한 (ChatDocSettings), carried with my settings for the ⚙ window. */
+  timeoutSeconds?: number | null
+  commandTimeoutSeconds?: number | null
   sendAction: SendAction
   contextMode: ContextMode
   checkpointMaxTurns?: number
@@ -448,7 +454,9 @@ export interface MyAiPrefsUpdate {
 }
 
 export interface ChatSettingsPatch {
-  timeout_minutes?: number | null
+  /** Per-chat values: saved through the chat's settings, not /me/chat-settings. */
+  timeout_seconds?: number | null
+  command_timeout_seconds?: number | null
   send_action?: SendAction
   context_mode?: ContextMode
   checkpoint_max_turns?: number

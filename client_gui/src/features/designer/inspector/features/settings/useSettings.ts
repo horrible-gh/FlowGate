@@ -15,6 +15,7 @@
 // the v0.1 Flow's Node only (a Graph card's settings are useCardSettings'). A change
 // is saved at once (`change`: no save button, no "saved" line — v7), and while the rows written again wait
 // for the Canvas to give the Node its row's new id, the row last shown stays drawn (off) instead of a line.
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, inject, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   reviewDocumentRead,
@@ -149,6 +150,7 @@ export function useSettings(target: () => InspectorTarget | null): SettingsTabSt
     read: settingsChoicesRead,
     events: [],
   })
+  useAiProvidersChanged(() => { void choices.reload() })
 
   const draft = ref<SettingsDraft | null>(null)
   const busy = ref(false)

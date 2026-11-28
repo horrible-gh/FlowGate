@@ -23,6 +23,7 @@
 // one Q&A state per document at a time, shared by all its consumers: the Q&A tab and the ↗ windows the
 // Frame draws apart from it (QnaWindowHost). The questions are read once for them, and what a window sends (an answer, an
 // AI request) is the list's too — who is awaited, what was sent. The last consumer to leave a document ends its state.
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import {
   computed,
   effectScope,
@@ -173,6 +174,7 @@ function createQna(target: () => InspectorTarget | null, options: QnaOptions = {
     read: settingsChoicesRead,
     events: [],
   })
+  useAiProvidersChanged(() => { void choices.reload() })
 
   const busy = ref<number | null>(null)
   const failure = ref<QnaFailure | null>(null)

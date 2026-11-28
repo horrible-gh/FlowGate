@@ -393,3 +393,30 @@ def test_cli_parser_rejects_overlong_executable():
     command = svc.compose_cli_preset("gemini")["cli_command"]
     assert svc.parse_cli_preset("a" * 201 + command[3:]) is None
 
+
+
+@pytest.mark.parametrize("kind", ["claude", "codex", "gemini"])
+@pytest.mark.parametrize("version", ["5.6", "6", "7.0"])
+@pytest.mark.parametrize("model", ["nova", "nova_fast", "nova-fast"])
+def test_cli_free_input_round_trip(kind, version, model):
+    composed = svc.compose_cli_preset(kind, version=version, model=model)
+    assert svc.parse_cli_preset(composed["cli_command"], kind=kind) == composed["selection"]
+
+
+@pytest.mark.parametrize("kind", ["claude", "codex", "gemini"])
+@pytest.mark.parametrize("field", ["version", "model"])
+@pytest.mark.parametrize("value", HOSTILE_MODEL_NAMES + ["", " 6", "6 ", "a" * 65, "모델", "a/b", "a:b"])
+def test_cli_free_input_rejects_unsafe_or_overlong(kind, field, value):
+    with pytest.raises(svc.AiSettingsValidationError) as error:
+        svc.compose_cli_preset(kind, **{field: value})
+    assert error.value.errors == [{"field": field, "reason": "invalid_format"}]
+
+
+def test_cli_free_input_length_boundary_and_catalog_compatibility():
+    for kind in ("claude", "codex", "gemini"):
+        composed = svc.compose_cli_preset(kind, version="6", model="a" * 64)
+        assert svc.parse_cli_preset(composed["cli_command"]) == composed["selection"]
+        entry = svc.get_cli_model_catalog()[kind]
+        assert entry["suggestions"] == {key: entry[key] for key in ("versions", "models")}
+    command = svc.compose_cli_preset("claude", version="6")["cli_command"]
+    assert svc.parse_cli_preset(command.replace("opus-6", "opus-" + "6" * 130)) is None

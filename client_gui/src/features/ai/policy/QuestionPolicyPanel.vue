@@ -76,6 +76,7 @@
   </section>
 </template>
 <script setup lang="ts">
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { normalizeApiError } from '@shared/apiErrors'
@@ -168,7 +169,18 @@ async function load() {
   try { const policy = await loadPolicy(); body.value = saved.value = policy.body; loaded.value = true; mode.value = policy.body.trim() ? 'preview' : 'edit' }
   catch { error.value = t('error') }
   finally { loading.value = false }
-  try { providers.value = await loadProviders() } catch { assistantError.value = t('error') }
+  await refreshProviders()
+}
+let providerRequest = 0
+useAiProvidersChanged(() => { void refreshProviders() })
+async function refreshProviders() {
+  const request = ++providerRequest
+  try {
+    const next = await loadProviders()
+    if (disposed || request !== providerRequest) return
+    providers.value = next
+    if (!next.some(item => item.id === provider.value)) provider.value = ''
+  } catch { if (!disposed && request === providerRequest) assistantError.value = t('error') }
 }
 function restart() {
   if (busy.value) return

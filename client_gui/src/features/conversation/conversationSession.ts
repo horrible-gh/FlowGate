@@ -11,6 +11,7 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
+import { subscribeAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly } from 'vue'
 import { draftUserId, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
@@ -31,6 +32,7 @@ import type {
   ChatSettingsPatch,
   ChatSummary,
   ChatAutoTitle,
+  ChatDocSettingsPatch,
   CheckpointKind,
   CommandDecision,
   CommandRequestActivity,
@@ -1273,7 +1275,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
     state.runId = null
     state.cancelling = false
     state.deciding = []
-    state.settings.timeoutMinutes = null
+    state.settings.timeoutSeconds = null
+    state.settings.commandTimeoutSeconds = null
     state.myParticipantKey = null
     state.checkpointSeq = null
     state.checkpointKind = null
@@ -1302,6 +1305,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providersLoad = fetchProviders(projectId)
     return providersLoad
   }
+
+  const stopProviderChanges = subscribeAiProvidersChanged(() => {
+    if (disposed) return
+    const projectId = state.scope?.projectId ?? providersProject
+    providersProject = null
+    if (projectId) void loadProviders(projectId)
+  })
 
   function providersLoaded(): Promise<void> {
     return providersLoad
@@ -1378,7 +1388,8 @@ export function createConversationSession(options: ConversationSessionOptions = 
       const [stored] = await Promise.all([read, providersLoad])
       if (!isCurrentChat(chatId, gen)) return
       const settings = stored ?? { providerId: null, checkpointSeq: state.checkpointSeq, checkpointKind: state.checkpointKind }
-      state.settings.timeoutMinutes = settings.timeoutMinutes ?? null
+      state.settings.timeoutSeconds = settings.timeoutSeconds ?? null
+      state.settings.commandTimeoutSeconds = settings.commandTimeoutSeconds ?? null
       state.checkpointSeq = settings.checkpointSeq
       state.checkpointKind = settings.checkpointKind
       // A pick made on this screen while the read was out wins: it is the newer one (and is being saved).
@@ -1457,7 +1468,11 @@ export function createConversationSession(options: ConversationSessionOptions = 
 
   function applySettings(settings: ChatSettings, scope: ConversationScope | null): boolean {
     if (!sameScope(settings.sourceAccessScope, scope)) return false
-    state.settings = { ...settings, timeoutMinutes: settings.timeoutMinutes === undefined ? state.settings.timeoutMinutes : settings.timeoutMinutes, sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
+    state.settings = {
+      ...settings,
+      timeoutSeconds: settings.timeoutSeconds === undefined ? state.settings.timeoutSeconds : settings.timeoutSeconds,
+      commandTimeoutSeconds: settings.commandTimeoutSeconds === undefined ? state.settings.commandTimeoutSeconds : settings.commandTimeoutSeconds,
+      sourceAccessMode: scope ? settings.sourceAccessMode : 'read_only' }
     return true
   }
 
@@ -3200,21 +3215,44 @@ export function createConversationSession(options: ConversationSessionOptions = 
     if ('source_access_mode' in patch && !scope) return false
     const request = ++settingsRequest
     state.savingSettings = true
+    let docSaved = null as { chatId: string; chatGeneration: number; timeoutSeconds: number | null; commandTimeoutSeconds: number | null } | null
     try {
-      const { timeout_minutes, ...userPatch } = patch
+      // 채팅 최대 시간 / 명령 실행 제한 are the chat's own settings; the rest is mine (/me/chat-settings).
+      const { timeout_seconds, command_timeout_seconds, ...userPatch } = patch
       const chatId = state.activeChatId
       const chatGeneration = chatGen
-      let timeoutMinutes = state.settings.timeoutMinutes ?? null
-      if ('timeout_minutes' in patch) {
+      let timeoutSeconds = state.settings.timeoutSeconds ?? null
+      let commandTimeoutSeconds = state.settings.commandTimeoutSeconds ?? null
+      if ('timeout_seconds' in patch || 'command_timeout_seconds' in patch) {
         if (!chatId || !source.saveChatDocSettings) return false
-        const saved = await source.saveChatDocSettings(chatId, { timeout_minutes })
-        timeoutMinutes = saved.timeoutMinutes ?? null
+        const docPatch: ChatDocSettingsPatch = {}
+        if ('timeout_seconds' in patch) docPatch.timeout_seconds = timeout_seconds
+        if ('command_timeout_seconds' in patch) docPatch.command_timeout_seconds = command_timeout_seconds
+        const saved = await source.saveChatDocSettings(chatId, docPatch)
+        timeoutSeconds = saved.timeoutSeconds ?? null
+        commandTimeoutSeconds = saved.commandTimeoutSeconds ?? null
+        docSaved = { chatId, chatGeneration, timeoutSeconds, commandTimeoutSeconds }
+      }
+      // Only the chat's own times changed (e.g. the 대화 tab's context is being typed and not valid yet): nothing to
+      // send to /me/chat-settings, the confirmed times are taken as they are.
+      if (docSaved && !Object.keys(userPatch).length) {
+        if (!isCurrentChat(docSaved.chatId, docSaved.chatGeneration) || !settingsCurrent(gen, scope) || request !== settingsRequest) return false
+        state.settings.timeoutSeconds = timeoutSeconds
+        state.settings.commandTimeoutSeconds = commandTimeoutSeconds
+        return true
       }
       const settings = await source.saveChatSettings(userPatch, scope ?? undefined)
       if (chatId && !isCurrentChat(chatId, chatGeneration)) return false
-      settings.timeoutMinutes = timeoutMinutes
+      settings.timeoutSeconds = timeoutSeconds
+      settings.commandTimeoutSeconds = commandTimeoutSeconds
       return settingsCurrent(gen, scope) && request === settingsRequest && applySettings(settings, scope)
     } catch (error) {
+      // F108-6: the chat's own PATCH may have been stored before /me/chat-settings failed. Those times are on the
+      // server now, so they are kept in the confirmed settings (the window redraws them); only the rest goes back.
+      if (docSaved && isCurrentChat(docSaved.chatId, docSaved.chatGeneration)) {
+        state.settings.timeoutSeconds = docSaved.timeoutSeconds
+        state.settings.commandTimeoutSeconds = docSaved.commandTimeoutSeconds
+      }
       if (settingsCurrent(gen, scope)) notify('danger', 'settings_failed', messageOf(error))
       return false
     } finally {
@@ -3248,6 +3286,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function dispose(): void {
+    stopProviderChanges()
     state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true
