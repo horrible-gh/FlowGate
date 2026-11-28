@@ -1,0 +1,15 @@
+{
+  "locale": "ja",
+  "areas": {
+    "notices": "注意事項",
+    "conversation": "会話の参照とターン送信",
+    "documents": "文書の参照と編集",
+    "attachments": "添付の参照と共有",
+    "source_tools": "ソースファイルの操作",
+    "cards": "カードの配置と実行",
+    "question": "質問と回答",
+    "submit": "結果の保存と検証",
+    "design_template": "設計文書テンプレート",
+    "authoring_guide": "文書の執筆指針"
+  }
+}

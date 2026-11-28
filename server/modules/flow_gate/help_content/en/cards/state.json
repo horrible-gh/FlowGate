@@ -1,0 +1,12 @@
+{
+  "locale": "en",
+  "title": "Current Flow state",
+  "summary": "Read the current Flow canvas and run state.",
+  "purpose": "Inspect card placement and the current run.",
+  "request": {
+    "canvas": "{{route:cards.canvas}}",
+    "current_run": "{{route:cards.run_current}}"
+  },
+  "response": "Returns stored state. Display Flow and card names using flow_name and card_name.",
+  "errors": "For authentication failures or inaccessible Flows, inspect the response error."
+}

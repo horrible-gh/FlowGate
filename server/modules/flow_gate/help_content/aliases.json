@@ -1,0 +1,12 @@
+{
+  "conversation/recovery": "cards/recovery",
+  "submit/check_http": "submit/self_check",
+  "submit/check_request": "submit/self_check",
+  "submit/check_lifecycle": "submit/self_check",
+  "submit/check_errors_request": "submit/check_errors",
+  "submit/check_errors_execution": "submit/check_errors",
+  "submit/check_errors_recovery": "submit/check_errors",
+  "submit/check_errors_busy": "submit/check_errors",
+  "submit/check_errors_ownership": "submit/check_errors",
+  "submit/check_baseline_conditions": "submit/check_baseline"
+}

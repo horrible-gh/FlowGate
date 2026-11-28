@@ -1,0 +1,12 @@
+{
+  "locale": "ko",
+  "title": "현재 Flow 상태",
+  "summary": "현재 Flow의 캔버스와 실행 상태를 읽습니다.",
+  "purpose": "카드 배치와 현재 실행 상태를 확인할 때 사용합니다.",
+  "request": {
+    "canvas": "{{route:cards.canvas}}",
+    "current_run": "{{route:cards.run_current}}"
+  },
+  "response": "저장된 상태를 반환합니다. Flow와 카드는 flow_name, card_name으로 표시합니다.",
+  "errors": "인증 실패 또는 읽을 수 없는 Flow이면 응답의 오류 원인을 확인합니다."
+}
