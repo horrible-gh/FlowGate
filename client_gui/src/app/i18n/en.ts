@@ -1471,6 +1471,11 @@ export default {
       remote_path_invalid: 'The agent cannot use the working directory path. Check the remote working directory',
       remote_agent_rejected: 'The agent rejected the run',
       remote_agent_failed: 'The agent could not start the run',
+      // F107-14: the last message of a run that ended without a reply turn (preview box under run_no_reply).
+      dying_title: 'Last message · not added to the conversation',
+      dying_more: '… {n} more lines',
+      dying_open: 'View all',
+      dying_work_folder: 'work folder/…',
     },
     participants: {
       all: 'Participants ({count})',

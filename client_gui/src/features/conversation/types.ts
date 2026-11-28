@@ -495,6 +495,12 @@ export interface AiRunState {
   providerName?: string | null
   /** D: the applied read / edit access of a chat run; null when the server does not say. */
   sourceAccess?: ChatSourceAccess | null
+  /**
+   * F107-14: the run's last message (다잉메세지) as its record keeps it — given only for a remote CLI run
+   * (the detail's `remote_cli` is true), whose last message stays on the run record. A server-local CLI run
+   * and an API run (`api_turns_used` set, already a chat turn) never carry one. Absent when the server sent none.
+   */
+  lastMessage?: string | null
 }
 
 /** Newest-first run-history page. */

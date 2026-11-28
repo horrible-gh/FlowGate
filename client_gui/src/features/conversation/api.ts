@@ -811,9 +811,10 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
     () => getRequest<{ run_id?: string; status?: string; end_reason?: string | null; outcome?: string | null;
       exit_code?: number | null; doc_ref?: string | null; action_scope?: string | null; group_id?: string | null;
       finished_at?: string | null; fallback_history?: unknown; succeeded?: boolean | null; stop_code?: string | null;
-      api_turns_used?: number | null; provider_id?: string | null;
+      api_turns_used?: number | null; provider_id?: string | null; last_message?: string | null;
       started_at?: string | null; provider?: { id?: unknown; name?: unknown } | null; provider_name?: string | null;
-      requested_provider_id?: string | null; source_access?: string | null; command_access?: string | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
+      requested_provider_id?: string | null; source_access?: string | null; command_access?: string | null;
+      remote_cli?: boolean | null }>(`${API}/ai-invoke/${encodeURIComponent(runId)}`),
   )
   const endReason = data?.end_reason ?? null
   const failure = endReason === 'all_providers_failed' ? runFailure(data?.fallback_history) : null
@@ -823,6 +824,12 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
   // an execute-mode run keeps `source_access=read` and says `command_access=execute`.
   const sourceAccess = data?.source_access === 'read' && data?.command_access === 'execute' ? 'execute'
     : data?.source_access === 'read' || data?.source_access === 'read_write' ? data.source_access : null
+  // F107-14 (0028-T decision 6): only a remote CLI run (the server marks one that went to a remote Agent,
+  // `remote_cli`) keeps its last message on the run record alone. A server-local CLI run and an API run
+  // (api_turns_used set, already a chat turn) never carry one, nor does a server that does not say.
+  // Kept as sent; the preview masks its own copy.
+  const lastMessage = data?.remote_cli === true && data?.api_turns_used == null
+    && typeof data?.last_message === 'string' && data.last_message.trim() ? data.last_message : null
   return {
     runId: textOrNull(data?.run_id) ?? runId,
     status: data?.status === 'finished' ? 'finished' :
@@ -834,6 +841,7 @@ export async function fetchRun(runId: string): Promise<ChatRunState> {
     providerName: textOrNull(data?.provider_name) ?? textOrNull(live?.name), sourceAccess,
     docRef: textOrNull(data?.doc_ref), actionScope: textOrNull(data?.action_scope), groupId: textOrNull(data?.group_id),
     startedAt: textOrNull(data?.started_at), finishedAt: textOrNull(data?.finished_at), ...(failure ? { failure } : {}),
+    ...(lastMessage ? { lastMessage } : {}),
   }
 }
 
