@@ -178,7 +178,10 @@ def test_fallback_language_and_gates(ready, monkeypatch):
     result = build(localized={"ko": {"materials": "원문"}})
     assert result.locale == "ko" and result.language_reasons
     assert terminal.finalize(result.text).startswith("## 지금 할 일\n")
+    # Chat help visibility is chat-scope only, so any chat-mode probe covers chat.read.
     state["chat.read"]["verification"]["token_mode"] = "chat.edit"
+    assert build().fallback_reason is None
+    state["chat.read"]["verification"]["token_mode"] = "card.edit"
     assert build().fallback_reason == "verification_missing_or_failed"
     state["chat.read"]["verification"]["token_mode"] = "chat.read"
     asset["status"] = "pending"
@@ -230,9 +233,30 @@ def test_render_checks_leaf_contract_and_omits_optional_bad_context(monkeypatch)
     monkeypatch.setattr(render, "build_bulk", lambda names, ctx: ([payload], []))
     with pytest.raises(loader.HelpContentError, match="unresolved_help_context:question/register"):
         mention.help_selection(MentionFacts("card.edit", "rework", "TR"), {}, "ko")
-    payload.update(name="cards", child="ai_options")
+    payload.update(name="cards", child="ai_options", content={"url": "{doc_id}"})
     first, more, _ = mention.help_selection(MentionFacts("chat.read"), {}, "ko")
     assert "cards/ai_options" not in first + more
+
+
+def test_chat_keeps_node_key_path_slot(monkeypatch):
+    # A chat is not bound to a card: `{node_key}` in a route is a slot, not missing context.
+    from modules.flow_gate.services.help import render
+    payload = {"name": "cards", "child": "recovery", "content": {"url": "/flows/f/nodes/{node_key}/basis"}}
+    monkeypatch.setattr(render, "build_bulk", lambda names, ctx: ([payload], []))
+    first, more, _ = mention.help_selection(MentionFacts("chat.edit_once"), {}, "ko")
+    assert "cards/recovery" in more
+    assert mention.unresolved_context("cards/recovery", payload["content"])
+    assert not mention.unresolved_context("cards/recovery", payload["content"], mention.unbound_for("chat.read"))
+    assert mention.unbound_for("card.edit") == frozenset()
+
+
+def test_chat_probe_covers_chat_modes_only():
+    assert mention.probe_covers("chat.edit_once", "chat.read")
+    assert mention.probe_covers("chat.read", "chat.edit")
+    assert not mention.probe_covers("chat.edit_once", "card.read")
+    assert not mention.probe_covers("card.edit", "card.read")
+    assert not mention.probe_covers("chat.bogus", "chat.read")
+    assert not mention_transition.verify_transition("card.read", "chat.edit", "base", "secret", {"notices": ["x"]})["passed"]
 
 
 def test_transition_decoded_values_and_manifest_context(monkeypatch):

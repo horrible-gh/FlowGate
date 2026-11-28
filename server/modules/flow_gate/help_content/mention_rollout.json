@@ -1,19 +1,412 @@
 {
   "chat.read": {
-    "enabled": false,
-    "verification": null
+    "enabled": true,
+    "verification": {
+      "mode": "chat.read",
+      "token_mode": "chat.edit_once",
+      "checked_at": "2026-11-28T08:05:00+00:00",
+      "passed": true,
+      "items": {
+        "notices": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/read": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/turn": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/encoding": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/list": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/partial": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/unreadable": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/link": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "source_tools": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/state": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/ai_options": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/upload_request": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/questions": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/recovery": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "question/policy": {
+          "visible": true,
+          "response": true,
+          "context": true
+        }
+      }
+    }
   },
   "chat.execute": {
-    "enabled": false,
-    "verification": null
+    "enabled": true,
+    "verification": {
+      "mode": "chat.execute",
+      "token_mode": "chat.edit_once",
+      "checked_at": "2026-11-28T08:05:00+00:00",
+      "passed": true,
+      "items": {
+        "notices": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/read": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/turn": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/encoding": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/list": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/partial": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/unreadable": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/link": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "source_tools": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/state": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/ai_options": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/commands": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/upload_request": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/questions": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/recovery": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "question/policy": {
+          "visible": true,
+          "response": true,
+          "context": true
+        }
+      }
+    }
   },
   "chat.edit": {
-    "enabled": false,
-    "verification": null
+    "enabled": true,
+    "verification": {
+      "mode": "chat.edit",
+      "token_mode": "chat.edit_once",
+      "checked_at": "2026-11-28T08:05:00+00:00",
+      "passed": true,
+      "items": {
+        "notices": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/read": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/turn": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/encoding": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/list": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/partial": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/unreadable": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/link": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "source_tools": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/state": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/ai_options": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/commands": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/edit": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/edit_by_id": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/place": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/roles": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/run": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/upload_request": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/questions": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/recovery": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "question/policy": {
+          "visible": true,
+          "response": true,
+          "context": true
+        }
+      }
+    }
   },
   "chat.edit_once": {
-    "enabled": false,
-    "verification": null
+    "enabled": true,
+    "verification": {
+      "mode": "chat.edit_once",
+      "token_mode": "chat.edit_once",
+      "checked_at": "2026-11-28T08:05:00+00:00",
+      "passed": true,
+      "items": {
+        "notices": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/read": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/turn": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/encoding": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/list": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/partial": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/unreadable": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/link": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "source_tools": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/state": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/ai_options": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "conversation/commands": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/edit": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "documents/edit_by_id": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/place": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/roles": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/run": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "attachments/upload_request": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/questions": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "cards/recovery": {
+          "visible": true,
+          "response": true,
+          "context": true
+        },
+        "question/policy": {
+          "visible": true,
+          "response": true,
+          "context": true
+        }
+      }
+    }
   },
   "card.read": {
     "enabled": false,

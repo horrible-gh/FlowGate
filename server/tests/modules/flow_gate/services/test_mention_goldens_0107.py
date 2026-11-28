@@ -54,11 +54,22 @@ def test_complete_provider_golden_and_budget(case, monkeypatch):
     assert actual.startswith(terminal.render(terminal.specification(case["kind"], case["locale"])))
 
 
-def test_exact_mode_locale_coverage_and_disabled_rollout():
+def test_exact_mode_locale_coverage_and_rollout_evidence():
     assert {(c["mode"], c["locale"]) for c in CASES} == {
         (mode, locale) for mode in mention.MODES for locale in ("ko", "en", "ja")}
     assert len(CASES) == 18
-    assert all(not row["enabled"] for row in loader.read_json("mention_rollout").values())
+    rollout = loader.read_json("mention_rollout")
+    assert set(rollout) == set(mention.MODES)
+    for mode, row in rollout.items():
+        if not row["enabled"]:
+            continue
+        # An enabled mode carries a passing probe covering every transition leaf.
+        record = row["verification"]
+        assert record["passed"] is True and record["mode"] == mode
+        assert mention.probe_covers(record["token_mode"], mode)
+        assert set(transition_leaves(mode)) <= set(record["items"])
+        assert all(all(item[k] is True for k in ("visible", "response", "context"))
+                   for item in record["items"].values())
 
 
 @pytest.mark.parametrize("locale", ("ko", "en", "ja"))

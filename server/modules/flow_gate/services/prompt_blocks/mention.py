@@ -40,17 +40,36 @@ def render_body(template, spec, values, routes):
     return body
 
 
-def unresolved_context(name, body):
+# A chat token is never bound to a card, so `{node_key}` stays a path slot the AI
+# fills from cards/state. It is not missing context in a chat mode.
+CHAT_UNBOUND = frozenset({"node_key"})
+
+
+def unbound_for(mode):
+    return CHAT_UNBOUND if str(mode).startswith("chat.") else frozenset()
+
+
+def probe_covers(token_mode, mode):
+    """Chat help visibility depends only on the chat scope (not read/edit), so a
+    probe made with any chat-mode token is evidence for every chat mode. Card
+    modes still need a probe token of the exact mode."""
+    if token_mode == mode:
+        return True
+    return token_mode in MODES and str(token_mode).startswith("chat.") and str(mode).startswith("chat.")
+
+
+def unresolved_context(name, body, unbound=frozenset()):
     """Match manifest-declared placeholders in decoded response string values.
 
     Original user fields are opaque; their brace text is not a context contract.
     Unknown contracts fail closed instead of silently using a fixed name list.
+    ``unbound`` names are slots the caller's mode never binds (see CHAT_UNBOUND).
     """
     import re
     spec = loader.definition(name)
     if spec is None:
         raise loader.HelpContentError("unknown_help_contract:" + name)
-    names = {key for key, kind in spec.get("placeholders", {}).items() if kind != "original"}
+    names = {key for key, kind in spec.get("placeholders", {}).items() if kind != "original"} - set(unbound)
     pattern = re.compile(r"\{\{?([A-Za-z_][\w./-]*)\}?\}")
     return any(match in names for value in loader.strings(body) for match in pattern.findall(value))
 
@@ -73,7 +92,7 @@ def help_selection(facts, context, locale):
     # Inspect decoded values, using each leaf's manifest contract.
     for item in items:
         name = item["name"] + ("/" + item["child"] if item.get("child") else "")
-        if unresolved_context(name, item.get("content", item.get("children", {}))):
+        if unresolved_context(name, item.get("content", item.get("children", {})), unbound_for(facts.mode)):
             if name in required:
                 raise loader.HelpContentError("unresolved_help_context:" + name)
             missing.add(name)
@@ -103,7 +122,7 @@ def render_mention(legacy, *, facts, values, context, locale="ko", localized_val
         record = state.get("verification") or {}
         first, more = select_mention(facts)
         if not (record.get("passed") is True and record.get("mode") == facts.mode
-                and record.get("token_mode") == facts.mode and record.get("checked_at")
+                and probe_covers(record.get("token_mode"), facts.mode) and record.get("checked_at")
                 and set(first + more + transition_leaves(facts.mode)).issubset(record.get("items", {}))
                 and all(all(row.get(k) is True for k in ("visible", "response", "context"))
                         for row in record.get("items", {}).values())):
