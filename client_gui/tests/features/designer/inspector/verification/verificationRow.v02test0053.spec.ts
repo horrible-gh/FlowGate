@@ -132,7 +132,7 @@ describe('registration and answer', () => {
 
   it('the model: line, buttons, next read, tooltip times', () => {
     expect(verificationRowView(v(hidden()), true)).toBeNull()
-    expect(verificationRowView(v(raw()), true)).toEqual({ state: 'overdue', tone: 'danger', danger: true, focus: false, buttons: ['force_stop'] })
+    expect(verificationRowView(v(raw()), true)).toEqual({ state: 'overdue', tone: 'danger', danger: true, focus: false, buttons: ['force_stop'], reason: null })
     expect(verificationRowView(v(raw({ state: 'stop_failed' })), true)?.buttons).toEqual(['retry_stop'])
     expect(verificationRowView(v(waiting()), true)).toMatchObject({ tone: 'warning', focus: true, buttons: ['go', 'cancel_waiting'] })
     expect(verificationRowView(v(waiting()), false)?.buttons).toEqual(['cancel_waiting'])
@@ -227,6 +227,8 @@ describe('the line', () => {
     await q(w, 'verification-confirm').trigger('click')
     await flushPromises()
     expect(badge(w).text()).toBe(t(k('state.stop_failed')))
+    // A server without `stop_reason` / `mark_ended` (before flowgate.v02test.0084 #13): the line as before.
+    expect(q(w, 'verification-reason').exists()).toBe(false)
     expect(buttons(w)).toEqual(['verification-retry_stop'])
     expect(q(w, 'verification-retry_stop').text()).toBe(t(k('button.retry_stop')))
     await q(w, 'verification-retry_stop').trigger('click')
