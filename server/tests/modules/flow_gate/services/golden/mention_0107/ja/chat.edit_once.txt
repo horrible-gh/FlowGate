@@ -1,0 +1,27 @@
+## 今やること
+作業: 最後のユーザーメッセージに答える
+完了前: 追加の前提作業なし
+提出・完了: 必要な作業を終えた後、最後に一度だけ行う。
+最後の形式: ターンbody・based_on_seq契約を守る / 提出body/contentの最終行に指定probeを維持
+
+## モード: 一回編集
+今回に限り、ソースと文書の参照・変更、およびコマンドの実行ができます。次の会話は読み取りモードになります。
+
+## 今回の呼び出しの値
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+Flow: F1(Example) · flow_id demo.test.0001
+会話: demo.test.0001.0002-CH · 読み取り開始 after_seq=0
+範囲の終端: through_seq=5
+idempotency_key: golden-turn
+display_name: Example AI
+作業場所: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## ヘルプ
+GET https://example.invalid/flowgate/api/v1/help (索引; help/items/{name}[/{child}])
+最初に読む項目: notices, conversation/read, conversation/turn, conversation/encoding
+必要に応じて読む項目: documents/list, documents/partial, documents/unreadable, attachments/link, source_tools, cards/state, cards/ai_options, conversation/commands, documents/edit, documents/edit_by_id, cards/place, cards/roles, cards/run, attachments/upload_request, cards/questions, cards/recovery, question/policy
+
+## 資料
+---
+Original {{token}} material. 사용자 원문 / 原文

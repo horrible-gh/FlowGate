@@ -1,0 +1,139 @@
+{
+  "locale": "ja",
+  "title": "自己検証エラーと対処",
+  "summary": "自己検証エラーと対処",
+  "purpose": "自己検証エラーと対処",
+  "request": {
+    "details": "submit/self_checkで実行を取得し、error.codeまたはerror_codeを確認します。"
+  },
+  "response": "該当するエラーと理由ごとの対処に従います。",
+  "errors": {
+    "table": [
+      {
+        "category": "execution",
+        "code": "selfcheck_quota_exhausted",
+        "guidance": "検証回数を使い切った。最後の実行結果で判定する。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_request",
+        "guidance": "リクエストがオブジェクトでない、または program/args/cwd/timeout_seconds/parallel_share 以外のフィールドがある → この5つのフィールドだけ送る。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_share",
+        "guidance": "parallel_share が 1 以上の整数ではない(上限 64) → コマンドが使う worker 数を整数で送るか省略する(省略時は 1)。"
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_cpu_limit_violation",
+        "guidance": "failed run の error_code(POSIX ホスト)。run のプロセスが割り当てられた処理器の外へ処理器集合を広げたためツリーを終了した。結果を検証の根拠に使わない → コマンドが処理器設定を変えないようにして再実行する。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_program",
+        "guidance": "program が実行ファイル名1つではない(パス・区切り・制御文字を含む) → program には実行ファイル名だけを入れ、オプションと対象は args に分ける。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_args",
+        "guidance": "args が文字列配列でない、または個数(256)・長さ(8192)の上限を超えている → 文字列配列に直して再送する。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_timeout",
+        "guidance": "timeout_seconds は正の整数。省略時はカードの上限を使う。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_shell_operator",
+        "guidance": "args に |, &&, ;, >, < などのシェル演算子がある → コマンドを1つずつ分け、別々の run で実行する。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_inline_execution",
+        "guidance": "python -c や node -e のようなインラインコード実行 → テストファイルやスクリプトのパスを args で渡す。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_program_denied",
+        "guidance": "ポリシーで禁止された実行ファイル(シェル、git、ネットワーク・削除・システムツール等) → テスト/リント/ビルド用の実行ファイルに変える。回避は試みない。"
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_executable_not_found",
+        "guidance": "program が見つからない(未インストール、または 'pytest -q ...' のようにコマンド全体を program に入れた) → 名前だけを正しく書き残りは args に移す。未インストールならその事実を報告する。"
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_cwd",
+        "guidance": "cwd が管理ワークツリー内に存在する相対ディレクトリではない(絶対パス、ドライブ、範囲外) → ワークツリー基準の相対パスを使うか '.' のままにする。"
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_disabled",
+        "guidance": "このプロジェクトでは Self-check が無効 → 返された理由を TR に報告し、他の実行手段を探さない。"
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_already_running",
+        "guidance": "この Group には実行中の run がある。実行スロットは TR ごとではなく Group に1つなので、別の TR や TR 登録前(draft)の run の場合もある。応答 details の self_check_run_id と run 要約(tr_doc_id・draft・status・created_at・same_owner)を見る → same_owner が true なら read で確認して完了を待つか cancel してから再実行する。false なら(details.reason_code = selfcheck_foreign_run)このトークンでは取消できないので group_read の経路で状態だけを確認して完了を待ち、長く残る場合はその事実と run 要約を TR に報告する。"
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_owner_scope_closed",
+        "guidance": "このトークンの管理対象 provider/hop 所有範囲は終了したか、このサーバーに有効な binding がない。独立実行には変換しない → 古い要求を再試行せず、現在の実行と新しいトークンを確認する。"
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_source_busy",
+        "guidance": "別のソース操作がプロジェクトのソースロックを保持している → その操作の終了後にしばらくして再試行する。"
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_cancel_unconfirmed",
+        "guidance": "取消要求は記録された(details.cancel.accepted)が、実行の停止は確認できていない。このサーバーにその run の実行制御がなく、所有サーバーの終了もプロセスツリー全体の不在も証明されていない(details.cancel.reason、理由別コードは details.reason_code)。run の状態と保護はそのまま維持される → 取消を繰り返さず read で状態を見守り、残り続ける場合は run 要約と理由を TR に報告する。"
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_foreign_run",
+        "guidance": "selfcheck_already_running の details.reason_code。スロットを持つ run が別の TR または別の draft トークンのもので、このトークンの read/cancel 経路からは見えない(selfcheck_run_not_found) → details.run の group_read_path で状態だけを確認して完了を待ち、長く残る場合は run 要約を TR に報告する。取消は試みない。"
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_ownership_unknown",
+        "guidance": "その run を所有するサーバーが不明(記録なし)、またはそのサーバーの終了を証明できない(照会失敗・別ノード・インスタンス行なし)。cancel_unconfirmed の details.reason_code、または再検証の拒否コード。run の状態と保護はそのまま → 要求を繰り返さず、run 要約と理由を TR に報告する。証明なしの強制解除はない。"
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_tree_unproven",
+        "guidance": "所有サーバーの終了は証明されたが、run のプロセスツリー全体(target・supervisor・グループ/Job・run マーカー)が空であることを証明できない(構成員が残存、または照会不可)。cancel_unconfirmed の details.reason_code、または再検証の拒否コード。run は recovery_incomplete のまま Group の G は保護される → 繰り返さず理由を報告する。証明が成立すればサーバーの定期 reaper が整理する。"
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_owner_alive",
+        "guidance": "再検証の拒否: その run を所有するサーバー(またはこのサーバーのワーカー)が生存している。所有者が自ら終了するため、サーバーが代わりに解除しない → read で状態を見守る。"
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_reverify_not_applicable",
+        "guidance": "再検証の対象ではない。所有権の再検証は recovery_incomplete の active run にだけ行う(コンソールユーザー、project.document.update) → 終了した run や保護されていない run は read で状態を見る。"
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_state_conflict",
+        "guidance": "判定の間に run の状態が変わった(別の復旧・取消・ワーカーが先に記録した) → read で現在の状態を確認し、必要ならもう一度要求する。"
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_lock_lost",
+        "guidance": "failed run の error_code。実行中に Group ロック(G)が消え、別の作業が同じワークツリーに入った可能性があるため run を停止した。その結果(exit_code・tail)を検証の根拠に使わない → 再実行して結果を得る。"
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_worktree_unavailable",
+        "guidance": "このTRの管理ワークツリーを利用できない → 返された理由を報告する。別経路やコピーで回避しない。"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "locale": "ko",
+  "title": "카드 배치",
+  "summary": "카드 배치",
+  "purpose": "카드 배치",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": "POST에 cards 배열을 보냅니다. 카드마다 label, doc_type(T 기본값 또는 TS/N/D/P/L/DB), roles, settings를 지정합니다. roles의 instruction/execution/review는 kind=assigned와 provider_id, 또는 kind=not_used를 사용합니다. settings에는 review_count(0, -1 또는 허용 횟수), restart, time_limit(분), verify_max_runs, verify_run_minutes를 지정합니다. after는 기준 node_key입니다. gate=false로 확인 카드 생성을 생략할 수 있습니다. 병렬 배치는 cards/topology를 봅니다."
+  },
+  "response": "links가 없으면 최대 다섯 카드를 한 줄로 배치합니다. root는 빈 Flow에 만든 시작 카드입니다. defaults_used는 기본값을 쓴 역할입니다. 반환된 node_key의 instruction 슬롯에 {{route:chat.slot_document.revise}}로 지시를 씁니다. 헤더를 생략하면 기존 헤더를 유지합니다.",
+  "errors": "409 chat_cards_anchor_ambiguous이면 후보 중 알맞은 node_key를 after로 지정합니다. 422 ai_not_selectable이면 cards/ai_options를 다시 조회합니다. 설정값이 거절되면 응답의 choices를 확인합니다."
+}

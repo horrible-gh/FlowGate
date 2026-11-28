@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "첨부 승인 요청",
+  "summary": "생성한 파일 한 개를 사람에게 첨부 승인 대상으로 보냅니다.",
+  "purpose": "생성한 파일 한 개를 사람에게 첨부 승인 대상으로 보냅니다.",
+  "request": "{{route:attachments.upload_request}}에 `multipart/form-data`로 파일 `file`과 파일명·노트를 담은 JSON `meta`를 보냅니다. 자세한 제약은 `attachments/request_rules`를 참조합니다.",
+  "response": "응답은 즉시 `pending`입니다. 승인 대기 중에도 작업을 계속합니다.",
+  "errors": "크기·확장자·대상·한도 오류는 `attachments/request_rules`를 확인합니다."
+}

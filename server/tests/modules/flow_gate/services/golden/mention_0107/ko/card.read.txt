@@ -1,0 +1,30 @@
+## 지금 할 일
+할 일: 기존 빈 카드의 본문을 처음 작성한다
+완료 전: 기존 문서 헤더 유지 / 전체 본문 준비와 저장 내용 확인
+제출·완료: 필요한 일을 마친 뒤 마지막에 한 번만 한다.
+마지막 형식: edit·expected_revision·edit_reason 계약 준수
+
+## 읽기
+소스를 조회하고 결과를 문서로 제출합니다.
+
+## 이번 호출 값
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+플로우: F1(Example) · demo.test.0001
+카드: F1-2(Example card)
+대상 문서: demo.test.0001.0003-D · D · Original title
+리비전: 0
+제출 동작: edit
+기대 리비전: 0
+수정 사유: user_comment
+참조 문서: demo.test.0001.0001-R
+작업 위치: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## 헬프
+GET https://example.invalid/flowgate/api/v1/help
+먼저 읽기: notices, submit/format, documents/access
+필요할 때: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, attachments/upload_request
+
+## 자료
+---
+Original {{token}} material. 사용자 원문 / 原文

@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Writing a work instruction",
+  "summary": "Writing a work instruction",
+  "purpose": "Writing a work instruction",
+  "body": "You are authoring this T (work-instruction) directly instead of the server\nemitting a fixed template. Reflect the actual context of this group and the findings\nof the preceding investigation. A good T DIRECTS the work the paired TR will carry\nout. Cover:\n- Purpose/scope: what change is being made and why (tie it to the driving R/B + NR).\n- Work items: the concrete, ordered work items (files/areas to touch, the approach).\n- Completion criteria: how the TR proves it is done (tests to run GREEN, acceptance checks).\nKeep it an instruction: direct the work; the implementation + evidence belong in the\nTR that follows. Do NOT implement the code in this step — write the directive.\n\nWhen the mention has an 'Instruction to include next document header' section, include the\nnext-document header exactly as given there (next_type / project / module / group / title / target_id).\nWhen the mention asks you to write into an existing document (edit), it has no such section: keep\nthat document's existing header (front matter) as it is and add no next-document header.\nOn submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\nthe unmanned chain proceeds to its paired report step."
+}

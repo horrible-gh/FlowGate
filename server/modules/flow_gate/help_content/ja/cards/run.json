@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "実行を開始",
+  "summary": "実行を開始",
+  "purpose": "実行を開始",
+  "request": {
+    "route": "{{route:cards.run}}",
+    "authorization": "Bearer {{token}}",
+    "details": "指示を書いた後、allow_instruction_ai=falseをPOSTします。指示作成をAIに委ねる場合はtrueにします。"
+  },
+  "response": "ドラフトを確定して全体実行を開始または再開します。waitingのmanual_write_waitは役割にAIがいないことを示します。後でcards/stateのwait_reasonとinterventionを確認します。実行終了でチャットは自動再開されません。",
+  "errors": "409 chat_run_instruction_missingでは空の指示を補います。403 chat_edit_mode_requiredでは適用されたチャットモードを確認します。"
+}

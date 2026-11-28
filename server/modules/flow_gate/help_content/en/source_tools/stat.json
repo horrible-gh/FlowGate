@@ -1,0 +1,68 @@
+{
+  "locale": "en",
+  "title": "stat",
+  "summary": "Inspect whether a path exists and return its type, size, and metadata.",
+  "purpose": "Inspect whether a path exists and return its type, size, and metadata.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "stat"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Source-root-relative path whose metadata will be inspected."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional committed-tree ref. Omit or send null for the worktree, including uncommitted changes. Accepts head, target_sha, merge_base and merge_tree from merge_preview."
+      }
+    ],
+    "example": {
+      "path": "app/main.py"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "stat",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "exists": true,
+      "type": "file",
+      "size": 18342,
+      "mtime": "2026-07-29T13:30:00+09:00",
+      "eol": "lf",
+      "binary": false
+    },
+    "details": [
+      "Binary status is determined by whether the first 64 KB contains a NUL byte."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The path escapes the source root or has an invalid form."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the read scope."
+    }
+  ]
+}

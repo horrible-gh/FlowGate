@@ -1,0 +1,9 @@
+{
+  "locale": "ja",
+  "title": "添付依頼の規則",
+  "summary": "添付承認の対象と制約を確認します。",
+  "purpose": "添付承認の対象と制約を確認します。",
+  "request": "{{route:attachments.upload_request}} には毎回1ファイルを送ります。チャットでは現在の Flow に属し、カード対象の指定は不要です。",
+  "response": "`pending` は承認待ちです。承認された共有ファイルは `attachments/link` で確認します。",
+  "errors": "`409 attachment_target_document_missing` の場合はカード文書を確認します。`413 attachment_request_too_large` の場合はサイズを縮小し、`422 attachment_request_extension_blocked` の場合は許可された形式を使います。`429` はリクエスト上限です。"
+}

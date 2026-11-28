@@ -1,0 +1,9 @@
+{
+  "locale": "ja",
+  "title": "会話ターンの追加",
+  "summary": "読んだ会話に返信を1ターン追加します。",
+  "purpose": "読んだ会話に返信を1ターン追加します。",
+  "request": "{{route:conversation.turn}}。`body` に返信を入れ、最後の取得の `head_seq` を `based_on_seq` に指定します。送信形式は `conversation/encoding`、ファイルリンクは `attachments/link` を参照します。未コミットの変更があれば英語1行の `commit_message` を送ります。 回答を一つのターンとして追加します。メンションの `idempotency_key` と、指定されている場合は `display_name` を使います。モデル名が不明なら省略できます。 編集モードで未コミットの変更がある場合は、`commit_message` に英語一行（`type(scope): summary`）を指定します。会話の終了時に FlowGate がコミットします。",
+  "response": "ターンは順番に保存されます。`dry_run: true` はリンクと文字コードを検証し、登録やトークンの消費を行いません。",
+  "errors": "`422 commit_message_required` の場合はコミットメッセージを追加して再送します。添付と文字コードのエラーは参照先を確認します。"
+}

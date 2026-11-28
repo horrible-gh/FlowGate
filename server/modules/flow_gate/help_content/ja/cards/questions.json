@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "カード質問に回答",
+  "summary": "カード質問に回答",
+  "purpose": "カード質問に回答",
+  "request": {
+    "route": "{{route:cards.questions}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GETに任意のdoc_id、include_answeredを指定します。ユーザーに代わって答える場合はターン送信前に{{route:cards.question_answer}}へbodyまたはselected_option_idsをPOSTします。文書作成権限があれば閲覧モードでも回答できます。"
+  },
+  "response": "item_id、seq、body、options、answeredと関連カードを確認します。responder_error_codeは自動回答の失敗理由です。card_resumeでresumes_after_chat_run、他の質問待ち、run_not_resumableを確認して伝えます。",
+  "errors": "409 question_already_answeredでは保存済み回答を確認します。対象が曖昧な場合は質問を特定します。"
+}

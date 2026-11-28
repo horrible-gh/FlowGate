@@ -1,0 +1,20 @@
+{
+  "locale": "ko",
+  "title": "그룹 검증 실행 조회",
+  "summary": "그룹 검증 실행 조회",
+  "purpose": "그룹 검증 실행 조회",
+  "request": {
+    "routes": [
+      "{{route:self_check.group.list}}",
+      "{{route:self_check.group.read}}"
+    ],
+    "authorization": "Bearer {{token}}"
+  },
+  "response": {
+    "details": "실행 슬롯은 Group 에 하나다. 이 Group 의 작업 토큰(new·edit·review)은 group_read / group_list 로 그 슬롯을 잡은 run 의 요약을 읽을 수 있다(다른 Group 의 run 은 404). 읽기 전용이며 취소는 그 run 을 소유한 TR 의 edit 토큰이나 draft 토큰만 한다. cancel 응답의 cancel 필드는 접수(accepted)와 중단 확인(stopped)을 구분한다."
+  },
+  "errors": {
+    "status": 404,
+    "details": "대상 run_id의 그룹을 확인합니다."
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Writing an apply instruction",
+  "summary": "Writing an apply instruction",
+  "purpose": "Writing an apply instruction",
+  "body": "Write a Markdown instruction for changes representable by a TR2 edit-spec. State target files, purpose, safety conditions and validation criteria."
+}

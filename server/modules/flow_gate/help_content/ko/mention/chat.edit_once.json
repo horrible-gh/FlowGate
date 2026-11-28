@@ -1,0 +1,7 @@
+{
+  "locale": "ko",
+  "title": "편1",
+  "summary": "편1",
+  "purpose": "편1",
+  "body": "{{task_block}}\n\n## 모드: 편1\n이번 호출에 한해 소스·문서 조회와 수정, 명령 실행을 할 수 있습니다. 다음 대화부터 읽기입니다.\n\n## 이번 호출 값\nAuthorization: Bearer {{token}}\nFlow: {{flow_name}} · flow_id {{flow_id}}\n대화: {{doc_id}} · 읽기 시작 after_seq={{after_seq}}\n이번 범위 끝: through_seq={{through_seq}}\nidempotency_key: {{idempotency_key}}\ndisplay_name: {{display_name}}\n작업 위치: {{workspace}}\nprobe: {{probe}}\n\n## 헬프\n{{route:help.index}} (색인; help/items/{name}[/{child}])\n먼저 읽기: {{help_first}}\n필요할 때: {{help_more}}\n\n{{materials}}"
+}

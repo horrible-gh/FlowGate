@@ -1,0 +1,13 @@
+{
+  "locale": "ko",
+  "title": "카드 AI 목록",
+  "summary": "카드 AI 목록",
+  "purpose": "카드 AI 목록",
+  "request": {
+    "route": "{{route:cards.ai_options}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET으로 배치 전에 조회합니다. 사용자가 지정한 AI 그룹은 role_groups에서 찾습니다."
+  },
+  "response": "options의 id, name, kind로 AI를 고릅니다. role_groups는 from_group에 사용합니다.",
+  "errors": "접근이 거절되면 바인딩된 Flow와 채팅 토큰을 확인합니다."
+}

@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "첨부 요청 규칙",
+  "summary": "첨부 승인 요청의 대상과 제약을 확인합니다.",
+  "purpose": "첨부 승인 요청의 대상과 제약을 확인합니다.",
+  "request": "{{route:attachments.upload_request}}에 요청마다 파일 한 개를 보냅니다. 채팅 파일은 현재 Flow에 속하며 카드 대상을 지정하지 않습니다.",
+  "response": "`pending` 요청은 승인 대기 중입니다. 승인된 공유 파일은 `attachments/link`에서 찾습니다.",
+  "errors": "`409 attachment_target_document_missing`이면 카드 문서를 확인합니다. `413 attachment_request_too_large`면 크기를 줄이고, `422 attachment_request_extension_blocked`면 허용 형식을 사용합니다. `429`는 요청 한도입니다."
+}

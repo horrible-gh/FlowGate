@@ -1,0 +1,7 @@
+{
+  "locale": "ja",
+  "title": "編集",
+  "summary": "編集",
+  "purpose": "編集",
+  "body": "{{task_block}}\n\n## モード: 編集\nソースと文書の参照・変更、およびコマンドの実行ができます。\n\n## 今回の呼び出しの値\nAuthorization: Bearer {{token}}\nFlow: {{flow_name}} · flow_id {{flow_id}}\n会話: {{doc_id}} · 読み取り開始 after_seq={{after_seq}}\n範囲の終端: through_seq={{through_seq}}\nidempotency_key: {{idempotency_key}}\ndisplay_name: {{display_name}}\n作業場所: {{workspace}}\nprobe: {{probe}}\n\n## ヘルプ\n{{route:help.index}} (索引; help/items/{name}[/{child}])\n最初に読む項目: {{help_first}}\n必要に応じて読む項目: {{help_more}}\n\n{{materials}}"
+}

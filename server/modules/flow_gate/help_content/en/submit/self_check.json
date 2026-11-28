@@ -1,0 +1,83 @@
+{
+  "locale": "en",
+  "title": "Run a TR self-check",
+  "summary": "Run a TR self-check",
+  "purpose": "Run a TR self-check",
+  "request": {
+    "edit": {
+      "run": "{{route:self_check.run}}",
+      "list": "{{route:self_check.list}}",
+      "read": "{{route:self_check.read}}",
+      "cancel": "{{route:self_check.cancel}}"
+    },
+    "draft": {
+      "run": "{{route:self_check.draft.run}}",
+      "list": "{{route:self_check.draft.list}}",
+      "read": "{{route:self_check.draft.read}}",
+      "cancel": "{{route:self_check.draft.cancel}}"
+    },
+    "authorization": "Bearer {{token}}",
+    "limits": "{{self_check}}",
+    "fields": {
+      "program": "One executable name, e.g. pytest. Never the whole command string.",
+      "args": "Array of strings: options and target paths. Default [].",
+      "cwd": "Path relative to the managed worktree. Default \".\".",
+      "timeout_seconds": "Positive integer seconds. Omit for the card limit; larger requests are capped to that limit.",
+      "parallel_share": "Processors (workers) this run wishes to use, integer of at least 1. Default 1. The run executes on its granted processors only."
+    },
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": "{{timeout_seconds}}",
+      "parallel_share": 1
+    },
+    "details": "Use the bound tr_doc_id on edit and draft routes on new. Draft runs are token-owned and link to the TR at registration.",
+    "command": "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing."
+  },
+  "response": {
+    "success_status": {
+      "run": 202,
+      "read": 200,
+      "cancel": 200,
+      "list": 200
+    },
+    "states": [
+      "queued",
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "result_fields": [
+      "self_check_run_id",
+      "status",
+      "exit_code",
+      "timed_out",
+      "stdout_tail",
+      "stderr_tail",
+      "source_changed_during_run",
+      "worktree_state_changed",
+      "error_code",
+      "result_summary",
+      "environment_evidence"
+    ],
+    "details": [
+      "Self-check is the one official way to run tests/verification in a TR new or edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
+      "run_self_check -> receive self_check_run_id -> continue your work and read_self_check when you need the result. Use cancel_self_check if needed.",
+      "A completed run with a non-zero exit_code is not a transport failure; it may be a real verification failure. Read stdout_tail/stderr_tail, fix the code within scope, then start a new run_self_check. That is the normal procedure.",
+      "status=failed means the run itself failed. Interpret error_code with the error table below.",
+      "If source_changed_during_run / worktree_state_changed is true, the source or worktree state moved during the run; do not trust the result blindly and rerun once it is stable."
+    ]
+  },
+  "errors": {
+    "details": [
+      "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
+      "See submit/check_errors for request and execution failures. Read error.code for route errors and http_status plus error_message for authentication failures."
+    ]
+  }
+}

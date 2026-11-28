@@ -119,6 +119,11 @@ def append_title_request(prompt: str, exec_type: Optional[str], locale: Optional
     """Append the title request; provider finalization places the task block after it. A failing wording leaves
     the prompt as it is: the AI starts all the same."""
     try:
+        from modules.flow_gate.services import terminal_prompt, mention_service
+        _, task = terminal_prompt.split(prompt)
+        if task and "mention" in task:
+            request = title_request(exec_type, task["locale"])
+            return mention_service.add_card_materials(task, request)
         request = title_request(exec_type, locale)
     except Exception:  # noqa: BLE001
         logger.warning("card title request wording failed exec_type=%s (the prompt goes out without it)",

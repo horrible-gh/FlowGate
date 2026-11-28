@@ -1,0 +1,10 @@
+{
+  "locale": "ja",
+  "title": "ユーザーの質問方針",
+  "summary": "ユーザーの質問方針",
+  "purpose": "ユーザーの質問方針",
+  "body": {
+    "label": "ユーザーが記載した原文",
+    "original": "{{question_policy}}"
+  }
+}

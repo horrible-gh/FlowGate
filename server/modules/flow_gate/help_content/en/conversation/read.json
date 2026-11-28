@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Read conversation history",
+  "summary": "Page forward or backward through turns.",
+  "purpose": "Page forward or backward through turns.",
+  "request": "{{route:conversation.turns}}. Use `after_seq` with `include_head=1` to page forward, or `before_seq` to read older turns. For context preceding `after_seq=start`, start with `before_seq=start+1`. Start at the mention’s `after_seq`. Within the selected window, follow `next_after_seq` and keep any specified `through_seq` bound.",
+  "response": "Continue with `next_after_seq` or `prev_before_seq`. Backward reads leave token consumption and the forward read cursor unchanged. After major stages and immediately before submitting, reread after the last sequence you read with `include_head=1`. Omit the initial `through_seq` and `limit`, and continue until `next_after_seq` is empty. Incorporate new user messages and send the last response’s `head_seq` as `based_on_seq`.",
+  "errors": "If both direction parameters were sent, retry with one."
+}

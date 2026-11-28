@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "카드 문서 수정",
+  "summary": "슬롯에 연결된 문서의 새 리비전을 저장합니다.",
+  "purpose": "슬롯에 연결된 문서의 새 리비전을 저장합니다.",
+  "request": "{{route:chat.slot_document}}로 최신 본문과 식별자를 읽고 {{route:chat.slot_document.revise}}로 `expected_doc_id`, `expected_revision`, `content` 전체, `idempotency_key`를 보냅니다.",
+  "response": "같은 문서에 새 리비전이 저장됩니다.",
+  "errors": "문서나 리비전이 달라졌으면 슬롯을 다시 읽고 최신 내용에 변경을 적용합니다. 읽기 모드에서 거절되면 결과를 보고합니다."
+}

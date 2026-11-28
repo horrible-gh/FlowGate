@@ -1,0 +1,25 @@
+{
+  "locale": "en",
+  "title": "Register a document question",
+  "summary": "Register a document question",
+  "purpose": "Register a document question",
+  "request": {
+    "route": "{{route:question.register}}",
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "details": "Register question data on the document. Apply question/policy and question/precheck first. Supply title and body. If choices are necessary, put them in options on one question. A choice requiring a new attempt uses label and requires=new_attempt. Follow conversation/encoding for transport. This token is bound to {{doc_id}}. Use that document ID in the request path.",
+    "example": {
+      "asker_kind": "ai",
+      "questions": [
+        {
+          "title": "Acceptance criteria",
+          "body": "Specify which outcome this card should verify."
+        }
+      ]
+    }
+  },
+  "response": "added_item_ids identifies new questions. A choice that requires a new attempt holds the card for intervention until the attempt opens. See question/precheck for reused_answer.",
+  "errors": "See question/precheck for 409 existing_answer_requires_reason. For 422 transport errors see conversation/encoding."
+}

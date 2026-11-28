@@ -1,0 +1,32 @@
+## 지금 할 일
+할 일: 반려 지적을 반영해 카드 문서를 수정한다
+완료 전: 반려 항목별 응답 / 전체 본문 준비와 저장 내용 확인
+제출·완료: 필요한 일을 마친 뒤 마지막에 한 번만 한다.
+마지막 형식: rejection_response·반려 식별자·expected_revision 포함
+
+## 편집
+소스를 조회·수정하고 결과를 문서로 제출합니다. TR은 자체 검증을 사용합니다.
+
+## 이번 호출 값
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+플로우: F1(Example) · demo.test.0001
+카드: F1-2(Example card)
+대상 문서: demo.test.0001.0004-TR · TR · Original title
+리비전: 2
+제출 동작: edit
+기대 리비전: 2
+수정 사유: rejected
+반려 식별자: rejection_id=golden-rejection
+참조 문서: demo.test.0001.0001-R
+자체 검증: 60s / 10
+작업 위치: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## 헬프
+GET https://example.invalid/flowgate/api/v1/help
+먼저 읽기: notices, submit/format, submit/changed_files, documents/access
+필요할 때: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, submit/self_check, attachments/upload_request
+
+## 자료
+---
+Original {{token}} material. 사용자 원문 / 原文

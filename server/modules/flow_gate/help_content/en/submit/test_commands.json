@@ -1,0 +1,17 @@
+{
+  "locale": "en",
+  "title": "Registered test commands",
+  "summary": "Registered test commands",
+  "purpose": "Registered test commands",
+  "request": {
+    "details": "Read the original registered commands below. If empty, use repository scripts, configuration and existing results as evidence. See submit/self_check and the relevant test instruction for execution."
+  },
+  "response": {
+    "original": "{{test_commands}}",
+    "host_os": "{{test_host_os}}",
+    "shell": "{{test_shell}}",
+    "engine_recipe_route": "{{route:test_commands.engine_recipes}}",
+    "engine_recipe_details": "Before writing TS preparation steps, fetch the engine recipes. Pick the engine that matches the code under test (for example, engine=pytest) and copy its setup as-is. If there is no recipe for the engine, write the setup. A successful run registers it automatically."
+  },
+  "errors": "Report test_command_missing if no command can be determined."
+}

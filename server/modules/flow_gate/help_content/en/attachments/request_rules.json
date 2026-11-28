@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Attachment request rules",
+  "summary": "Check attachment approval targets and constraints.",
+  "purpose": "Check attachment approval targets and constraints.",
+  "request": "Send one file per POST to {{route:attachments.upload_request}}. In chat, the file belongs to the current flow and needs no card target.",
+  "response": "A `pending` request awaits approval. See `attachments/link` to find approved shared files.",
+  "errors": "For `409 attachment_target_document_missing`, check the card document. For `413 attachment_request_too_large`, reduce the size. For `422 attachment_request_extension_blocked`, use an allowed format. `429` indicates a request limit."
+}

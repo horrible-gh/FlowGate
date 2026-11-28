@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Read part of a document",
+  "summary": "Retrieve metadata, a section, or search results without reading the whole body.",
+  "purpose": "Retrieve metadata, a section, or search results without reading the whole body.",
+  "request": "{{route:document.meta}}, {{route:document.outline}}, {{route:document.section}}, or {{route:document.relations}}. Take `section_id` from the outline. For body search, send `q` to {{route:search.content}}. Use `doc_id` or `group_id` to restrict the search to one conversation or flow.",
+  "response": "Search of one migrated CH returns compact turn matches by default. Set `include_matches=true` for locations and reuse `next_cursor` with the same search conditions.",
+  "errors": "On `400` from a malformed cursor or changed conditions, restart the search. Supply only one of `doc_id` and `group_id`."
+}

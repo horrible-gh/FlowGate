@@ -1,0 +1,128 @@
+{
+  "locale": "ja",
+  "title": "read",
+  "summary": "リモートプロジェクトソースのファイルを1つ読み取る。",
+  "purpose": "リモートプロジェクトソースのファイルを1つ読み取る。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "read"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "ソースルートからの相対パス。絶対パスと '..' は禁止。"
+      },
+      {
+        "name": "max_bytes",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "読み取る最大バイト数。省略時はファイル全体を読み取るが、サーバー上限を超えると413。"
+      },
+      {
+        "name": "offset",
+        "type": "integer",
+        "required": false,
+        "default": 0,
+        "description": "読み取りを開始する0基準のバイト位置。"
+      },
+      {
+        "name": "length",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "読み取るバイト範囲の最大長。max_bytesと併用した場合は小さい方が適用される。"
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "デコード用エンコーディング。デコードできない文字は置換文字に変わる。"
+      },
+      {
+        "name": "start_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1始まりの読み取り開始行番号。end_lineと併用が必須で、offset/length/max_bytesとは同時に使えない。"
+      },
+      {
+        "name": "end_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1始まりの読み取り終了行番号(含む)。start_line <= end_line が必要。ファイル末尾を超える場合は取得できる行までだけ返す。"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意のコミットツリーrefです。省略またはnullは未コミット変更を含む作業ツリーです。merge_previewのhead、target_sha、merge_base、merge_treeを使えます。"
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "start_line": 1,
+      "end_line": 40,
+      "encoding": "utf-8"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "read",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "content": "<lines 1-40>",
+      "encoding": "utf-8",
+      "size": 18342,
+      "start_line": 1,
+      "end_line": 40,
+      "returned_start_line": 1,
+      "returned_end_line": 40,
+      "total_lines": 512,
+      "returned_bytes": 1180,
+      "eof": false,
+      "truncated": true
+    },
+    "details": [
+      "readのsource_sha256は編集時の基準ハッシュに使えます。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "パスが存在しないか通常ファイルではない。"
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "max_bytes を省略し、ファイルがサーバー上限を超えている(行選択子を使った場合もファイル全体のサイズで同様に判定する)。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "パスがソースルート外か形式が正しくない、readが許可しないフィールドがリクエストに含まれる(reason=unknown_field)、またはstart_line/end_lineが不正(reason=invalid_line_range)かoffset/length/max_bytesと併用されている(reason=line_and_byte_selector)。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このトークンにreadスコープがない。"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "locale": "en",
+  "title": "Place cards",
+  "summary": "Place cards",
+  "purpose": "Place cards",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": "POST a cards array. Each card takes label, doc_type (T by default, or TS/N/D/P/L/DB), roles and settings. For instruction/execution/review use kind=assigned with provider_id, or kind=not_used. Settings include review_count (0, -1 or an allowed count), restart, time_limit in minutes, verify_max_runs and verify_run_minutes. Use after for the anchor node_key and gate=false to skip creating a confirm card. See cards/topology for parallel placement."
+  },
+  "response": "Without links, place up to five cards in a chain. root identifies the start card created for an empty Flow. defaults_used lists defaulted roles. Write each instruction with {{route:chat.slot_document.revise}} using the returned node_key and slot=instruction. Omit front matter to keep the existing header.",
+  "errors": "On 409 chat_cards_anchor_ambiguous supply the intended node_key in after. On 422 ai_not_selectable reload cards/ai_options. For a rejected setting, check the returned choices."
+}

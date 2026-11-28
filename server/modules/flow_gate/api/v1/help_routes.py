@@ -35,6 +35,7 @@ from modules.flow_gate.services import (
 )
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.help_url import help_url, outbound_api_base
+from modules.flow_gate.services.help.render import has_file
 
 router = APIRouter(prefix="/api/v1", tags=["Help"])
 
@@ -78,6 +79,10 @@ def get_help_question(request: Request):
         return auth
 
     locale = template_provision.normalize_locale(auth.get("continuation_locale"))
+    names = ["question/" + child for child in ("register", "precheck", "answers", "policy")]
+    if any(has_file(name, locale) for name in names):
+        ctx = help_catalog.resolve_context(auth, locale, outbound_api_base())
+        return _help_bulk_response(auth, ctx, names)
     return JSONResponse(content=help_catalog.build_question_content(locale, {"token_rec": auth, "group_id": auth.get("group_id"), "action_scope": auth.get("action_scope")}))
 
 
@@ -175,6 +180,13 @@ def get_help_tools(request: Request, locale: Optional[str] = None):
             ),
             "notes": registry["notes"],
         }
+    if any(has_file("source_tools/" + row["name"], normalized_locale) for row in registry["tools"]):
+        ctx = help_catalog.resolve_context(auth, normalized_locale, base_url)
+        item = help_catalog.build_item("source_tools", ctx)
+        summaries = {row["name"]:row["summary"] for row in item["children"]}
+        payload["tools"] = [dict(row, summary=summaries.get(row["name"], row.get("summary", ""))) for row in payload["tools"]]
+        payload["locale"] = ctx["locale"]
+        payload["language"] = item["language"]
     _record_help_tools_event(
         auth,
         view="list",
@@ -235,6 +247,12 @@ def get_help_tool(request: Request, name: str, locale: Optional[str] = None):
             "notes": tool_registry.detail_notes(name, normalized_locale),
         })
 
+    if status == 200 and name not in tool_registry.ATTACHMENT_DISPLAY_ORDER and has_file("source_tools/" + name, normalized_locale):
+        ctx = help_catalog.resolve_context(auth, normalized_locale, outbound_api_base())
+        body = help_catalog.build_child("source_tools", name, ctx)
+        response = JSONResponse(content={"ok":True, "version":tool_registry.VERSION,
+            "base_url":ctx["base_url"], "locale":ctx["locale"], "kind":registry["kind"],
+            "tool":body["content"], "language":body["language"]})
     _record_help_tools_event(
         auth,
         view="detail",
@@ -394,6 +412,7 @@ def _help_envelope(ctx: dict) -> dict:
         "version": help_catalog.VERSION,
         "base_url": ctx["base_url"],
         "locale": ctx["locale"],
+        **({"language": ctx["help_language"]} if ctx.get("help_language") else {}),
     }
 
 
@@ -508,6 +527,8 @@ def get_help_item_child(
     # The child list is derived from the same context, so a tool this token may not
     # call is not merely hidden from the list — it is not a known child at all.
     known = {entry["name"] for entry in help_catalog.enumerate_children(name, ctx)}
+    if help_catalog.decide_visibility(name + "/" + child, ctx).visible:
+        known.add(child)
     if child not in known:
         _record_help_event(
             auth, ctx, view="child", name=name, child=child, count=0, http_status=404

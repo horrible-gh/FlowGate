@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Edit by document ID",
+  "summary": "Revise an existing project document by ID.",
+  "purpose": "Revise an existing project document by ID.",
+  "request": "Read the latest `revision_no` with {{route:chat.document}}, then POST the full `content` and `expected_revision` to {{route:chat.document.revise}}. To create a document, POST `title` and `content` to {{route:chat.document.create}}.",
+  "response": "A revision increments the revision number and preserves the ID. Omitting front matter preserves the existing header.",
+  "errors": "On `revision_conflict`, reread and reapply the changes. On `404 document_not_found`, check the ID. Report read-mode refusals."
+}

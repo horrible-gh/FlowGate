@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "Flowを復旧",
+  "summary": "Flowを復旧",
+  "purpose": "Flowを復旧",
+  "request": {
+    "route": "{{route:cards.recovery_basis}}",
+    "authorization": "Bearer {{token}}",
+    "details": "再開時はGET {{route:cards.recovery_basis}}、カード再試行時はGET {{route:cards.node_basis}}で基準を読みます。新規request_idと取得時のexpected_contextを{{route:cards.restart}}または{{route:cards.retry}}にPOSTします。通信再試行では両方を再利用します。"
+  },
+  "response": "new_attempt、existing_attempt、group_headを区別します。新しいカード試行は先行結果か確認済みgroup HEADを使います。実適用はactual_basisで確認します。停止中でpendingなら同じリクエストを再送し、処理を続けます。",
+  "errors": "文脈変更またはrequest_idの衝突時は基準を読み直します。保留、ゲート、マージ要件の場合はエラー理由を確認します。"
+}

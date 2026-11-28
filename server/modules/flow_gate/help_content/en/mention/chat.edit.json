@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Edit",
+  "summary": "Edit",
+  "purpose": "Edit",
+  "body": "{{task_block}}\n\n## Mode: Edit\nRead and edit source and documents and run commands.\n\n## Values for this call\nAuthorization: Bearer {{token}}\nFlow: {{flow_name}} · flow_id {{flow_id}}\nConversation: {{doc_id}} · Start reading after_seq={{after_seq}}\nWindow end: through_seq={{through_seq}}\nidempotency_key: {{idempotency_key}}\ndisplay_name: {{display_name}}\nWorkspace: {{workspace}}\nprobe: {{probe}}\n\n## Help\n{{route:help.index}} (Index; help/items/{name}[/{child}])\nRead first: {{help_first}}\nWhen needed: {{help_more}}\n\n{{materials}}"
+}

@@ -1,0 +1,13 @@
+{
+  "locale": "ko",
+  "title": "카드 역할과 설정",
+  "summary": "카드 역할과 설정",
+  "purpose": "카드 역할과 설정",
+  "request": {
+    "route": "{{route:cards.roles}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET으로 settings_version, context, options와 설정별 choices를 확인합니다. {{route:cards.roles.update}}에 변경할 roles/settings와 expected_settings_version을 보냅니다. GET의 context는 expected_context로 보낼 수 있습니다. 사용자가 그룹을 지정했으면 from_group을 쓰고 명시한 roles가 그룹보다 우선합니다. 설정의 null은 기본값입니다."
+  },
+  "response": "이 채팅이 배치한 카드의 변경을 한 번에 저장합니다. 저장 후 다시 GET하여 적용된 선택을 확인합니다.",
+  "errors": "403 chat_card_not_owned이면 응답의 node_key를 확인합니다. 409 gate_context_changed 또는 node_settings_locked이면 상태를 다시 조회합니다. 422 role_not_applicable / ai_not_selectable / setting_not_applicable / not_a_choice이면 역할·설정 후보를 확인합니다."
+}
