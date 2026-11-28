@@ -4389,8 +4389,991 @@
     },
     "mention/*": {
       "kind": "guide",
-      "owner": 4,
+      "owner": 1,
       "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": true
+    },
+    "mention/chat.read": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "after_seq",
+        "idempotency_key"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": true
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": true
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": false
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": false
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": false
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "mention/chat.execute": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "after_seq",
+        "idempotency_key"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": true
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": true
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": false
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": false
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": false
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "mention/chat.edit": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "after_seq",
+        "idempotency_key"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": true
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": true
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": false
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": false
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": false
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "mention/chat.edit_once": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "after_seq",
+        "idempotency_key"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": true
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": true
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": false
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": false
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": false
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "mention/card.read": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "doc_type",
+        "doc_title",
+        "submit_action"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": false
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": true
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": true
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": true
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "mention/card.edit": {
+      "kind": "guide",
+      "owner": 1,
+      "visibility": "mention",
+      "placeholders": {
+        "token": "neutral",
+        "base_url": "neutral",
+        "flow_id": "neutral",
+        "doc_id": "neutral",
+        "after_seq": "neutral",
+        "through_seq": "neutral",
+        "idempotency_key": "neutral",
+        "display_name": "neutral",
+        "probe": "neutral",
+        "revision_no": "neutral",
+        "submit_action": "neutral",
+        "expected_revision": "neutral",
+        "edit_reason": "neutral",
+        "rejection_ref": "neutral",
+        "next_header": "neutral",
+        "reference_doc_ids": "neutral",
+        "self_check": "neutral",
+        "help_first": "neutral",
+        "help_more": "neutral",
+        "flow_name": "original",
+        "card_ref": "original",
+        "doc_title": "original",
+        "materials": "original",
+        "task_block": "system",
+        "doc_type": "system",
+        "workspace": "system"
+      },
+      "routes": [
+        "help.index",
+        "help.leaf"
+      ],
+      "aliases": [],
+      "dynamic": false,
+      "required": [
+        "task_block",
+        "token",
+        "base_url",
+        "flow_id",
+        "flow_name",
+        "doc_id",
+        "probe",
+        "help_first",
+        "doc_type",
+        "doc_title",
+        "submit_action"
+      ],
+      "placeholder_contract": {
+        "token": {
+          "kind": "neutral",
+          "required": true
+        },
+        "base_url": {
+          "kind": "neutral",
+          "required": true
+        },
+        "flow_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "doc_id": {
+          "kind": "neutral",
+          "required": true
+        },
+        "after_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "through_seq": {
+          "kind": "neutral",
+          "required": false
+        },
+        "idempotency_key": {
+          "kind": "neutral",
+          "required": false
+        },
+        "display_name": {
+          "kind": "neutral",
+          "required": false
+        },
+        "probe": {
+          "kind": "neutral",
+          "required": true
+        },
+        "revision_no": {
+          "kind": "neutral",
+          "required": false
+        },
+        "submit_action": {
+          "kind": "neutral",
+          "required": true
+        },
+        "expected_revision": {
+          "kind": "neutral",
+          "required": false
+        },
+        "edit_reason": {
+          "kind": "neutral",
+          "required": false
+        },
+        "rejection_ref": {
+          "kind": "neutral",
+          "required": false
+        },
+        "next_header": {
+          "kind": "neutral",
+          "required": false
+        },
+        "reference_doc_ids": {
+          "kind": "neutral",
+          "required": false
+        },
+        "self_check": {
+          "kind": "neutral",
+          "required": false
+        },
+        "help_first": {
+          "kind": "neutral",
+          "required": true
+        },
+        "help_more": {
+          "kind": "neutral",
+          "required": false
+        },
+        "flow_name": {
+          "kind": "original",
+          "required": true
+        },
+        "card_ref": {
+          "kind": "original",
+          "required": false
+        },
+        "doc_title": {
+          "kind": "original",
+          "required": true
+        },
+        "materials": {
+          "kind": "original",
+          "required": false
+        },
+        "task_block": {
+          "kind": "system",
+          "required": true
+        },
+        "doc_type": {
+          "kind": "system",
+          "required": true
+        },
+        "workspace": {
+          "kind": "system",
+          "required": false
+        }
+      }
+    },
+    "conversation/commands": {
+      "kind": "usage",
+      "owner": 2,
+      "visibility": "chat_turn",
       "placeholders": {
         "doc_id": "neutral",
         "group_id": "neutral",
@@ -4408,69 +5391,8 @@
         "self_check": "neutral"
       },
       "routes": [
-        "help.index",
-        "help.item",
-        "document.read",
-        "document.path",
-        "document.meta",
-        "document.outline",
-        "document.section",
-        "conversation.turns",
-        "conversation.turn",
-        "attachments.document.list",
-        "attachments.document.read",
-        "attachments.document.copy",
-        "attachments.flow.list",
-        "cards.canvas",
-        "cards.ai_options",
-        "cards.place",
-        "cards.run",
-        "cards.roles",
-        "cards.roles.update",
-        "cards.recovery_basis",
-        "cards.node_basis",
-        "cards.retry",
-        "cards.restart",
-        "question.register",
-        "question.search",
-        "question.search_item",
-        "submit.inbox",
-        "source.tool",
-        "source.tool_help",
-        "cards.questions",
-        "cards.question_answer",
         "chat.commands",
-        "chat.command",
-        "workflow.head",
-        "workflow.sequence",
-        "workflow.decide",
-        "workflow.advance",
-        "group.next_action",
-        "self_check.run",
-        "self_check.list",
-        "self_check.read",
-        "self_check.cancel",
-        "self_check.draft.run",
-        "self_check.draft.list",
-        "self_check.draft.read",
-        "self_check.draft.cancel",
-        "self_check.group.list",
-        "self_check.group.read",
-        "help.leaf",
-        "search.documents",
-        "search.content",
-        "list.groups",
-        "list.group",
-        "list.group_documents",
-        "list.doc_types",
-        "cards.run_current",
-        "chat.document",
-        "chat.document.revise",
-        "chat.document.create",
-        "chat.slot_document",
-        "chat.slot_document.revise",
-        "attachments.upload_request",
-        "document.relations"
+        "chat.command"
       ],
       "aliases": [],
       "dynamic": true

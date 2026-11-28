@@ -1,0 +1,8 @@
+{
+  "locale": "en",
+  "status": "pending",
+  "title": "chat.edit",
+  "summary": "Mention template pending",
+  "purpose": "Assemble invocation values",
+  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+}

@@ -1,0 +1,8 @@
+{
+  "locale": "ko",
+  "status": "pending",
+  "title": "card.read",
+  "summary": "멘션 템플릿 작성 대기",
+  "purpose": "호출 값 조립",
+  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+}

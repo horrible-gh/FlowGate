@@ -174,13 +174,19 @@ def split(prompt):
     for i in range(len(lines) - 5, -1, -1):
         candidate = _decode_block([v.rstrip('\r\n') for v in lines[i:i + 5]])
         if candidate is not None:
+            if i == 0:
+                candidate['placement'] = 'first'
             return ''.join(lines[:i] + lines[i + 5:]).rstrip(), candidate
     return body, None
 
 
 def prepare(prompt, *, kind, locale='ko', unanswered=False, can_write=False):
-    body, _ = _records(prompt)
+    body, previous = _records(prompt)
     spec = specification(kind, locale, unanswered=unanswered, can_write=can_write)
+    if previous and "mention" in previous:
+        spec["mention"] = previous["mention"]
+        spec["placement"] = "first"
+        spec["locale"] = previous["locale"]
     return _with_spec(body, spec)
 
 
@@ -205,8 +211,15 @@ def task_kind(prompt):
 def finalize(prompt, *, locale=None, fallback_kind='generic'):
     body, spec = split(prompt)
     spec = spec or specification(fallback_kind, locale)
+    if 'mention' in spec:
+        from .prompt_blocks.mention import render_body
+        data = spec['mention']
+        data['values']['task_block'] = render(spec)
+        return render_body(data['template'], data['spec'], data['values'], data['routes'])
     if locale is not None:
         spec['locale'] = normalize_locale(locale)
+    if spec.get('placement') == 'first':
+        return render(spec) + '\n\n' + body.lstrip()
     return body + '\n\n' + render(spec)
 
 
@@ -228,6 +241,9 @@ def finalize_messages(messages, *, locale=None, fallback_kind='generic'):
     """
     first = next(m for m in messages if m['role'] == 'user')
     body, spec = split(first['content'])
+    if spec and ('mention' in spec or spec.get('placement') == 'first'):
+        first['content'] = finalize(first['content'])
+        return spec
     first['content'] = body
     spec = spec or specification(fallback_kind, locale)
     if locale is not None:
