@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from modules.flow_gate.storage import filesystem as storage_fs
+from modules.flow_gate.services import chat_doc_settings_service
 
 from flowgate.conversation import activity
 from flowgate.conversation import command_policy as policy
@@ -672,6 +673,12 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         policy.resolve(command, root)
     except policy.CommandPolicyError as exc:
         raise c.ConversationError(422, exc.code, exc.message) from exc
+    timeout_seconds = command.timeout_seconds
+    limit = chat_doc_settings_service.get_settings(run.get("issued_to"), run["doc_ref"])["command_timeout_seconds"]
+    if limit == 0:
+        timeout_seconds = 0
+    elif limit is not None:
+        timeout_seconds = min(command.timeout_seconds, limit) if "timeout_seconds" in payload else limit
     user_policy = resolve_policy(run.get("issued_to"))
     error_code = None
     decision_source: Optional[str] = c.DECIDED_BY_POLICY
@@ -690,7 +697,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         token_id=token_id or run.get("current_token_id") or run.get("token_id"),
         issued_to=run.get("issued_to"), provider_name=_provider_name(run),
         program=command.program, args=list(command.args), cwd_relative=command.cwd,
-        timeout_seconds=command.timeout_seconds, category=command.category, policy=user_policy,
+        timeout_seconds=timeout_seconds, category=command.category, policy=user_policy,
         status=status, decision_source=decision_source, error_code=error_code,
         run_start_seq=run.get("chat_start_seq"),
     )
@@ -1119,7 +1126,9 @@ def run_tool(run: dict, tool_input: object) -> tuple[int, dict]:
             _notify(withdrawn)
             row = withdrawn or repo.get_command(request_id)
     if row is not None and row["status"] not in c.TERMINAL_STATUSES:
-        row, why = wait_for(request_id, int(row["timeout_seconds"]) + c.RUNNING_GRACE_SEC, run)
+        max_wait = (float("inf") if row["timeout_seconds"] == 0
+                    else int(row["timeout_seconds"]) + c.RUNNING_GRACE_SEC)
+        row, why = wait_for(request_id, max_wait, run)
         if row is not None and row["status"] not in c.TERMINAL_STATUSES:
             reason = c.REASON_RUN_CANCELLED if why == WAIT_RUN_CANCELLED else c.REASON_RUN_BUDGET_EXHAUSTED
             row = _cancel(request_id, reason) or repo.get_command(request_id)

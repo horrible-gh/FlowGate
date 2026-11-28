@@ -42,7 +42,7 @@ from modules.flow_gate.db import chat_command_requests as db
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import chat_command_policy as policy
-from modules.flow_gate.services import chat_settings_service
+from modules.flow_gate.services import chat_settings_service, chat_doc_settings_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_self_check_executor as executor
 from modules.flow_gate.services.tr_self_check_service import _redact
@@ -452,6 +452,14 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         policy.resolve(command, root)
     except policy.ChatCommandPolicyError as exc:
         raise ChatCommandError(422, exc.code, exc.message) from exc
+    timeout_seconds = command.timeout_seconds
+    limit = chat_doc_settings_service.get_settings(
+        run.get("issued_to"), run["doc_ref"],
+    )["command_timeout_seconds"]
+    if limit == 0:
+        timeout_seconds = 0
+    elif limit is not None:
+        timeout_seconds = min(command.timeout_seconds, limit) if "timeout_seconds" in payload else limit
     user_policy = resolve_policy(run.get("issued_to"))
     status = {"always_approve": "approved", "reject": "rejected"}.get(user_policy, "pending_approval")
     row = db.create(
@@ -460,7 +468,7 @@ def _create_request(run: dict, payload: object, *, token_id: Optional[str] = Non
         token_id=token_id,
         issued_to=run.get("issued_to"), provider_name=_provider_name(run),
         program=command.program, args=list(command.args), cwd_relative=command.cwd,
-        timeout_seconds=command.timeout_seconds, category=command.category, policy=user_policy,
+        timeout_seconds=timeout_seconds, category=command.category, policy=user_policy,
         status=status, decision_source=None if status == "pending_approval" else "policy",
         run_start_seq=run.get("chat_start_seq"),
     )
@@ -793,6 +801,7 @@ def run_tool(run: dict, tool_input: object, remaining_sec: float) -> tuple[int, 
     except ChatCommandError as exc:
         return exc.status, {"ok": False, "op": TOOL_NAME,
                             "error": {"code": exc.code, "message": exc.message}}
+    started = time.monotonic()
     budget = max(0.0, float(remaining_sec) - _RUN_SAFETY_SEC)
     if row["status"] == "pending_approval":
         row = wait_terminal(row["request_id"], min(budget, APPROVAL_WAIT_MAX_SEC),
@@ -803,8 +812,9 @@ def run_tool(run: dict, tool_input: object, remaining_sec: float) -> tuple[int, 
             _notify(withdrawn)
             row = withdrawn or db.get(row["request_id"])
     if row and row["status"] not in db.TERMINAL_STATUSES:
-        left = max(0.0, float(remaining_sec) - _RUN_SAFETY_SEC)
-        row = wait_terminal(row["request_id"], min(left, row["timeout_seconds"] + 15),
+        left = max(0.0, budget - (time.monotonic() - started))
+        wait_seconds = left if row["timeout_seconds"] == 0 else min(left, row["timeout_seconds"] + 15)
+        row = wait_terminal(row["request_id"], wait_seconds,
                             run.get("cancel_event"))
         if row and row["status"] not in db.TERMINAL_STATUSES:
             row = _cancel(row["request_id"], "chat_command_run_budget_exhausted") or db.get(row["request_id"])
