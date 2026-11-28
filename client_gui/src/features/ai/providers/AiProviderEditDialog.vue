@@ -95,23 +95,31 @@
         <template v-if="entry">
           <div class="form-group c1">
             <label class="form-label" for="provider-version">{{ t('gui.ai.providers.field_version') }}</label>
-            <Select
+            <Input
               id="provider-version"
               :model-value="selection.version"
-              :options="entry.versions.map(plainOption)"
+              list="provider-version-suggestions"
+              maxlength="64"
               :disabled="saving"
               @update:model-value="setSelection('version', $event)"
             />
+            <datalist id="provider-version-suggestions">
+              <option v-for="value in entry.versions" :key="value" :value="value">{{ value }}</option>
+            </datalist>
           </div>
           <div class="form-group c1">
             <label class="form-label" for="provider-model-name">{{ t('gui.ai.providers.field_model') }}</label>
-            <Select
+            <Input
               id="provider-model-name"
               :model-value="selection.model"
-              :options="entry.models.map(modelOption)"
+              list="provider-model-name-suggestions"
+              maxlength="64"
               :disabled="saving"
               @update:model-value="setSelection('model', $event)"
             />
+            <datalist id="provider-model-name-suggestions">
+              <option v-for="value in entry.models" :key="value" :value="value">{{ kindLabel(value) }}</option>
+            </datalist>
           </div>
           <div class="form-group c1">
             <label class="form-label" for="provider-effort">{{ t('gui.ai.providers.field_effort') }}</label>
@@ -319,7 +327,6 @@ const commandVisible = computed(() => isCustom.value || showCommand.value)
 
 const kindLabel = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1)
 const plainOption = (value: string) => ({ value, label: value })
-const modelOption = (value: string) => ({ value, label: kindLabel(value) })
 
 const cliKindOptions = computed(() => [
   ...Object.keys(catalog.value).map((value) => ({ value, label: kindLabel(value) })),
@@ -415,11 +422,16 @@ function onKindChange(kind: string) {
 
 function setSelection(field: 'version' | 'model' | 'effort', value: string) {
   selection.value = { ...selection.value, [field]: value }
-  void compose()
+  if (field === 'effort') void compose()
+  else scheduleCompose()
 }
 
 function setExecutable(value: string) {
   selection.value = { ...selection.value, executable: value }
+  scheduleCompose()
+}
+
+function scheduleCompose() {
   clearExecutableTimer()
   composeSeq += 1 // a typed character makes any composition in flight stale
   composeState.value = 'pending'

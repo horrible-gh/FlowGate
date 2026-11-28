@@ -148,7 +148,9 @@ def is_valid_model_name(model_name: Optional[str]) -> bool:
     return bool(_MODEL_NAME_RE.match(name))
 
 
-# Catalog keys are also the machine values sent by the editor.
+# Version/model lists are suggestions, not an allowlist. Efforts remain CLI enums.
+_CLI_SELECTION_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+_CLI_SELECTION_RE = re.compile(_CLI_SELECTION_PATTERN)
 _CLI_MODEL_CATALOG = {
     "claude": {
         "versions": ("5.5",),
@@ -196,6 +198,7 @@ def get_cli_model_catalog() -> dict:
         kind: {
             **{key: list(entry[key]) for key in ("versions", "models", "efforts")},
             "defaults": dict(entry["defaults"]),
+            "suggestions": {key: list(entry[key]) for key in ("versions", "models")},
         }
         for kind, entry in _CLI_MODEL_CATALOG.items()
     }
@@ -218,13 +221,11 @@ def compose_cli_preset(
     model = defaults["model"] if model is None else model
     effort = defaults["effort"] if effort is None else effort
     executable = (executable or "").strip() or defaults["executable"]
-    for field, value, allowed in (
-        ("version", version, entry["versions"]),
-        ("model", model, entry["models"]),
-        ("effort", effort, entry["efforts"]),
-    ):
-        if value not in allowed:
-            raise _invalid_cli_selection(field, "unsupported_value")
+    for field, value in (("version", version), ("model", model)):
+        if not _CLI_SELECTION_RE.fullmatch(value):
+            raise _invalid_cli_selection(field, "invalid_format")
+    if effort not in entry["efforts"]:
+        raise _invalid_cli_selection("effort", "unsupported_value")
     if (len(executable) > MODEL_NAME_MAX or executable.endswith("\\")
             or not _CLI_EXECUTABLE_RE.fullmatch(executable)):
         raise _invalid_cli_selection("executable", "invalid_executable")
@@ -245,25 +246,32 @@ def compose_cli_preset(
     }
 
 
-def _cli_model_pattern(kind: str) -> re.Pattern:
+def _cli_model_pattern(kind: str, *, numeric_version: bool = False) -> re.Pattern:
     entry = _CLI_MODEL_CATALOG[kind]
     pattern = re.escape(_CLI_MODEL_TEMPLATES[kind][0])
     fields = {"executable": _CLI_EXECUTABLE_PATTERN, "minutes": r"[1-9][0-9]{0,4}"}
-    for field, key in (("version", "versions"), ("model", "models"), ("effort", "efforts")):
-        values = entry[key]
-        if field == "version" and kind == "claude":
-            values = [value.replace(".", "-") for value in values]
-        fields[field] = "|".join(map(re.escape, values))
+    fields["effort"] = "|".join(map(re.escape, entry["efforts"]))
+    fields["version"] = _CLI_SELECTION_PATTERN
+    fields["model"] = _CLI_SELECTION_PATTERN
+    # The first component is non-greedy because '-' also separates components.
+    # Claude's numeric version suffix takes precedence, including legacy 5-5 ids.
+    if kind == "claude":
+        fields["model"] += "?"
+        if numeric_version:
+            fields["version"] = r"[0-9]+(?:-[0-9]+)*(?:[._][A-Za-z0-9]+)*"
+    else:
+        fields["version"] += "?"
     for field, value in fields.items():
         pattern = pattern.replace(re.escape("{" + field + "}"), f"(?P<{field}>{value})")
     return re.compile(pattern)
 
 
-_CLI_MODEL_PATTERNS = {kind: _cli_model_pattern(kind) for kind in _CLI_MODEL_CATALOG}
+_CLI_MODEL_PATTERNS = [("claude", _cli_model_pattern("claude", numeric_version=True))]
+_CLI_MODEL_PATTERNS += [(kind, _cli_model_pattern(kind)) for kind in _CLI_MODEL_CATALOG]
 
 
 def parse_cli_preset(cli_command: str, *, kind: str | None = None) -> dict | None:
-    for preset_kind, pattern in _CLI_MODEL_PATTERNS.items():
+    for preset_kind, pattern in _CLI_MODEL_PATTERNS:
         if kind is not None and kind != preset_kind:
             continue
         match = pattern.fullmatch(cli_command)
@@ -274,12 +282,15 @@ def parse_cli_preset(cli_command: str, *, kind: str | None = None) -> dict | Non
             if len(executable) > MODEL_NAME_MAX or executable.endswith("\\"):
                 return None
             if preset_kind == "claude":
-                selection["version"] = selection["version"].replace("-", ".")
+                selection["version"] = re.sub(r"(?<=\d)-(?=\d)", ".", selection["version"])
             if minutes is not None and int(minutes) > 10080:
                 return None
-            result = compose_cli_preset(
-                preset_kind, **selection, timeout_seconds=int(minutes) * 60 if minutes else None,
-            )
+            try:
+                result = compose_cli_preset(
+                    preset_kind, **selection, timeout_seconds=int(minutes) * 60 if minutes else None,
+                )
+            except AiSettingsValidationError:
+                continue
             if result["cli_command"] == cli_command:
                 return result["selection"]
     return None

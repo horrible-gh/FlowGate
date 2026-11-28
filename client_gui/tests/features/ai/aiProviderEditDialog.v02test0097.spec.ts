@@ -22,7 +22,7 @@ const GEMINI_45 = 'agy --output-format stream-json --dangerously-skip-permission
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T | null
 const select = (id: string) => $<HTMLSelectElement>(`#${id}`)!
-const options = (id: string) => Array.from(select(id).options).filter((o) => !o.hidden).map((o) => ({ value: o.value, label: o.textContent?.trim(), disabled: o.disabled }))
+const options = (id: string) => Array.from(($<HTMLDataListElement>(`#${id}-suggestions`) ?? select(id)).options).filter((o) => !o.hidden).map((o) => ({ value: o.value, label: o.textContent?.trim(), disabled: o.disabled }))
 const field = (id: string) => select(id).closest('.form-group') as HTMLElement
 const save = () => $<HTMLButtonElement>('.dialog-actions .ui-btn--primary')!
 const nameInput = () => $<HTMLInputElement>('#provider-name')!
@@ -32,7 +32,9 @@ const link = (text: string) => Array.from(document.querySelectorAll<HTMLButtonEl
 
 async function choose(id: string, value: string) {
   select(id).value = value
-  select(id).dispatchEvent(new Event('change'))
+  const input = select(id).tagName === 'INPUT'
+  select(id).dispatchEvent(new Event(input ? 'input' : 'change'))
+  if (input) await new Promise((resolve) => setTimeout(resolve, 350))
   await flushPromises()
 }
 async function type(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -111,6 +113,29 @@ describe('v7 layout', () => {
 })
 
 describe('composition', () => {
+  it('debounces new version/model input for 300ms and saves the latest command', async () => {
+    const w = await open(null)
+    vi.useFakeTimers()
+    try {
+      mocks.compose.mockClear()
+      await type($<HTMLInputElement>('#provider-version')!, '5.6')
+      await vi.advanceTimersByTimeAsync(299)
+      expect(mocks.compose).not.toHaveBeenCalled()
+      expect(save().disabled).toBe(true)
+      await type($<HTMLInputElement>('#provider-model-name')!, 'nova')
+      await vi.advanceTimersByTimeAsync(299)
+      expect(mocks.compose).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await flushPromises()
+      expect(mocks.compose).toHaveBeenCalledTimes(1)
+      expect(mocks.compose).toHaveBeenCalledWith(expect.objectContaining({ version: '5.6', model: 'nova' }))
+      save().click()
+      expect(saved(w)!.cli_command).toContain('claude-nova-5-6')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('opens a new AI with the composed name and command, command hidden until the switch is on', async () => {
     await open(null)
     expect(nameInput().value).toBe('Claude Opus 5.5')
@@ -121,7 +146,7 @@ describe('composition', () => {
     expect($<HTMLInputElement>('#provider-executable')!.value).toBe('claude')
   })
 
-  it('recomposes name and command at once when a selection changes', async () => {
+  it('recomposes name and command after typed selection settles', async () => {
     await open(null)
     commandSwitch().click()
     await choose('provider-kind', 'codex')
