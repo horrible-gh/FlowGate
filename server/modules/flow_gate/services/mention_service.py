@@ -2705,7 +2705,7 @@ def build_mention_from_token_rec(
         work_plan_scope=work_plan_scope,
         card_token_rec=token_rec,
         card_locale=card_locale,
-        card_node=job.get("node"),
+        card_node=card_node,
     )
 
 
