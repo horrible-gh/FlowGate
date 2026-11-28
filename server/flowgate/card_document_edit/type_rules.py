@@ -107,7 +107,9 @@ def _base_rule_for(doc, request=None):
     code = doc.get("type_code")
     if code == "TSR":
         from .errors import GraphApiError
-        raise GraphApiError(409, "report_server_generated", {"doc_id": doc["doc_id"]})
+        raise GraphApiError(409, "report_server_generated", {
+            "doc_id": doc["doc_id"], "scenario_doc_id": doc.get("target_id") or doc.get("triggered_by"),
+            "next_action": "record_case_results_and_use_server_report", "question_required": False})
     if code == "CH":
         return None
     if code == "WP":

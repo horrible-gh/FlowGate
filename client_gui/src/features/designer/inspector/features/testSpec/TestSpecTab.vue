@@ -87,11 +87,6 @@ function canOpen(kind: TestCardWindowKind) {
 function openReason(kind: TestCardWindowKind) {
   return t(k(canOpen(kind) ? 'open_hint' : card.value?.openReason(kind) ?? 'reason.busy'))
 }
-/** ✎: the instruction's editor window, unless the server refuses changing documents (the line's name still opens it to read). */
-function editBrief() {
-  if (refusals.update.value !== null) return
-  openWindow('brief')
-}
 /**
  * [AI 호출] on the scenario line: F81 removed the instruction line (and its ✎), so the scenario's AI writing is this
  * card's document change entry point; the server's refusal of `project.document.update` turns it off too.
@@ -107,14 +102,17 @@ function openWindow(kind: TestCardWindowKind) {
 // F81: two lines only — the scenario and the report. There is no instruction line.
 interface Line { key: 'scenario' | 'report'; kind: TestCardWindowKind; id: string | null; blank: boolean; label: string; tone: TestSpecSlotTone }
 /**
- * The card's document decision slot of a line. The server keeps a test card's scenario (TS) in its instruction slot
- * (the document decision API names it `instruction`), so the scenario line decides that slot.
+ * The card's document decision slot of a line — where the server keeps the line's document, not a screen name. The
+ * scenario (TS) is decided as `scenario` once the decision read names that slot; until then (a server that still keeps
+ * the TS in the instruction slot) the TS is decided through `instruction`. The screen shows no instruction line.
  */
-const decisionSlot = (line: Line) => (line.key === 'scenario' ? 'instruction' : 'report')
-/** The shared line decision; an empty scenario cannot be approved (✓ off), as an empty document is refused. */
+const decisionSlot = (line: Line) => (line.key === 'report' ? 'report' : decisions.resource.data.value?.documents?.scenario ? 'scenario' : 'instruction')
+/** The cases the scenario window lists (F81-9: 0 cases → the scenario cannot be approved). */
+const caseCount = computed(() => (stage.value.hasScenario ? card.value?.cases?.value?.length ?? 0 : 0))
+/** The shared line decision; a scenario without cases cannot be approved (✓ off, "no cases" tooltip). */
 function decisionOf(line: Line) {
   const row = decisions.row(decisionSlot(line), line.id)
-  return row.action === 'approve' && line.key === 'scenario' && line.blank && !row.disabled ? { ...row, reason: 'empty', disabled: true } : row
+  return row.action === 'approve' && line.key === 'scenario' && caseCount.value === 0 ? { ...row, reason: 'no_cases', disabled: true } : row
 }
 function decide(line: Line) { if (!decisionOf(line).disabled) void decisions.decide(decisionSlot(line), line.id) }
 function decisionLabel(line: Line) {

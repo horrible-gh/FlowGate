@@ -71,7 +71,7 @@ function tsFailureParsed(failure: TsReviseFailure) {
   else if (code === 'unauthorized') kind = 'unauthorized'
   else if (code === 'token_kind_not_allowed') kind = 'config'
   else if (code === 'invalid_content' || code === 'invalid_request') kind = 'invalid'
-  else if (code === 'GROUP_AI_RUN_LOCKED' || code === 'workflow_revert_pending') kind = 'running'
+  else if (code === 'run_in_progress' || code === 'GROUP_AI_RUN_LOCKED' || code === 'workflow_revert_pending') kind = 'running'
   else if (code === 'flow_disposed') kind = 'disposed'
   else if (code === 'permission_denied') kind = 'forbidden'
   else if (code === 'not_editable') {
@@ -299,7 +299,7 @@ export function createTestCardSession(target: () => InspectorTarget | null, host
     if (documentCommands.includes(operation) && kind === 'forbidden') documentDenied.value = true
     const shared = ['running', 'disposed', 'forbidden', 'not_found', 'network', 'not_approved', 'report_approved', 'origin_pending', 'no_automated', 'unauthorized', 'config', 'detached', 'uncertain', 'binding']
     const failureOperation = operation === 'caseAdd' ? 'caseSave' : operation
-    const key = kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
+    const key = error instanceof TsReviseFailure && code === 'run_in_progress' ? 'failure.scenario_running' : kind === 'approved' ? 'guard.approved' : kind === 'forbidden' && documentCommands.includes(operation) ? `failure.${failureOperation}_forbidden` : shared.includes(kind) ? `failure.${kind}` : `failure.${failureOperation}_${['conflict', 'invalid'].includes(kind) ? kind : 'other'}`
     refusal.value = { operation, key, kind, status, code, message, fieldErrors, error }
   }
   /** T2 also uses this for its direct documentContentSave call, so raw saves share the guard/busy/refusal. */
@@ -469,6 +469,19 @@ export function followTestCardWindows(target: InspectorTarget | null): void {
 }
 /** No window of the card is open any more. */
 export function releaseTestCardWindows(key: string): void { testCardWindowCards.delete(key) }
+
+/**
+ * F81-9: the Canvas card's 시나리오 button asks for the card's scenario window (a TS document always opens as the
+ * scenario, never as a 지시서 document window). The Canvas selects the card; the Frame's window host opens the window
+ * once the selected target is that card and its scenario can open. Another card selected drops the request.
+ */
+export interface TestCardScenarioRequest { readonly projectId: string; readonly flowId: string; readonly nodeKey: string }
+export const testCardScenarioRequest = shallowRef<TestCardScenarioRequest | null>(null)
+export function requestTestCardScenario(request: TestCardScenarioRequest): void { testCardScenarioRequest.value = { ...request } }
+/** Whether `target` is the card a scenario request names. */
+export function testCardScenarioRequested(request: TestCardScenarioRequest | null, target: InspectorTarget | null): boolean {
+  return !!request && !!target && target.projectId === request.projectId && target.flowId === request.flowId && target.nodeId === request.nodeKey
+}
 
 /** Consumers share refs, settings writes and event subscriptions. Inactive cards retain only their memory. */
 export function useTestCardSession(target: () => InspectorTarget | null): ComputedRef<TestCardContext | null> {

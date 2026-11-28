@@ -84,7 +84,8 @@ const FIELDS: Record<string, readonly FieldDef[]> = {
     ['restart', 0, REPEAT],
     ['review_ai', null, null],
     ['review_count', 0, REPEAT],
-    ['time_limit', 60, [30, 45, 60, 90, 120, 180, 240]],
+    // flowgate.v02test.0081: seconds, no choices (a [number][unit] box)
+    ['time_limit_sec', 14400, null],
     ['review_basis', 'type', ['type', 'last']],
   ],
   test: [
@@ -390,15 +391,16 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     expect(shownOf(w, 'review_ai')).toBe('기본 검수 AI')
     expect(labelsOf(w, 'review_count')).toEqual(['통과할 때까지', '안 함', '1회', '2회', '3회'])
     expect(shownOf(w, 'review_count')).toBe('안 함')
-    // 고급 ▾ folds 실행 제한 시간 · 검수 기준.
-    expect(runSelect(w, 'time_limit').exists()).toBe(false)
+    // 고급 ▾ folds 실행 제한 시간 · 검수 기준; flowgate.v02test.0081: the time limit is [4][시간] (14400 seconds).
+    expect(runSelect(w, 'time_limit_sec').exists()).toBe(false)
     await openAdvanced(w)
     expect(rowLabels(w).slice(-2)).toEqual(['실행 제한 시간', '검수 기준'])
-    expect(labelsOf(w, 'time_limit')).toEqual(['30분', '45분', '60분', '90분', '120분', '180분', '240분'])
-    expect(shownOf(w, 'time_limit')).toBe('60분')
+    expect((w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]').element as HTMLInputElement).value).toBe('4')
+    expect((w.get('[data-test="inspector-run-settings-time_limit_sec-unit"]').element as HTMLSelectElement).value).toBe('hour')
+    expect(isDisabled(w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]'))).toBe(false)
     expect(labelsOf(w, 'review_basis')).toEqual(['문서 타입 기본', '직전 반려 사유만'])
     // Every item can change (the "미연결" ones included); nothing of 0048/0052 is left.
-    for (const field of ['instruction_ai', 'run_ai', 'restart', 'review_count', 'time_limit', 'review_basis']) expect(isDisabled(runSelect(w, field)), field).toBe(false)
+    for (const field of ['instruction_ai', 'run_ai', 'restart', 'review_count', 'review_basis']) expect(isDisabled(runSelect(w, field)), field).toBe(false)
     for (const option of w.findAll('[data-test="inspector-segment-option"]')) expect(option.attributes('disabled')).toBeUndefined()
     // With no review the review AI is off, its reason a tooltip.
     expect(isDisabled(runSelect(w, 'review_ai'))).toBe(true)
@@ -414,11 +416,10 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     ['재시작 2회', 'restart', 2, 'select'],
     ['재시작 끝날 때까지', 'restart', -1, 'select'],
     ['검수 횟수 통과할 때까지', 'review_count', -1, 'select'],
-    ['실행 제한 시간 120분', 'time_limit', 120, 'select'],
     ['검수 기준 직전 반려 사유만', 'review_basis', 'last', 'select'],
   ] as const)('%s is saved at once: one PATCH of that one value, the answer shown', async (_name, field, value, kind) => {
     const w = await mountPart(SettingsTab, targetFor(TASK))
-    if (field === 'time_limit' || field === 'review_basis') await openAdvanced(w)
+    if (field === 'review_basis') await openAdvanced(w)
     if (kind === 'segment') await segmentPick(w, 'settings-instruction-switch', String(value))
     else await pick(w, field, String(value))
     expect(writes).toEqual([[FLOW, 'gn_task', field, value]])
@@ -426,6 +427,18 @@ describe('a run card’s settings (조사 · 작업 · 설계 · Custom) — v7 
     if (kind === 'segment') expect(segmentOn(w, 'settings-instruction-switch')).toBe(value)
     else expect(valueOf(w, field)).toBe(String(value))
     expect(failureOf(w, field)).toBeNull()
+  })
+
+  it('flowgate.v02test.0081: 실행 제한 시간 [90][분] is saved at once as 5400 seconds, the answer shown', async () => {
+    const w = await mountPart(SettingsTab, targetFor(TASK))
+    await openAdvanced(w)
+    await w.get('[data-test="inspector-run-settings-time_limit_sec-unit"]').setValue('minute'); await flushPromises()
+    const box = w.get('[data-test="inspector-run-settings-time_limit_sec-amount"]')
+    await box.setValue('90'); await box.trigger('focusout'); await flushPromises()
+    expect(writes.at(-1)).toEqual([FLOW, 'gn_task', 'time_limit_sec', 5400])
+    expect(cards.get('gn_task')!.stored.time_limit_sec).toBe(5400)
+    expect((box.element as HTMLInputElement).value).toBe('90')
+    expect(failureOf(w, 'time_limit_sec')).toBeNull()
   })
 
   it('a review count turns the review AI on; the default AI is sent as null (the 지시 AI too)', async () => {

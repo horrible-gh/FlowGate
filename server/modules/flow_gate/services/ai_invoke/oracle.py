@@ -205,9 +205,29 @@ def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> O
         return _failure_origin_oracle
     # Baseline BEFORE the worker starts, so the oracle only credits this run's work.
     baseline = _probe(probe, doc_id)
+    # Snapshot eligibility, not the mutable token row: a reused, already-consumed
+    # token is prior work even if its timestamp is subsequently rewritten.
+    handoff_pending = False
+    if action_scope == "test_run" and token_id:
+        try:
+            before = db_tokens.get_by_id(token_id) or {}
+            handoff_pending = bool(
+                before.get("action_scope") == "test_run" and before.get("doc_ref") == doc_id
+                and not before.get("consumed_at") and not before.get("revoked_at")
+            )
+        except Exception:
+            logger.warning("ai-invoke hand-off baseline lookup failed", exc_info=True)
 
     def _oracle() -> bool:
         current = _probe(probe, doc_id)
+        if handoff_pending:
+            # Approval may already have queued (or finished) the code run before this
+            # worker starts. An accepted hand-off consumes this exact TS token without
+            # inserting another run. It is output; the separate test gate judges PASS.
+            accepted = db_tokens.get_by_id(token_id) or {}
+            if (accepted.get("action_scope") == "test_run" and accepted.get("doc_ref") == doc_id
+                    and accepted.get("consumed_at") and not accepted.get("revoked_at")):
+                return True
         # An unresolvable baseline/probe cannot confirm the work landed. This is not the
         # old unreachable case — a missing target means the worker had nothing it could
         # write, and the inbox would have refused it too.

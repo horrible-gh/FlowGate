@@ -33,12 +33,8 @@ def current_rows(doc, run, stored):
 
 
 def regenerate(doc):
-    from modules.flow_gate.services import test_run_service as runs
-    run = test_runs.latest_spec_run(doc["doc_id"])
-    if run:
-        return runs.assemble_tsr(doc, run, test_runs.list_cases(run["run_id"]),
-                                 locale=run.get("locale") or "ko", run_chain=False)
-    return None
+    from modules.flow_gate.graph_workflow.services.card_document_ports import dedicated_write
+    return dedicated_write("tsr", doc, refresh=True)
 
 
 def saved(doc, before, after):
@@ -46,8 +42,19 @@ def saved(doc, before, after):
         return
     running = test_runs.get_running_by_doc(doc["doc_id"])
     if running:
-        from fastapi import HTTPException
-        raise HTTPException(409, detail={"error": "run_in_progress", "run_id": running["run_id"]})
+        from modules.flow_gate.graph_workflow.services.errors import GraphApiError
+        raise GraphApiError(409, "run_in_progress", {"run_id": running["run_id"]},
+                            message="The test is running. Edit the scenario after it finishes.")
     if cases_changed(before, after):
         reopen(doc)
-    regenerate(documents.get_by_id(doc["doc_id"]) or doc)
+    return True
+
+
+def regenerate_after_save(doc):
+    import logging
+
+    try:
+        regenerate(doc)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "TSR regeneration deferred after scenario save: %s", doc["doc_id"])

@@ -215,7 +215,8 @@ def _instruction_line(running: dict, slot: cs.CardSlot) -> bool:
     """the line is the instruction line of a node in its instruction stage holding a live
     instruction stage token (a person's instruction stage, T-2)."""
     return bool(running.get("instruction_stage") and running.get("stage_token_id")
-                and slot.slot == cs.INSTRUCTION and running.get("instruction_type") == slot.doc_type)
+                and slot.slot == (cs.SCENARIO if slot.doc_type == "TS" else cs.INSTRUCTION)
+                and running.get("instruction_type") == slot.doc_type)
 
 
 def _reserve_instruction(group: dict, node: dict, slot: cs.CardSlot, ordinal: int, running: dict,

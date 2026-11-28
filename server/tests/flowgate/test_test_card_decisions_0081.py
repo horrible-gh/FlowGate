@@ -12,7 +12,9 @@ def test_scenario_approval_rejection_and_empty_gate(decisions_env, monkeypatch):
     env = decisions_env
     key = _card(env, "TS")
     view = _get(env, key)
-    assert view["documents"]["scenario"]["doc_id"] == view["documents"]["instruction"]["doc_id"]
+    assert set(view["documents"]) == {"scenario", "report"}
+    from test_fg_card_approval_0056 import TS_AUTOMATED
+    _body(view["documents"]["scenario"]["doc_id"], TS_AUTOMATED)
     result = _post(env, key, _request(env, key, "scenario"), "scenario")
     assert result["documents"]["scenario"]["doc_review_status"] == "approved"
     assert result["documents"]["scenario"]["human_decision"]["valid"]
