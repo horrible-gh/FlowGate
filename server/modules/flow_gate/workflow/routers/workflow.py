@@ -10,8 +10,8 @@ Endpoints:
   POST  /api/v1/documents/{id}/transitions/{action} transition a document state
   GET   /api/v1/documents/{id}/prompt               generate the next-action prompt
 
-RBAC: rbac.decorators.require_permission does not exist, so an inline stub is
-used. The dependency on the TR059 stub status is explicitly documented.
+RBAC: ``_get_user_permissions`` resolves the caller's grant on the target's stored
+project through ``rbac.access``.
 """
 from __future__ import annotations
 
@@ -70,37 +70,91 @@ def _parse_rejection_history(raw: Any) -> list:
         return []
 
 
-# ── RBAC permission lookup stub ───────────────────────────────────────────────
-# Replace the stub below with the real implementation when T_rbac is complete.
-# (TR059 unresolved section)
+# ── Workflow permission lookup ────────────────────────────────────────────────
+# The workflow pipeline speaks dotted permission names. `_get_user_permissions` is
+# the ceiling a user may ever hold; `_project_permissions` narrows it to what the
+# real RBAC grant (rbac.access.can) allows on the target's stored project.
+
+_ADMIN_WORKFLOW_PERMISSIONS = frozenset({
+    "project.group.manage",
+    "document.create",
+    "document.read",
+    "document.update",
+    "document.approve",
+    "document.reject",
+    "document.delete",
+    "document.delete.own.draft",
+    "own.draft",
+})
+
+# Non-administrators never receive more than this. Approve/reject/group management
+# stay with system administrators until the role model is settled.
+_MEMBER_WORKFLOW_CEILING = frozenset({
+    "document.create",
+    "document.read",
+    "document.update",
+    "own.draft",
+    "document.delete.own.draft",
+})
+
+# Which RBAC permission on the project unlocks which workflow names.
+_RBAC_TO_WORKFLOW = {
+    "project.document.create": ("document.create",),
+    "project.document.read": ("document.read",),
+    "project.document.update": ("document.update", "own.draft", "document.delete.own.draft"),
+}
+
 
 def _get_user_permissions(user: dict) -> set[str]:
-    """Return the current user's permission set.
-
-    Stub behavior: admins get all permissions, while other users only receive
-    the default permission set. The real implementation should query the DB
-    through the rbac module.
-    """
+    """The most a user may hold on any project (administrators: everything)."""
     if user.get("is_admin"):
-        return {
-            "project.group.manage",
-            "document.create",
-            "document.read",
-            "document.update",
-            "document.approve",
-            "document.reject",
-            "document.delete",
-            "document.delete.own.draft",
-            "own.draft",
-        }
-    # Default: worker-level permissions
-    return {
-        "document.create",
-        "document.read",
-        "document.update",
-        "own.draft",
-        "document.delete.own.draft",
-    }
+        return set(_ADMIN_WORKFLOW_PERMISSIONS)
+    return set(_MEMBER_WORKFLOW_CEILING)
+
+
+def _project_permissions(user: dict, project_id: Optional[str]) -> set[str]:
+    """The caller's workflow permissions on ``project_id``.
+
+    Administrators keep the full set. Anyone else only gets the names their
+    project role grants on that exact project, so a non-member (or an unknown
+    target) gets nothing.
+    """
+    from modules.flow_gate.rbac import access
+
+    ceiling = _get_user_permissions(user)
+    if access.is_admin(user):
+        return ceiling
+    if not project_id:
+        return set()
+    granted: set[str] = set()
+    for rbac_permission, names in _RBAC_TO_WORKFLOW.items():
+        if access.can(user, project_id, rbac_permission):
+            granted.update(names)
+    return ceiling & granted
+
+
+def _member_permissions(user: dict, project_id: Optional[str]) -> set[str]:
+    """``_project_permissions`` that refuses a caller with no grant on the project.
+
+    Transition rules may let an action through with an empty requirement, so the
+    transition endpoints refuse a non-member before the pipeline runs.
+    """
+    granted = _project_permissions(user, project_id)
+    if not granted:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return granted
+
+
+def _group_project(group_id: Optional[str]) -> Optional[str]:
+    """The stored project of a group (None when the group does not exist)."""
+    row = db_groups.get_by_id(group_id) if group_id else None
+    return (row or {}).get("project_id") or None
+
+
+def _doc_project(doc_id: Optional[str]) -> Optional[str]:
+    """The stored project of a document (None when the document does not exist)."""
+    row = db_docs.get_by_id(doc_id) if doc_id else None
+    return (row or {}).get("project_id") or None
 
 
 # ── Disposed-group action guard ──────────────────────────
@@ -213,7 +267,7 @@ def list_groups_endpoint(
 
     Permission: document.read
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, project_id)
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
     groups = db_groups.list_groups(project_id=project_id, module=module, status=status)
@@ -244,7 +298,7 @@ def create_group_endpoint(
     Automatically reserve group_id when omitted.
     Permission: project.group.manage
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, body.project_id)
     if "project.group.manage" not in user_permissions:
         raise HTTPException(status_code=403, detail="project.group.manage permission required.")
 
@@ -284,7 +338,7 @@ def update_group_endpoint(
     Changing parent_id is out of scope here.
     Permission: project.group.manage
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _group_project(group_id))
     if "project.group.manage" not in user_permissions:
         raise HTTPException(status_code=403, detail="project.group.manage permission required.")
 
@@ -340,7 +394,7 @@ def get_group_work_base_endpoint(
     flowgate.v02.0104 D0004 §5.3. Display only; the PATCH judges again.
     Permission: document.read (``can_edit`` = project.group.manage)
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _group_project(group_id))
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
     try:
@@ -372,7 +426,7 @@ def _work_base_update_body(raw: bytes) -> dict:
 
 
 def _update_group_work_base(group_id: str, raw: bytes, current_user: dict) -> dict[str, Any]:
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _group_project(group_id))
     if "project.group.manage" not in user_permissions:
         raise HTTPException(status_code=403, detail="project.group.manage permission required.")
     # Both fields are checked here so a missing/blank ref and a missing expected answer
@@ -432,7 +486,7 @@ def group_transition_endpoint(
     action: approve | close | start | clarify | resume
     Permission: varies by action (D017 r1 §4-1, §9-1).
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _member_permissions(current_user, _group_project(gid))
     try:
         result = transition_group(
             group_id=gid,
@@ -463,7 +517,7 @@ def archive_group_endpoint(
     Permission: project.group.manage
     """
     from modules.flow_gate.db.connection import now_iso
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _group_project(group_id))
     if "project.group.manage" not in user_permissions:
         raise HTTPException(status_code=403, detail="project.group.manage permission required.")
     row = db_groups.get_by_id(group_id)
@@ -485,7 +539,7 @@ def group_timeline_endpoint(
 
     Permission: document.read
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _group_project(gid))
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
 
@@ -535,7 +589,7 @@ def approval_job_action_rpc(
     from modules.flow_gate.services.git import approval_publish as ap
     from modules.flow_gate.services.git import job_store as jobs
 
-    if "document.approve" not in _get_user_permissions(current_user):
+    if "document.approve" not in _project_permissions(current_user, _doc_project(body.doc_id)):
         raise HTTPException(status_code=403, detail="document.approve permission required.")
     if action not in ("cancel", "discard", "rejudge"):
         raise HTTPException(status_code=422, detail="Unknown approval job action.")
@@ -644,7 +698,7 @@ async def document_review_transition_rpc(
                 return JSONResponse(status_code=status_code, content=payload)
 
             def _retry_terminal_approval() -> tuple[int, dict]:
-                user_permissions = _get_user_permissions(current_user)
+                user_permissions = _member_permissions(current_user, _doc_project(body.doc_id))
                 locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
                 try:
                     precheck_document_review_transition(
@@ -725,7 +779,7 @@ async def document_review_transition_rpc(
         }})
 
     def _orchestrate_final_approval() -> tuple[int, dict]:
-        user_permissions = _get_user_permissions(current_user)
+        user_permissions = _member_permissions(current_user, _doc_project(body.doc_id))
         locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
         pending = {
             "approved": False,
@@ -801,7 +855,7 @@ def finalize_workflow_endpoint(
     The root document's workflow is finalized only after every workflow-step
     document in the group is approved (i.e. the computed head is AC).
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _doc_project(body.doc_id))
     if "document.approve" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.approve permission required")
 
@@ -930,7 +984,7 @@ def document_transition_endpoint(
     action: submit | approve | reject | cancel | resubmit | redraft | close
     Permission: varies by action (D017 r1 §7-3, §9-1).
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _member_permissions(current_user, _doc_project(doc_id))
     _guard_group_not_disposed(db_docs.get_by_id(doc_id), doc_id)
     try:
         result = transition_document(
@@ -971,7 +1025,7 @@ def recover_orphaned_workflow_document_endpoint(
 
     _guard_group_not_disposed(doc, doc_id)
     _guard_group_not_ai_running(doc, doc_id)
-    if "document.approve" not in _get_user_permissions(current_user):
+    if "document.approve" not in _project_permissions(current_user, _doc_project(doc_id)):
         raise HTTPException(
             status_code=403,
             detail="document.approve permission required to recover an orphaned document.",
@@ -1100,7 +1154,7 @@ async def document_review_transition_endpoint(
     # event loop. Only the SSE broadcast below needs the loop; HTTPExceptions
     # raised inside the closure propagate unchanged through run_sync.
     def _transition_sync():
-        user_permissions = _get_user_permissions(current_user)
+        user_permissions = _member_permissions(current_user, _doc_project(doc_id))
         # task 4: pipeline_service's approval-rejection messages (empty body /
         # "not the current workflow head") became ko/en/ja dictionaries, and this is the
         # human approve/reject path — the one surface where a reviewer actually reads
@@ -1268,7 +1322,7 @@ async def update_rejection_reason_endpoint(
     'rejected'; a stale/disposed/AI-running document is rejected with 409.
     Permission: document.reject
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _doc_project(doc_id))
     if "document.reject" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.reject permission required.")
 
@@ -1372,7 +1426,7 @@ async def register_document_result_endpoint(
     # they cannot stall the event loop. Only the SSE broadcast below needs the
     # loop; HTTPExceptions raised inside the closure propagate through run_sync.
     def _register_sync():
-        user_permissions = _get_user_permissions(current_user)
+        user_permissions = _project_permissions(current_user, _doc_project(doc_id))
         if "document.update" not in user_permissions and "own.draft" not in user_permissions:
             raise HTTPException(status_code=403, detail="document.update or own.draft permission required.")
 
@@ -1461,7 +1515,7 @@ def document_prompt_endpoint(
     Permission: document.read
     Record the prompt_copied event (PM decision No.5).
     """
-    user_permissions = _get_user_permissions(current_user)
+    user_permissions = _project_permissions(current_user, _doc_project(doc_id))
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
 

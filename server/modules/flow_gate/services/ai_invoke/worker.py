@@ -591,6 +591,17 @@ def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
     # T-B4d: a claiming Graph AI start's card title request, worded for THIS provider (the plan
     # §4.2.6); any other token's prompt is returned as it is.
     from modules.flow_gate.services import message_image_delivery
+    from modules.flow_gate.services.prompt_blocks.mention import provider_prompt as template_provider_prompt
+    if provider_remote.is_remote_cli(provider):
+        workspace = {"ko": "현재 작업 디렉터리", "en": "Current working directory", "ja": "現在の作業ディレクトリ"}
+        _, task = terminal_prompt.split(prompt)
+        workspace = workspace.get((task or {}).get("locale"), workspace["ko"])
+    else:
+        workspace = None if provider.get("exec_type") == "api" else run.get("token_scratch_dir")
+    prepared = template_provider_prompt(prompt, workspace)
+    if prepared is not None:
+        # New builders collect localized title/image material before composition.
+        return prepared if provider.get("exec_type") == "api" else terminal_prompt.finalize(prepared)
     prompt = message_image_delivery.provider_prompt(prompt, provider, run)
     prompt = node_title_hooks.provider_prompt(prompt, run.get("raw_token"), provider.get("exec_type"))
     locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()

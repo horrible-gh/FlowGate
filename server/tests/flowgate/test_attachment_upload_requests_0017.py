@@ -9,7 +9,7 @@ What this suite pins, in the design's own priority order:
   on the hash the person saw, restore on failure), the target re-check inside the document
   guard (409 ``attachment_target_changed``, nothing follows a changed target), concurrent
   deciders (exactly one wins), the group AI-run lease never refusing a decision;
-* permissions — any ``perm_document_update`` holder decides, readers preview, others get 403;
+* permissions — any ``project.document.update`` holder decides, readers preview, others get 403;
   the human attachment routes now check project permissions too;
 * settings — system defaults, project overrides that inherit when unset, hard caps;
 * retention / recovery, the chat timeline block, the run-result count and the tool exposure.

@@ -7,13 +7,20 @@ import i18n from '@shared/i18n'
 import type {
   AgentEnrollment,
   AiMode,
+  ChangeAnswer,
+  ChangeMode,
+  ChangePreview,
+  ChangeRequest,
   CreateUserInput,
   MemberCandidate,
   PolicyResource,
   ProjectAccess,
   ProjectCreatePolicy,
+  ProjectDirectMember,
   ProjectGitConfigView,
+  ProjectMemberCandidates,
   ProjectStorageRoot,
+  ProjectTeamRole,
   ResourceType,
   SecurityPolicy,
   ScratchUnit,
@@ -24,7 +31,10 @@ import type {
   SystemSettingRow,
   SystemStorageRoot,
   SystemUser,
+  SystemUserDetail,
   SystemUsersResponse,
+  Team,
+  TeamDetail,
   UserCredentialResult,
   WorkspaceDetail,
   WorkspaceListResponse,
@@ -82,23 +92,96 @@ export const deleteWorkspace = (id: string) =>
 export const listMemberCandidates = async (id: string, q: string) =>
   (await call(() => getRequest<{ users: MemberCandidate[] }>(`${ws(id)}/member-candidates`, { q }), 'load_failed')).users
 
-export const addMember = (id: string, userId: string, role: Exclude<WorkspaceRole, 'owner'>) =>
-  call(() => postRequest<WorkspaceDetail>(`${ws(id)}/members`, { user_id: userId, role }), 'save_failed')
+// ── Access changes (v02test.0090): preview first, then apply with the revision ────────────
+// Every change of who may do what — workspace members and defaults, teams, project roles — goes
+// through the server's common change path. The same method, path and body are sent twice: first with
+// `?preview=true` (nothing is written; the answer is { revision, impact }), then with
+// `?revision=<that number>` (applied; the answer is { revision, result }). When someone changed
+// access in between the server answers 409 revision_conflict and the screen previews again.
 
-export const changeMemberRole = (id: string, userId: string, role: Exclude<WorkspaceRole, 'owner'>) =>
-  call(() => patchRequest<WorkspaceDetail>(`${ws(id)}/members/${encodeURIComponent(userId)}`, { role }), 'save_failed')
+/** The path of one access-change call in the given mode. */
+function changePath(path: string, mode: ChangeMode): string {
+  return `${path}${'preview' in mode ? '?preview=true' : `?revision=${encodeURIComponent(String(mode.revision))}`}`
+}
 
-export const removeMember = (id: string, userId: string) =>
-  call(() => deleteRequest<WorkspaceDetail>(`${ws(id)}/members/${encodeURIComponent(userId)}`), 'save_failed')
+export const isPreview = <T>(answer: ChangeAnswer<T>): answer is ChangePreview => 'impact' in answer
 
-export const setDefaultAccess = (id: string, defaults: Partial<Record<WorkspaceRole, ProjectAccess>>) =>
-  call(() => putRequest<WorkspaceDetail>(`${ws(id)}/access/defaults`, defaults), 'save_failed')
+export const addMember = (id: string, userId: string, role: Exclude<WorkspaceRole, 'owner'>): ChangeRequest<WorkspaceDetail> => (mode) =>
+  call(() => postRequest<ChangeAnswer<WorkspaceDetail>>(changePath(`${ws(id)}/members`, mode), { user_id: userId, role }), 'save_failed')
 
-export const setProjectAccess = (id: string, projectId: string, userId: string, access: ProjectAccess | 'default') =>
+export const changeMemberRole = (id: string, userId: string, role: Exclude<WorkspaceRole, 'owner'>): ChangeRequest<WorkspaceDetail> => (mode) =>
+  call(() => patchRequest<ChangeAnswer<WorkspaceDetail>>(changePath(`${ws(id)}/members/${encodeURIComponent(userId)}`, mode), { role }), 'save_failed')
+
+export const removeMember = (id: string, userId: string): ChangeRequest<WorkspaceDetail> => (mode) =>
+  call(() => deleteRequest<ChangeAnswer<WorkspaceDetail>>(changePath(`${ws(id)}/members/${encodeURIComponent(userId)}`, mode)), 'save_failed')
+
+export const setDefaultAccess = (id: string, defaults: Partial<Record<WorkspaceRole, ProjectAccess>>): ChangeRequest<WorkspaceDetail> => (mode) =>
+  call(() => putRequest<ChangeAnswer<WorkspaceDetail>>(changePath(`${ws(id)}/access/defaults`, mode), defaults), 'save_failed')
+
+export const setProjectAccess = (id: string, projectId: string, userId: string, access: ProjectAccess | 'default'): ChangeRequest<WorkspaceDetail> => (mode) =>
   call(
-    () => putRequest<WorkspaceDetail>(`${ws(id)}/access/exceptions`, { project_id: projectId, user_id: userId, access }),
+    () => putRequest<ChangeAnswer<WorkspaceDetail>>(changePath(`${ws(id)}/access/exceptions`, mode), { project_id: projectId, user_id: userId, access }),
     'save_failed',
   )
+
+// ── Teams (설정 › 팀) ─────────────────────────────────────────────────────────────
+const teamsOf = (workspaceId: string) => `${ws(workspaceId)}/teams`
+const team = (workspaceId: string, teamId: string) => `${teamsOf(workspaceId)}/${encodeURIComponent(teamId)}`
+
+export const listTeams = async (workspaceId: string) =>
+  (await call(() => getRequest<{ teams: Team[] }>(teamsOf(workspaceId)), 'load_failed')).teams
+
+export const getTeam = (workspaceId: string, teamId: string) =>
+  call(() => getRequest<TeamDetail>(team(workspaceId, teamId)), 'load_failed')
+
+export const createTeam = (workspaceId: string, name: string): ChangeRequest<Team> => (mode) =>
+  call(() => postRequest<ChangeAnswer<Team>>(changePath(teamsOf(workspaceId), mode), { name }), 'save_failed')
+
+export const renameTeam = (workspaceId: string, teamId: string, name: string): ChangeRequest<Team> => (mode) =>
+  call(() => patchRequest<ChangeAnswer<Team>>(changePath(team(workspaceId, teamId), mode), { name }), 'save_failed')
+
+export const disableTeam = (workspaceId: string, teamId: string): ChangeRequest<Team> => (mode) =>
+  call(() => postRequest<ChangeAnswer<Team>>(changePath(`${team(workspaceId, teamId)}/disable`, mode), {}), 'save_failed')
+
+export const addTeamMember = (workspaceId: string, teamId: string, userId: string): ChangeRequest<unknown> => (mode) =>
+  call(() => putRequest<ChangeAnswer<unknown>>(changePath(`${team(workspaceId, teamId)}/members/${encodeURIComponent(userId)}`, mode), {}), 'save_failed')
+
+export const removeTeamMember = (workspaceId: string, teamId: string, userId: string): ChangeRequest<unknown> => (mode) =>
+  call(() => deleteRequest<ChangeAnswer<unknown>>(changePath(`${team(workspaceId, teamId)}/members/${encodeURIComponent(userId)}`, mode)), 'save_failed')
+
+// ── Project members (설정 › 프로젝트 › 멤버): the /rbac routes ───────────────────────
+const rbacProject = (projectId: string) => `/rbac/projects/${encodeURIComponent(projectId)}`
+
+export const listProjectMembers = (projectId: string) =>
+  call(() => getRequest<ProjectDirectMember[]>(`${rbacProject(projectId)}/members`), 'load_failed')
+
+export const listProjectTeamRoles = async (projectId: string) =>
+  (await call(() => getRequest<{ teams: ProjectTeamRole[] }>(`${rbacProject(projectId)}/team-roles`), 'load_failed')).teams
+
+/** Only for someone who may manage the project's members (403 otherwise). */
+export const getProjectMemberCandidates = (projectId: string) =>
+  call(() => getRequest<ProjectMemberCandidates>(`${rbacProject(projectId)}/member-candidates`), 'load_failed')
+
+export const assignProjectUserRole = (projectId: string, userId: string, roleId: string): ChangeRequest<unknown> => (mode) =>
+  call(
+    () => postRequest<ChangeAnswer<unknown>>(changePath(`/rbac/users/${encodeURIComponent(userId)}/roles`, mode), { project_id: projectId, role_id: roleId }),
+    'save_failed',
+  )
+
+export const revokeProjectUserRole = (projectId: string, userId: string): ChangeRequest<unknown> => (mode) =>
+  call(
+    () => deleteRequest<ChangeAnswer<unknown>>(changePath(`/rbac/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(projectId)}`, mode)),
+    'save_failed',
+  )
+
+export const assignProjectTeamRole = (projectId: string, teamId: string, roleId: string): ChangeRequest<unknown> => (mode) =>
+  call(
+    () => putRequest<ChangeAnswer<unknown>>(changePath(`${rbacProject(projectId)}/team-roles/${encodeURIComponent(teamId)}`, mode), { role_id: roleId }),
+    'save_failed',
+  )
+
+export const revokeProjectTeamRole = (projectId: string, teamId: string): ChangeRequest<unknown> => (mode) =>
+  call(() => deleteRequest<ChangeAnswer<unknown>>(changePath(`${rbacProject(projectId)}/team-roles/${encodeURIComponent(teamId)}`, mode)), 'save_failed')
 
 export const setWorkspacePolicy = (id: string, patch: { ai_mode?: AiMode; project_create?: ProjectCreatePolicy }) =>
   call(() => putRequest<WorkspaceDetail>(`${ws(id)}/policy`, patch), 'save_failed')
@@ -124,6 +207,10 @@ export const revokeResource = (id: string, resourceType: ResourceType, resourceI
 
 export const listSystemUsers = () =>
   call(() => getRequest<SystemUsersResponse>(`${API}/system/users`), 'load_failed')
+
+/** One person with the teams they are in and the final role on each project (v02test.0090). */
+export const getSystemUser = (id: string) =>
+  call(() => getRequest<SystemUserDetail>(user(id)), 'load_failed')
 
 /** Only the four fields the server reads; workspace_id is never sent. */
 export const createSystemUser = (input: CreateUserInput) =>

@@ -27,7 +27,7 @@ import { reviseTs, tsOwnerOf, tsStartNewIntent, type TsBase, type TsReviseResult
 import { captureInspectorResourceContext, useInspectorResource } from '../../useInspectorResource'
 import type { InspectorTarget } from '../../inspectorTarget'
 import { cardSettingsDisabledReason, type CardSettingsField } from '../settings/cardSettingsModel'
-import { useCardSettings } from '../settings/useCardSettings'
+import { injectCardSettingsHost, useCardSettings, type CardSettingsHost } from '../settings/useCardSettings'
 import { testCardPresentation, testSpecTargetDocId, type TestCardWriting, type TestSpecAvailabilityItem } from './testSpecModel'
 import { useTestSpec } from './useTestSpec'
 
@@ -106,11 +106,16 @@ const windowKinds: TestCardWindowKind[] = ['scenario', 'case', 'remark', 'report
 const documentCommands: TestCardCommand[] = ['caseSave', 'caseAdd', 'caseDelete', 'rawSave']
 const missingCommands: TestCardCommand[] = ['rewriteCase', 'decide']
 
-export function createTestCardSession(target: () => InspectorTarget | null) {
+/**
+ * `host`: the Host a taken card setting asks to read the Canvas again (`refresh-flow`). A session of a card selected after
+ * another one is made by useTestCardSession's watch, outside component setup, where nothing can be injected; it
+ * passes the Host its consumers injected. Omitted = the one injected here (a caller inside setup).
+ */
+export function createTestCardSession(target: () => InspectorTarget | null, host?: () => CardSettingsHost | null) {
   const writing = ref<TestCardWriting>(null)
   const writingCaseId = ref<string | null>(null)
   const test = useTestSpec(target, () => writing.value !== null)
-  const settings = useCardSettings(target)
+  const settings = useCardSettings(target, host)
   const reviewHistory = useInspectorResource({
     target: () => { const current = target(); const docId = test.view.value?.tsDocId ?? testSpecTargetDocId(current)
       return current && docId ? { projectId: current.projectId, flowId: current.flowId, docId } : null },
@@ -437,7 +442,13 @@ export function createTestCardSession(target: () => InspectorTarget | null) {
 }
 export type TestCardContext = ReturnType<typeof createTestCardSession>
 
-interface SessionEntry { context: TestCardContext; target: ReturnType<typeof shallowRef<InspectorTarget | null>>; users: number }
+interface SessionEntry {
+  context: TestCardContext
+  target: ReturnType<typeof shallowRef<InspectorTarget | null>>
+  users: number
+  /** The Host the latest consumer injected (the session outlives a remounted Frame). */
+  host: CardSettingsHost | null
+}
 const apps = new WeakMap<object, Map<string, SessionEntry>>()
 const fallbackApp = {}
 export const testCardSessionKey = (target: InspectorTarget) => [target.projectId, target.flowId, target.nodeType ? target.nodeId : target.docId ?? target.nodeId].join('\n')
@@ -476,6 +487,9 @@ export function testCardScenarioRequested(request: TestCardScenarioRequest | nul
 export function useTestCardSession(target: () => InspectorTarget | null): ComputedRef<TestCardContext | null> {
   const app = getCurrentInstance()?.appContext ?? fallbackApp
   const inResourceContext = captureInspectorResourceContext()
+  // Injected here, in the consumer's setup: the watch below makes a card's session outside setup (a card selected after
+  // another one), where inject() finds nothing.
+  const host = injectCardSettingsHost()
   let sessions = apps.get(app)
   if (!sessions) { sessions = new Map(); apps.set(app, sessions) }
   const current = shallowRef<SessionEntry | null>(null)
@@ -485,11 +499,12 @@ export function useTestCardSession(target: () => InspectorTarget | null): Comput
     if (!entry) {
       const selected = shallowRef(target())
       const scope = effectScope(true)
-      const context = inResourceContext(() => scope.run(() => createTestCardSession(() => selected.value)))!
-      entry = { context, target: selected, users: 0 }; sessions!.set(key, entry)
+      const created: SessionEntry = { context: null as unknown as TestCardContext, target: selected, users: 0, host }
+      created.context = inResourceContext(() => scope.run(() => createTestCardSession(() => selected.value, () => created.host)))!
+      entry = created; sessions!.set(key, entry)
       // App disposal naturally releases the WeakMap; inactive resources unsubscribe through target=null.
     }
-    entry.users++; entry.target.value = target(); current.value = entry
+    entry.users++; if (host) entry.host = host; entry.target.value = target(); current.value = entry
     cleanup(() => { if (--entry!.users === 0) entry!.target.value = null })
   }, { immediate: true, flush: 'sync' })
   const stopTarget = watch(target, (value) => { if (value && current.value) current.value.target.value = value }, { flush: 'sync' })

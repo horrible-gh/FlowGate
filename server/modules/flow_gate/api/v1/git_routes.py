@@ -5,7 +5,7 @@ POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST /api/v1/projects/{project_id}/git/provision
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
 GET /api/v1/projects/{project_id}/git/branches
-GET /api/v1/projects/{project_id}/git/work-base-options (perm_document_create)
+GET /api/v1/projects/{project_id}/git/work-base-options (project.document.create)
 POST /api/v1/projects/{project_id}/git/branches
 DELETE /api/v1/projects/{project_id}/git/branches/{name:path}
 GET /api/v1/projects/{project_id}/git/branches/tree (checkout-free ordinary local branch)
@@ -52,7 +52,9 @@ POST /api/v1/projects/{project_id}/git/merge/{merge_id}/reject (human only)
 POST /api/v1/projects/{project_id}/git/merge/{merge_id}/review-message (human only)
 POST /api/v1/projects/{project_id}/git/merge/{merge_id}/write-plan-token (worker token only)
 
-RBAC (common): read = project.settings.read, mutate = project.settings.edit.
+RBAC (common): repository settings and base-branch management = project.settings.read / project.settings.edit;
+branches, changes and diffs = project.git.read; work-branch commits and work-base changes =
+project.git.write; merging into a base branch, conflict handling and merge review = project.git.merge.
 Group-scoped routes resolve the project from the group_id prefix and check the
 same keys manually (require_permission needs a path param named project_id).
 Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
@@ -254,7 +256,7 @@ class BranchMergeBody(BaseModel):
 @router.get("/projects/{project_id}/git/branches")
 def get_git_branches(
     project_id: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_service.list_branches(project_id)
@@ -265,7 +267,7 @@ def get_git_branches(
 @router.get("/projects/{project_id}/git/work-base-options")
 def get_git_work_base_options(
     project_id: str,
-    user=Depends(require_permission("perm_document_create", "project_id")),
+    user=Depends(require_permission("project.document.create", "project_id")),
 ):
     """flowgate.default.0613 T0013: Base Branch choices for the requirement (R/B)
     dialog.  Gated by the project's document-create permission -- the right a
@@ -310,7 +312,7 @@ def post_git_branch_merge(
     project_id: str,
     body: BranchMergeBody,
     request: Request,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     s_kind = body.source.kind if body.source else body.source_kind
     s_branch = (body.source.branch if body.source else body.source_branch) or ""
@@ -412,7 +414,7 @@ def put_git_default_merge_target(
 def get_local_branch_tree(
     project_id: str,
     branch: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Recursive file tree of an ordinary local branch's HEAD commit (read-only,
     no checkout — T0004 §3.1)."""
@@ -428,7 +430,7 @@ def get_local_branch_blob(
     branch: str,
     path: str,
     ref: str | None = None,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Single-file content from an ordinary local branch (read-only, checkout-free
     — T0004 §3.2). ``ref`` (optional) pins the read to the tree's commit sha, same
@@ -444,7 +446,7 @@ def get_local_branch_blob(
 @router.get("/projects/{project_id}/git/status")
 def get_git_status(
     project_id: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Aggregate status + finalize-pending list + count (control panel + badge)."""
     try:
@@ -456,7 +458,7 @@ def get_git_status(
 @router.post("/projects/{project_id}/git/fetch")
 def post_git_fetch(
     project_id: str,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.write", "project_id")),
 ):
     """Recovery fetch of the base checkout (P §3-1)."""
     try:
@@ -474,7 +476,7 @@ class GitPushBody(BaseModel):
 def post_git_push(
     project_id: str,
     body: GitPushBody | None = None,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     """Recovery re-push of an accumulated base/slot branch (P §3-2)."""
     try:
@@ -569,7 +571,7 @@ def post_git_base_remove(
 def get_group_branch_tree(
     project_id: str,
     group_id: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Recursive group tree plus one group-scoped TR2 managed-path snapshot."""
     try:
@@ -593,7 +595,7 @@ def get_group_review_package(
     project_id: str,
     group_id: str,
     target_doc_id: str | None = None,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Download the current group worktree delta as a reviewer-safe ZIP."""
     try:
@@ -618,7 +620,7 @@ def get_group_branch_changes(
     project_id: str,
     group_id: str,
     base: str | None = None,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Tracked paths changed from the base branch through the group worktree.
 
@@ -635,7 +637,7 @@ def get_group_branch_changes(
 def get_base_file_diff(
     project_id: str,
     path: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Old/new content of one base-checkout file (0326 R0001 / NR0005 §4).
 
@@ -655,7 +657,7 @@ def get_group_file_diff(
     path: str,
     ref: str | None = None,
     base: str | None = None,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Old/new content of one group-branch file (0326 R0001 / NR0005 §4).
 
@@ -675,7 +677,7 @@ def get_group_branch_blob(
     group_id: str,
     path: str,
     ref: str | None = None,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     """Single-file content from a group branch (read-only, checkout-free).
 
@@ -695,7 +697,7 @@ def get_group_branch_blob(
 def get_group_finalize_state(
     group_id: str, context: str | None = None, user=Depends(get_current_user)
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -712,7 +714,7 @@ def get_group_finalize_state(
 
 @router.post("/groups/{group_id}/git/update-from-base")
 def post_group_update_from_base(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied:
         return denied
     try:
@@ -723,7 +725,7 @@ def post_group_update_from_base(group_id: str, user=Depends(get_current_user)):
 
 @router.post("/groups/{group_id}/git/worktree/update-from-base")
 def post_worktree_update_from_base(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied:
         return denied
     try:
@@ -734,7 +736,7 @@ def post_worktree_update_from_base(group_id: str, user=Depends(get_current_user)
 
 @router.post("/groups/{group_id}/git/worktree/reconstruct")
 def post_worktree_reconstruct(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied:
         return denied
     try:
@@ -750,7 +752,7 @@ class GroupUntrackedBody(BaseModel):
 
 
 def _group_untracked_recover(group_id: str, body: GroupUntrackedBody, action: str, user: dict):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied:
         return denied
     try:
@@ -790,7 +792,7 @@ def post_group_finalize(
     body: FinalizeBody | None = None,
     user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -815,7 +817,7 @@ def get_group_finalize_target(
     """flowgate.default.0665 T0004: what merging into ``target`` (default: the group's
     work base) means -- unmerge support and the work-base commits that would flow
     into a different target.  Read-only; the approval UI asks before a risky target."""
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -827,7 +829,7 @@ def get_group_finalize_target(
 @router.get("/groups/{group_id}/git/work-base")
 def get_group_work_base(group_id: str, user=Depends(get_current_user)):
     """The group's recorded work-base floor, its classification and audit trail."""
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -907,7 +909,7 @@ def post_group_unmerge(
     body: UnmergeBody,
     user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -920,7 +922,7 @@ def post_group_unmerge(
 
 @router.get("/groups/{group_id}/git/merge/{merge_id}/conflicts")
 def get_merge_conflicts(group_id: str, merge_id: int, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -996,7 +998,7 @@ def post_merge_resolve(
     body: ResolveBodyHuman,
     user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -1051,7 +1053,7 @@ def post_merge_resolve_token(
 
 @router.post("/groups/{group_id}/git/merge/{merge_id}/hold")
 def post_merge_hold(group_id: str, merge_id: int, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -1062,7 +1064,7 @@ def post_merge_hold(group_id: str, merge_id: int, user=Depends(get_current_user)
 
 @router.post("/groups/{group_id}/git/merge/{merge_id}/abort")
 def post_merge_abort(group_id: str, merge_id: int, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -1128,7 +1130,7 @@ def post_tr_conflict_commit(group_id: str, merge_id: int, user=Depends(get_curre
     this commit the workflow strip will say the step is cancelled and nothing downstream
     re-examines that claim.
     """
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     try:
@@ -1140,7 +1142,7 @@ def post_tr_conflict_commit(group_id: str, merge_id: int, user=Depends(get_curre
 # ── General-merge review gate ────
 # GET review / POST approve / POST reject / POST review-message are the four new
 # windows the design [DEFERRED] left to this WP's logic design; all
-# four require a human (project.settings.edit) — a resolve_conflict worker token
+# four require a human (project.git.merge) — a resolve_conflict worker token
 # can reach /resolve and /resolve-token above, never these.
 
 def _review_group_parts(group_id: str) -> tuple[str, Optional[str]]:
@@ -1228,7 +1230,7 @@ def _start_resolve_conflict_run(
 
 @router.get("/groups/{group_id}/git/merge/{merge_id}/review")
 def get_merge_review(group_id: str, merge_id: int, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -1241,7 +1243,7 @@ def get_merge_review(group_id: str, merge_id: int, user=Depends(get_current_user
 def get_merge_review_diff(
     group_id: str, merge_id: int, path: str, user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -1259,7 +1261,7 @@ class RecoveryBody(BaseModel):
 
 @router.get("/groups/{group_id}/git/merge/{merge_id}/recovery")
 def get_merge_recovery(group_id: str, merge_id: int, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied:
         return denied
     try:
@@ -1269,7 +1271,7 @@ def get_merge_recovery(group_id: str, merge_id: int, user=Depends(get_current_us
 
 
 def _recovery_action(group_id, merge_id, body, action, user):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     if not _UUID_RE.match(body.request_id or ""):
@@ -1307,7 +1309,7 @@ class ApproveBody(BaseModel):
 def post_merge_review_approve(
     group_id: str, merge_id: int, body: ApproveBody, user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     if not _UUID_RE.match(body.attempt_id or ""):
@@ -1354,7 +1356,7 @@ def post_merge_review_reject(
     group_id: str, merge_id: int, body: RejectBody, request: Request,
     user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     reason = (body.reason or "").strip()
@@ -1396,7 +1398,7 @@ def post_merge_review_message(
     group_id: str, merge_id: int, body: ReviewMessageBody, request: Request,
     user=Depends(get_current_user),
 ):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied:
         return denied
     if body.provider_pinned is not True:
@@ -1507,7 +1509,7 @@ def post_merge_write_plan_token(
 # project. Every route below is a thin project-scoped window onto the SAME service the
 # group routes above use (`resolve_conflicts`, `list_conflicts`, `get_merge_review`,
 # `approve_merge_review`, ...), called with `group_id=None, project_id=...`. RBAC is the
-# Branch Manager's: read = project.settings.read, mutate = project.settings.edit; the two
+# Branch Manager's: read = project.git.read, mutate = project.git.merge; the two
 # worker-token routes accept only a resolve_conflict token bound to this project + merge
 # and to no group.
 
@@ -1589,7 +1591,7 @@ def _worker_token_for_branch_merge(request: Request, project_id: str, merge_id: 
 @router.get("/projects/{project_id}/git/merge")
 def get_branch_merge_attempts(
     project_id: str, all: bool = False,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_branch_merge.list_attempts(project_id, open_only=not all)
@@ -1600,7 +1602,7 @@ def get_branch_merge_attempts(
 @router.get("/projects/{project_id}/git/merge/{merge_id}")
 def get_branch_merge_attempt(
     project_id: str, merge_id: int,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_branch_merge.get_attempt(project_id, merge_id)
@@ -1611,7 +1613,7 @@ def get_branch_merge_attempt(
 @router.get("/projects/{project_id}/git/merge/{merge_id}/conflicts")
 def get_branch_merge_conflicts(
     project_id: str, merge_id: int,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_service.list_conflicts(None, merge_id, project_id=project_id)
@@ -1622,7 +1624,7 @@ def get_branch_merge_conflicts(
 @router.post("/projects/{project_id}/git/merge/{merge_id}/resolve")
 def post_branch_merge_resolve(
     project_id: str, merge_id: int, body: ResolveBody,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     # ResolveBody, not ResolveBodyHuman: a branch merge has no auto-authority checkbox to record.
     try:
@@ -1666,7 +1668,7 @@ class BranchMergeAiBody(BaseModel):
 @router.post("/projects/{project_id}/git/merge/{merge_id}/ai-resolve")
 def post_branch_merge_ai_resolve(
     project_id: str, merge_id: int, request: Request, body: BranchMergeAiBody | None = None,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     """Invoke (first run) or re-invoke the AI resolver (T#3: the server never auto-starts).
     The GitConflictResolverDialog calls this when the user selects a Provider and clicks
@@ -1692,7 +1694,7 @@ def post_branch_merge_ai_resolve(
 @router.post("/projects/{project_id}/git/merge/{merge_id}/abort")
 def post_branch_merge_abort(
     project_id: str, merge_id: int,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     try:
         return git_service.abort_merge(None, merge_id, project_id=project_id)
@@ -1703,7 +1705,7 @@ def post_branch_merge_abort(
 @router.get("/projects/{project_id}/git/merge/{merge_id}/review")
 def get_branch_merge_review(
     project_id: str, merge_id: int,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_service.get_merge_review(None, merge_id, project_id=project_id)
@@ -1714,7 +1716,7 @@ def get_branch_merge_review(
 @router.get("/projects/{project_id}/git/merge/{merge_id}/review-diff")
 def get_branch_merge_review_diff(
     project_id: str, merge_id: int, path: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
+    user=Depends(require_permission("project.git.read", "project_id")),
 ):
     try:
         return git_service.read_merge_review_file_diff(None, merge_id, path, project_id=project_id)
@@ -1725,7 +1727,7 @@ def get_branch_merge_review_diff(
 @router.post("/projects/{project_id}/git/merge/{merge_id}/approve")
 def post_branch_merge_approve(
     project_id: str, merge_id: int, body: ApproveBody,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     if not _UUID_RE.match(body.attempt_id or ""):
         return _error_response(400, "invalid_attempt_id", "attempt_id must be a UUID")
@@ -1742,7 +1744,7 @@ def post_branch_merge_approve(
 @router.post("/projects/{project_id}/git/merge/{merge_id}/reject")
 def post_branch_merge_reject(
     project_id: str, merge_id: int, body: RejectBody, request: Request,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     reason = (body.reason or "").strip()
     if not reason or len(reason) > 4000:
@@ -1767,7 +1769,7 @@ def post_branch_merge_reject(
 @router.post("/projects/{project_id}/git/merge/{merge_id}/review-message")
 def post_branch_merge_review_message(
     project_id: str, merge_id: int, body: ReviewMessageBody, request: Request,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.merge", "project_id")),
 ):
     if body.provider_pinned is not True:
         return _error_response(422, "provider_not_pinned", "provider_pinned must be true")
@@ -1844,7 +1846,7 @@ class WorktreePathsBody(BaseModel):
 
 @router.get("/groups/{group_id}/git/worktree/status")
 def get_group_worktree_status(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1856,7 +1858,7 @@ def get_group_worktree_status(group_id: str, user=Depends(get_current_user)):
 
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/stage")
 def post_group_worktree_stage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1868,7 +1870,7 @@ def post_group_worktree_stage(group_id: str, body: WorktreePathsBody, user=Depen
 
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/unstage")
 def post_group_worktree_unstage(group_id: str, body: WorktreePathsBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1895,7 +1897,7 @@ class WorktreeFilesBody(BaseModel):
 
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/commit")
 def post_group_worktree_commit(group_id: str, body: WorktreeCommitBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1907,7 +1909,7 @@ def post_group_worktree_commit(group_id: str, body: WorktreeCommitBody, user=Dep
 
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/revert")
 def post_group_worktree_revert(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1919,7 +1921,7 @@ def post_group_worktree_revert(group_id: str, body: WorktreeFilesBody, user=Depe
 
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/remove")
 def post_group_worktree_remove(group_id: str, body: WorktreeFilesBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import worktree_manual
@@ -1938,7 +1940,7 @@ class CommitSuggestBody(BaseModel):
 @_worktree_mutations.post("/groups/{group_id}/git/worktree/commit-message/suggest")
 def post_group_commit_suggest(group_id: str, body: CommitSuggestBody | None = None,
                              user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import commit_suggest
@@ -1965,7 +1967,7 @@ class GitExecutionBody(BaseModel):
 
 @router.get("/groups/{group_id}/git/execution")
 def get_git_execution(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import execution
@@ -1977,7 +1979,7 @@ def get_git_execution(group_id: str, user=Depends(get_current_user)):
 
 @_worktree_mutations.post("/groups/{group_id}/git/execution")
 def post_git_execution(group_id: str, body: GitExecutionBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.write")
     if denied is not None:
         return denied
     if not _UUID_RE.match(body.request_id):
@@ -2024,7 +2026,7 @@ class FetchRefsBody(BaseModel):
 
 @router.get("/groups/{group_id}/git/manual-merge")
 def get_group_manual_merge(group_id: str, target: Optional[str] = None, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import manual_merge
@@ -2036,7 +2038,7 @@ def get_group_manual_merge(group_id: str, target: Optional[str] = None, user=Dep
 
 @router.post("/groups/{group_id}/git/manual-merge")
 def post_group_manual_merge(group_id: str, body: ManualMergeBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import manual_merge
@@ -2048,7 +2050,7 @@ def post_group_manual_merge(group_id: str, body: ManualMergeBody, user=Depends(g
 
 @router.get("/groups/{group_id}/git/merge-result")
 def get_group_merge_result(group_id: str, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.read")
+    denied = _check_group_permission(user, group_id, "project.git.read")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import manual_merge
@@ -2060,7 +2062,7 @@ def get_group_merge_result(group_id: str, user=Depends(get_current_user)):
 
 @router.post("/groups/{group_id}/git/merge-result/push")
 def post_group_merge_result_push(group_id: str, body: MergeResultPushBody, user=Depends(get_current_user)):
-    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    denied = _check_group_permission(user, group_id, "project.git.merge")
     if denied is not None:
         return denied
     from modules.flow_gate.services.git import manual_merge
@@ -2075,7 +2077,7 @@ def post_group_merge_result_push(group_id: str, body: MergeResultPushBody, user=
 def post_git_fetch_refs(
     project_id: str,
     body: FetchRefsBody | None = None,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
+    user=Depends(require_permission("project.git.write", "project_id")),
 ):
     """Fetch-only refresh: remote-tracking refs move, nothing local does (D#1 §3-7)."""
     from modules.flow_gate.services.git import remote_refresh

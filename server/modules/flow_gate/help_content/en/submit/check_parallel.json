@@ -1,0 +1,33 @@
+{
+  "locale": "en",
+  "title": "Self-check parallelism",
+  "summary": "Self-check parallelism",
+  "purpose": "Self-check parallelism",
+  "request": {
+    "routes": [
+      "{{route:self_check.run}}",
+      "{{route:self_check.draft.run}}"
+    ],
+    "field": "parallel_share",
+    "details": [
+      "Use pytest parallelism only for large selections, as -n <share> --dist loadfile with parallel_share set to the same number. server/tests pytest shares one worker slot pool of size R per run and lowers its workers to the free slots; a nested pytest uses only the slots left and runs serially without a slot when none is free. Prefer running pytest directly over a script that starts pytest several times.",
+      "Keep fixed-port connection integration tests, builds or type checks writing into the same source, and single- or few-file selections serial."
+    ]
+  },
+  "response": {
+    "fields": [
+      "cpu_share_requested",
+      "cpu_reservation",
+      "enqueued_at",
+      "queue"
+    ],
+    "details": [
+      "Every Self-check run of a host (serial runs and non-pytest commands included, TS runs excluded) reserves logical processors. The wish is parallel_share (default 1); the granted reservation R is the response's cpu_reservation. Reservations never sum above the host cap, and a share above 1 is granted only while the serial reserve stays free.",
+      "The operating system limits the run's whole process tree to R processors (Windows Job affinity, POSIX supervisor processor set). Whatever the tool does, no more than R workers execute at once. A tool that starts more workers than R does not fail; it runs slower.",
+      "A request is never refused for capacity: it is queued and answered at once (status queued). It runs in a copy of the worktree taken at that moment and takes no Group lock. Its reservation R is decided when the queue starts it (cpu_reservation); until a processor is free it waits. Read the result with read_self_check. A new request of the same card cancels its earlier requests that have not started."
+    ]
+  },
+  "errors": {
+    "details": "For reservation or processor errors see submit/check_errors."
+  }
+}

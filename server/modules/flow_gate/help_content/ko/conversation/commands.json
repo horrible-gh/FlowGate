@@ -1,0 +1,25 @@
+{
+  "locale": "ko",
+  "title": "대화 명령 실행",
+  "summary": "실행 연결이 있는 대화에서 현재 Flow 작업 폴더에 명령을 실행합니다. API 공급자는 `run_command`를 사용합니다.",
+  "purpose": "실행 연결이 있는 대화에서 현재 Flow 작업 폴더에 명령을 실행합니다. API 공급자는 `run_command`를 사용합니다.",
+  "request": {
+    "submit": "{{route:chat.commands}}",
+    "fields": "`program`은 실행 파일명, `args`는 분리된 인자 배열, `cwd`는 작업 폴더 상대 경로입니다. 예시의 `timeout_seconds`는 실행 제한, `wait_seconds`는 최초 응답 대기 시간입니다. 셸 구문과 인라인 스크립트는 허용되지 않습니다.",
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "server/tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "wait_seconds": 60
+    }
+  },
+  "response": {
+    "poll": "{{route:chat.command}}",
+    "details": "`terminal=false`이면 같은 Bearer로 상태를 `wait=60`을 붙여 조회하고 `terminal=true`까지 확인합니다. 실행 결과에는 상태, 종료 코드, 출력, 시간 초과 및 반려가 기록됩니다. 명령 요청은 토큰을 소모하지 않습니다."
+  },
+  "errors": "명령은 사용자 방침에 따라 실행·승인 대기·반려됩니다. 반려된 명령은 그대로 재요청하지 말고 답변에 알립니다. 실행 모드에서는 허용된 조회·테스트·빌드 명령만 실행합니다. 파일을 바꾸는 명령에는 `chat_command_execute_mode_denied`가 돌아옵니다."
+}

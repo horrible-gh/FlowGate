@@ -28,8 +28,8 @@ def test_L2W01_chat_read_two_PATCH_aliases_refused_then_chat_saves(l3,monkeypatc
     monkeypatch.setattr(routes,'_reject_if_group_ai_running',lambda _:None)
     monkeypatch.setattr(routes,'_save_target',lambda _:pytest.fail('PATCH reached file preparation'))
     unwrap=lambda fn:getattr(fn,'__wrapped__',fn)
-    calls=[lambda:unwrap(routes.update_document_content)(l3.doc_id,routes.DocumentContentUpdate(content='bad'),{'user_id':USER}),
-           lambda:unwrap(routes.update_document_content_rpc)(routes.DocumentContentUpdateRpc(doc_id=l3.doc_id,content='bad'),{'user_id':USER})]
+    calls=[lambda:unwrap(routes.update_document_content)(l3.doc_id,routes.DocumentContentUpdate(content='bad'),{'user_id':USER,'is_admin':True}),
+           lambda:unwrap(routes.update_document_content_rpc)(routes.DocumentContentUpdateRpc(doc_id=l3.doc_id,content='bad'),{'user_id':USER,'is_admin':True})]
     for call in calls:
         before=l3.observe()
         with pytest.raises(HTTPException) as caught:call()

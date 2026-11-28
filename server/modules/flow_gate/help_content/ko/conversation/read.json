@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "대화 이력 읽기",
+  "summary": "대화 턴을 순방향 또는 역방향으로 읽습니다.",
+  "purpose": "대화 턴을 순방향 또는 역방향으로 읽습니다.",
+  "request": "{{route:conversation.turns}}. 앞으로는 `after_seq`와 `include_head=1`, 이전 턴은 `before_seq`를 사용합니다. `after_seq=start` 앞의 문맥은 `before_seq=start+1`부터 조회합니다. 첫 조회는 멘션의 `after_seq`에서 시작합니다. 선택 범위 안에서 페이지를 넘길 때는 `next_after_seq`를 사용하고 지정된 `through_seq` 경계를 유지합니다.",
+  "response": "`next_after_seq` 또는 `prev_before_seq`로 계속합니다. 역방향은 토큰을 소모하거나 마지막 읽기 위치를 갱신하지 않습니다. 큰 작업 단계를 마쳤을 때와 턴 제출 직전에는 마지막으로 읽은 seq 이후를 `include_head=1`로 다시 조회합니다. 이때 최초 범위의 `through_seq`와 `limit`은 빼고 `next_after_seq`가 비어 있을 때까지 읽습니다. 새 사용자 메시지를 반영하고 마지막 응답의 `head_seq`를 `based_on_seq`로 보냅니다.",
+  "errors": "두 방향 값을 함께 보냈다면 한 방향만 지정해 다시 조회합니다."
+}

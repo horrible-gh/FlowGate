@@ -13,7 +13,7 @@
         <template v-if="line.key === 'scenario'">
           <!-- flowgate.v02.0094: the scenario's AI writing is the line's [AI 호출], as on the other cards' lines: it opens
                the document's AI call window (nothing is written until it runs); the 지시서 window only saves. -->
-          <InspectorAiButton v-if="form !== 'legacy' && line.id" :label="t(aiKey)" :title="aiReason ?? t(aiKey)" :state="writing ? 'running' : 'enabled'" :disabled="!writing && !card?.can('rewriteAll').enabled" data-test="test-card-scenario-ai" @click="card?.rewriteAll()" />
+          <InspectorAiButton v-if="form !== 'legacy' && line.id" :label="t(aiKey)" :title="refusals.update.value ?? aiReason ?? t(aiKey)" :state="writing ? 'running' : 'enabled'" :disabled="refusals.update.value !== null || (!writing && !card?.can('rewriteAll').enabled)" data-test="test-card-scenario-ai" @click="writeScenario" />
           <InspectorHistoryButton v-if="stage.hasScenario && line.id" :count="reviewCount" data-test="test-card-review-history" @click="openDocumentHistory(line.id)" />
         </template>
         <template v-if="line.key === 'report'">
@@ -59,12 +59,15 @@ import InspectorOpenButton from '../../parts/InspectorOpenButton.vue'
 import InspectorPaneState from '../../parts/InspectorPaneState.vue'
 import InspectorReason from '../../parts/InspectorReason.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
-import { cardDocumentContext, DocumentIoGroup, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, DocumentIoGroup, openDocumentHistory, useDocumentRefusals } from '../../openDocument'
 import { type TestCardWindowKind } from './testCardSession'
 import { testCardPresentation, type TestSpecSlotTone } from './testSpecModel'
 import { useTestCard } from './useTestCard'
 const props = defineProps<{ target: InspectorTarget }>()
 const { t } = useI18n()
+// flowgate.v02test.0090: ✎ (the instruction's editor window) is a document change — the server's refusal of
+// `project.document.update` turns it off with its sentence.
+const refusals = useDocumentRefusals()
 const decisions = useCardDocumentDecisions(() => props.target)
 const k = (key: string) => `gui.inspector.testSpec.${key}`
 const card = useTestCard(() => props.target)
@@ -83,6 +86,14 @@ function canOpen(kind: TestCardWindowKind) {
 }
 function openReason(kind: TestCardWindowKind) {
   return t(k(canOpen(kind) ? 'open_hint' : card.value?.openReason(kind) ?? 'reason.busy'))
+}
+/**
+ * [AI 호출] on the scenario line: F81 removed the instruction line (and its ✎), so the scenario's AI writing is this
+ * card's document change entry point; the server's refusal of `project.document.update` turns it off too.
+ */
+function writeScenario() {
+  if (refusals.update.value !== null) return
+  card.value?.rewriteAll()
 }
 function openWindow(kind: TestCardWindowKind) {
   if (!canOpen(kind)) return

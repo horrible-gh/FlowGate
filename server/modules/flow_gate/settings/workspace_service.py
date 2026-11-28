@@ -5,14 +5,15 @@ A workspace is the membership / project-access / policy boundary above projects:
 * Membership: owner (exactly one), admin, member. Users stay system-wide identities.
 * Project access: each workspace role has a default access ('admin' Project Admin, 'dev'
   Developer, 'review' Reviewer, 'none') and a member may carry a per-person exception for one
-  project. The effective access is materialised into `user_project_roles`, which is still the
-  only table every permission check reads (rbac.permission_service) — the workspace decides which
-  rows exist, it never adds a second access path.
+  project. This "workspace value" is computed at judgment time by rbac.permission_service, next
+  to the person's direct and team roles (the highest one wins, design 0004-D §2.2-C). Nothing is
+  copied into `user_project_roles`, which holds direct grants only. A change here raises the
+  permission version of the people it affects in the same transaction (`sync`).
 * Policy: which AI / Agent the workspace's projects may use ('off' = no extra limit,
   'allowlist' = approved entries only) and who may create a project there.
 
-A disabled workspace keeps its members, defaults and exceptions but materialises 'none' for
-everyone, so re-enabling restores exactly the previous access.
+A disabled workspace keeps its members, defaults and exceptions but gives no workspace value to
+anyone, so re-enabling restores exactly the previous access.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from typing import Iterable, Optional
 
 from modules.flow_gate.db import connection as _connection
 from modules.flow_gate.db import workspaces as _db
+from modules.flow_gate.rbac import permission_service as _permission_service
 from modules.flow_gate.rbac import role_service
 
 ROLES = ("owner", "admin", "member")
@@ -32,10 +34,13 @@ AI_MODES = {"all": "off", "allow": "allowlist"}
 RESOURCE_TYPES = ("provider", "agent")
 NAME_MAX = 100
 
-# Project access level -> the project role materialised in user_project_roles.
-ACCESS_TO_ROLE = {"admin": "role_manager", "dev": "role_worker", "review": "role_viewer"}
-# Any existing project role read back as an access level (role_admin is a legacy project grant).
-ROLE_TO_ACCESS = {"role_admin": "admin", "role_manager": "admin", "role_worker": "dev", "role_viewer": "review"}
+# Project access level -> the fixed project role it gives (the viewer role has no access value).
+ACCESS_TO_ROLE = dict(_permission_service.ACCESS_TO_ROLE)
+# A project role (or old alias) read back as an access level.
+ROLE_TO_ACCESS = {
+    **_permission_service.ROLE_TO_ACCESS,
+    **{alias: _permission_service.ROLE_TO_ACCESS[role] for alias, role in _permission_service.ROLE_ALIASES.items()},
+}
 
 
 class WorkspaceError(Exception):
@@ -129,40 +134,47 @@ def member_role(workspace_id: str, user_id: Optional[str]) -> Optional[str]:
 
 
 def can_view(user: dict, ws: dict) -> bool:
-    return _is_sys_admin(user) or member_role(ws["workspace_id"], user.get("user_id")) is not None
+    from modules.flow_gate.rbac import access
+
+    return access.can_workspace(user, ws, "workspace.view")
 
 
 def can_manage(user: dict, ws: dict) -> bool:
-    """Members, project access and policy: system admin or workspace owner/admin."""
-    return _is_sys_admin(user) or member_role(ws["workspace_id"], user.get("user_id")) in ("owner", "admin")
+    """Members, project access and policy: system admin or workspace owner/admin, in an active
+    workspace (a disabled one keeps only viewing and re-enabling, design 2.2-B 4)."""
+    from modules.flow_gate.rbac import access
+
+    return access.can_workspace(user, ws, "workspace.member.manage")
 
 
 def can_admin(user: dict, ws: dict) -> bool:
     """Rename / disable / delete: system admin or the workspace owner."""
-    return _is_sys_admin(user) or member_role(ws["workspace_id"], user.get("user_id")) == "owner"
+    from modules.flow_gate.rbac import access
+
+    return access.can_workspace(user, ws, "workspace.admin")
+
+
+def _denied_code(default: str) -> str:
+    """The reason of a refused workspace request. Until the grant migration has completed every
+    judgment refuses a non-administrator (design 7.1), and the reason says so."""
+    return default if _permission_service.migration_ready() else "rbac_migration_incomplete"
 
 
 def _check(allowed: bool) -> None:
     if not allowed:
-        raise WorkspaceError(403, "forbidden")
+        raise WorkspaceError(403, _denied_code("forbidden"))
 
 
 def can_create_project(user: dict, workspace_id: str) -> bool:
+    from modules.flow_gate.rbac import access
+
     ws = _db.get(workspace_id)
-    if not ws or ws["status"] != "active":
+    if not ws:
         return False
-    if _is_sys_admin(user):
-        return True
-    role = member_role(workspace_id, user.get("user_id"))
-    policy = ws.get("project_create_policy") or "owner_admin"
-    if policy == "owner":
-        return role == "owner"
-    if policy == "owner_admin":
-        return role in ("owner", "admin")
-    return role is not None
+    return access.can_workspace(user, ws, "workspace.project.create")
 
 
-# ── effective access + materialisation ───────────────────────────────────────
+# ── workspace value + permission versions ────────────────────────────────────
 
 def _default_access(ws: dict, role: str) -> str:
     return ws.get(f"default_access_{role}") or "none"
@@ -174,41 +186,34 @@ def _effective(ws: dict, role: str, exception: Optional[str]) -> str:
 
 def sync(workspace_id: str, user_ids: Optional[Iterable[str]] = None,
          project_ids: Optional[Iterable[str]] = None, actor: Optional[str] = None) -> None:
-    """Make user_project_roles match the effective access of the given members/projects.
-
-    A row whose role already reads as the wanted access is left untouched (a legacy role_admin
-    project grant stays role_admin), so a sync never shifts access it does not have to.
-    """
-    ws = _db.get(workspace_id)
-    if not ws:
-        return
-    members = {m["user_id"]: m["role"] for m in _db.list_members(workspace_id)}
-    targets = [uid for uid in (user_ids if user_ids is not None else members) if uid in members]
-    wanted_projects = set(project_ids) if project_ids is not None else None
-    projects = [p["project_id"] for p in _projects_of(ws)
-                if wanted_projects is None or p["project_id"] in wanted_projects]
-    exceptions = {(e["project_id"], e["user_id"]): e["access"] for e in _db.list_exceptions(workspace_id)}
-    disabled = ws.get("status") != "active"
-    for project_id in projects:
-        for uid in targets:
-            desired = "none" if disabled else _effective(ws, members[uid], exceptions.get((project_id, uid)))
-            current = role_service.get_user_role(uid, project_id)
-            if desired == "none":
-                if current:
-                    role_service.revoke_role(uid, project_id)
-            elif not current or ROLE_TO_ACCESS.get(current["role_id"]) != desired:
-                role_service.assign_role(uid, project_id, ACCESS_TO_ROLE[desired], granted_by=actor)
+    """A workspace record changed for these members (all members when None): raise their
+    permission version on the caller's transaction. The workspace value itself is computed at
+    judgment time, so nothing is copied into user_project_roles. `project_ids` / `actor` are
+    kept for callers; the version covers every project of the person."""
+    members = [m["user_id"] for m in _db.list_members(workspace_id)]
+    targets = members if user_ids is None else [uid for uid in user_ids if uid]
+    _permission_service.bump_user_versions(targets, _store())
 
 
 def _revoke_workspace_roles(ws: dict, user_id: str) -> None:
+    """Leaving a workspace: its projects' direct roles and its teams' memberships go too."""
     for project in _projects_of(ws):
         if role_service.get_user_role(user_id, project["project_id"]):
             role_service.revoke_role(user_id, project["project_id"])
+    if _permission_service._caps(_store())["teams"]:
+        for team in _store()._fetch_all(
+            "SELECT t.team_id FROM teams t JOIN team_members tm ON tm.team_id = t.team_id"
+            " WHERE t.workspace_id = ? AND tm.user_id = ?",
+            [ws["workspace_id"], user_id],
+        ):
+            role_service.remove_team_member(team["team_id"], user_id)
 
 
 # ── views ────────────────────────────────────────────────────────────────────
 
 def _summary(ws: dict, user: dict, member_counts: dict, project_counts: dict, owners: dict) -> dict:
+    from modules.flow_gate.rbac import capabilities
+
     owner = owners.get(ws["workspace_id"])
     projects = project_counts.get(ws["workspace_id"], 0)
     if ws.get("is_default"):
@@ -224,6 +229,7 @@ def _summary(ws: dict, user: dict, member_counts: dict, project_counts: dict, ow
         "owner": {"user_id": owner["user_id"], "username": owner["username"], "email": owner.get("email")}
         if owner else None,
         "my_role": member_role(ws["workspace_id"], user.get("user_id")),
+        "capabilities": capabilities.workspace(user, ws),
         "can_manage": can_manage(user, ws),
         "can_admin": can_admin(user, ws),
     }
@@ -244,8 +250,11 @@ def get_detail(user: dict, workspace_id: str) -> dict:
     ws = _require(workspace_id)
     _check(can_view(user, ws))
     summary = _summary(ws, user, _db.member_counts(), _db.project_counts(), _db.owners())
-    projects = _projects_of(ws)
-    active_projects = [p["project_id"] for p in projects if p.get("is_active", 1)]
+    from modules.flow_gate.rbac import access
+
+    all_projects = _projects_of(ws)
+    projects = [p for p in all_projects if access.can(user, p["project_id"], "project.view")]
+    active_projects = [p["project_id"] for p in all_projects if p.get("is_active", 1)]
     exceptions = _db.list_exceptions(workspace_id)
     exc_map = {(e["project_id"], e["user_id"]): e["access"] for e in exceptions}
     members = []
@@ -429,6 +438,7 @@ def remove_member(user: dict, workspace_id: str, target_user_id: str) -> dict:
         _db.clear_member_exceptions(workspace_id, target_user_id)
         _revoke_workspace_roles(ws, target_user_id)
         _db.remove_member(workspace_id, target_user_id)
+        sync(workspace_id, [target_user_id])
     return get_detail(user, workspace_id)
 
 
@@ -482,13 +492,16 @@ def set_project_access(user: dict, workspace_id: str, project_id: str, target_us
 
 def record_direct_assignment(user_id: str, project_id: str, role_id: Optional[str],
                              actor: Optional[str] = None, *, may_add_member: bool = True) -> None:
-    """Keep the workspace model in step with a project role granted/revoked through the per-project
-    role APIs, so the next sync does not undo it. Runs inside the caller's transaction.
+    """Keep the workspace record in step with a direct project role granted/revoked through the
+    per-project role APIs. Runs inside the caller's transaction.
 
     A grant to someone outside the workspace makes them a Member (a project member is a workspace
     member, the requirement) with 'none' on every other project of it, so the grant opens exactly that
-    one project. A disabled workspace takes no grant, and a role that is not one of the fixed
-    project roles cannot be expressed as workspace access."""
+    one project. When the person's workspace value on that project is higher than the granted role,
+    a 'none' exception is set, so the granted role is the role they end up with (the screens' meaning
+    of "give this role"). A revoke sets 'none' where the default would reopen the project. A
+    disabled workspace takes no grant, and only the four fixed roles (or an old alias) are project
+    roles."""
     if project_id == _db.SYSTEM_PROJECT:
         return
     workspace_id = workspace_id_of_project(project_id)
@@ -504,8 +517,8 @@ def record_direct_assignment(user_id: str, project_id: str, role_id: Optional[st
         else:
             _db.set_exception(workspace_id, project_id, user_id, "none", actor)
         return
-    access = ROLE_TO_ACCESS.get(role_id)
-    if access is None:
+    role = _permission_service.fixed_role(role_id)
+    if role is None:
         raise WorkspaceError(422, "role_invalid")
     if ws.get("status") != "active":
         raise WorkspaceError(409, "workspace_disabled")
@@ -518,10 +531,11 @@ def record_direct_assignment(user_id: str, project_id: str, role_id: Optional[st
             for project in _projects_of(ws):
                 if project["project_id"] != project_id:
                     _db.set_exception(workspace_id, project["project_id"], user_id, "none", actor)
-    if _default_access(ws, member["role"]) == access:
-        _db.clear_exception(project_id, user_id)
-    else:
-        _db.set_exception(workspace_id, project_id, user_id, access, actor)
+    exception = _db.get_exception(project_id, user_id)
+    value = _effective(ws, member["role"], (exception or {}).get("access"))
+    workspace_role = ACCESS_TO_ROLE.get(value)
+    if workspace_role and _permission_service.higher_role(workspace_role, role) != role:
+        _db.set_exception(workspace_id, project_id, user_id, "none", actor)
 
 
 def assign_direct_project_role(user_id: str, project_id: str, role_id: str,
@@ -540,7 +554,6 @@ def assign_direct_project_role(user_id: str, project_id: str, role_id: str,
         row = role_service.assign_role(user_id, project_id, role_id, granted_by=actor_id)
         if workspace_id:
             sync(workspace_id, [user_id], actor=actor_id)
-            row = role_service.get_user_role(user_id, project_id) or row
     return row
 
 
@@ -550,6 +563,9 @@ def revoke_direct_project_role(user_id: str, project_id: str, actor: Optional[di
     with _store().transaction():
         record_direct_assignment(user_id, project_id, None, (actor or {}).get("user_id"))
         role_service.revoke_role(user_id, project_id)
+        workspace_id = workspace_id_of_project(project_id)
+        if workspace_id:
+            sync(workspace_id, [user_id])
 
 def on_project_created(user: dict, project_id: str, workspace_id: str) -> None:
     """Place a new project in its workspace and give the creator Project Admin access when the
@@ -560,7 +576,11 @@ def on_project_created(user: dict, project_id: str, workspace_id: str) -> None:
     role = member_role(workspace_id, uid)
     if role and not _is_sys_admin(user) and _default_access(ws, role) != "admin":
         _db.set_exception(workspace_id, project_id, uid, "admin", uid)
-    sync(workspace_id, project_ids=[project_id], actor=uid)
+    # Everyone holding a direct or team role on the project, and the workspace's members.
+    holders = [row["user_id"] for row in _store()._fetch_all(
+        "SELECT user_id FROM user_project_roles WHERE project_id = ?", [project_id])]
+    sync(workspace_id, actor=uid)
+    _permission_service.bump_user_versions(holders, _store())
 
 
 def resolve_create_workspace(user: dict, workspace_id: Optional[str]) -> str:
@@ -573,7 +593,7 @@ def resolve_create_workspace(user: dict, workspace_id: Optional[str]) -> str:
     if ws["status"] != "active":
         raise WorkspaceError(409, "workspace_disabled")
     if not can_create_project(user, target):
-        raise WorkspaceError(403, "project_create_forbidden")
+        raise WorkspaceError(403, _denied_code("project_create_forbidden"))
     return target
 
 

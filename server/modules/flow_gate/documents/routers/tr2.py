@@ -13,11 +13,7 @@ from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents import tr2_service as tr2
 from modules.flow_gate.documents.tr2_errors import TR2_ERRORS, error_payload
 
-try:
-    from rbac.decorators import require_permission
-except ImportError:
-    def require_permission(_permission):
-        return lambda function: function
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 log = logging.getLogger(__name__)
@@ -78,14 +74,14 @@ def _run(doc_id: str, call):
 
 
 @router.get("/{doc_id}/tr2")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2(doc_id: str, current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
     return _run(doc_id, lambda: tr2.read(doc_id))
 
 
 @router.post("/{doc_id}/tr2/precheck")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def post_tr2_precheck(doc_id: str, current_user: dict = Depends(get_current_user)):
     from modules.flow_gate.documents.tr2_precheck import diagnostic_precheck
     _doc(doc_id)
@@ -108,7 +104,7 @@ def _writable_doc(doc_id: str) -> dict:
 
 
 @router.put("/{doc_id}/tr2")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def put_tr2(request: Request, doc_id: str, body: Tr2Save,
             current_user: dict = Depends(get_current_user)):
     _writable_doc(doc_id)
@@ -123,7 +119,7 @@ def _mutate(doc_id: str, operation: str, current_user: dict, **kwargs):
 
 
 @router.delete("/{doc_id}/tr2/spec")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def delete_tr2_spec(doc_id: str, expected_revision: int,
                     current_user: dict = Depends(get_current_user)):
     """Reset the editable proposal to an empty spec as a new revision; history stays."""
@@ -131,7 +127,7 @@ def delete_tr2_spec(doc_id: str, expected_revision: int,
 
 
 @router.post("/{doc_id}/tr2/items")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def post_tr2_item(doc_id: str, body: Tr2ItemWrite,
                   current_user: dict = Depends(get_current_user)):
     return _mutate(doc_id, "add_item", current_user, expected_revision=body.expected_revision,
@@ -139,14 +135,14 @@ def post_tr2_item(doc_id: str, body: Tr2ItemWrite,
 
 
 @router.get("/{doc_id}/tr2/items/{item_id:path}")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_item(doc_id: str, item_id: str, current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
     return _run(doc_id, lambda: tr2.read_item(doc_id, item_id))
 
 
 @router.put("/{doc_id}/tr2/items/{item_id:path}")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def put_tr2_item(doc_id: str, item_id: str, body: Tr2ItemWrite,
                  current_user: dict = Depends(get_current_user)):
     return _mutate(doc_id, "replace_item", current_user,
@@ -155,7 +151,7 @@ def put_tr2_item(doc_id: str, item_id: str, body: Tr2ItemWrite,
 
 
 @router.delete("/{doc_id}/tr2/items/{item_id:path}")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def delete_tr2_item(doc_id: str, item_id: str, expected_revision: int,
                     current_user: dict = Depends(get_current_user)):
     return _mutate(doc_id, "delete_item", current_user,
@@ -163,7 +159,7 @@ def delete_tr2_item(doc_id: str, item_id: str, expected_revision: int,
 
 
 @router.get("/{doc_id}/tr2/files/{file_path:path}")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_file(doc_id: str, file_path: str,
                  current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
@@ -171,7 +167,7 @@ def get_tr2_file(doc_id: str, file_path: str,
 
 
 @router.get("/{doc_id}/tr2/attempts")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_attempts(doc_id: str, current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
     from modules.flow_gate.db import tr2_approval_attempts
@@ -182,14 +178,14 @@ def get_tr2_attempts(doc_id: str, current_user: dict = Depends(get_current_user)
 # ── Proposal recovery (반영안 복구, T0030 §6) — never the approval rollback ─────────
 
 @router.get("/{doc_id}/tr2/recovery")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_recovery(doc_id: str, current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
     return _run(doc_id, lambda: tr2.recovery_view(doc_id))
 
 
 @router.get("/{doc_id}/tr2/revisions/{revision_no}")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_revision(doc_id: str, revision_no: int,
                      current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
@@ -197,7 +193,7 @@ def get_tr2_revision(doc_id: str, revision_no: int,
 
 
 @router.get("/{doc_id}/tr2/raw")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_tr2_raw(doc_id: str, current_user: dict = Depends(get_current_user)):
     """Whatever is still stored for the current body, for inspection and download."""
     _doc(doc_id)
@@ -205,7 +201,7 @@ def get_tr2_raw(doc_id: str, current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/{doc_id}/tr2/recovery/restore")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def post_tr2_restore(doc_id: str, body: Tr2Restore,
                      current_user: dict = Depends(get_current_user)):
     _writable_doc(doc_id)
@@ -215,7 +211,7 @@ def post_tr2_restore(doc_id: str, body: Tr2Restore,
 
 
 @router.post("/{doc_id}/tr2/recovery/new")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def post_tr2_new_proposal(doc_id: str, body: Tr2NewProposal,
                           current_user: dict = Depends(get_current_user)):
     _writable_doc(doc_id)

@@ -7,7 +7,7 @@ import { RouterView } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
 import router from '@/app/router/index'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../../helpers/capabilities'
 
 // flowgate.v02.0076 T#3 (D §2.5/§2.7, §5.2 V01·V11–V15·V19·V20): 시스템 › 일반 and 시스템 › 사용자 on
 // the real /app router (installAuthGuard + installSettingsAccessGuard + SettingsLayout) with the

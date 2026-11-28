@@ -152,13 +152,12 @@ def _emit(row: Optional[dict]) -> None:
 
 
 def has_permission(user: Optional[dict], permission: str, project_id: Optional[str]) -> bool:
+    """The shared judgment on the stored project (membership first, then the permission)."""
     if not user:
         return False
-    try:
-        from modules.flow_gate.rbac.decorators import _has_permission
-    except Exception:
-        return bool(user.get("is_admin"))
-    return bool(_has_permission(user, permission, project_id))
+    from modules.flow_gate.rbac import access
+
+    return access.can(user, project_id, permission)
 
 
 def require_permission(user: Optional[dict], permission: str, project_id: Optional[str]) -> None:
@@ -819,7 +818,7 @@ def get_row(request_id: str) -> dict:
 
 def readable_row(request_id: str, user: dict) -> dict:
     row = get_row(request_id)
-    require_permission(user, "perm_document_read", row["project_id"])
+    require_permission(user, "project.document.read", row["project_id"])
     return row
 
 
@@ -829,7 +828,7 @@ def list_for_node(flow_id: str, node_key: str, user: dict, *, include_closed: bo
     group = db_groups.get_by_id(flow_id)
     if not group:
         raise RequestError(404, "attachment_target_flow_not_found", "the Flow does not exist")
-    require_permission(user, "perm_document_read", group.get("project_id"))
+    require_permission(user, "project.document.read", group.get("project_id"))
     statuses = None if include_closed else list(db.OPEN_STATUSES)
     rows = db.list_for_node(flow_id, node_key, statuses)
     return {"ok": True, "flow_id": flow_id, "node_key": node_key,
@@ -842,7 +841,7 @@ def pending_counts(flow_id: str, user: dict) -> dict:
     group = db_groups.get_by_id(flow_id)
     if not group:
         raise RequestError(404, "attachment_target_flow_not_found", "the Flow does not exist")
-    require_permission(user, "perm_document_read", group.get("project_id"))
+    require_permission(user, "project.document.read", group.get("project_id"))
     by_node = db.count_pending_by_node(flow_id)
     return {"ok": True, "flow_id": flow_id, "total": sum(by_node.values()), "by_node": by_node}
 
@@ -888,7 +887,7 @@ def list_for_chat(doc_id: str, user: dict) -> dict:
     doc = db_documents.get_by_id(doc_id)
     if not doc:
         raise RequestError(404, "attachment_request_not_found", "chat document not found")
-    require_permission(user, "perm_document_read", doc.get("project_id"))
+    require_permission(user, "project.document.read", doc.get("project_id"))
     return {"ok": True, "doc_id": doc_id, "groups": chat_groups(doc_id)}
 
 
@@ -1050,11 +1049,11 @@ def _decision_input(body: Any) -> tuple[str, Optional[str], str, Optional[str]]:
 
 
 def decide(request_id: str, user: dict, body: Any) -> dict:
-    """A person's approve / reject. Any user with ``perm_document_update`` on the project may
+    """A person's approve / reject. Any user with ``project.document.update`` on the project may
     decide, whichever screen mode they are in and whoever started the run."""
     decision, expected_doc_id, conflict, existing_sha = _decision_input(body)
     row = get_row(request_id)
-    require_permission(user, "perm_document_update", row["project_id"])
+    require_permission(user, "project.document.update", row["project_id"])
     if row["status"] != db.STATUS_PENDING:
         raise RequestError(409, "attachment_request_already_decided", f"the request is {row['status']}",
                            current_status=row["status"])
@@ -1137,7 +1136,7 @@ def _same_name_on(doc_id: str, filename: str) -> Optional[str]:
 def _bulk_one(request_id: str, user: dict, decision: str, expected_doc_id: Optional[str]) -> dict:
     if decision == "approve":
         row = get_row(request_id)
-        require_permission(user, "perm_document_update", row["project_id"])
+        require_permission(user, "project.document.update", row["project_id"])
         existing = _same_name_on(expected_doc_id, row.get("filename") or "") if row["status"] == db.STATUS_PENDING else None
         if existing:
             raise RequestError(409, "attachment_name_conflict",

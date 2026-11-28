@@ -1,0 +1,32 @@
+{
+  "locale": "ko",
+  "title": "카드 시도의 자체 검증",
+  "summary": "카드 시도의 자체 검증",
+  "purpose": "카드 시도의 자체 검증",
+  "request": {
+    "routes": [
+      "{{route:self_check.run}}",
+      "{{route:self_check.draft.run}}"
+    ],
+    "details": "cwd는 시도 워크트리 기준 상대경로입니다."
+  },
+  "response": {
+    "fields": [
+      "attempt_id",
+      "input_commit",
+      "source_head_before",
+      "source_head_after"
+    ],
+    "details": "이 토큰은 Graph attempt 에 매핑되어 있다. Self-check 는 그룹 워크트리가 아니라 이 attempt 의 전용 워크트리(원격 소스 도구가 읽고 쓰는 트리)에서 실행되고, cwd 는 그 트리 기준 상대 경로다. run 응답과 조회 결과의 attempt_id·input_commit 이 실행 기준(attempt 와 그 트리의 시작 커밋)이며 source_head_before/after 는 attempt 트리의 HEAD 다. 실행 중에는 이 attempt 트리에 대한 소스 쓰기가 잠긴다. 실행이 끝났어도 그 프로세스 트리가 비었음이 증명되지 않으면(recovery_incomplete) 이 잠금은 보호된 채 남고, 증명된 뒤에 풀린다. 실행 슬롯은 attempt 가 아니라 Group 에 하나다."
+  },
+  "errors": [
+    {
+      "code": "graph_attempt_inactive",
+      "guidance": "실행이 정지 중이거나 attempt 가 무효화되어 이 attempt 에서는 Self-check 를 시작할 수 없다 → 반복 호출하지 말고 details(reason·attempt_id)를 TR 에 보고한다. 그룹 워크트리나 로컬 실행으로 우회하지 않는다."
+    },
+    {
+      "code": "graph_worktree_unavailable",
+      "guidance": "attempt 의 전용 워크트리를 확인할 수 없다(준비 전, 트리 없음, marker 불일치 등 details.reason) → 사유를 TR 에 보고한다. 그룹 워크트리로 대신 실행하지 않는다."
+    }
+  ]
+}

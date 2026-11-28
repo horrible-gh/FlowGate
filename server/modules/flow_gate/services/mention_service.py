@@ -952,12 +952,7 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         # tells the worker to prefer a supplied workflow_type_counts value, without the
         # mention ever showing that value.
         "type_counts": "workflow_type_counts 제시값",
-        # (rejected: "where did the run provider go?"): the run provider picked on
-        # screen — a different value from the multi-select candidates (providers). rev2 (review
-        # finding 2): it is NOT the value to copy into the plan's defaults.provider_id. Doing so
-        # would silently assign every created step to that provider — step assignment belongs to
-        # the post-creation editor. This line only tells the worker "the provider running this
-        # mention right now", and default_provider_rule below states that to the worker directly.
+        # The running provider is distinct from the step-assignment candidates.
         "default_provider": "실행 프로바이더",
         "providers": "후보 공급자",
         # ("so there is no way to pass any note to the planner?"): the planner
@@ -975,20 +970,13 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
-        # (review finding 4): the run provider is independent of the candidate
-        # multi-select, so a provider outside the candidates can arrive. If the section carrying
-        # it also held only the tail's "do not write a non-candidate provider into
-        # steps[].provider_id", the worker would read two conflicting orders in one section with
-        # no way to tell which wins. One line pinning down what each value is for removes that.
+        # Only candidates may be assigned to newly created steps.
         "default_provider_rule": (
             "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 "
             "아닙니다 — steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 "
             "있는 값만 적으십시오."
         ),
-        # (review finding 3): writing the value down without saying where to
-        # preserve it gives no guarantee the note survives into the final plan on the AI path.
-        # completion criterion 2 ("an AI-proposed plan must also preserve the input in
-        # defaults.note") reaches the worker through this one line and no other.
+        # Explain how the supplied note informs the plan.
         "note_rule": (
             "위 '전달 멘트'는 작업계획을 쓸 때 참고할 입력 요구사항입니다. 참조 문서와 함께 "
             "읽고, 모든 단계에 공통으로 붙는 defaults.note 와 각 단계의 steps[].note 를 새로 "
@@ -1931,6 +1919,9 @@ def build_mention(
     # ({quantity_type_codes, step_keys, provider_ids}). Read ONLY when the head type is
     # WP and this is not an edit; every other mention is byte-identical without it.
     work_plan_scope: Optional[dict] = None,
+    card_token_rec: Optional[dict] = None,
+    card_locale: Optional[str] = None,
+    card_node: Optional[str] = None,
 ) -> Optional[str]:
     """Return an R018-enhanced prompt string.
 
@@ -2449,10 +2440,144 @@ def build_mention(
     if title_request:
         heading = {"ko": "작업 이름", "ja": "作業名", "en": "Task names"}.get(locale, "작업 이름")
         sections.append(_section(heading, title_request))
-    return compose(sections, kind=task_kind, locale=locale)
+    mention = None
+    if (card_token_rec is not None and action_scope in ("new", "edit")
+            and not continuous and str(scope_type or "").upper() not in {"WP", "TS", "TSR"}):
+        references = list(dict.fromkeys(ref for ref in effective_ref_ids if ref and ref != target_doc_id))
+        rejection_ref = None
+        if is_edit and edit_reason == "rejected":
+            rejection_ref = ", ".join(
+                f"{key}={post_body[key]}" for key in ("rejection_id", "review_id")
+                if post_body.get(key) is not None
+            )
+        mention = _card_mention_input(
+            card_token_rec, raw_token, base, card_locale or locale, task_kind,
+            scope_type, target_doc_id, s1_type, s1_title, action_scope, references,
+            parent_revision_no if is_edit else None, edit_reason if is_edit else None,
+            rejection_ref, None if is_edit else {
+                "next_type": next_type_value, "project": project, "module": module,
+                "group": group, "target_id": parent_doc_id,
+            },
+            bool(template_section), bool(nt_authoring_section), card_node,
+            rejection_target, current_review, qa_lines,
+        )
+    legacy = compose(sections, kind=task_kind, locale=locale)
+    if mention is None:
+        return legacy
+    from modules.flow_gate.services.prompt_blocks.mention import render_mention
+    return render_mention(legacy, locale=card_locale or locale, **mention).text
+
+
+_CARD_MATERIAL_HEADERS = {
+    "ko": ("반려 사유", "검수 내용"),
+    "en": ("Rejection reason", "Review findings"),
+    "ja": ("差し戻し理由", "レビュー内容"),
+}
+
+
+def _card_review_materials(rejection_target, review, qa_lines, edit_reason):
+    reason = (rejection_target or {}).get("reason") if edit_reason == "rejected" else None
+    review_lines = []
+    if review:
+        if review.get("comment"):
+            review_lines.append(str(review["comment"]))
+        findings = review.get("findings")
+        for finding in findings if isinstance(findings, list) else ():
+            if isinstance(finding, dict):
+                review_lines.append(f"- {finding.get('locus') or ''} {finding.get('note') or ''}".strip())
+    return reason, "\n".join(review_lines), "\n".join(qa_lines).strip()
+
+
+def _card_mention_input(token_rec, raw_token, base, locale, task_kind, scope_type,
+                        doc_id, display_type, doc_title, action, references, revision,
+                        edit_reason, rejection_ref, next_header, design_template,
+                        authoring_guide, card_node, rejection_target, current_review, qa_lines):
+    from modules.flow_gate.services.help import loader
+    from modules.flow_gate.services.help.visibility import decide_visibility, resolve_context
+    from modules.flow_gate.services.prompt_blocks.matrix import MentionFacts
+    from modules.flow_gate.services import display_names, encoding_probe, token_service, tr_self_check_quota
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.services import card_ids, card_numbers
+
+    try:
+        rollout = loader.read_json("mention_rollout")
+        if not any(rollout.get(mode, {}).get("enabled") for mode in ("card.read", "card.edit")):
+            return None
+        if not token_rec.get("token_id"):
+            token_rec = token_service._find_token_by_raw(raw_token) or {}
+        if (token_rec.get("action_scope") != action or token_rec.get("doc_ref") != doc_id
+                or not token_rec.get("token_id")):
+            return None
+        context = resolve_context(token_rec, locale, base)
+        mode = {"read": "card.read", "read_write": "card.edit"}.get(context["tool_kind"])
+        if not mode or not rollout.get(mode, {}).get("enabled"):
+            return None
+        flow_id = context["group_id"]
+        flow = db_groups.get_by_id(flow_id) or {}
+        flow_name = display_names.flow_name(flow_id, flow.get("title") or flow.get("name"))
+        card_display = None
+        if card_node:
+            card_no = card_numbers.numbers(flow_id).get(card_node.get("node_key"))
+            card_display = display_names.card_name(card_ids.card_ref(flow_id, card_no), card_node.get("title"))
+        reason, review_body, qa_body = _card_review_materials(
+            rejection_target, current_review, qa_lines, edit_reason,
+        )
+        localized = {}
+        for language, headings in _CARD_MATERIAL_HEADERS.items():
+            title_request = _first_card_names(flow_id, language, action)
+            localized[language] = {
+                "doc_type": f"{display_type} ({get_type_name(display_type, language)})",
+                "self_check": tr_self_check_quota.token_notice(token_rec, language)
+                if mode == "card.edit" and scope_type == "TR" else None,
+                "materials": "\n\n".join(filter(None, (
+                    _section(headings[0], reason) if isinstance(reason, str) and reason.strip() else "",
+                    _section(headings[1], review_body) if review_body else "",
+                    qa_body, title_request,
+                ))),
+            }
+        return {
+            "facts": MentionFacts(
+                mode=mode, kind=task_kind, doc_type=scope_type,
+                attachment_request=decide_visibility("attachments/upload_request", context).visible,
+                design_template=design_template, authoring_guide=authoring_guide,
+            ),
+            "values": {
+                "token": raw_token, "base_url": base, "flow_id": flow_id, "flow_name": flow_name,
+                "doc_id": doc_id, "doc_title": doc_title, "card_ref": card_display,
+                "revision_no": revision, "submit_action": action, "expected_revision": revision,
+                "edit_reason": edit_reason, "rejection_ref": rejection_ref,
+                "next_header": json.dumps(next_header, ensure_ascii=False) if next_header else None,
+                "reference_doc_ids": ", ".join(references),
+                "probe": encoding_probe.probe_for(token_rec["token_id"]),
+            },
+            "context": context,
+            "localized_values": localized,
+        }
+    except Exception:
+        # An optional compact path cannot interrupt the existing card start.
+        return None
+
+
+def _first_card_names(flow_id, locale, action):
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+
+    request = first_names_hooks.title_request(flow_id, locale, action)
+    heading = {"ko": "작업 이름", "en": "Task names", "ja": "作業名"}[locale]
+    return _section(heading, request) if request else ""
+
+
+def add_card_materials(task, materials):
+    """Keep start-time material in the template values used by provider finalization."""
+    from modules.flow_gate.services.prompt_blocks.mention import render_body
+
+    data = task["mention"]
+    data["values"]["materials"] = "\n\n".join(filter(None, (materials, data["values"].get("materials"))))
+    text = render_body(data["template"], data["spec"], data["values"], data["routes"])
+    return terminal_prompt._with_spec(text, task)
 
 
 def build_mention_from_token_rec(
+
     token_rec: dict,
     head_type: str,
     head_status: str,
@@ -2470,6 +2595,8 @@ def build_mention_from_token_rec(
     continuous: bool = False,
     continuous_review_mode: bool = False,
     work_plan_scope: Optional[dict] = None,
+    card_locale: Optional[str] = None,
+    card_node: Optional[str] = None,
 ) -> Optional[str]:
     """Generate an R018-enhanced prompt from token_rec + a document record.
 
@@ -2576,6 +2703,9 @@ def build_mention_from_token_rec(
         continuous=continuous,
         continuous_review_mode=continuous_review_mode,
         work_plan_scope=work_plan_scope,
+        card_token_rec=token_rec,
+        card_locale=card_locale,
+        card_node=job.get("node"),
     )
 
 

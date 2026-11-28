@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
-import { setCurrentUser } from '@/core/auth/currentUser'
+import { setCurrentUserWithCaps as setCurrentUser } from '../../helpers/capabilities'
 import * as api from '@/features/settings/api'
 import {
   SettingsHubView,
@@ -13,6 +13,8 @@ import {
   WorkspaceListView,
 } from '@/features/settings'
 import type {
+  ChangeImpactRow,
+  ChangeMode,
   SecurityResponse,
   SystemUsersResponse,
   WorkspaceDetail,
@@ -63,6 +65,14 @@ async function mountAt(url: string, router = makeRouter()) {
 }
 
 const btn = (w: VueWrapper, selector: string) => w.get(selector)
+
+/**
+ * A change request the way the api adapter returns one (v02test.0090): the same call is sent as a
+ * preview first and then applied with the revision that preview gave.
+ */
+function changeRequest(result: WorkspaceDetail, impact: ChangeImpactRow[] = []) {
+  return vi.fn(async (mode: ChangeMode) => ('preview' in mode ? { revision: 7, impact } : { revision: 8, result }))
+}
 
 function workspaceList(): WorkspaceListResponse {
   return {
@@ -143,6 +153,8 @@ beforeEach(() => {
   i18n.global.locale.value = 'ko'
   setCurrentUser({ username: 'Jung-Min Shin', email: 'admin@flowgate.local', isAdmin: true })
   for (const fn of Object.values(m)) if (typeof fn === 'function' && 'mockReset' in fn) (fn as ReturnType<typeof vi.fn>).mockReset()
+  // the adapter's own preview/apply tell-apart, restored after the blanket mock reset
+  m.isPreview.mockImplementation(((answer: object) => 'impact' in answer) as never)
 })
 
 afterEach(() => {
@@ -235,14 +247,16 @@ describe('워크스페이스 상세 (시안 12)', () => {
     await wrapper.get('[data-role-filter="all"]').trigger('click')
     await wrapper.get('[data-testid="invited-filter"]').trigger('click')
     expect(wrapper.findAll('[data-member]').map((r) => r.attributes('data-member'))).toEqual(['u3'])
-    expect(wrapper.get('[data-testid="member-foot"]').text()).toBe('1 / 3')
+    expect(wrapper.get('[data-testid="member-foot"]').text()).toBe('1–1 / 1')
   })
 
-  it('adds an existing user and changes a member role; the owner is locked', async () => {
+  it('adds an existing user and changes a member role through preview → apply; the owner is locked', async () => {
     m.getWorkspace.mockResolvedValue(detail())
     m.listMemberCandidates.mockResolvedValue([{ user_id: 'u9', username: 'Oh Dohyun', email: 'd@x', state: 'active' }])
-    m.addMember.mockResolvedValue(detail())
-    m.changeMemberRole.mockResolvedValue(detail())
+    const add = changeRequest(detail())
+    const role = changeRequest(detail())
+    m.addMember.mockReturnValue(add)
+    m.changeMemberRole.mockReturnValue(role)
     const { wrapper } = await mountAt('/settings/workspaces/ws_default')
 
     await wrapper.get('[data-testid="member-add"]').trigger('click')
@@ -252,6 +266,8 @@ describe('워크스페이스 상세 (시안 12)', () => {
     await wrapper.get('[data-testid="member-add-confirm"]').trigger('click')
     await flushPromises()
     expect(m.addMember).toHaveBeenCalledWith('ws_default', 'u9', 'admin')
+    // Nobody's access changes, so the preview is followed by the apply with the preview's revision.
+    expect(add.mock.calls).toEqual([[{ preview: true }], [{ revision: 7 }]])
 
     await wrapper.get('[data-member="u1"]').trigger('click')
     expect(wrapper.get('[data-testid="member-remove"]').attributes('disabled')).toBeDefined()
@@ -259,63 +275,53 @@ describe('워크스페이스 상세 (시안 12)', () => {
     await wrapper.get('[data-member-role="member"]').trigger('click')
     await flushPromises()
     expect(m.changeMemberRole).toHaveBeenCalledWith('ws_default', 'u2', 'member')
+    expect(role.mock.calls).toEqual([[{ preview: true }], [{ revision: 7 }]])
   })
 
-  it('saves role default access and per-person exceptions at once', async () => {
+  it('shows who gains and loses before default access is saved, and applies only on confirm', async () => {
     m.getWorkspace.mockResolvedValue(detail())
-    m.setDefaultAccess.mockResolvedValue(detail())
-    m.setProjectAccess.mockResolvedValue(detail())
+    const defaults = changeRequest(detail(), [
+      { user_id: 'u3', project_id: 'flowgate', before: 'role_viewer', after: 'role_reviewer', gained: ['project.document.approve'], lost: [] },
+    ])
+    m.setDefaultAccess.mockReturnValue(defaults)
     const { wrapper } = await mountAt('/settings/workspaces/ws_default?tab=projects')
     expect(wrapper.find('[data-panel="projects"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="exception-count"]').text()).toBe('1')
+
     await wrapper.get('[data-default-role="member"] [data-access="review"]').trigger('click')
     await flushPromises()
     expect(m.setDefaultAccess).toHaveBeenCalledWith('ws_default', { member: 'review' })
+    const dialog = wrapper.get('[data-testid="impact-dialog"]')
+    expect(dialog.text()).toContain('Park Jiwon')
+    expect(dialog.get('[data-testid="impact-role"]').text()).toBe('보기 전용 → 리뷰어')
+    expect(defaults.mock.calls).toEqual([[{ preview: true }]]) // nothing is written before 적용
 
-    const row = wrapper.get('[data-exception-member="u3"]')
-    expect(row.get('[data-access="review"]').classes()).toContain('on')
-    await row.get('[data-access="default"]').trigger('click')
+    await wrapper.get('[data-testid="impact-apply"]').trigger('click')
     await flushPromises()
-    expect(m.setProjectAccess).toHaveBeenCalledWith('ws_default', 'flowgate', 'u3', 'default')
-
-    await wrapper.get('[data-project="mirage"]').trigger('click')
-    await wrapper.get('[data-exception-member="u2"] [data-access="none"]').trigger('click')
-    await flushPromises()
-    expect(m.setProjectAccess).toHaveBeenLastCalledWith('ws_default', 'mirage', 'u2', 'none')
+    expect(defaults.mock.calls).toEqual([[{ preview: true }], [{ revision: 7 }]])
+    expect(wrapper.find('[data-testid="impact-dialog"]').exists()).toBe(false)
   })
 
-  it('switches the AI policy, revokes an allowed AI, adds one and sets who may create projects', async () => {
+  it('cancelling the impact dialog writes nothing', async () => {
     m.getWorkspace.mockResolvedValue(detail())
-    m.revokeResource.mockResolvedValue(detail())
-    m.setWorkspacePolicy.mockResolvedValue(detail())
-    m.listPolicyResources.mockResolvedValue({
-      providers: [
-        { resource_type: 'provider', resource_id: 'aip_a', name: 'OpenAI · GPT', enabled: true },
-        { resource_type: 'provider', resource_id: 'aip_b', name: 'Claude', enabled: true },
-      ],
-      agents: [],
-    })
-    m.allowResource.mockResolvedValue(detail())
+    const exception = changeRequest(detail())
+    m.setProjectAccess.mockReturnValue(exception)
+    const { wrapper } = await mountAt('/settings/workspaces/ws_default?tab=projects')
+    await wrapper.get('[data-exception-member="u3"] [data-access="default"]').trigger('click')
+    await flushPromises()
+    expect(m.setProjectAccess).toHaveBeenCalledWith('ws_default', 'flowgate', 'u3', 'default')
+    expect(wrapper.find('[data-testid="impact-empty"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="impact-cancel"]').trigger('click')
+    await flushPromises()
+    expect(exception.mock.calls).toEqual([[{ preview: true }]])
+  })
+
+  it('has no AI / Agent allow-list tab: ?tab=policy shows the members', async () => {
+    m.getWorkspace.mockResolvedValue(detail())
     const { wrapper } = await mountAt('/settings/workspaces/ws_default?tab=policy')
-
-    const aiRow = wrapper.get('[data-allow-kind="provider"]')
-    expect(aiRow.text()).toContain('OpenAI · GPT')
-    await aiRow.get('.allowchip button').trigger('click')
-    await flushPromises()
-    expect(m.revokeResource).toHaveBeenCalledWith('ws_default', 'provider', 'aip_a')
-
-    await wrapper.get('[data-add-kind="provider"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-resource="aip_a"]').exists()).toBe(false) // already allowed
-    await wrapper.get('[data-resource="aip_b"]').trigger('click')
-    await flushPromises()
-    expect(m.allowResource).toHaveBeenCalledWith('ws_default', 'provider', 'aip_b')
-
-    await wrapper.get('[data-ai-mode="all"]').trigger('click')
-    await wrapper.get('[data-project-create="all"]').trigger('click')
-    await flushPromises()
-    expect(m.setWorkspacePolicy).toHaveBeenCalledWith('ws_default', { ai_mode: 'all' })
-    expect(m.setWorkspacePolicy).toHaveBeenCalledWith('ws_default', { project_create: 'all' })
+    expect(wrapper.find('[data-panel="members"]').exists()).toBe(true)
+    expect(wrapper.find('[data-panel="policy"]').exists()).toBe(false)
+    expect(wrapper.find('[data-ai-mode], [data-allow-kind], [data-project-create]').exists()).toBe(false)
   })
 
   it('shows a plain member everything read-only', async () => {

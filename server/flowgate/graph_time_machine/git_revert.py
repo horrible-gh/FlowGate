@@ -255,7 +255,7 @@ def _failed(reason: str, made: list[str], **extra) -> dict:
 
 
 def _apply(session: dict, flow_id: str, operation_id: str, targets: list[dict], recorded: list[dict],
-           resume: bool) -> dict:
+           resume: bool, integration_head_inputs: list[dict] = ()) -> dict:
     wt = session["wt_path"]
     if resume:
         step = _marker(wt, operation_id)
@@ -315,6 +315,25 @@ def _apply(session: dict, flow_id: str, operation_id: str, targets: list[dict], 
         return stop("compensation_resumed", None)               # a compensation had begun: finish it
     if refused:
         return stop(*refused)
+    # Conflict joins can have consumed work without a graph edge. Verify the
+    # immutable input HEADs under the cancel session's Git lock, before the first
+    # revert (also on recovery). Never invalidate only half of that dependency.
+    for consumer in integration_head_inputs:
+        consumed = consumer.get("input_commit")
+        if not consumed:
+            return stop("integration_head_input_missing", None)
+        resolved = _read(wt, ["rev-parse", "--verify", consumed + "^{commit}"]).strip()
+        if resolved != consumed:
+            return stop("integration_head_input_unverified", consumed)
+        if consumer.get("selected"):
+            continue
+        for _i, target, _parent in plan:
+            ancestry = git._run_git(["merge-base", "--is-ancestor", target["commit_sha"], consumed],
+                                    cwd=wt, timeout=git.GIT_READ_TIMEOUT_SEC)
+            if ancestry.returncode == 0:
+                return stop("integration_head_dependency", target["commit_sha"])
+            if ancestry.returncode != 1:
+                raise GitReadError("integration HEAD ancestry unreadable")
     reverts = []
     for _i, target, first_parent in plan:
         sha = target["commit_sha"]
@@ -371,7 +390,8 @@ def _open_session(flow_id: str, targets: list[dict], owned_dirt) -> dict:
 
 
 def apply(flow_id: str, operation_id: str, targets: list[dict], *, resume: bool = False,
-          recorded: Optional[list[dict]] = None) -> dict:
+          recorded: Optional[list[dict]] = None,
+          integration_head_inputs: Optional[list[dict]] = None) -> dict:
     """Outside every Flow guard and DB transaction. ``{"status": ok, "reverts", "pre_head"}``, ``blocked`` (proven:
     nothing of the operation on the branch, the worktree settled — refused, or compensated), ``failed`` (unknown or
     not restorable: the operation's partial failure) or, on a resume, ``deferred`` (the session cannot be opened now;
@@ -386,7 +406,8 @@ def apply(flow_id: str, operation_id: str, targets: list[dict], *, resume: bool 
                 "sub": opened.get("block_sub"), "compensated": False, "reverts": []}
     session = opened["session"]
     try:
-        return _apply(session, flow_id, operation_id, targets, list(recorded or ()), resume)
+        return _apply(session, flow_id, operation_id, targets, list(recorded or ()), resume,
+                      list(integration_head_inputs or ()))
     except GitReadError as exc:
         log.error("Graph Time Machine Git read failed flow=%s operation=%s: %s", flow_id, operation_id, exc)
         return _failed("git_read_failed", [], cause=str(exc)[:500])

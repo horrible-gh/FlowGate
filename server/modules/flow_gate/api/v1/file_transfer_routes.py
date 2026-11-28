@@ -135,8 +135,8 @@ def _err(status: int, code: str, message: str) -> JSONResponse:
 def _check_project_auth(request: Request, project_id: str):
     """Verifies Bearer token and checks project_id permissions.
 
-    - Worker token: perm_document_read is verified inside verify_bearer() against the token's project.
-    - User JWT: after verify_bearer() verification, additionally checks perm_document_read for the requested project_id.
+    - Worker token: project.document.read is verified inside verify_bearer() against the token's project.
+    - User JWT: after verify_bearer() verification, additionally checks project.document.read for the requested project_id.
 
     On success: returns token_rec dict.
     On failure: returns JSONResponse (caller must return immediately).
@@ -152,7 +152,7 @@ def _check_project_auth(request: Request, project_id: str):
 
     if token_rec.get("_is_user_jwt"):
         user_id: str = token_rec["issued_to"]
-        if not has_permission(user_id, project_id, "perm_document_read"):
+        if not has_permission(user_id, project_id, "project.document.read"):
             return _err(403, "FORBIDDEN", "Insufficient permissions for this action")
 
     return token_rec

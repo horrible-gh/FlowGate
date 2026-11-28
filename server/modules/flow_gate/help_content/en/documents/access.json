@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Read a document",
+  "summary": "Read the document body and its question answers.",
+  "purpose": "Read the document body and its question answers.",
+  "request": "{{route:document.read}}. For the stored path, use {{route:document.path}}. For a bounded read, see `documents/partial`.",
+  "response": "Check `content_state` for body availability. `A: null` in `answers` means unanswered. Read answers for referenced documents from those documents.",
+  "errors": "If the body is unavailable, see `documents/unreadable`."
+}

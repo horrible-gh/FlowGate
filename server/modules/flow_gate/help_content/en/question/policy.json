@@ -1,0 +1,10 @@
+{
+  "locale": "en",
+  "title": "User question policy",
+  "summary": "User question policy",
+  "purpose": "User question policy",
+  "body": {
+    "label": "Original text supplied by the user",
+    "original": "{{question_policy}}"
+  }
+}

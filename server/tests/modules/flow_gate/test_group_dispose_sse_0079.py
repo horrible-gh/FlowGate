@@ -327,14 +327,14 @@ def test_group_rename_guard_rejects_disposed_group(real_store, monkeypatch):
     body = wf.GroupUpdateRequest(title="renamed")
 
     # Live group: the rename succeeds.
-    res = wf.update_group_endpoint(gid, body, {"user_id": "u-x"})
+    res = wf.update_group_endpoint(gid, body, {"user_id": "u-x", "is_admin": True})
     assert res["group_id"] == gid
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 
     # Disposed group: renaming is now rejected at the server with 409.
     with pytest.raises(HTTPException) as exc:
-        wf.update_group_endpoint(gid, body, {"user_id": "u-x"})
+        wf.update_group_endpoint(gid, body, {"user_id": "u-x", "is_admin": True})
     assert exc.value.status_code == 409
     assert "group_disposed" in str(exc.value.detail)
 
@@ -376,19 +376,19 @@ def test_qa_register_guard_rejects_disposed_group(real_store):
 
     # Live group: reject_disposed=True does NOT 409 (only RBAC may 403) — disposal-gating
     # is the property under test, so assert it specifically does not fire here.
-    live = _doc_project_or_403(root_id, "u-nobody", "perm_document_create", reject_disposed=True)
+    live = _doc_project_or_403(root_id, "u-nobody", "project.document.create", reject_disposed=True)
     assert not (isinstance(live, JSONResponse) and live.status_code == 409)
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 
     # Disposed group, write path: 409 (disposal check precedes the permission check).
-    resp = _doc_project_or_403(root_id, "u-nobody", "perm_document_create", reject_disposed=True)
+    resp = _doc_project_or_403(root_id, "u-nobody", "project.document.create", reject_disposed=True)
     assert isinstance(resp, JSONResponse)
     assert resp.status_code == 409
 
     # Disposed group, read path (reject_disposed=False): NOT gated by disposal — viewing
     # the Q&A of a discarded group is still allowed (any 4xx here is RBAC, never 409).
-    read = _doc_project_or_403(root_id, "u-nobody", "perm_document_read", reject_disposed=False)
+    read = _doc_project_or_403(root_id, "u-nobody", "project.document.read", reject_disposed=False)
     assert not (isinstance(read, JSONResponse) and read.status_code == 409)
 
 
@@ -435,7 +435,7 @@ def test_rejection_reason_guard_rejects_disposed_group(real_store, monkeypatch):
 
     monkeypatch.setattr(wf, "_get_user_permissions", lambda u: {"document.reject"})
     body = wf.RejectionReasonRequest(reason="still wrong")
-    user = {"user_id": "u-x"}
+    user = {"user_id": "u-x", "is_admin": True}
 
     # Live group: correcting the rejection reason succeeds and updates the entry in place.
     res = asyncio.run(wf.update_rejection_reason_endpoint(root_id, body, user))
@@ -470,7 +470,7 @@ def test_register_result_guard_rejects_disposed_group(real_store, monkeypatch):
 
     monkeypatch.setattr(wf, "_get_user_permissions", lambda u: {"document.update"})
     body = wf.DocumentTransitionRequest()
-    user = {"user_id": "u-x"}
+    user = {"user_id": "u-x", "is_admin": True}
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 

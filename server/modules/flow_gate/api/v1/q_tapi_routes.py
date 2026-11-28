@@ -8,10 +8,10 @@ Endpoints:
 
 Q&A is sub-data of a document, so it all follows the parent document's permissions.
 Auth:
-  Read (get_current_user)  : login session JWT. Read=perm_document_read.
+  Read (get_current_user)  : login session JWT. Read=project.document.read.
   Write (register query/answer) : login session JWT (human) **or** inbox/edit worker token (AI).
      The AI worker has no login session and holds only an edit-scoped token, so when the token's
-     doc_ref matches the path {doc_id}, registration is allowed under perm_document_create for issued_to.
+     doc_ref matches the path {doc_id}, registration is allowed under project.document.create for issued_to.
      Without this path the worker cannot leave ambiguities as a Q and ends up guessing.
 """
 from __future__ import annotations
@@ -157,7 +157,7 @@ def _resolve_writer(
       1) inbox/edit worker token → token_service.verify, doc_ref must bind to {doc_id};
          the writer is the token's issued_to and the kind is forced to 'ai'.
       2) login session JWT (human [+query]) → get_current_user; kind stays as requested.
-    Parent-document perm_document_create is enforced downstream by _doc_project_or_403 against
+    Parent-document project.document.create is enforced downstream by _doc_project_or_403 against
     the resolved writer (issued_to for tokens, user_id for sessions).
 
     Returns (writer_user_id, forced_kind, ai_run_id) where forced_kind='ai' for worker
@@ -241,7 +241,7 @@ def search_answers(request: Request, doc_id: str, q: str = Query(min_length=1, m
     identity = _resolve_writer(request, doc_id)
     if isinstance(identity, JSONResponse):
         return identity
-    project = _doc_project_or_403(doc_id, identity[0], "perm_document_read")
+    project = _doc_project_or_403(doc_id, identity[0], "project.document.read")
     if isinstance(project, JSONResponse):
         return project
     # A damaged query finds nothing and reads as "no precedent": refuse it instead.
@@ -264,7 +264,7 @@ def search_answer_detail(request: Request, doc_id: str, answer_id: int):
     identity = _resolve_writer(request, doc_id)
     if isinstance(identity, JSONResponse):
         return identity
-    project = _doc_project_or_403(doc_id, identity[0], "perm_document_read")
+    project = _doc_project_or_403(doc_id, identity[0], "project.document.read")
     if isinstance(project, JSONResponse):
         return project
     from modules.flow_gate.services import question_search
@@ -431,7 +431,7 @@ def _in_document_write(handler):
 def _add_questions_response(
     doc_id: str, body: AddQuestionsRequest, user_id: str, ai_run_id: Optional[str] = None,
 ) -> JSONResponse:
-    project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
+    project_id = _doc_project_or_403(doc_id, user_id, "project.document.create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
         return project_id
     try:
@@ -456,7 +456,7 @@ def _register_answer_response(
     request: Request,
     ai_run_id: Optional[str] = None,
 ) -> JSONResponse:
-    project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
+    project_id = _doc_project_or_403(doc_id, user_id, "project.document.create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
         return project_id
     try:
@@ -495,7 +495,7 @@ def _force_session_author_human(body: RegisterAnswerRequest, forced_kind: Option
 
 
 def _detail_response(doc_id: str, user_id: str) -> JSONResponse:
-    project_id = _doc_project_or_403(doc_id, user_id, "perm_document_read")
+    project_id = _doc_project_or_403(doc_id, user_id, "project.document.read")
     if isinstance(project_id, JSONResponse):
         return project_id
     return JSONResponse(content={"ok": True, "qa": q_service.get_qa_detail(doc_id)})
@@ -643,7 +643,7 @@ def post_escalate_to_user(
         return _fail(
             403, "Only the AI responder run dispatched for this question may hand it to a user.",
         )
-    project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
+    project_id = _doc_project_or_403(doc_id, user_id, "project.document.create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
         return project_id
     rejected, cleaned = _encoding_gate(request, {"reason": body.reason}, ("reason",))
@@ -695,9 +695,9 @@ def _resolve_dispatch_target(doc_id: str, item_id: int, user_id: str):
     if _process_service.is_group_disposed(doc.get("group_id")):
         return None, None, _fail(409, "Modification not allowed: the group has been disposed.")
     project_id = doc.get("project_id")
-    if project_id and not has_permission(user_id, project_id, "perm_document_create"):
+    if project_id and not has_permission(user_id, project_id, "project.document.create"):
         return None, None, _fail(
-            403, "Insufficient permissions for this operation (perm_document_create required)")
+            403, "Insufficient permissions for this operation (project.document.create required)")
     try:
         item = q_answer_invoke_service.resolve_item(doc_id, item_id)
     except HTTPException as exc:
@@ -807,8 +807,8 @@ def get_open_queries(
 ):
     """List of queries awaiting an answer (parent document ID + Q number + title)."""
     user_id: str = current_user["user_id"]
-    if project_id and not has_permission(user_id, project_id, "perm_document_read"):
-        return _fail(403, "Insufficient permissions for this operation (perm_document_read required)")
+    if project_id and not has_permission(user_id, project_id, "project.document.read"):
+        return _fail(403, "Insufficient permissions for this operation (project.document.read required)")
     items = q_service.list_open_items(project_id=project_id)
     return JSONResponse(content={"ok": True, "items": items})
 

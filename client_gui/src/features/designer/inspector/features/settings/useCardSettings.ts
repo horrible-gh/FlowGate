@@ -3,6 +3,9 @@
 // the project's. A card just placed (`tmp_` key) has nothing stored yet: its form is drawn, off, until the
 // draft save answers its key. No server event announces a settings change; a run starting or ending a node
 // (the card's 🔒) is announced, and the card is read again then and when its Canvas run state moves.
+// A taken change asks the Host to read the written card's Flow again (`refresh-flow`): the instruction use / omit
+// moves the card's document buttons and the AI / role values its stage assignments. The Canvas event the write
+// causes names this tab (`x-canvas-client-id`) and is dropped by this tab, so this request is the only read.
 import { inject, provide, computed, ref, shallowRef, watch, effectScope, getCurrentInstance, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import {
   settingsChoicesRead,
@@ -15,6 +18,7 @@ import {
   type SettingsNode,
 } from '@/features/document'
 import { aiRolePayload, type AiRoleValue } from '@/features/document'
+import { INSPECTOR_HOST, type InspectorHost } from '../../inspectorHost'
 import { inspectorCardNodeKey, type InspectorTarget } from '../../inspectorTarget'
 import { captureInspectorResourceContext, useInspectorFieldWrite, useInspectorResource, type InspectorEventMatch, type InspectorEventScope, type InspectorResourceStatus } from '../../useInspectorResource'
 import { cardSettingsBlockedBy, type CardSettingsBlocked, type CardSettingsFailureKind, type CardSettingsField } from './cardSettingsModel'
@@ -62,7 +66,24 @@ export interface CardSettingsState {
   reload(): Promise<void>
 }
 
-export function useCardSettings(target: () => InspectorTarget | null): CardSettingsState {
+/** The Host a card's settings ask to read the Canvas again (`refresh-flow`). */
+export type CardSettingsHost = InspectorHost
+
+/**
+ * The Host injected in the calling component's setup, or null (called outside setup, or no Frame above). A session that is
+ * made later outside setup (a watch callback) takes the Host from its consumer's setup through this and passes it on as `host`.
+ */
+export function injectCardSettingsHost(): CardSettingsHost | null {
+  return getCurrentInstance() ? inject(INSPECTOR_HOST, null) : null
+}
+
+/**
+ * `host`: the Host a taken change asks to read the Canvas again. Omitted = the one injected here (component setup);
+ * a session created outside setup (useSharedCardSettings) passes the one its consumers injected.
+ */
+export function useCardSettings(target: () => InspectorTarget | null, host?: () => InspectorHost | null): CardSettingsState {
+  const injectedHost = host ? null : injectCardSettingsHost()
+  const hostOf = host ?? (() => injectedHost)
   const scope = (): InspectorEventScope | null => {
     const current = target()
     const nodeKey = inspectorCardNodeKey(current)
@@ -115,8 +136,12 @@ export function useCardSettings(target: () => InspectorTarget | null): CardSetti
       // the context sent back is the one the server answered for this card (its own run / revision /
       // draft choice), never the one the screen built from its view — those differ and 0126 refused every write then.
       const answered = resource.data.value?.context
-      return settingsNodeWrite(flowId, nodeKey, field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value,
+      const answer = await settingsNodeWrite(flowId, nodeKey, field, field.endsWith('_role') ? aiRolePayload(value as AiRoleValue) : value,
         resource.data.value?.settingsVersion, answered ?? JSON.parse(context) ?? undefined)
+      // Taken: the Canvas of the written card's Flow is read again (its own Canvas event is dropped by this tab), even
+      // when another card was selected meanwhile — the server already holds the value.
+      hostOf()?.request({ kind: 'refresh-flow', flowId })
+      return answer
     },
   })
 
@@ -180,6 +205,8 @@ interface CardSettingsSession {
   target: ReturnType<typeof shallowRef<InspectorTarget | null>>
   state: CardSettingsState
   users: number
+  /** The Host the latest consumer injected (the session outlives a remounted Frame). */
+  host: InspectorHost | null
 }
 const cardSettingsApps = new WeakMap<object, Map<string, CardSettingsSession>>()
 const fallbackCardSettingsApp = {}
@@ -191,6 +218,7 @@ export function useSharedCardSettings(target: () => InspectorTarget | null): Car
   if (provided) return provided
   const app = getCurrentInstance()?.appContext ?? fallbackCardSettingsApp
   const inResourceContext = captureInspectorResourceContext()
+  const host = injectCardSettingsHost()
   let sessions = cardSettingsApps.get(app)
   if (!sessions) { sessions = new Map(); cardSettingsApps.set(app, sessions) }
   const current = shallowRef<CardSettingsSession | null>(null)
@@ -203,10 +231,11 @@ export function useSharedCardSettings(target: () => InspectorTarget | null): Car
     if (!entry) {
       const selected = shallowRef(target())
       const scope = effectScope(true)
-      const state = inResourceContext(() => scope.run(() => useCardSettings(() => selected.value)))!
-      entry = { target: selected, state, users: 0 }; sessions!.set(key, entry)
+      const created: CardSettingsSession = { target: selected, state: null as unknown as CardSettingsState, users: 0, host }
+      created.state = inResourceContext(() => scope.run(() => useCardSettings(() => selected.value, () => created.host)))!
+      entry = created; sessions!.set(key, entry)
     }
-    entry.users++; entry.target.value = target(); current.value = entry
+    entry.users++; if (host) entry.host = host; entry.target.value = target(); current.value = entry
     cleanup(() => { if (--entry!.users === 0) entry!.target.value = null })
   }, { immediate: true, flush: 'sync' })
   const stopTarget = watch(target, value => { if (value && current.value) current.value.target.value = value }, { flush: 'sync' })

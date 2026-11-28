@@ -1,0 +1,128 @@
+{
+  "locale": "ko",
+  "title": "read",
+  "summary": "원격 프로젝트 소스의 파일 하나를 읽는다.",
+  "purpose": "원격 프로젝트 소스의 파일 하나를 읽는다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "read"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "소스 루트 기준 상대 경로. 절대경로와 '..' 금지."
+      },
+      {
+        "name": "max_bytes",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "읽을 최대 바이트. 생략하면 파일 전체를 읽되 서버 상한을 넘으면 413."
+      },
+      {
+        "name": "offset",
+        "type": "integer",
+        "required": false,
+        "default": 0,
+        "description": "읽기를 시작할 0 기준 바이트 위치."
+      },
+      {
+        "name": "length",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "읽을 바이트 창의 최대 길이. max_bytes와 함께 쓰면 더 작은 값이 적용된다."
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "required": false,
+        "default": "utf-8",
+        "description": "디코딩 인코딩. 디코딩 실패 문자는 대체 문자로 바뀐다."
+      },
+      {
+        "name": "start_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1부터 시작하는 읽기 시작 줄 번호. end_line과 함께 써야 하며, offset/length/max_bytes와 동시에 쓸 수 없다."
+      },
+      {
+        "name": "end_line",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "1부터 시작하는 읽기 끝 줄 번호(포함). start_line <= end_line 이어야 한다. 파일 끝을 넘으면 가능한 줄까지만 반환된다."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "커밋 트리를 지정하는 선택적 ref입니다. 생략 또는 null은 미커밋 변경을 포함한 작업 트리입니다. merge_preview의 head, target_sha, merge_base, merge_tree를 사용할 수 있습니다."
+      }
+    ],
+    "example": {
+      "path": "app/main.py",
+      "start_line": 1,
+      "end_line": 40,
+      "encoding": "utf-8"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "read",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/main.py",
+      "content": "<lines 1-40>",
+      "encoding": "utf-8",
+      "size": 18342,
+      "start_line": 1,
+      "end_line": 40,
+      "returned_start_line": 1,
+      "returned_end_line": 40,
+      "total_lines": 512,
+      "returned_bytes": 1180,
+      "eof": false,
+      "truncated": true
+    },
+    "details": [
+      "read 응답의 source_sha256은 파일 수정의 기준 해시로 쓸 수 있습니다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "경로가 없거나 일반 파일이 아니다."
+    },
+    {
+      "http_status": 413,
+      "code": "too_large",
+      "when": "max_bytes 를 생략했는데 파일이 서버 상한을 넘는다(줄 선택자를 쓴 경우도 파일 전체 크기 기준으로 동일하게 적용)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "경로가 소스 루트를 벗어나거나 형식이 잘못됐다, 요청에 read가 허용하지 않는 필드가 있다(reason=unknown_field), 또는 start_line/end_line이 잘못됐거나(reason=invalid_line_range) offset/length/max_bytes와 함께 쓰였다(reason=line_and_byte_selector)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    }
+  ]
+}

@@ -221,6 +221,7 @@ def restart(group, user_id, body, recheck):
         from flowgate.card_documents import lines, slots
         missing = [n["node_key"] for n in (record or {}).get("nodes", [])
                    if n.get("node_type") == "document" and n.get("doc_type") == "T"
+                   and not lines.instruction_omitted(flow_id, n["node_key"], slots.INSTRUCTION, n.get("doc_type"))
                    and not lines.has_body((lines.line_document(flow_id, n["node_key"], slots.INSTRUCTION,
                        n.get("node_type"), n.get("doc_type")) or {}).get("document"))]
         if missing:

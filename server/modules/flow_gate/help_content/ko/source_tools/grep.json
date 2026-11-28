@@ -1,0 +1,108 @@
+{
+  "locale": "ko",
+  "title": "grep",
+  "summary": "소스 트리에서 정규식으로 텍스트를 검색한다.",
+  "purpose": "소스 트리에서 정규식으로 텍스트를 검색한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "grep"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "pattern",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "찾을 정규식(파이썬 re 문법)."
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "검색을 시작할 디렉터리. 비우면 소스 루트 전체."
+      },
+      {
+        "name": "glob",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "파일 필터. 예: **/*.py"
+      },
+      {
+        "name": "ignore_case",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "대소문자 무시."
+      },
+      {
+        "name": "max_results",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "돌려줄 최대 매치 수. 채워지면 그 파일까지만 훑고 멈춘다."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "커밋 트리를 지정하는 선택적 ref입니다. 생략 또는 null은 미커밋 변경을 포함한 작업 트리입니다. merge_preview의 head, target_sha, merge_base, merge_tree를 사용할 수 있습니다."
+      }
+    ],
+    "example": {
+      "pattern": "TODO",
+      "glob": "**/*.py",
+      "ignore_case": true,
+      "max_results": 20
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "grep",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "matches": [
+        {
+          "file": "server/modules/flow_gate/template_provision.py",
+          "line": 194,
+          "text": "def normalize_locale(x_locale: Optional[str]) -> str:"
+        }
+      ],
+      "total": 1,
+      "truncated": false
+    },
+    "details": [
+      "total 은 truncated=false 일 때만 정확한 개수이고, true 면 훑다 멈춘 시점까지의 하한값이다.",
+      ".venv / venv / node_modules / .git / __pycache__ 는 순회에서 제외된다. 그 안을 보려면 path 로 직접 가리켜야 한다.",
+      "너무 큰 파일과 바이너리 파일은 건너뛴다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "path 가 없거나 디렉터리가 아니다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "정규식이 잘못됐거나 path 가 소스 루트를 벗어난다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 grep 스코프가 없다."
+    }
+  ]
+}

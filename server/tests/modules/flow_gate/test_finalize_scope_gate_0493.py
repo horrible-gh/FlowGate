@@ -125,7 +125,7 @@ def test_finalize_blocks_structured_unreported_without_partial_transition(monkey
     with pytest.raises(HTTPException) as caught:
         workflow.finalize_workflow_endpoint(
             workflow.DocumentBodyRequest(doc_id=ROOT_ID),
-            {"user_id": "reviewer"},
+            {"user_id": "reviewer", "is_admin": True},
         )
 
     assert caught.value.status_code == 409
@@ -157,10 +157,10 @@ def test_finalize_rework_then_retry_succeeds(monkeypatch):
 
     with pytest.raises(HTTPException):
         workflow.finalize_workflow_endpoint(
-            workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer"}
+            workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer", "is_admin": True}
         )
     result = workflow.finalize_workflow_endpoint(
-        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer"}
+        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer", "is_admin": True}
     )
 
     assert result["document"]["doc_review_status"] == "wf_done"
@@ -177,7 +177,7 @@ def test_finalize_normal_or_git_off_result_is_unchanged(monkeypatch):
     )
 
     result = workflow.finalize_workflow_endpoint(
-        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer"}
+        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer", "is_admin": True}
     )
 
     assert result["document"]["doc_review_status"] == "wf_done"
@@ -191,7 +191,7 @@ def test_finalize_idempotent_path_does_not_recheck(monkeypatch):
     monkeypatch.setattr(workflow.tr_scope_service, "evaluate_group_unreported", recheck)
 
     result = workflow.finalize_workflow_endpoint(
-        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer"}
+        workflow.DocumentBodyRequest(doc_id=ROOT_ID), {"user_id": "reviewer", "is_admin": True}
     )
 
     assert result == {"document": root}

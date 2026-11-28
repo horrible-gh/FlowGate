@@ -3,7 +3,7 @@
 Real SQLite (questions / question_items / answers, documents, tokens), the real Flow document guard and the real
 ``q_service.register_answer``, through both transports: the API chat tool (call ledger) and the CLI chat HTTP route.
 The chat fixture is the 0127 one (token verify replaced by a live-row lookup; authz still reads the token row).
-Q#600: the user's ``perm_document_create`` alone decides — reading mode answers too. One answer per question.
+Q#600: the user's ``project.document.create`` alone decides — reading mode answers too. One answer per question.
 """
 import sys
 from pathlib import Path
@@ -207,7 +207,7 @@ def test_scope_permission_and_ownership_refusals_store_nothing(q):
                  404, "document_not_found")
     q.allowed["value"] = False
     assert error(api(q, chat_questions.ANSWER_TOOL, {"doc_id": D, "item_id": item["id"], "body": "x"}),
-                 403, "permission_denied")["required"] == "perm_document_create"
+                 403, "permission_denied")["required"] == "project.document.create"
     assert stored(item["id"]) == [] and stored(foreign_item["id"]) == []
 
 

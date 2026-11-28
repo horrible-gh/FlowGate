@@ -47,7 +47,6 @@ from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate import template_provision as _tp
 from modules.flow_gate.db import projects as projects_db
 from modules.flow_gate.db import messages as messages_db
-from modules.flow_gate.utils.slug import project_name_to_slug
 from modules.flow_gate.utils.id_validators import validate_project_id
 from modules.flow_gate.storage.migration import apply_storage_change
 from modules.flow_gate.storage.paths import describe_storage_root
@@ -96,11 +95,34 @@ def list_projects_endpoint(
     """Project list with an explicit management scope.
 
     General consumers receive active projects by default. Archive/restore
-    management views pass status=all to render both states.
+    management views pass status=all to render both states. A system
+    administrator sees every project; anyone else only the projects they are a
+    member of (filtered in SQL).
     """
-    projects = projects_db.list_projects(is_active=_status_to_is_active(status))
+    from modules.flow_gate.rbac.access import visible_project_clause
+
+    projects = projects_db.list_projects(
+        is_active=_status_to_is_active(status),
+        visible_clause=visible_project_clause(user),
+    )
+    from modules.flow_gate.rbac import capabilities
+
     _attach_project_modules(projects)
+    for project in projects:
+        project["capabilities"] = capabilities.project(user, project)
     return {"projects": projects}
+
+
+@router.get("/projects/{project_id}/capabilities")
+def get_project_capabilities(project_id: str, user=Depends(get_current_user)):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.rbac import access, capabilities
+
+    access.require(user, project_id, "project.view")
+    row = get_store()._fetch_one("SELECT * FROM projects WHERE project_id = ?", [project_id])
+    if not row or project_id == "__SYSTEM__":
+        raise HTTPException(status_code=404, detail="project_not_found")
+    return {"project_id": project_id, "capabilities": capabilities.project(user, row)}
 
 
 class ProjectCreate(BaseModel):
@@ -229,6 +251,8 @@ def create_project_endpoint(
             raise HTTPException(status_code=422, detail=str(exc))
     else:
         try:
+            from modules.flow_gate.utils.slug import project_name_to_slug
+
             project_id = project_name_to_slug(body.project_name)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Failed to convert project name: {e}")
@@ -338,7 +362,7 @@ class DocTypeCreate(BaseModel):
 def create_doc_type(
     project_id: str,
     body: DocTypeCreate,
-    user=Depends(require_permission("project.document_type.create", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     resolved_code = body.code or body.type_code
     resolved_name = body.label or body.type_name
@@ -380,7 +404,7 @@ def update_doc_type(
     project_id: str,
     type_id: int,
     body: DocTypePatch,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     updates: dict = {}
     resolved_name = body.label if body.label is not None else body.type_name
@@ -403,7 +427,7 @@ def update_doc_type(
 def delete_doc_type(
     project_id: str,
     type_id: int,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     try:
         if not delete_document_type(project_id, type_id):
@@ -693,7 +717,7 @@ class TemplateContentBody(BaseModel):
 def register_tpl(
     project_id: str,
     body: TemplateContentBody,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E4 — JSON body registration: ensure registry (is_active=0) + first body."""
     try:
@@ -742,7 +766,7 @@ def put_tpl_content(
     template_id: int,
     locale: str,
     body: TemplateContentPut,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E5 — register/replace a locale body (no redeploy, idempotent)."""
     try:
@@ -761,7 +785,7 @@ def delete_tpl_content(
     project_id: str,
     template_id: int,
     locale: str,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E6 — delete a locale body (ko-fallback protected)."""
     try:
@@ -784,7 +808,7 @@ def update_tpl(
     project_id: str,
     template_id: int,
     body: TemplatePatch,
-    user=Depends(require_permission("project.document_type.update", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     """E7 — activation toggle (existing contract)."""
     row = update_template(project_id, template_id, body.model_dump())
@@ -797,7 +821,7 @@ def update_tpl(
 def delete_tpl(
     project_id: str,
     template_id: int,
-    user=Depends(require_permission("project.document_type.delete", "project_id")),
+    user=Depends(require_permission("project.document_type.manage", "project_id")),
 ):
     if not delete_template(project_id, template_id):
         raise HTTPException(status_code=404, detail="Template not found")

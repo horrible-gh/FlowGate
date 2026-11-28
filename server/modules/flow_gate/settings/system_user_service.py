@@ -117,7 +117,26 @@ def get_user_view(user_id: str) -> dict:
         {"workspace_id": m["workspace_id"], "name": m["name"], "role": m["role"]}
         for m in _ws_db.memberships_for_user(user_id)
     ]
-    return _view(row, workspaces)
+    from modules.flow_gate.rbac import capabilities
+
+    return {**_view(row, workspaces), **capabilities.memberships(user_id)}
+
+
+def _audit(actor: dict, operation: str, user_id: str) -> None:
+    from modules.flow_gate.rbac import mutation
+
+    from modules.flow_gate.auth import auth_cache
+
+    mutation.audit(_store(), actor, operation, user_id)
+    _connection.after_commit(lambda: auth_cache.invalidate_user(user_id))
+    if operation in ("user.admin", "user.disable"):
+        _connection.after_commit(auth_cache.invalidate_all_sessions)
+
+
+def _lock_access():
+    from modules.flow_gate.rbac import permission_service
+
+    permission_service.bump_global_version(_store())
 
 
 def _active_admin_count() -> int:
@@ -157,6 +176,7 @@ def create_user(actor: dict, name: str, email: str, start: str, is_admin: bool,
     token, invite = _new_invite() if start == "invite" else (None, {})
     system_role = "role_admin" if is_admin else "role_viewer"
     with _store().transaction():
+        _lock_access()
         _users_db.create({
             "user_id": uid,
             "username": display,
@@ -175,6 +195,7 @@ def create_user(actor: dict, name: str, email: str, start: str, is_admin: bool,
                 workspace_service.add_user_to_workspace(workspace_id, uid, "member", actor.get("user_id"))
             except WorkspaceError as exc:
                 raise SystemUserError(exc.status, exc.code) from None
+        _audit(actor, "user.create", uid)
     result: dict = {"user": get_user_view(uid)}
     if token:
         result["invite_path"] = invite_path(token)
@@ -185,39 +206,58 @@ def create_user(actor: dict, name: str, email: str, start: str, is_admin: bool,
 
 
 def set_admin(actor: dict, user_id: str, is_admin: bool) -> dict:
-    row = _users_db.get_by_id(user_id)
-    if not row:
-        raise SystemUserError(404, "user_not_found")
-    if not is_admin and _is_last_admin(row):
-        raise SystemUserError(409, "last_admin")
+    from modules.flow_gate.auth.session_store import revoke_all_sessions
+
     with _store().transaction():
+        _lock_access()
+        row = _users_db.get_by_id(user_id)
+        if not row:
+            raise SystemUserError(404, "user_not_found")
+        if not is_admin and _is_last_admin(row):
+            raise SystemUserError(409, "last_admin")
         _users_db.update(user_id, {"is_admin": int(bool(is_admin))})
         role_service.assign_role(user_id, role_service.SYSTEM_PROJECT,
                                  "role_admin" if is_admin else "role_viewer", granted_by=actor.get("user_id"))
+        if row["is_admin"] and not is_admin:
+            revoke_all_sessions(user_id, "admin")
+        _audit(actor, "user.admin", user_id)
     return get_user_view(user_id)
 
 
 def disable_user(actor: dict, user_id: str) -> dict:
     """Disable (or cancel an invitation): sign-in blocked, sessions ended, data kept."""
     from modules.flow_gate.auth.session_store import revoke_all_sessions
+    from modules.flow_gate.rbac import mutation, permission_service
 
-    row = _users_db.get_by_id(user_id)
-    if not row:
-        raise SystemUserError(404, "user_not_found")
-    if _is_last_admin(row):
-        raise SystemUserError(409, "last_admin")
-    if actor.get("user_id") == user_id:
-        raise SystemUserError(409, "cannot_disable_self")
-    _users_db.update(user_id, {"is_active": 0, "invite_token_hash": None, "invite_expires_at": None})
-    revoke_all_sessions(user_id, "admin")
+    with _store().transaction():
+        _lock_access()
+        row = _users_db.get_by_id(user_id)
+        if not row:
+            raise SystemUserError(404, "user_not_found")
+        if _is_last_admin(row):
+            raise SystemUserError(409, "last_admin")
+        if actor.get("user_id") == user_id:
+            raise SystemUserError(409, "cannot_disable_self")
+        projects = [project_id for project_id, grants in permission_service.compute_grants(user_id, _store()).items()
+                    if permission_service._best(grants) == "role_admin"]
+        if projects:
+            _, admins = mutation._snapshot(_store(), projects)
+            if any(admins[project_id] == {user_id} for project_id in projects):
+                raise SystemUserError(409, "last_project_admin")
+        _users_db.update(user_id, {"is_active": 0, "invite_token_hash": None, "invite_expires_at": None})
+        revoke_all_sessions(user_id, "admin")
+        _audit(actor, "user.disable", user_id)
     return get_user_view(user_id)
 
 
 def enable_user(actor: dict, user_id: str) -> dict:
-    row = _users_db.get_by_id(user_id)
-    if not row:
-        raise SystemUserError(404, "user_not_found")
-    _users_db.update(user_id, {"is_active": 1})
+    with _store().transaction():
+        _lock_access()
+        row = _users_db.get_by_id(user_id)
+        if not row:
+            raise SystemUserError(404, "user_not_found")
+        _users_db.update(user_id, {"is_active": 1})
+        _audit(actor, "user.enable", user_id)
     return get_user_view(user_id)
 
 

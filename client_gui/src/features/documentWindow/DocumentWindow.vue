@@ -135,6 +135,13 @@
       <!-- (B3): the view's one action group, by the body's state (documentViewerActions) —
            unreadable: [복구]? [본문 다시 입력] [닫기]; readable or empty: [편집] [닫기]; not editable: [닫기].
            flowgate.v02.0068 T#1: while an upload guards the document, [복구] · [본문 다시 입력] · [편집] are disabled. -->
+      <PermissionNote
+        v-if="!editing && updateRefused"
+        :project-id="record?.projectId ?? null"
+        :actions="['project.document.update']"
+        :block="record?.capabilities ?? null"
+        data-test="document-window-permission-note"
+      />
       <div v-if="!editing" class="document-window-viewer-bar" data-test="document-window-viewer-bar">
         <Button
           v-if="viewerActions.includes('recover')"
@@ -252,6 +259,7 @@ import {
 import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import PermissionNote from '@/components/ui/PermissionNote.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import { documentNumberBadge } from '@/core/overlay/modelessRegistry'
 import DocumentIoGroup from './DocumentIoGroup.vue'
@@ -316,8 +324,15 @@ async function readRecord(): Promise<void> {
 const record = computed(() => chain.value.find((item) => item.docId === props.win.shown) ?? chain.value[0] ?? null)
 const { user } = useCurrentUser()
 const canReenter = computed(
-  () => !props.win.exact && !!user.value && record.value?.isEditable === true && !record.value?.groupDisposed && record.value?.typeCode !== 'TR2',
+  () => !props.win.exact && !!user.value && record.value?.isEditable === true && !record.value?.groupDisposed && record.value?.typeCode !== 'TR2'
+    && !updateRefused.value,
 )
+// The server's "no" for editing this document (role or a context rule such as a final approval): [편집] is not offered
+// and one line says why (PermissionNote). No answer sent = nothing changes.
+const updateRefused = computed(() => {
+  const decision = record.value?.capabilities?.actions['project.document.update']
+  return !!decision && !decision.allowed
+})
 const liveDocId = computed(() => chain.value[chain.value.length - 1]?.docId ?? null)
 
 // F81-9: a TS document never shows a stored 「지시서」 role in its title (documentTitleShown), whoever opened it.

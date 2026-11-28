@@ -28,6 +28,9 @@ def fenced(result_db, monkeypatch):
     # execution_store now anchors requests to the current command event.
     if "last_event_seq" not in {r["name"] for r in db._fetch_all("PRAGMA table_info(graph_runs)")}:
         db.db.execute("ALTER TABLE graph_runs ADD COLUMN last_event_seq INTEGER DEFAULT 0")
+    # This fixture models a legacy execution, without stage-assignment recovery.
+    from flowgate.card_settings import result_recovery
+    monkeypatch.setattr(result_recovery, "prepare_explicit_review", lambda *args: None)
     unfinished = {"busy": True}
     monkeypatch.setattr(operation, "busy", lambda flow_id: unfinished["busy"])
 

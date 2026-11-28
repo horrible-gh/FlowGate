@@ -1,0 +1,60 @@
+{
+  "locale": "ko",
+  "title": "결과 제출 형식",
+  "summary": "결과 제출 형식",
+  "purpose": "결과 제출 형식",
+  "request": {
+    "route": "{{route:submit.inbox}}",
+    "workflow": {
+      "details": "작업 순서 지정 또는 수정 전용 작업에서는 해당 작업의 지시와 요청 본문을 따릅니다.",
+      "decision": "{{route:workflow.worker_decide}}",
+      "sequence_update": "{{route:workflow.worker_sequence_update}}"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "edit": {
+      "action": "edit",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "edit_reason": "user_comment",
+      "expected_revision": "<current revision_no>",
+      "content": "<complete document>",
+      "commit_message": "docs(help): summarize the migration"
+    },
+    "new": {
+      "action": "new",
+      "project": "{{project}}",
+      "module": "{{module}}",
+      "group_name": "{{group_id}}",
+      "doc_type": "<type>",
+      "prev_doc_id": "<previous document ID>",
+      "title": "<title>",
+      "content": "<document>"
+    },
+    "review": {
+      "action": "review",
+      "project": "{{project}}",
+      "doc_id": "{{doc_id}}",
+      "verdict": "pass | issues | hold",
+      "findings": [
+        {
+          "locus": "<section>",
+          "note": "<finding>"
+        }
+      ],
+      "comment": "<optional overall comment>"
+    },
+    "details": "토큰 작업에 맞는 형식을 사용합니다. edit_reason은 rejected 또는 user_comment입니다. edit에서는 기존 헤더를 유지하며 현재 revision_no를 expected_revision에 넣습니다. 문서는 content 또는 작업 scratch 내 절대 doc_path 중 하나로 보냅니다. review 파일 형식의 doc_path는 verdict/findings/comment JSON을 가리킵니다. TR의 commit_message는 한 줄 ASCII 영어 최대 200자이며 유효한 기존 메시지를 유지하는 edit에서 생략할 수 있습니다. 변경 파일 서식은 submit/changed_files를 참고합니다.",
+    "encoding": {
+      "line": "{{probe}}",
+      "reference": "conversation/encoding",
+      "fields": "body_chars, body_sha256"
+    },
+    "remote_cli": "원격 CLI에서는 현재 작업 디렉터리의 UTF-8 파일에 전체 본문(검수 JSON 포함)을 작성합니다. 파일을 읽어 요청의 content에 넣고 같은 파일에서 body_chars와 body_sha256을 계산합니다. 원격 CLI에서는 doc_path를 사용하지 않습니다.",
+    "rejected_edit": "반려 반영에는 본문과 별도로 비어 있지 않은 rejection_response가 필요합니다. 멘션이 제공한 rejection_id 또는 review_id를 그대로 전송합니다."
+  },
+  "response": "dry_run=true면 등록하지 않고 검증합니다. 저장 응답의 change_summary를 확인합니다.",
+  "errors": "리비전 충돌이면 최신 본문을 다시 읽습니다. invalid_commit_message이면 TR 메시지 형식을 확인합니다. 인코딩 거절은 conversation/encoding을 확인합니다. 빈 rejection_response는 422, 반려 대상이 일치하지 않으면 409로 거절됩니다."
+}

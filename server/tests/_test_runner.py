@@ -121,14 +121,9 @@ from config import settings
 from routers.main import app
 routes = [r.path for r in app.routes]
 ctx = settings.CONTEXT
-api_brief_route = f"{ctx}/api/v1/brief"
-api_queue_route = f"{ctx}/api/v1/queue"
-api_draft_route = f"{ctx}/api/v1/draft/{{doc_id:path}}"
-api_detail_route = f"{ctx}/api/v1/detail/{{doc_id:path}}"
-assert api_brief_route in routes
-assert api_queue_route in routes
-assert api_draft_route in routes
-assert api_detail_route in routes
+# The unauthenticated legacy brief/queue/draft/detail routes were removed.
+for removed in ("brief", "queue", "draft/{doc_id:path}", "detail/{doc_id:path}"):
+    assert f"{ctx}/api/v1/{removed}" not in routes
 
 # 9. Action Queue categories
 db.insert_document('server/N010', 'N', 'server', None, 'needs dispatch')

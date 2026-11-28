@@ -1,0 +1,9 @@
+{
+  "locale": "en",
+  "title": "Unreadable documents",
+  "summary": "Interpret body availability and base claims on the text you can read.",
+  "purpose": "Interpret body availability and base claims on the text you can read.",
+  "request": "Check `content_state` from {{route:document.read}} and reread when needed.",
+  "response": "`readable` means the read succeeded. A document containing only front matter is empty. `file_path_missing` means no recorded path, `file_not_found` means no file at the path, and `path_unresolved` means the repository could not resolve it.",
+  "errors": "Record the unavailable state and continue using verified material. Use a document-bound question if a decision requires the missing body."
+}

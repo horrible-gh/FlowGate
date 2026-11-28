@@ -56,7 +56,7 @@ __all__ = ["CANCELLED_STATUS", "is_alive", "live_end", "flow_documents", "docume
            "load_flow", "require_writable", "running_node", "node_result", "register_result", "discard_file",
            "tell_graph", "work_sets", "card_working"]
 
-CREATE_PERMISSION = "perm_document_create"     # the v0.1 document create routes' permission
+CREATE_PERMISSION = "project.document.create"     # the v0.1 document create routes' permission
 
 
 def flow_documents(flow_id: str) -> list[dict]:

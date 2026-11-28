@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "문서 부분 조회",
+  "summary": "본문 전체 대신 필요한 메타데이터, 절 또는 검색 결과를 조회합니다.",
+  "purpose": "본문 전체 대신 필요한 메타데이터, 절 또는 검색 결과를 조회합니다.",
+  "request": "{{route:document.meta}}, {{route:document.outline}}, {{route:document.section}}, {{route:document.relations}}. 절에는 개요에서 받은 `section_id`를 사용합니다. 본문 검색은 {{route:search.content}}에 `q`를 보냅니다. `doc_id`와 `group_id`는 각각 한 대화와 한 Flow로 제한합니다.",
+  "response": "이관된 단일 CH의 검색은 기본으로 턴 요약을 돌려줍니다. 자세한 위치는 `include_matches=true`, 다음 페이지는 같은 검색 조건의 `next_cursor`를 사용합니다.",
+  "errors": "커서가 잘못됐거나 조건이 달라 `400`이 나오면 처음부터 조회합니다. `doc_id`와 `group_id`는 하나만 지정합니다."
+}

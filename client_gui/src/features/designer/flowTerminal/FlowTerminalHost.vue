@@ -22,7 +22,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { allocateOverlayZIndex } from '@/core/overlay/zIndex'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
-import { isAdminFromToken } from '@shared/auth'
+import { systemCan } from '@shared/permissions/capabilities'
 import FlowTerminalWindow from './FlowTerminalWindow.vue'
 import { openFailureOf, openTerminalSession, readTerminalStatus, type OpenFailure, type TerminalSession } from './api'
 import { flowTerminalUi } from './state'
@@ -77,7 +77,7 @@ let statusSeq = 0
 async function refreshStatus() {
   const id = props.flowId
   const seq = ++statusSeq
-  if (!id || !isAdminFromToken()) { flowTerminalUi.status = null; return }
+  if (!id || !systemCan('system.settings.manage')) { flowTerminalUi.status = null; return }
   try {
     const status = await readTerminalStatus(id)
     if (!alive || seq !== statusSeq) return

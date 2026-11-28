@@ -863,7 +863,7 @@ def all_migrations_db():
         except Exception as e:
             print(f"⚠ Error in {migration_file.name}: {e}")
 
-    # Seed required data
+    # Seed required data. Permission IDs and role mappings come from the deploy SQL only.
     conn.executescript(
         """
         INSERT OR IGNORE INTO roles(role_id,role_name,is_system,created_at,updated_at)
@@ -872,39 +872,6 @@ def all_migrations_db():
                 ('role_manager','Manager',1,datetime('now'),datetime('now')),
                 ('role_worker','Worker',1,datetime('now'),datetime('now')),
                 ('role_viewer','Viewer',1,datetime('now'),datetime('now'));
-
-        INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at)
-            VALUES
-                ('system.settings.manage','Manage system settings',datetime('now')),
-                ('system.user.read','View users',datetime('now')),
-                ('system.user.create','Create user',datetime('now')),
-                ('system.user.update','Update user',datetime('now')),
-                ('system.user.delete','Delete user',datetime('now')),
-                ('system.user.assign_role','Assign role',datetime('now')),
-                ('project.settings.read','View project settings',datetime('now')),
-                ('project.settings.edit','Edit project settings',datetime('now')),
-                ('project.document_type.create','Create document type',datetime('now')),
-                ('project.document_type.update','Update document type',datetime('now')),
-                ('project.document_type.delete','Delete document type',datetime('now'));
-
-        INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
-            VALUES
-                ('role_admin','system.settings.manage'),
-                ('role_admin','system.user.read'),
-                ('role_admin','system.user.create'),
-                ('role_admin','system.user.update'),
-                ('role_admin','system.user.delete'),
-                ('role_admin','system.user.assign_role'),
-                ('role_admin','project.settings.read'),
-                ('role_admin','project.settings.edit'),
-                ('role_admin','project.document_type.create'),
-                ('role_admin','project.document_type.update'),
-                ('role_admin','project.document_type.delete'),
-                ('role_manager','project.settings.read'),
-                ('role_manager','project.settings.edit'),
-                ('role_manager','project.document_type.create'),
-                ('role_manager','project.document_type.update'),
-                ('role_manager','project.document_type.delete');
 
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)
             VALUES

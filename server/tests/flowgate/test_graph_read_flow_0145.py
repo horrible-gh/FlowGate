@@ -55,11 +55,9 @@ def active(env, decided, wired, monkeypatch, starts):
                         else auth_outbound.verify_bearer(req))
     monkeypatch.setattr(guards, "has_permission", lambda *a: True)
     from modules.flow_gate.rbac import permission_service
-    monkeypatch.setattr(permission_service, "_cache", {})
-    _sql(env["db"], "INSERT INTO roles(role_id,role_name,created_at,updated_at) VALUES (\'read0145\',\'read0145\',\'t\',\'t\')")
-    _sql(env["db"], "INSERT OR IGNORE INTO permissions(permission_id,permission_name,created_at) VALUES (\'perm_document_read\',\'perm_document_read\',\'t\')")
-    _sql(env["db"], "INSERT INTO role_permissions(role_id,permission_id) VALUES (\'read0145\',\'perm_document_read\')")
-    _sql(env["db"], "INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'read0145\',\'t\')")
+    permission_service.clear_all_cache()
+    # a fixed role that reads documents (project roles are the four fixed roles)
+    _sql(env["db"], "INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'role_viewer\',\'t\')")
     key = flow(env, doc_type="N", extra_settings=(("instruction","omit"),("review_count",1)))
     roles(key, "not_used", X, B)
     graph = start(env)
@@ -118,8 +116,54 @@ def test_reads_are_observational_and_isolate_worker_and_foreign_relations(active
         text = json.dumps(body)
         assert FOREIGN not in text and "FOREIGN_TITLE_MARKER" not in text
         assert all(s not in text for s in ("raw_token","lease_token","lease_expires_at","token_hash","stage_assignments","dispatch"))
-        assert body["capabilities"] == {"read":True,"write":False,"execute":False}
+        assert "capabilities" not in body
+    assert chat_canvas["chat_mode"] == chat_current["chat_mode"] == "read_only"
+    assert "chat_mode" not in worker_canvas and "chat_mode" not in worker_current
     assert called == [] and len(env["events"]) == events and digest(env) == before
+
+
+@pytest.mark.parametrize(("setting", "lose_claim", "expected"), [
+    ("execute", False, "execute"),
+    ("edit", False, "edit"),
+    ("edit_once", False, "edit_once"),
+    ("edit_once", True, "read_only"),
+])
+def test_graph_reads_report_applied_chat_mode(active, monkeypatch, setting, lose_claim, expected):
+    from modules.flow_gate.db import user_chat_source_access
+    from modules.flow_gate.services import graph_execution_hooks
+
+    env, _, _, _, _, _, live = active
+    run = live["ai-read-chat"]
+    call = graph_execution_hooks.call
+
+    def graph_hook(action, *args, **kwargs):
+        # Issue each chat mode with the active Graph fixture already in place.
+        if action != "chat_source_refusal":
+            return call(action, *args, **kwargs)
+
+    monkeypatch.setattr(graph_execution_hooks, "call", graph_hook)
+    user_chat_source_access.upsert("u_kim", "flowgate", FA, setting, "now")
+    if lose_claim:
+        claim = user_chat_source_access.claim
+
+        def lose_to_setting_change(user_id, project_id, group_id, token_id, claimed_at, updated_at):
+            user_chat_source_access.upsert(user_id, project_id, group_id, "read_only", updated_at)
+            return claim(user_id, project_id, group_id, token_id, claimed_at, updated_at)
+
+        monkeypatch.setattr(user_chat_source_access, "claim", lose_to_setting_change)
+    chat = token_service.issue("flowgate", FA, "chat", run["doc_ref"], "u_kim", ai_run_id=run["run_id"])
+    run["current_token_id"] = chat["token_id"]
+    if chat["one_shot_claimed"]:
+        run["chat_edit_once_token_id"] = chat["token_id"]
+        assert user_chat_source_access.commit("u_kim", "flowgate", FA, chat["token_id"], "now") == "COMMITTED"
+    # A later setting change is independent of the issued token.
+    user_chat_source_access.upsert("u_kim", "flowgate", FA, "read_only", "now")
+    before = digest(env)
+    for resource in ("canvas", "runs/current"):
+        body = ok(get(env, chat, resource))
+        assert body["chat_mode"] == expected
+        assert "capabilities" not in body
+    assert digest(env) == before
 
 
 def test_real_tokens_v1_contract_and_all_refusals_preserve_database(active):
@@ -160,12 +204,21 @@ def test_real_worker_fences_and_revocation(active):
         assert digest(env)==before
         _sql(env["db"],restore,values)
     from modules.flow_gate.rbac import permission_service
-    _sql(env["db"],"DELETE FROM user_project_roles WHERE user_id=\'u_kim\' AND role_id=\'read0145\'")
+    _sql(env["db"],"DELETE FROM user_project_roles WHERE user_id=\'u_kim\' AND role_id=\'role_viewer\'")
+    # the token owner is a system administrator (who holds everything): take the flag and any
+    # workspace value away as well, so the owner really holds no read on the project
+    _sql(env["db"],"UPDATE users SET is_admin=0, authz_version=authz_version+1 WHERE user_id=\'u_kim\'")
+    members=_sql(env["db"],"SELECT workspace_id, role FROM workspace_members WHERE user_id=\'u_kim\'")
+    _sql(env["db"],"DELETE FROM workspace_members WHERE user_id=\'u_kim\'")
     permission_service.invalidate_cache("u_kim","flowgate")
     before=digest(env)
     assert get(env,chat).status_code==get(env,worker).status_code==403
     assert digest(env)==before
-    _sql(env["db"],"INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'read0145\',\'t\')")
+    _sql(env["db"],"INSERT INTO user_project_roles(user_id,project_id,role_id,granted_at) VALUES (\'u_kim\',\'flowgate\',\'role_viewer\',\'t\')")
+    for member in members or []:
+        _sql(env["db"],"INSERT INTO workspace_members(workspace_id,user_id,role,created_at,updated_at) VALUES (?,\'u_kim\',?,\'t\',\'t\')",
+             (member["workspace_id"], member["role"]))
+    _sql(env["db"],"UPDATE users SET is_admin=1, authz_version=authz_version+1 WHERE user_id=\'u_kim\'")
     permission_service.invalidate_cache("u_kim","flowgate")
     live["ai-read-chat"]["status"]="cancelling"
     assert get(env,chat).status_code == 409

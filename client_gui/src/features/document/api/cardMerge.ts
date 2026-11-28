@@ -75,7 +75,8 @@ export interface CardMergeAutoAttempt {
   readonly no: number
   /** null = a mode this screen does not know (read as the plain AI try). */
   readonly mode: CardMergeAutoMode | null
-  readonly provider: { readonly id: string; readonly name: string } | null
+  readonly provider: { readonly id: string; readonly name: string | null } | null
+  readonly reasonCode?: string | null
   /** null = a result this screen does not know. */
   readonly result: CardMergeAutoResult | null
   readonly reason: string | null
@@ -97,6 +98,8 @@ export interface CardMergeAutoUnresolved {
 
 export interface CardMergeAutoResolve {
   readonly state: CardMergeAutoStateKey
+  readonly phase?: string | null
+  readonly waiting?: { readonly reason: 'run_in_progress'; readonly runId: string | null; readonly since: string | null } | null
   readonly attempt: number
   readonly maxAttempts: number
   readonly attempts: readonly CardMergeAutoAttempt[]
@@ -147,6 +150,11 @@ const provider = (raw: unknown): { id: string; name: string } | null => {
   return id ? { id, name: text(row.name) ?? id } : null
 }
 
+function autoProviderText(value: unknown): string | null {
+  const name = text(value)?.trim()
+  return name && !/^(none|null)$/i.test(name) ? name : null
+}
+
 /** `auto_resolve` -> CardMergeAutoResolve; null for a missing / null / unknown-state value (the screen then draws nothing extra). */
 export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
@@ -157,10 +165,13 @@ export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | nul
   const attempts = Array.isArray(row.attempts)
     ? row.attempts.map((item, index): CardMergeAutoAttempt => {
         const attempt = record(item)
+        const ai = record(attempt.provider)
+        const id = autoProviderText(ai.id)
         return {
           no: count(attempt.no) ?? index + 1,
           mode: cardMergeAutoModes.find((key) => key === attempt.mode) ?? null,
-          provider: provider(attempt.provider),
+          provider: id ? { id, name: autoProviderText(ai.name) } : null,
+          reasonCode: text(attempt.reason_code),
           result: cardMergeAutoResults.find((key) => key === attempt.result) ?? null,
           reason: text(attempt.reason),
           reasonSummary: text(attempt.reason_summary),
@@ -186,7 +197,12 @@ export function toCardMergeAutoResolve(raw: unknown): CardMergeAutoResolve | nul
       })
     : []
   const fileCount = count(row.count)
+  const waiting = record(row.waiting)
   return {
+    phase: text(row.phase),
+    waiting: waiting.reason === 'run_in_progress'
+      ? { reason: waiting.reason, runId: text(waiting.run_id), since: text(waiting.since) }
+      : null,
     state, attempt: count(row.attempt) ?? attempts.length, maxAttempts: maxAttempts && maxAttempts > 0 ? maxAttempts : 3, attempts, unresolved,
     fileCount: fileCount !== null && fileCount > 0 ? Math.floor(fileCount) : null,
   }

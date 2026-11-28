@@ -19,8 +19,8 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 _log = logging.getLogger(__name__)
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-READ_PERMISSION = "perm_document_read"
-WRITE_PERMISSION = "perm_document_update"
+READ_PERMISSION = "project.document.read"
+WRITE_PERMISSION = "project.document.update"
 
 _MESSAGES = {
     "document_storage_unwritable": {

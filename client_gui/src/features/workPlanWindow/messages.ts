@@ -23,6 +23,7 @@ const ko = {
     unreadable: '표로 읽을 수 없습니다.',
   },
   lock: {
+    permission: '문서를 고칠 권한이 없어 편집할 수 없습니다.',
     read_only: '읽기 전용으로 열린 작업계획입니다.',
     run_locked: '플로우가 실행 중이라 편집할 수 없습니다.',
     ai_running: 'AI 실행 중이라 편집할 수 없습니다.',
@@ -259,6 +260,7 @@ const en: typeof ko = {
     unreadable: 'Cannot be read as a table.',
   },
   lock: {
+    permission: 'You may not edit documents here, so the plan cannot be edited.',
     read_only: 'This work plan is open read-only.',
     run_locked: 'The flow is running; the plan cannot be edited.',
     ai_running: 'An AI run is in progress; the plan cannot be edited.',
@@ -495,6 +497,7 @@ const ja: typeof ko = {
     unreadable: '表として読めません。',
   },
   lock: {
+    permission: '文書を編集する権限がないため、編集できません。',
     read_only: '読み取り専用で開いた作業計画です。',
     run_locked: 'フローの実行中のため編集できません。',
     ai_running: 'AI 実行中のため編集できません。',

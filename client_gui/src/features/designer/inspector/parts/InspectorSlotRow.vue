@@ -88,6 +88,11 @@
       <span v-if="$slots.io && decisionLayout" class="inspector-slot-io" data-test="inspector-slot-io"><slot name="io" /></span>
       <slot />
     </span>
+    <!-- flowgate.v02test.0084 #13 (rework): an optional words line under the badge (the `detail` slot), in its own grid row
+         from the value column to the end, so it keeps its room on a narrow list instead of sharing the first row. -->
+    <div v-if="$slots.detail && !empty" class="inspector-slot-detail" data-test="inspector-slot-detail">
+      <slot name="detail" />
+    </div>
   </div>
 </template>
 
@@ -508,6 +513,13 @@ const warns = computed(() => lineWarns({ docId: props.id, bodyState: props.bodyS
   .inspector-slot-state {
     padding: 0 5px;
   }
+}
+/* flowgate.v02test.0084 #13 (rework): the `detail` line — the second row, under the badge, to the end of the line. */
+.inspector-slot-detail {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  min-width: 0;
+  margin-top: -4px;
 }
 /* 0126: keep the file/info/decision groups together and in reading order at every width. */
 .inspector-slot.has-decision {

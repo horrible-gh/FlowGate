@@ -64,7 +64,7 @@ def get_current_user(payload:dict=Depends(verify_token)):
     except Exception as exc:
         raise auth_unavailable(exc) from exc
     if not user:raise HTTPException(401,"User not found")
-    if not user.get("is_active"):raise HTTPException(403,"User account is inactive")
+    if not user.get("is_active"):raise HTTPException(401,"User account is inactive")
     return user
 def optional_current_user(token:str|None=Depends(OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login",auto_error=False))):
     if not token:return None

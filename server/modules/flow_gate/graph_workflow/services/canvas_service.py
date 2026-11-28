@@ -191,8 +191,19 @@ def _read(group: dict, user_id: Optional[str], ident, view: Optional[str], colla
                     lookup if lookup is not None else lambda ids: lookup_documents(ids),
                     run, latest_definition=view == "latest")
     _place(proj, layout_store.positions(flow_id))
+    actor = None
+    if user_id and project_id:
+        from modules.flow_gate.db.users import get_by_id
+
+        actor = get_by_id(user_id)
     for node in proj.nodes:
-        node.setdefault("title_state", None)                      # free documents, v0.1 slots
+        document = node.get("document") or {}
+        doc_id = node.get("doc_id") or document.get("doc_id")
+        if actor and doc_id in snap.docs_by_id:
+            from modules.flow_gate.rbac import capabilities
+
+            node["capabilities"] = capabilities.project(actor, group, snap.docs_by_id[doc_id])
+        node.setdefault("title_state", None)
     flow_ref = card_numbers.decorate(flow_id, proj.nodes)          # card_ref per node: F77-12 and its forms
     applied, ignored = cm.parse_collapse(collapse)
     hidden_counts = _collapse(proj, applied)

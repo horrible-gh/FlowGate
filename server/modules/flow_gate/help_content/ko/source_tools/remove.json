@@ -1,0 +1,86 @@
+{
+  "locale": "ko",
+  "title": "remove",
+  "summary": "파일 또는 빈 디렉터리 하나를 삭제한다.",
+  "purpose": "파일 또는 빈 디렉터리 하나를 삭제한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "remove"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "삭제할 파일, 빈 디렉터리 또는 흔적 디렉터리의 소스 루트 기준 상대 경로."
+      },
+      {
+        "name": "recursive",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "빈 디렉터리는 이 옵션 없이도 삭제한다. 내용이 있는 디렉터리를 통째로 지운다. 도구가 남긴 흔적(.test-tmp-*, 점 디렉터리, node_modules 등)으로 판정되는 경로에만 허용되고, 그 밖에는 422다."
+      }
+    ],
+    "example": {
+      "path": "app/obsolete.py",
+      "recursive": false
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
+      "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요.",
+      "write/patch/move/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "remove",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "path": "app/obsolete.py",
+      "removed": true,
+      "continuation": {
+        "ment": "작업 레포트에 변경 파일을 기록합니다.",
+        "report_doc_id": null,
+        "next_action": "write_report"
+      }
+    },
+    "details": [
+      "삭제 성공 시 변경 파일 절에 경로를 적습니다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "경로가 없거나, 비어 있지 않은 디렉터리에 recursive 를 주지 않았다."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "그룹 작업 공간을 쓸 수 없다."
+    },
+    {
+      "http_status": 409,
+      "code": "conflict",
+      "when": "읽기 전용/잠금이라 지울 수 없다. 재시도해도 같은 결과다(503 아님)."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "루트·.git·디렉터리 별칭이거나, 루트 밖 또는 내용이 있는 일반 소스 폴더의 재귀 삭제다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 remove 스코프가 없다."
+    }
+  ]
+}

@@ -19,7 +19,7 @@
       <code v-if="item.abortFailure?.reason" class="gx-abort-failure-reason" data-test="git-abort-failure-reason">{{ item.abortFailure.reason }}</code>
       <small v-if="item.abortFailure?.at" class="gx-kicker">{{ t('gui.git.abort_failures.at', { at: item.abortFailure.at }) }}</small>
       <div class="gx-actions">
-        <button v-if="item.groupId" type="button" class="gx-btn danger" :disabled="!session.canAct.value" data-test="git-abort-failure-force" @click="force(item)">
+        <button v-if="item.groupId" type="button" class="gx-btn danger" :disabled="!session.canMerge.value" data-test="git-abort-failure-force" @click="force(item)">
           {{ t('gui.git.abort_failures.force') }}
         </button>
       </div>

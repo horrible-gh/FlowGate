@@ -26,6 +26,7 @@ export type WorktreeButton = 'stage' | 'unstage' | 'unstageAll' | 'commit' | 'ai
  */
 export const WORKTREE_REASON_CODES: readonly string[] = [
   'read_only',
+  'merge_read_only',
   'forbidden',
   'worktree_unavailable',
   'session_open',
@@ -63,7 +64,10 @@ export const WORKTREE_REASON_CODES: readonly string[] = [
 ]
 
 export interface WorktreeReasonInput {
+  // `project.git.write` refused (or a read-only Flow): every button but the merge ones.
   readOnly: boolean
+  // `project.git.merge` refused (or a read-only Flow): only the merge and follow-up Push buttons. Absent = `readOnly`.
+  mergeReadOnly?: boolean
   forbidden: boolean
   // A worktree action or a 0033 action is running: disabled without a reason.
   busy: boolean
@@ -102,6 +106,8 @@ export interface WorktreeReason {
   code: string | null
   // Values of the reason text (e.g. the uncommitted count); absent when the text has none.
   params?: Record<string, string | number>
+  // The server's own sentence for the refusal (the capabilities answer), shown instead of the generic wording.
+  text?: string
 }
 
 const OK: WorktreeReason = { disabled: false, code: null }
@@ -169,8 +175,14 @@ function pushReason(input: WorktreeReasonInput): WorktreeReason {
 
 /** The first rule of §3-5 that applies to `button`, or enabled. */
 export function worktreeReason(button: WorktreeButton, input: WorktreeReasonInput): WorktreeReason {
-  // 1–3: read-only, a 403 seen in this session, an action running.
-  if (input.readOnly) return off('read_only')
+  // 1–3: read-only, a 403 seen in this session, an action running. Each button is under its own server permission:
+  // merge and the follow-up Push under project.git.merge, every other one under project.git.write. Both refused (a
+  // view-only role, a read-only Flow) reads as plain "read only"; only the merge permission refused says so.
+  if (button === 'merge' || button === 'push') {
+    if (input.mergeReadOnly ?? input.readOnly) return off(input.mergeReadOnly && !input.readOnly ? 'merge_read_only' : 'read_only')
+  } else if (input.readOnly) {
+    return off('read_only')
+  }
   if (input.forbidden) return off('forbidden')
   if (input.busy) return BUSY
   // Fetch has no other rule; the follow-up push and the merge have their own columns.
@@ -211,12 +223,12 @@ export function worktreeReasons(input: WorktreeReasonInput): Record<WorktreeButt
 }
 
 /** The i18n key and values of a reason's short line; null = no text (enabled or in progress). */
-export function reasonMessage(reason: WorktreeReason): { key: string; params: Record<string, string> } | null {
+export function reasonMessage(reason: WorktreeReason): { key: string; params: Record<string, string>; text?: string } | null {
   if (!reason.disabled || !reason.code) return null
   if (WORKTREE_REASON_CODES.includes(reason.code)) {
     const params: Record<string, string> = {}
     for (const [key, value] of Object.entries(reason.params ?? {})) params[key] = String(value)
-    return { key: `gui.git.reason.${reason.code}`, params }
+    return reason.text ? { key: `gui.git.reason.${reason.code}`, params, text: reason.text } : { key: `gui.git.reason.${reason.code}`, params }
   }
   return { key: 'gui.git.reason.unknown', params: { code: reason.code } }
 }

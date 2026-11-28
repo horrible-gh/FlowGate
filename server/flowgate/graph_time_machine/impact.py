@@ -177,7 +177,13 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
                      and not nodes[key].get("root_bound")]
     if missing_nodes:
         block("commit_attribution_missing", node_keys=missing_nodes)
-    mixed = [a["attempt_id"] for a in selected if a.get("input_source") == "integration_head"]
+    # A conflict join may consume the integrated HEAD. Its own merge can still
+    # be reverted against its first parent; borrowing the HEAD is not itself a
+    # reason to refuse. Keep missing legacy evidence closed. The Git step checks
+    # consumers outside this structural scope before changing any files.
+    mixed = [a["attempt_id"] for a in selected
+             if a.get("input_source") == "integration_head"
+             and (not a.get("input_commit") or not decoded.get(a["attempt_id"]))]
     if mixed:
         block("integration_head_input", attempt_ids=sorted(mixed))
 
@@ -197,6 +203,11 @@ def calculate(snapshot: Snapshot, node_key: str) -> dict:
               "input_commit", "result_commit", "integration_status", "integrated_commit")
     impact = {
         "node_keys": sorted(affected),
+        "integration_head_inputs": [
+            {"attempt_id": a["attempt_id"], "node_key": a["node_key"],
+             "input_commit": a.get("input_commit"), "selected": a["attempt_id"] in selected_ids}
+            for a in sorted(attempts.values(), key=lambda a: a["attempt_id"])
+            if a.get("input_source") == "integration_head"],
         "revision_nos": sorted({a["revision_no"] for a in selected}
                                | ({revision_no} if run else set())),
         "attempts": [{**{k: a.get(k) for k in fields},

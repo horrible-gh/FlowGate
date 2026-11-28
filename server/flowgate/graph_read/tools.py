@@ -49,7 +49,7 @@ def descriptors():
         if resource == "canvas":
             props["view"] = {"type": "string", "enum": ["revision", "latest"]}
         tool = {"name": name, "description": "Read stored " + resource + " state of this chat's bound group only. "
-                "No writes or execution; no other groups. A 413 requires the CLI read path.",
+                "This tool is read-only. The response includes the applied chat_mode. A 413 requires the CLI read path.",
                 "schema": {"type": "object", "properties": props, "required": ["flow_id"], "additionalProperties": False},
                 "handler": stub, "own_validation": True, "completion": False,
                 "call_handler": lambda run, ctx, name=name: call(run, ctx, name)}

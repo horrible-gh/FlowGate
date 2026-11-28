@@ -23,7 +23,7 @@ Session (Console user) routes::
 The AI side (``POST /api/v1/attachment-requests``, Bearer = a live run token) lives in
 ``document_routes`` next to the other worker attachment routes.
 
-Reads need ``perm_document_read`` and a decision ``perm_document_update`` on the request's
+Reads need ``project.document.read`` and a decision ``project.document.update`` on the request's
 project — any such user, whoever started the run and whatever screen mode they are in. The
 decision route is exempt from the group AI-run lease (``mutation_policy``), so it answers while
 an AI works in the same group. All handlers are plain ``def`` (blocking store / filesystem work
@@ -88,7 +88,7 @@ def attachment_request_counts(flow_id: str = Query(...), user: dict = Depends(ge
 @router.get("/attachment-requests/limits")
 def attachment_request_limits(project_id: str = Query(...), user: dict = Depends(get_current_user)):
     try:
-        svc.require_permission(user, "perm_document_read", project_id)
+        svc.require_permission(user, "project.document.read", project_id)
         data = request_settings.effective_with_sources(project_id)
         return {"ok": True, "project_id": project_id, **data}
     except svc.RequestError as exc:

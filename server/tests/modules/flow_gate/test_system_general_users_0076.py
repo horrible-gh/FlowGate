@@ -252,34 +252,36 @@ def _delegate(env, uid="usr_dd0076"):
     permission_service.clear_all_cache()
 
 
-# What the real router/auth/RBAC answered for D (is_admin=0, the four permissions delegated) on
-# every the earlier implementation route, as observed. Pinned so a change in the server's behaviour shows up; it records
-# the existing delegated-permission check, it is NOT an is_admin-only result and NOT a release basis.
+# What the real router/auth/RBAC answers for D (is_admin=0, the four permissions delegated through a
+# custom role on __SYSTEM__) on every route. With the fixed roles, system permissions belong to system
+# administrators only and a role on __SYSTEM__ grants nothing, so the delegation no longer opens any
+# of them (it used to: 200/201, and 409 past RBAC for the invite).
 D_OBSERVED = {
-    ("GET", "/system/storage-root"): 200,
-    ("GET", "/system/settings"): 200,
-    ("PATCH", "/system/settings"): 200,
-    ("GET", "/system/users"): 200,
-    ("POST", "/system/users"): 201,
-    ("PUT", "/system/users/usr_n0076/admin"): 200,
-    ("POST", "/system/users/usr_n0076/disable"): 200,
-    ("POST", "/system/users/usr_n0076/enable"): 200,
-    ("POST", "/system/users/usr_n0076/invite"): 409,  # past RBAC: N is active, not invited (service rule)
-    ("POST", "/system/users/usr_n0076/password-reset"): 200,
-    ("POST", "/system/users/usr_n0076/tfa-reset"): 200,
+    ("GET", "/system/storage-root"): 403,
+    ("GET", "/system/settings"): 403,
+    ("PATCH", "/system/settings"): 403,
+    ("GET", "/system/users"): 403,
+    ("POST", "/system/users"): 403,
+    ("PUT", "/system/users/usr_n0076/admin"): 403,
+    ("POST", "/system/users/usr_n0076/disable"): 403,
+    ("POST", "/system/users/usr_n0076/enable"): 403,
+    ("POST", "/system/users/usr_n0076/invite"): 403,
+    ("POST", "/system/users/usr_n0076/password-reset"): 403,
+    ("POST", "/system/users/usr_n0076/tfa-reset"): 403,
 }
 
 
 def test_v06_d_delegated_observation_every_t3_route_and_what_it_changed(env):
     """D §5.1 D: is_admin=false with the target system permissions explicitly delegated, through the
     real router/auth/RBAC (no override, no conftest seed). Every §2.5/§2.7 call is made and its
-    status and the tables it changed are recorded. Nothing here requires a 403: the server's check
-    is a permission check, and with the delegation it lets D through — the observed result."""
+    status and the tables it changed are recorded. A role on __SYSTEM__ is not read by the judgment,
+    so the delegation changes nothing: every call is refused and no setting moves."""
     env.client.get(f"{API}/system/users", headers=env.h("A"))  # the list GET may create the default workspace; start after it
     before_undelegated = [(m, u.replace(API, ""), _send(env.client, m, u, b, env.h("D")).status_code)
                           for m, u, b in _system_calls("usr_n0076")[:2]]
     assert {status for _, _, status in before_undelegated} == {403}, before_undelegated  # role_viewer only
 
+    settings_before = _raw_settings(env.db_path, ("scratch_ttl_value", "scratch_ttl_unit", "ai_repeat_count_max"))
     _delegate(env)
     db_before = _snapshot(env.db_path)
     seen = []
@@ -295,7 +297,7 @@ def test_v06_d_delegated_observation_every_t3_route_and_what_it_changed(env):
     print(f"V06 D(delegated) tables changed: {changed}; workspace rows removed: {removed}; scratch/ceiling now: {settings}")
 
     assert seen == [(method, path, D_OBSERVED[(method, path)]) for method, path, _ in seen]
-    assert settings == ("6", "hour", "5")
+    assert settings == settings_before
     # The change range of these calls: settings rows, users and their roles/sessions — no Workspace
     # row removed, no other setting touched.
     assert set(changed) <= {"system_settings", "users", "user_project_roles", "auth_sessions", "refresh_tokens", "totp_backup_codes", "workspace_members", "user_invites"}, changed
@@ -307,9 +309,10 @@ def test_v06_d_delegated_observation_every_t3_route_and_what_it_changed(env):
 
 
 
+# The delegation cannot raise D to administrator nor disable an administrator any more.
 D_ADMIN_FLAG_OBSERVED = {
-    "self_admin": (200, True),
-    "disable_admin": (200, "disabled"),
+    "self_admin": (403, False),
+    "disable_admin": (403, "active"),
 }
 
 

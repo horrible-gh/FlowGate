@@ -1,0 +1,337 @@
+{
+  "help.index": {
+    "method": "GET",
+    "path": "/help",
+    "api": "v1"
+  },
+  "help.item": {
+    "method": "GET",
+    "path": "/help/items/{name}",
+    "api": "v1"
+  },
+  "document.read": {
+    "method": "GET",
+    "path": "/document/{doc_id}",
+    "api": "v1"
+  },
+  "document.path": {
+    "method": "GET",
+    "path": "/document/{doc_id}/path",
+    "api": "v1"
+  },
+  "document.meta": {
+    "method": "GET",
+    "path": "/document/{doc_id}/meta",
+    "api": "v1"
+  },
+  "document.outline": {
+    "method": "GET",
+    "path": "/document/{doc_id}/outline",
+    "api": "v1"
+  },
+  "document.section": {
+    "method": "GET",
+    "path": "/document/{doc_id}/section",
+    "api": "v1"
+  },
+  "conversation.turns": {
+    "method": "GET",
+    "path": "/conversation/{doc_id}/turns",
+    "api": "v1"
+  },
+  "conversation.turn": {
+    "method": "POST",
+    "path": "/conversation/{doc_id}/turn",
+    "api": "v1"
+  },
+  "attachments.document.list": {
+    "method": "GET",
+    "path": "/document/{doc_id}/attachments",
+    "api": "v1"
+  },
+  "attachments.document.read": {
+    "method": "GET",
+    "path": "/document/{doc_id}/attachments/{name}/read",
+    "api": "v1"
+  },
+  "attachments.document.copy": {
+    "method": "POST",
+    "path": "/document/{doc_id}/attachments/{name}/copy",
+    "api": "v1"
+  },
+  "attachments.flow.list": {
+    "method": "GET",
+    "path": "/flow/{flow_id}/attachments",
+    "api": "v1"
+  },
+  "cards.canvas": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/canvas",
+    "api": "v2/ai"
+  },
+  "cards.ai_options": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/ai-options",
+    "api": "v2/chat"
+  },
+  "cards.place": {
+    "method": "POST",
+    "path": "/flows/{flow_id}/cards",
+    "api": "v2/chat"
+  },
+  "cards.run": {
+    "method": "POST",
+    "path": "/flows/{flow_id}/runs",
+    "api": "v2/chat"
+  },
+  "cards.roles": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/nodes/{node_key}/roles",
+    "api": "v2/chat"
+  },
+  "cards.roles.update": {
+    "method": "PATCH",
+    "path": "/flows/{flow_id}/nodes/{node_key}/roles",
+    "api": "v2/chat"
+  },
+  "cards.recovery_basis": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/recovery-basis",
+    "api": "v2/chat"
+  },
+  "cards.node_basis": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/nodes/{node_key}/basis",
+    "api": "v2/chat"
+  },
+  "cards.retry": {
+    "method": "POST",
+    "path": "/flows/{flow_id}/nodes/{node_key}/retry",
+    "api": "v2/chat"
+  },
+  "cards.restart": {
+    "method": "POST",
+    "path": "/flows/{flow_id}/restart",
+    "api": "v2/chat"
+  },
+  "question.register": {
+    "method": "POST",
+    "path": "/q/{doc_id}/questions",
+    "api": "v1"
+  },
+  "question.search": {
+    "method": "GET",
+    "path": "/q/{doc_id}/search",
+    "api": "v1"
+  },
+  "question.search_item": {
+    "method": "GET",
+    "path": "/q/{doc_id}/search/{answer_id}",
+    "api": "v1"
+  },
+  "submit.inbox": {
+    "method": "POST",
+    "path": "/inbox",
+    "api": "v1"
+  },
+  "source.tool": {
+    "method": "POST",
+    "path": "/remote/{name}",
+    "api": "v1"
+  },
+  "source.tool_help": {
+    "method": "GET",
+    "path": "/help/tools/{name}",
+    "api": "v1"
+  },
+  "cards.questions": {
+    "method": "GET",
+    "path": "/questions",
+    "api": "v2/chat"
+  },
+  "cards.question_answer": {
+    "method": "POST",
+    "path": "/questions/{doc_id}/items/{item_id}/answers",
+    "api": "v2/chat"
+  },
+  "chat.commands": {
+    "method": "POST",
+    "path": "/chat-commands",
+    "api": "v1"
+  },
+  "chat.command": {
+    "method": "GET",
+    "path": "/chat-commands/{request_id}",
+    "api": "v1"
+  },
+  "workflow.head": {
+    "method": "GET",
+    "path": "/workflow/{doc_id}/head",
+    "api": "v1"
+  },
+  "workflow.sequence": {
+    "method": "GET",
+    "path": "/workflow/{doc_id}/sequence",
+    "api": "v1"
+  },
+  "workflow.decide": {
+    "method": "POST",
+    "path": "/workflow/{doc_id}/decide",
+    "api": "v1"
+  },
+  "workflow.worker_decide": {
+    "method": "POST",
+    "path": "/workflow/decide",
+    "api": "v1"
+  },
+  "workflow.worker_sequence_update": {
+    "method": "PATCH",
+    "path": "/workflow/sequence",
+    "api": "v1"
+  },
+  "test_commands.engine_recipes": {
+    "method": "GET",
+    "path": "/test-commands/help",
+    "api": "v1"
+  },
+  "workflow.advance": {
+    "method": "POST",
+    "path": "/workflow/{doc_id}/advance",
+    "api": "v1"
+  },
+  "group.next_action": {
+    "method": "GET",
+    "path": "/group/{gid}/next-action",
+    "api": "v1"
+  },
+  "self_check.run": {
+    "method": "POST",
+    "path": "/documents/{tr_doc_id}/self-check/runs",
+    "api": "v1"
+  },
+  "self_check.list": {
+    "method": "GET",
+    "path": "/documents/{tr_doc_id}/self-check/runs",
+    "api": "v1"
+  },
+  "self_check.read": {
+    "method": "GET",
+    "path": "/documents/{tr_doc_id}/self-check/runs/{run_id}",
+    "api": "v1"
+  },
+  "self_check.cancel": {
+    "method": "POST",
+    "path": "/documents/{tr_doc_id}/self-check/runs/{run_id}/cancel",
+    "api": "v1"
+  },
+  "self_check.draft.run": {
+    "method": "POST",
+    "path": "/self-check/draft/runs",
+    "api": "v1"
+  },
+  "self_check.draft.list": {
+    "method": "GET",
+    "path": "/self-check/draft/runs",
+    "api": "v1"
+  },
+  "self_check.draft.read": {
+    "method": "GET",
+    "path": "/self-check/draft/runs/{run_id}",
+    "api": "v1"
+  },
+  "self_check.draft.cancel": {
+    "method": "POST",
+    "path": "/self-check/draft/runs/{run_id}/cancel",
+    "api": "v1"
+  },
+  "self_check.group.list": {
+    "method": "GET",
+    "path": "/self-check/group/runs",
+    "api": "v1"
+  },
+  "self_check.group.read": {
+    "method": "GET",
+    "path": "/self-check/group/runs/{run_id}",
+    "api": "v1"
+  },
+  "help.leaf": {
+    "method": "GET",
+    "path": "/help/items/{name}/{child}",
+    "api": "v1"
+  },
+  "search.documents": {
+    "method": "GET",
+    "path": "/search/documents",
+    "api": "v1"
+  },
+  "search.content": {
+    "method": "GET",
+    "path": "/search/documents/content",
+    "api": "v1"
+  },
+  "list.groups": {
+    "method": "GET",
+    "path": "/list/projects/{project}/groups",
+    "api": "v1"
+  },
+  "list.group": {
+    "method": "GET",
+    "path": "/list/groups/{group_id}",
+    "api": "v1"
+  },
+  "list.group_documents": {
+    "method": "GET",
+    "path": "/list/groups/{group_id}/documents",
+    "api": "v1"
+  },
+  "list.doc_types": {
+    "method": "GET",
+    "path": "/help/doc_type",
+    "api": "v1"
+  },
+  "cards.run_current": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/runs/current",
+    "api": "v2/ai"
+  },
+  "chat.document": {
+    "method": "GET",
+    "path": "/documents/{doc_id}",
+    "api": "v2/chat"
+  },
+  "chat.document.revise": {
+    "method": "POST",
+    "path": "/documents/{doc_id}/revisions",
+    "api": "v2/chat"
+  },
+  "chat.document.create": {
+    "method": "POST",
+    "path": "/documents",
+    "api": "v2/chat"
+  },
+  "chat.slot_document": {
+    "method": "GET",
+    "path": "/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document",
+    "api": "v2/chat"
+  },
+  "chat.slot_document.revise": {
+    "method": "POST",
+    "path": "/flows/{flow_id}/nodes/{node_key}/slots/{slot}/document/revisions",
+    "api": "v2/chat"
+  },
+  "attachments.upload_request": {
+    "method": "POST",
+    "path": "/attachment-requests",
+    "api": "v1"
+  },
+  "document.relations": {
+    "method": "GET",
+    "path": "/document/{doc_id}/relations",
+    "api": "v1"
+  },
+  "source.tools": {
+    "method": "GET",
+    "path": "/help/tools",
+    "api": "v1"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "locale": "ja",
+  "title": "カードを配置",
+  "summary": "カードを配置",
+  "purpose": "カードを配置",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": "POSTでcards配列を送ります。各カードはlabel、doc_type（既定T、またはTS/N/D/P/L/DB）、roles、settingsを指定できます。instruction/execution/reviewはkind=assignedとprovider_id、またはkind=not_usedを使います。settingsはreview_count（0、-1または許容回数）、restart、time_limit（分）、verify_max_runs、verify_run_minutesです。afterには基準node_keyを指定します。gate=falseで確認カードの作成を省略できます。並列配置はcards/topologyを参照します。"
+  },
+  "response": "linksを省略すると最大5枚を直列に配置します。rootは空のFlowに作った開始カードです。defaults_usedは既定値を使った役割です。返されたnode_keyとslot=instructionで{{route:chat.slot_document.revise}}に指示を書きます。ヘッダーを省略すると既存のものを保持します。",
+  "errors": "409 chat_cards_anchor_ambiguousでは対象node_keyをafterに指定します。422 ai_not_selectableではcards/ai_optionsを再取得します。設定値が拒否されたら応答のchoicesを確認します。"
+}

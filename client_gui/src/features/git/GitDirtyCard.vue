@@ -2,15 +2,21 @@
   <section v-if="dirty" class="gx-card warn" data-test="git-dirty-card">
     <div class="gx-title" data-test="git-dirty-title">{{ t('gui.git.dirty.title') }} · {{ countText }}</div>
     <div class="gx-files">
-      <GitFileRow
-        v-for="row in visibleRows"
-        :key="`${row.letterKind}:${row.path}`"
-        :path="row.path"
-        :letter="row.letter"
-        @select="ctx.openDiff('dirty', row.path, row.letter)"
-      />
+      <!-- flowgate.v02test.0106: expanded, the rows scroll inside a capped area; [접기] stays outside it, always visible. -->
+      <div class="gx-files-list" :class="{ 'is-scroll': expanded }" data-test="git-dirty-list">
+        <GitFileRow
+          v-for="row in visibleRows"
+          :key="`${row.letterKind}:${row.path}`"
+          :path="row.path"
+          :letter="row.letter"
+          @select="ctx.openDiff('dirty', row.path, row.letter)"
+        />
+      </div>
       <button v-if="hiddenRows > 0" type="button" class="gx-files-more" data-test="git-dirty-more" @click="expanded = true">
         {{ t('gui.git.files_more', { n: hiddenRows }) }}
+      </button>
+      <button v-if="collapsible" type="button" class="gx-files-more" data-test="git-dirty-less" @click="expanded = false">
+        {{ t('gui.git.files_less') }}
       </button>
       <div v-if="dirty.hiddenUntracked > 0 && (expanded || hiddenRows === 0)" class="gx-files-more is-static" data-test="git-dirty-partial">
         {{ t('gui.git.dirty.more_partial', { n: dirty.hiddenUntracked }) }}
@@ -73,6 +79,9 @@ const rows = computed<Row[]>(() => {
 })
 const visibleRows = computed(() => (expanded.value ? rows.value : rows.value.slice(0, FILE_PREVIEW)))
 const hiddenRows = computed(() => rows.value.length - visibleRows.value.length)
+// [접기] only while expanded and there is something to hide again: a refresh that leaves FILE_PREVIEW rows or
+// fewer shows neither button (the expanded choice itself is kept across refreshes).
+const collapsible = computed(() => expanded.value && rows.value.length > FILE_PREVIEW)
 
 // Only drawn tracked rows are asked about, and only once per status generation.
 watch(

@@ -258,10 +258,10 @@ def test_auth_and_permission(env):
         res = c.get(url, headers={"Authorization": f"Bearer {token}"})
         assert res.status_code == 403 and res.json()["error"] == {
             "code": "token_kind_not_allowed", "message": res.json()["error"]["message"], "params": {"token_kind": "worker"}}
-    env["denied"].add(("u_lee", "perm_document_read"))
+    env["denied"].add(("u_lee", "project.document.read"))
     res = _get(env, F51, user="u_lee")
     assert res.status_code == 403 and res.json()["error"]["params"] == {"flow_id": F51, "required": "read"}
-    env["denied"].add(("u_kim", "perm_document_update"))
+    env["denied"].add(("u_kim", "project.document.update"))
     res = _put(env, F51, {"viewport": {"x": 0, "y": 0, "zoom": 1}})
     assert res.status_code == 403 and res.json()["error"]["params"] == {"flow_id": F51, "required": "write"}
 

@@ -6,7 +6,7 @@
        (CH) — the lines are the card's documents (made when it was placed); the
        지시서 line is hidden when the card's settings omit the instruction (useResearchCard). -->
   <section class="inspector-research-card" data-test="inspector-research-card" :data-doc-type="target.docType ?? ''">
-    <InspectorSlotList :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
+    <InspectorSlotList :edit-refusal="refusals.update.value" :write-refusal="refusals.update.value ?? refusals.create.value" :decisions="documentDecisions" :slots="lines" :editable="!target.readOnly" @open="open" @edit="edit" @history="history" @action="action">
       <!-- flowgate.v02.0068 T#1: a document line's [업로드][다운로드]. -->
       <template #io="{ docId }"><DocumentIoGroup :doc-id="docId"  :project-id="target.projectId" :group-id="target.flowId" :card="cardDocumentContext(target, docId)" /></template>
     </InspectorSlotList>
@@ -18,7 +18,7 @@ import { useCardDocumentDecisions } from '../../openDocument'
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { INSPECTOR_HOST } from '../../inspectorHost'
-import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory } from '../../openDocument'
+import { cardDocumentContext, cardLineRow, DocumentIoGroup, openCardLineAction, openDocument, openDocumentHistory, useDocumentRefusals } from '../../openDocument'
 import type { InspectorTarget } from '../../inspectorTarget'
 import InspectorSlotList, { type InspectorSlotView, type SlotActionKey } from '../../parts/InspectorSlotList.vue'
 import { researchCardSlots, type ResearchSlot } from './researchCardModel'
@@ -29,6 +29,8 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+// The server's refusals of editing the card's documents: ✎ and [작성] go off with the reason as their tooltip.
+const refusals = useDocumentRefusals()
 
 const host = inject(INSPECTOR_HOST, null)
 

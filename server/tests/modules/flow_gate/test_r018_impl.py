@@ -307,7 +307,7 @@ def seed(r018_db, document_write_gate):
 
     )
 
-    for perm in ["document.create", "document.read", "document.update", "perm_document_read"]:
+    for perm in ["document.create", "document.read", "document.update", "project.document.read"]:
 
         store._execute(
 

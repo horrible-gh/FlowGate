@@ -77,7 +77,19 @@ links=[{source:$after,target:$end},{source:B,target:$end}].
 Choose roles/settings on every new card as usual. Existing join ownership does not change.
 JSON example (add each card's roles/settings):
 {"after": "<X node_key>", "cards": [{"label": "A"}, {"label": "B"}, {"label": "C"}], "links": [{"source": "$after", "target": "card:0"}, {"source": "$after", "target": "card:1"}, {"source": "card:0", "target": "card:2"}, {"source": "card:1", "target": "card:2"}, {"source": "card:2", "target": "$end"}]}"""
-PLACE_DESCRIPTION += " " + TOPOLOGY_GUIDE
+REQUIREMENT_GUIDE = (
+    "A new Flow's default requirement card is placed by the designer when it first opens the Flow, "
+    "not by the server's Flow creation alone. If a new Flow lacks it, first consider a missing default card; "
+    "do not assume the user removed it or say it was never meant to exist. To place one in edit mode, use "
+    'place_flow_cards with {"cards": [{"doc_type": "R"}]}; omit label for the default name. ' 
+    "Place R alone, without roles, settings, after, links or join; omit gate or set it false. "
+    "It creates only the requirement card, reusing one unlinked requirement document or creating an empty one. "
+    "409 chat_cards_start_exists identifies existing requirement/bug start cards; "
+    "409 chat_cards_requirement_ambiguous lists multiple unlinked requirement document IDs; "
+    "403 chat_edit_mode_required means this chat lacks edit permission. Report the code and details. "
+    "After placement, pass its returned node_key as after to append work cards."
+)
+PLACE_DESCRIPTION += " " + TOPOLOGY_GUIDE + " " + REQUIREMENT_GUIDE
 
 START_DESCRIPTION = (
     "Start this chat's Flow (edit mode only): the draft is confirmed as a new revision and the run starts in full "
@@ -125,9 +137,9 @@ PLACE_SCHEMA = {
             "type": "array", "minItems": 0, "maxItems": service.MAX_CARDS,
             "items": {"type": "object", "properties": {
                 "label": {"type": "string", "minLength": 1, "description": "Card title shown on the canvas."},
-                "doc_type": {"type": "string", "enum": list(service.WORK_TYPES),
+                "doc_type": {"type": "string", "enum": list(service.WORK_TYPES) + ["R"],
                              "description": "T work (default), TS test, N research, D basic design, P protocol, "
-                                            "L logic, DB DB design."},
+                                            "L logic, DB DB design; R requirement alone (no roles, settings, after, links, join or gate=true)."},
                 "roles": {**_ROLES_OBJECT, "description": "The card's AI per role, chosen by you (omitted roles take "
                                                           "the defaults)."},
                 "settings": _SETTINGS_OBJECT},

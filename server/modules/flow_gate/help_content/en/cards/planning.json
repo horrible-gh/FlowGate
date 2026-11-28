@@ -1,0 +1,13 @@
+{
+  "locale": "en",
+  "title": "Plan a card run",
+  "summary": "Plan a card run",
+  "purpose": "Plan a card run",
+  "request": {
+    "route": "{{route:cards.canvas}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET the current layout. For requested card runs or large changes, show the intended cards and anchor and obtain approval before placement. Direct edits commit at chat end. Card work runs and merges from its own workspace."
+  },
+  "response": "Assign one change per card. Record user requirements, checked files and lines, decisions, completion criteria and exclusions in the instruction. Pick execution and review AIs and review count after reading cards/ai_options. Use instruction=not_used when writing it yourself. Explain AI and review choices after placement.",
+  "errors": "On graph_run_locked, read the run state with cards/state."
+}

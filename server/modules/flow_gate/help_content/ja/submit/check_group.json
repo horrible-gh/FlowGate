@@ -1,0 +1,20 @@
+{
+  "locale": "ja",
+  "title": "グループの自己検証実行を取得",
+  "summary": "グループの自己検証実行を取得",
+  "purpose": "グループの自己検証実行を取得",
+  "request": {
+    "routes": [
+      "{{route:self_check.group.list}}",
+      "{{route:self_check.group.read}}"
+    ],
+    "authorization": "Bearer {{token}}"
+  },
+  "response": {
+    "details": "実行スロットは Group に1つです。この Group の作業トークン(new・edit・review)は group_read / group_list でそのスロットを持つ run の要約を読めます(他 Group の run は 404)。読み取り専用で、取消はその run を所有する TR の edit トークンか draft トークンだけが行います。cancel 応答の cancel フィールドは受付(accepted)と停止確認(stopped)を区別します。"
+  },
+  "errors": {
+    "status": 404,
+    "details": "対象run_idのグループを確認します。"
+  }
+}

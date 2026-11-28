@@ -56,7 +56,8 @@ export function mergeReasonKey(reason: string | null): string {
 export interface MergeAutoAttempt {
   readonly no: number
   readonly mode: string | null
-  readonly provider: { readonly name: string } | null
+  readonly provider: { readonly name: string | null } | null
+  readonly reasonCode?: string | null
   readonly result: string | null
   readonly reason: string | null
   readonly reasonSummary?: string | null
@@ -65,6 +66,8 @@ export interface MergeAutoAttempt {
 /** The server's automatic resolution as the window draws it (the card merge API's `autoResolve`, read structurally). */
 export interface MergeAuto {
   readonly state: string
+  readonly phase?: string | null
+  readonly waiting?: { readonly reason: string } | null
   readonly attempt: number
   readonly maxAttempts: number
   readonly attempts: readonly MergeAutoAttempt[]
@@ -75,6 +78,11 @@ export interface MergeAuto {
 /** The server is resolving the conflict by itself right now (the merge state stays `catching_up`). */
 export function mergeAutoRunning(auto: Pick<MergeAuto, 'state'> | null | undefined): boolean {
   return auto?.state === 'running'
+}
+
+export function mergeAutoWaiting(auto: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null | undefined): boolean {
+  return auto?.state === 'running'
+    && (auto.phase === 'waiting_for_run' || (!auto.phase && auto.waiting?.reason === 'run_in_progress'))
 }
 
 /** The try to show as current: the one still running, else the one the server counts, else the last one. */
@@ -166,3 +174,50 @@ export function mergeCountKey(key: string, count: number | null | undefined): st
 export function mergeCardKey(flowId: string, nodeId: string): string {
   return `${flowId}\u0000${nodeId}`
 }
+
+// flowgate.v02test.0084 (F84-8, 시안 jvj9ff9t §1): the merge window opens by itself when the automatic resolution is used up.
+
+/** The conflict a merge state is about: the open session's merge id, else the attempt; null when it names neither. */
+export function mergeConflictKey(
+  flowId: string, nodeKey: string,
+  state: { readonly session: { readonly mergeId: number } | null; readonly attemptId: string | null },
+): string | null {
+  const id = state.session ? `m${state.session.mergeId}` : state.attemptId ? `a${state.attemptId}` : null
+  return id ? `${flowId}\u0000${nodeKey}\u0000${id}` : null
+}
+
+/** Every automatic try is used up and no resolver works on it now: the window may open by itself. */
+export function mergeAutoExhausted(state: { readonly state: string; readonly autoResolve: Pick<MergeAuto, 'state'> | null }): boolean {
+  return state.autoResolve?.state === 'exhausted' && state.state === 'needs_choice'
+}
+
+/**
+ * When the automatic tries ran out: the end time of the last try (ms since the epoch, the server's `ended_at`); null when
+ * the server sent none or it does not parse.
+ */
+export function mergeAutoEndedAt(auto: { readonly attempts: readonly { readonly endedAt?: string | null }[] } | null | undefined): number | null {
+  const last = auto?.attempts.length ? auto.attempts[auto.attempts.length - 1] : null
+  const at = last?.endedAt ? Date.parse(last.endedAt) : NaN
+  return Number.isFinite(at) ? at : null
+}
+
+/** An AI works on the card's conflict now: the group's resolver lease (`resolving`), or the automatic resolution running. */
+export function mergeAiAtWork(state: { readonly resolving: unknown; readonly autoResolve: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null }): boolean {
+  return !mergeAutoWaiting(state.autoResolve) && (!!state.resolving || mergeAutoRunning(state.autoResolve))
+}
+
+/**
+ * The AI's work did not settle the conflict: no AI works on it now and a file is still unresolved (the automatic tries ran
+ * out or were stopped, an asked AI failed), or the merge failed. A merge after this is a person's, not the AI's.
+ */
+export function mergeAiLeftOff(state: {
+  readonly state: string
+  readonly resolving: unknown
+  readonly autoResolve: Pick<MergeAuto, 'state' | 'phase' | 'waiting'> | null
+  readonly files: readonly { readonly resolved: boolean }[]
+}): boolean {
+  if (mergeAiAtWork(state)) return false
+  if (state.state === 'failed') return true
+  return state.state === 'needs_choice' && (!state.files.length || state.files.some((file) => !file.resolved))
+}
+

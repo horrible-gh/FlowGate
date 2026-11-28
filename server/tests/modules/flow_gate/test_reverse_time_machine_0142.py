@@ -173,7 +173,7 @@ def test_reopen_records_return_point_and_full_restore_clears_it(rt_store):
     ids = _seed_base_group(rt_store)
     reopened = doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     assert reopened["ok"] is True
@@ -186,7 +186,7 @@ def test_reopen_records_return_point_and_full_restore_clears_it(rt_store):
 
     restored = doc_routes.restore_workflow(
         doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     assert restored["ok"] is True
@@ -207,7 +207,7 @@ def test_restore_stops_at_first_changed_document_and_keeps_return_point(rt_store
     ids = _seed_base_group(rt_store, "b")
     doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     p_doc = db_docs.get_by_id(ids["P"])
@@ -217,7 +217,7 @@ def test_restore_stops_at_first_changed_document_and_keeps_return_point(rt_store
 
     restored = doc_routes.restore_workflow(
         doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     assert restored["restored"] == [ids["D"], ids["L"]]
@@ -297,7 +297,7 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
 
     reopened = doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=docs[2], target_seq=2),
-        {"user_id": ids["user_id"]})
+        {"user_id": ids["user_id"], "is_admin": True})
 
     # 8 real steps, not 9 — the phantom is excluded from the snapshot.
     assert reopened["return_point"]["restorable_count"] == 8
@@ -308,7 +308,7 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
     # A full restore walks exactly the 8 real steps in seq order (phantom absent).
     restored = doc_routes.restore_workflow(
         doc_routes._RestoreBody(doc_id=docs[1], destination_seq=None),
-        {"user_id": ids["user_id"]})
+        {"user_id": ids["user_id"], "is_admin": True})
     assert restored["reached_front"] is True
     assert restored["return_point_cleared"] is True
     assert phantom not in restored["restored"]
@@ -333,7 +333,7 @@ def test_mid_flight_rewind_records_return_point_and_restores_in_progress(rt_stor
 
     reopened = doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     # A return point IS now recorded over the approved baseline (D, L, T). The pending P step is not
@@ -349,7 +349,7 @@ def test_mid_flight_rewind_records_return_point_and_restores_in_progress(rt_stor
 
     restored = doc_routes.restore_workflow(
         doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     # The walk reaches front and clears the point, but the root is restored to wf_in_progress
@@ -377,7 +377,7 @@ def test_stale_return_point_is_discarded_on_fresh_rewind(rt_store):
     # First rewind to seq 4 → snapshot D, L, P, T (4 steps).
     doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
     first = db_rp.get_by_group(ids["group_id"])
     assert first is not None
@@ -393,7 +393,7 @@ def test_stale_return_point_is_discarded_on_fresh_rewind(rt_store):
     # never extending the old 4-step snapshot.
     reopened = doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=5),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
     assert reopened["return_point"]["restorable_count"] == 3
     fresh = db_rp.get_by_group(ids["group_id"])
@@ -413,7 +413,7 @@ def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):
     ids = _seed_base_group(rt_store, "poll")
     doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
     rp = db_rp.get_by_group(ids["group_id"])
     assert rp is not None
@@ -428,7 +428,7 @@ def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):
 
     restored = doc_routes.restore_workflow(
         doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     # The walk reaches front, but L is still pending → do NOT finalize.
@@ -449,7 +449,7 @@ def test_reopen_logs_an_audit_event(rt_store):
     ids = _seed_base_group(rt_store, "audit")
     doc_routes.reopen_workflow(
         doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
-        {"user_id": ids["user_id"]},
+        {"user_id": ids["user_id"], "is_admin": True},
     )
 
     events = db_events.list_by_group(ids["group_id"]) if hasattr(db_events, "list_by_group") else None

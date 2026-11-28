@@ -662,7 +662,7 @@ describe('the document [업로드] opens this window’s [JSON 가져오기]; th
 
   it('a new window opens the import window once the plan is read — once per request; nothing is sent', async () => {
     openWorkPlanEditImport(DOC, { projectId: 'flowgate', groupId: null })
-    expect(opener).toHaveBeenCalledWith(DOC, 'flowgate.v02.0072')
+    expect(opener).toHaveBeenCalledWith(DOC, 'flowgate.v02.0072', 'flowgate') // the document's project goes with the ask (the refusal is its answer)
     await flushPromises()
     expect(workPlanEditWindowList()).toHaveLength(1)
     expect(q('wp-edit-window')).not.toBeNull()

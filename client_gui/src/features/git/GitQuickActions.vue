@@ -5,7 +5,7 @@
         <div class="mseg" role="group" :aria-label="words.scope" data-test="git-scopes">
           <button v-for="item in scopes" :key="item" type="button" :class="{ on: scope === item }" :disabled="busy || paused || waiting" :aria-pressed="scope === item" @click="scope = item">{{ words[item + 'Scope'] }}</button>
         </div>
-        <button type="button" class="big" data-test="git-execute" :disabled="disabled || paused" @click="execute(false)"><span v-if="busy && plan" class="spin"><GitIcon name="spin" :size="13" /></span>{{ busy && plan ? words.running : words.execute }}</button>
+        <button type="button" class="big" data-test="git-execute" :disabled="disabled || paused || executeNeedsMerge" @click="execute(false)"><span v-if="busy && plan" class="spin"><GitIcon name="spin" :size="13" /></span>{{ busy && plan ? words.running : words.execute }}</button>
       </div>
       <template v-if="plan && (busy || paused || (waiting && !openSession))">
         <div class="chain" data-test="git-execution-steps">
@@ -42,7 +42,7 @@
           <div class="bar gq-session" data-test="git-open-session" :data-session-kind="openSession.sessionKind ?? undefined">
             <span class="why">{{ words.sessionHint }}</span>
             <span v-if="sessionBusy" class="spin"><GitIcon name="spin" :size="13" /></span>
-            <button v-else-if="openSession.mergeId !== null" type="button" class="gq-link" :class="{ 'gq-danger': abortAsk }" data-test="git-session-abort" :disabled="session.state.readOnly" @click="abortSession">{{ abortAsk ? words.sessionAbortSure : words.sessionAbort }}</button>
+            <button v-else-if="openSession.mergeId !== null" type="button" class="gq-link" :class="{ 'gq-danger': abortAsk }" data-test="git-session-abort" :disabled="session.state.mergeReadOnly" @click="abortSession">{{ abortAsk ? words.sessionAbortSure : words.sessionAbort }}</button>
           </div>
           <div v-if="abortRefused" class="gq-refused" role="alert" data-test="git-session-refused">{{ abortRefused }}</div>
         </template>
@@ -110,7 +110,7 @@
       <div class="act" :class="{ off: !mergeOn && open !== 'merge' }">
         <div class="atop">
           <span class="aico"><GitIcon name="merge" :size="16" /></span><b>{{ words.merge }}</b>
-          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="ahead !== 0">{{ words.commits }} <em data-test="git-worktree-summary-merge">{{ ahead ?? '—' }}</em> → {{ wt.state.mergeTarget ?? '—' }}<template v-if="dirty"> · <i>{{ words.dirtyExcluded.replace('{n}', String(dirty)) }}</i></template></template><template v-else><span data-test="git-worktree-summary-merge" hidden>0</span>{{ words.noMerge }}</template></span>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="mergeRefusedText"><span data-test="git-merge-refused">{{ mergeRefusedText }}</span></template><template v-else-if="ahead !== 0">{{ words.commits }} <em data-test="git-worktree-summary-merge">{{ ahead ?? '—' }}</em> → {{ wt.state.mergeTarget ?? '—' }}<template v-if="dirty"> · <i>{{ words.dirtyExcluded.replace('{n}', String(dirty)) }}</i></template></template><template v-else><span data-test="git-worktree-summary-merge" hidden>0</span>{{ words.noMerge }}</template></span>
           <span v-if="wt.state.busy === 'merge'" class="spin"><GitIcon name="spin" /></span>
           <button v-else type="button" class="ib" :class="{ pri: open === 'merge' }" data-test="git-open-merge" :disabled="!mergeOn" :title="words.merge" :aria-label="words.merge" @click="toggleOpen('merge')"><GitIcon name="merge" /></button>
         </div>
@@ -125,7 +125,7 @@
           <div class="bar">
             <span class="ad">{{ words.commits }} <em>{{ ahead ?? '—' }}</em> → {{ wt.state.mergeTarget ?? '—' }}</span>
             <button type="button" class="ib" data-test="git-worktree-entry" data-tab="merge" :title="words.mergeDetails" :aria-label="words.mergeDetails" @click="emit('details', 'merge')"><GitIcon name="diff" /></button>
-            <button type="button" class="ib pri" data-test="git-action-merge" :disabled="disabled || wt.reasons.value.merge.disabled" :title="words.merge" :aria-label="words.merge" @click="mergeNow"><GitIcon name="ok" /></button>
+            <button type="button" class="ib pri" data-test="git-action-merge" :disabled="lockedBase || wt.reasons.value.merge.disabled" :title="words.merge" :aria-label="words.merge" @click="mergeNow"><GitIcon name="ok" /></button>
             <button type="button" class="ib gh2" :title="words.close" :aria-label="words.close" @click="open = null"><GitIcon name="x" /></button>
           </div>
         </div>
@@ -134,14 +134,14 @@
       <div class="act" :class="{ off: !pushOn && open !== 'push' }">
         <div class="atop">
           <span class="aico"><GitIcon name="push" :size="16" /></span><b>{{ words.push }}</b>
-          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="unpushed">{{ words.toPush }} <em>{{ unpushed }}</em></template><template v-else>{{ words.noPush }}</template></span>
+          <span class="ad"><template v-if="rowLock">{{ rowLock }}</template><template v-else-if="mergeRefusedText"><span data-test="git-push-refused">{{ mergeRefusedText }}</span></template><template v-else-if="unpushed">{{ words.toPush }} <em>{{ unpushed }}</em></template><template v-else>{{ words.noPush }}</template></span>
           <span v-if="wt.state.busy === 'push'" class="spin"><GitIcon name="spin" /></span>
           <button v-else type="button" class="ib" :class="{ pri: open === 'push' }" data-test="git-open-push" :disabled="!pushOn" :title="words.push" :aria-label="words.push" @click="toggleOpen('push')"><GitIcon name="push" /></button>
         </div>
         <div v-if="open === 'push' && pushOn" class="sub">
           <div class="bar">
             <span class="ad">{{ words.commits }} <em>{{ unpushed }}</em> → origin/{{ wt.pushRow.value?.target.targetBranch ?? '—' }}</span>
-            <button type="button" class="ib pri" data-test="git-action-push" :disabled="disabled || wt.reasons.value.push.disabled" :title="words.push" :aria-label="words.push" @click="pushNow"><GitIcon name="ok" /></button>
+            <button type="button" class="ib pri" data-test="git-action-push" :disabled="lockedBase || wt.reasons.value.push.disabled" :title="words.push" :aria-label="words.push" @click="pushNow"><GitIcon name="ok" /></button>
             <button type="button" class="ib gh2" :title="words.close" :aria-label="words.close" @click="open = null"><GitIcon name="x" /></button>
           </div>
         </div>
@@ -257,7 +257,15 @@ const hostsCard = computed(() => plan.value?.status === 'running' || paused.valu
 const busy = computed(() => !!wt.state.busy || !!session.state.busy)
 const conflict = computed(() => ['conflict', 'ai', 'review', 'unsupported'].includes(session.groupCard.value ?? ''))
 const blocker = computed(() => wt.state.status?.blockers[0]?.code ?? wt.state.merge?.graph?.blocker ?? null)
-const disabled = computed(() => busy.value || conflict.value || !!blocker.value || session.state.readOnly || wt.state.forbidden || wt.state.statusLoad !== 'ready')
+// What stops every control (an action runs, a conflict / blocker, a 403, no status yet). The write controls (commit, update,
+// the run) are also off while project.git.write is refused; merge and Push are decided by project.git.merge alone
+// (wt.reasons), so a reviewer (merge, no write) keeps them and a developer (write, no merge) loses them.
+const lockedBase = computed(() => busy.value || conflict.value || !!blocker.value || wt.state.forbidden || wt.state.statusLoad !== 'ready')
+const disabled = computed(() => lockedBase.value || session.state.readOnly)
+// A run of the merge / push scope goes on to merge, so it also needs project.git.merge.
+const executeNeedsMerge = computed(() => scope.value !== 'commit' && session.state.mergeReadOnly)
+// Why the merge and Push rows are off for the merge permission: the server's own sentence, else the generic wording.
+const mergeRefusedText = computed(() => session.state.mergeReadOnly ? (session.state.mergeReason ?? t('gui.git.reason.merge_read_only')) : '')
 // The counts the mockup shows on each row; null = not read yet (the row then stays usable).
 const dirty = computed(() => wt.state.status?.counts.changed ?? 0)
 const behind = computed<number | null>(() => wt.state.merge?.workBaseBehind ?? null)
@@ -317,8 +325,8 @@ const commitOn = computed(() => !disabled.value && dirty.value > 0)
 // The base count is local knowledge: only a fetch learns of new remote commits, so 받아오기 stays
 // usable at 0 (the row is dimmed, as the mockup's 「받을 커밋 없음」).
 const updateOn = computed(() => !disabled.value && !dirty.value)
-const mergeOn = computed(() => !disabled.value && !wt.reasons.value.merge.disabled)
-const pushOn = computed(() => !disabled.value && !wt.reasons.value.push.disabled)
+const mergeOn = computed(() => !lockedBase.value && !wt.reasons.value.merge.disabled)
+const pushOn = computed(() => !lockedBase.value && !wt.reasons.value.push.disabled)
 const resultTitle = computed(() => {
   const p = plan.value
   if (!p) return ''

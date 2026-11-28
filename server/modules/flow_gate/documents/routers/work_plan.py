@@ -46,13 +46,7 @@ from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 
-try:
-    from rbac.decorators import require_permission  # type: ignore[import]
-except ImportError:
-    def require_permission(perm: str):
-        def _decorator(func):
-            return func
-        return _decorator
+from modules.flow_gate.rbac.access import require_target_permission as require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -449,7 +443,7 @@ def _read_view(doc: dict, body: dict) -> dict:
 # ── Create ───────────────────────────────────────────────
 
 @router.post("/work-plan", status_code=201)
-@require_permission("perm_document_create")
+@require_permission("project.document.create")
 def create_work_plan(
     request: Request,
     body: WorkPlanCreate,
@@ -502,7 +496,7 @@ def _heal_unwritten_plan(
 
 
 @router.get("/{doc_id}/work-plan")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def get_work_plan(
     request: Request,
     doc_id: str,
@@ -526,7 +520,7 @@ def get_work_plan(
 # ── Revision recovery ─────────────────────────────────────────────────────────
 
 @router.post("/{doc_id}/work-plan/revisions/{revision_no}/restore")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def restore_work_plan_revision(
     request: Request,
     doc_id: str,
@@ -540,7 +534,7 @@ def restore_work_plan_revision(
 # ── Save ─────────────────────────────────────────────────
 
 @router.put("/{doc_id}/work-plan")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 def save_work_plan(
     request: Request,
     doc_id: str,
@@ -551,7 +545,7 @@ def save_work_plan(
 
 
 @router.post("/{doc_id}/work-plan/pre-instruction-attachments", status_code=201)
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 async def upload_pre_instruction_attachment(
     request: Request,
     doc_id: str,
@@ -611,7 +605,7 @@ async def upload_pre_instruction_attachment(
 # ── Suggestion ──────────────────────────────────────────────────
 
 @router.post("/{doc_id}/work-plan/suggest")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 def suggest_work_plan(
     request: Request,
     doc_id: str,
@@ -740,7 +734,7 @@ def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
 
 
 @router.post("/{doc_id}/work-plan/apply/preview")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 async def preview_work_plan_apply(
     request: Request,
     doc_id: str,
@@ -820,7 +814,7 @@ def _apply_sync(
 
 
 @router.post("/{doc_id}/work-plan/apply")
-@require_permission("perm_document_update")
+@require_permission("project.document.update")
 async def apply_work_plan(
     request: Request,
     doc_id: str,
@@ -867,7 +861,7 @@ def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, loc
 
 
 @router.post("/{doc_id}/work-plan/sequence-candidates")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 async def work_plan_sequence_candidates(
     request: Request,
     doc_id: str,
@@ -885,7 +879,7 @@ def _applications_sync(doc_id: str, limit: int) -> dict:
 
 
 @router.get("/{doc_id}/work-plan/applications")
-@require_permission("perm_document_read")
+@require_permission("project.document.read")
 async def get_work_plan_applications(
     doc_id: str,
     limit: int = 20,

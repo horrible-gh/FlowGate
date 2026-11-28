@@ -1,4 +1,5 @@
 import { flushPromises } from '@vue/test-utils'
+import { SYSTEM_ACTIONS, wireBlock } from '../helpers/capabilities'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
 import type { SystemUsersResponse } from '@/features/settings/types'
@@ -21,6 +22,8 @@ vi.mock('@shared/api', async (importOriginal) => {
   const record = (method: string) =>
     vi.fn(async (path: string, params?: Record<string, string>) => {
       const query = method === 'GET' && params && Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : ''
+      // The settings menu asks which projects the person can see (capabilities) — not a settings request.
+      if (method === 'GET' && path === '/api/v1/projects' && query === '?status=active') return { data: { projects: [] } }
       net.requests.push(`${method} ${path}${query}`)
       if (method === 'GET' && path === '/auth/me') {
         return new Promise((resolve, reject) => {
@@ -50,8 +53,12 @@ vi.mock('@shared/api', async (importOriginal) => {
   }
 })
 
-const ADMIN_ME = { username: 'admin', email: 'admin@flowgate.local', is_admin: true }
-const P_ME = { username: 'p-admin', email: null, is_admin: false }
+// What the server sends in /auth/me (rbac/capabilities.py system block): an administrator can do every system action, P none.
+const ADMIN_ME = { username: 'admin', email: 'admin@flowgate.local', is_admin: true, capabilities: wireBlock(SYSTEM_ACTIONS, 'system_admin') }
+const P_ME = {
+  username: 'p-admin', email: null, is_admin: false,
+  capabilities: wireBlock(SYSTEM_ACTIONS, null, Object.fromEntries(SYSTEM_ACTIONS.map((a) => [a, { reason: 'system_admin_only' }]))),
+}
 
 const LOADING_URLS = ['/settings/system/agents', '/settings/system/projects', '/settings/project/p1/paths', '/settings/project/p1/git', '/settings/system/users']
 

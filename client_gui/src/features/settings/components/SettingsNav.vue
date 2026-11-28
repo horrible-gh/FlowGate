@@ -42,6 +42,7 @@ const menu = useSettingsMenu()
 
 const SCOPES: { key: SettingsScopeKey; icon: SettingsIconName }[] = [
   { key: 'me', icon: 'user' },
+  { key: 'manage', icon: 'users' },
   { key: 'project', icon: 'folder' },
   { key: 'system', icon: 'server' },
 ]
@@ -149,6 +150,7 @@ const scopes = computed(() =>
 }
 
 .t-me { color: #54a2ff; border-color: #296fb0; background: #112f50; }
+.t-manage { color: #4fd1b0; border-color: #2c7d6c; background: #10372f; }
 .t-project { color: #ad85ff; border-color: #6650a9; background: #282047; }
 .t-system { color: #9cbbdd; border-color: #526e8a; background: #1a2b41; }
 

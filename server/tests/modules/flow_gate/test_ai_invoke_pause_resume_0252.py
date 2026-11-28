@@ -1106,7 +1106,7 @@ class TestResumeRoute:
         assert denied.status_code == 403
         assert denied.json() == {
             "code": "permission_denied",
-            "message": "perm_document_read required",
+            "message": "project.document.read required",
         }
 
     def test_existing_404_and_409_contracts_remain_verbatim(

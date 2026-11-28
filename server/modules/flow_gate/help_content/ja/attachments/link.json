@@ -1,0 +1,9 @@
+{
+  "locale": "ja",
+  "title": "Flow 共有ファイルへのリンク",
+  "summary": "現在の Flow で承認済みの共有ファイルを会話にリンクします。",
+  "purpose": "現在の Flow で承認済みの共有ファイルを会話にリンクします。",
+  "request": "{{route:attachments.flow.list}} に現在の Flow ID と同じ作業 Bearer を使います。一覧の `key` を `[name](fg-attachment:key)` にコピーします。 リンクにはファイル名ではなく、承認済み一覧の `key` をそのまま使います。",
+  "response": "必要なファイルは一覧の参照・コピー URL を使います。インラインコードやコードブロック内のリンクは例として扱われ、承認待ちのファイルは一覧に表示されません。",
+  "errors": "不明なキーや別の Flow のキーは `dry_run` でも `422 attachment_link_unknown` と `unknown_keys` を返します。現在の一覧でキーを確認します。"
+}

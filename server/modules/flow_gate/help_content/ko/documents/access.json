@@ -1,0 +1,9 @@
+{
+  "locale": "ko",
+  "title": "문서 조회",
+  "summary": "문서 본문과 해당 문서의 질의 답변을 조회합니다.",
+  "purpose": "문서 본문과 해당 문서의 질의 답변을 조회합니다.",
+  "request": "{{route:document.read}}. 경로는 {{route:document.path}}로 조회합니다. 일부만 필요하면 `documents/partial`을 참조합니다.",
+  "response": "`content_state`로 본문 상태를 확인합니다. `answers`의 `A: null`은 미답변입니다. 참조 문서의 답변은 그 문서에서 조회합니다.",
+  "errors": "본문을 읽을 수 없으면 `documents/unreadable`을 참조합니다."
+}

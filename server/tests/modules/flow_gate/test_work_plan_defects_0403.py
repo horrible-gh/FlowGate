@@ -420,7 +420,7 @@ def seed(tmp_db, patch_store):
     )
     for perm in (
         "document.create", "document.read", "document.update",
-        "perm_document_create", "perm_document_read", "perm_document_update",
+        "project.document.create", "project.document.read", "project.document.update",
     ):
         store._execute(
             "INSERT OR IGNORE INTO permissions (permission_id, permission_name, created_at) VALUES (?,?,?)",

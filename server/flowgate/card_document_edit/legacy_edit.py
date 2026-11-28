@@ -54,7 +54,7 @@ def read_submission(source, token, routing):
 def edit(req):
     req = replace(req, transport_extras={**req.transport_extras, "legacy": True})
     doc = documents.get_by_id(req.expected_doc_id)
-    if not has_permission(req.actor.user_id, doc["project_id"], "perm_document_update"):
+    if not has_permission(req.actor.user_id, doc["project_id"], "project.document.update"):
         from modules.flow_gate.api import inbox_routes as inbox
         reject(inbox._permission_denied("Insufficient permissions for this operation"))
 

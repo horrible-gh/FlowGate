@@ -1,10 +1,12 @@
 """server contracts for the v0.2 general settings screens.
 
 1. GET /rbac/system/my-permissions — current user's system-scope permissions.
-   Admins hold everything; non-admins get only roles granted on the system scope,
-   never project roles, and the internal __SYSTEM__ sentinel is not in the body.
-2. Env Variables / Commands — read (list, resolve) keeps project.settings.read;
-   create/update/delete and execute need project.settings.edit; kind=system stays
+   Admins hold everything; system permissions belong to administrators only, so a
+   role on the system scope grants nothing, project roles never leak in, and the
+   internal __SYSTEM__ sentinel is not in the body.
+2. Env Variables / Commands — pages without a project: read (list, resolve) and
+   create/update/delete/execute are for administrators (a project permission without
+   a project and a role delegated on __SYSTEM__ grant nothing); kind=system stays
    admin-only.
 3. GET /system/storage-root and /projects/{id}/storage-root — stored vs effective
    storage root, resolved by storage.paths (the same SSOT as get_storage_root()).
@@ -60,7 +62,7 @@ INSERT OR IGNORE INTO role_permissions(role_id,permission_id)
 INSERT OR IGNORE INTO user_project_roles(user_id,project_id,role_id,granted_at)
     VALUES('usr_sys_editor','__SYSTEM__','t0623_sys_editor',datetime('now')),
           ('usr_sys_reader','__SYSTEM__','t0623_sys_reader',datetime('now')),
-          ('usr_proj_only','proj_a','t0623_proj_all',datetime('now'));
+          ('usr_proj_only','proj_a','role_admin',datetime('now'));
 """
 
 ADMIN = {"user_id": "usr_admin", "is_admin": 1}
@@ -145,13 +147,9 @@ class TestSystemMyPermissions:
         assert body == {"scope": "system", "permissions": every, "is_admin": True}
         assert "system.settings.manage" in body["permissions"]
 
-    def test_non_admin_with_system_role_gets_only_that_role(self):
+    def test_non_admin_with_system_role_gets_nothing(self):
         body = _client(SYS_EDITOR).get("/rbac/system/my-permissions").json()
-        assert body == {
-            "scope": "system",
-            "permissions": ["project.settings.edit", "project.settings.read"],
-            "is_admin": False,
-        }
+        assert body == {"scope": "system", "permissions": [], "is_admin": False}
 
     def test_non_admin_without_system_role_gets_nothing(self):
         body = _client(NOBODY).get("/rbac/system/my-permissions").json()
@@ -162,18 +160,16 @@ class TestSystemMyPermissions:
         system = client.get("/rbac/system/my-permissions").json()
         assert system["permissions"] == []
         assert "system.settings.manage" not in system["permissions"]
-        # ...while the project endpoint still reports that project's role unchanged.
+        # ...while the project endpoint reports that project's one role (project.* only).
         project = client.get("/rbac/projects/proj_a/my-permissions").json()
-        assert project == {
-            "project_id": "proj_a",
-            "permissions": ["project.settings.edit", "project.settings.read", "system.settings.manage"],
-            "is_admin": False,
-        }
+        assert project["project_id"] == "proj_a" and project["is_admin"] is False
+        assert {"project.settings.edit", "project.settings.read", "project.member.manage"} <= set(project["permissions"])
+        assert all(p.startswith("project.") for p in project["permissions"])
 
-    def test_system_role_still_counts_in_project_endpoint(self):
-        # The existing project contract sums project + system roles; unchanged.
+    def test_system_role_never_counts_in_project_endpoint(self):
+        # A role on __SYSTEM__ is never added to a project (not a member: nothing).
         body = _client(SYS_READER).get("/rbac/projects/proj_b/my-permissions").json()
-        assert body["permissions"] == ["project.settings.read"]
+        assert body["permissions"] == []
 
     def test_sentinel_not_exposed(self):
         for user in (ADMIN, SYS_EDITOR, NOBODY):
@@ -205,9 +201,10 @@ def _seed_cmd(store, kind="user", name="hello", template="echo hello"):
 
 
 class TestEnvVarsPermissions:
-    def test_reader_can_list(self, store):
+    def test_delegated_reader_cannot_list(self, store):
         _seed_env(store)
-        resp = _client(SYS_READER).get("/api/v1/env-vars")
+        assert _client(SYS_READER).get("/api/v1/env-vars").status_code == 403
+        resp = _client(ADMIN).get("/api/v1/env-vars")
         assert resp.status_code == 200
         assert [r["name"] for r in resp.json()["env_vars"]] == ["FOO"]
 
@@ -227,8 +224,9 @@ class TestEnvVarsPermissions:
         resp = _client(PROJ_ONLY).post("/api/v1/env-vars", json={"name": "NEW", "value": "1"})
         assert resp.status_code == 403
 
-    def test_editor_can_mutate(self, store):
-        client = _client(SYS_EDITOR)
+    def test_admin_can_mutate(self, store):
+        assert _client(SYS_EDITOR).post("/api/v1/env-vars", json={"name": "NEW", "value": "1"}).status_code == 403
+        client = _client(ADMIN)
         created = client.post("/api/v1/env-vars", json={"name": "NEW", "value": "1"})
         assert created.status_code == 201
         var_id = created.json()["var_id"]
@@ -251,18 +249,20 @@ class TestEnvVarsPermissions:
         assert created.status_code == 201
         assert client.delete(f"/api/v1/env-vars/{created.json()['var_id']}").status_code == 200
 
-    def test_existing_404_and_409_unchanged_for_editor(self, store):
+    def test_existing_404_and_409_unchanged_for_admin(self, store):
         _seed_env(store)
-        client = _client(SYS_EDITOR)
+        client = _client(ADMIN)
         assert client.put("/api/v1/env-vars/ev-missing", json={"value": "x"}).status_code == 404
         assert client.delete("/api/v1/env-vars/ev-missing").status_code == 404
         assert client.post("/api/v1/env-vars", json={"name": "FOO"}).status_code == 409
 
 
 class TestCommandsPermissions:
-    def test_reader_can_list_and_resolve(self, store):
+    def test_delegated_reader_cannot_list_or_resolve(self, store):
         row = _seed_cmd(store)
-        client = _client(SYS_READER)
+        assert _client(SYS_READER).get("/api/v1/commands").status_code == 403
+        assert _client(SYS_READER).post(f"/api/v1/commands/{row['command_id']}/resolve").status_code == 403
+        client = _client(ADMIN)
         listed = client.get("/api/v1/commands")
         assert listed.status_code == 200
         assert [r["name"] for r in listed.json()["commands"]] == ["hello"]
@@ -291,17 +291,18 @@ class TestCommandsPermissions:
         row = _seed_cmd(store)
         assert _client(NOBODY).post(f"/api/v1/commands/{row['command_id']}/resolve").status_code == 403
 
-    def test_editor_can_create_update_delete(self, store):
-        client = _client(SYS_EDITOR)
+    def test_admin_can_create_update_delete(self, store):
+        assert _client(SYS_EDITOR).post("/api/v1/commands", json={"name": "c2", "template": "echo 2"}).status_code == 403
+        client = _client(ADMIN)
         created = client.post("/api/v1/commands", json={"name": "c2", "template": "echo 2"})
         assert created.status_code == 201
         cid = created.json()["command_id"]
         assert client.put(f"/api/v1/commands/{cid}", json={"template": "echo 3"}).json()["template"] == "echo 3"
         assert client.delete(f"/api/v1/commands/{cid}").json() == {"detail": "deleted"}
 
-    def test_editor_execute_response_unchanged(self, store):
+    def test_admin_execute_response_unchanged(self, store):
         row = _seed_cmd(store, template="echo t0623")
-        resp = _client(SYS_EDITOR).post(f"/api/v1/commands/{row['command_id']}/execute", json={})
+        resp = _client(ADMIN).post(f"/api/v1/commands/{row['command_id']}/execute", json={})
         assert resp.status_code == 200
         body = resp.json()
         assert set(body) == {"command_id", "resolved", "stdout", "stderr", "return_code", "executed_at"}
@@ -310,14 +311,14 @@ class TestCommandsPermissions:
         assert body["return_code"] == 0
         assert "t0623" in body["stdout"]
 
-    def test_editor_execute_timeout_still_504(self, store, monkeypatch):
+    def test_admin_execute_timeout_still_504(self, store, monkeypatch):
         row = _seed_cmd(store)
 
         def _timeout(*_a, **_k):
             raise subprocess.TimeoutExpired(cmd="echo hello", timeout=60)
 
         monkeypatch.setattr(subprocess, "run", _timeout)
-        resp = _client(SYS_EDITOR).post(f"/api/v1/commands/{row['command_id']}/execute")
+        resp = _client(ADMIN).post(f"/api/v1/commands/{row['command_id']}/execute")
         assert resp.status_code == 504
         assert resp.json()["detail"] == {"detail": "command timed out after 60s", "resolved": "echo hello"}
 

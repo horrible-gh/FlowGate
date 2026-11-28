@@ -25,6 +25,7 @@ provider selected in the composer. No model or provider is fixed here.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -37,7 +38,7 @@ from flowgate.conversation import legacy_adapter
 
 logger = logging.getLogger(__name__)
 
-UPDATE_PERMISSION = "perm_document_update"
+UPDATE_PERMISSION = "project.document.update"
 META_KEY = "chat_auto_title"
 OWED, CLAIMED, DONE, FAILED, MANUAL = "owed", "claimed", "done", "failed", "manual"
 TITLE_MAX_CHARS = 30  # Shared names must fit graph_node_title_states (1..30).
@@ -258,15 +259,19 @@ def build_name_prompt(kind: str, text: str, start_document: str = "", conversati
     start card): a first message such as "let's talk after you read it" names nothing, and
     without the document the flow kept its default name while its card was renamed.
     """
-    if kind == "flow" and _bounded(start_document) and _bounded(start_document) != _bounded(text):
-        return (
+    if kind == "flow":
+        prompt = (
             "Write a short name for a workflow whose overall task is described below. "
             "It names the whole task, not a single step, card or document.\n"
             f"{_RULES}"
             "- Name the task from the first request. If the first request alone names no concrete "
-            "subject, name it from the start document instead.\n"
-            f"\nFirst request:\n<<<\n{_bounded(text)}\n>>>\n"
-            f"\nStart document:\n<<<\n{_bounded(start_document)}\n>>>")
+            "subject, name it from the later conversation, then from the start document.\n"
+            f"\nFirst request:\n<<<\n{_bounded(text)}\n>>>")
+        if _bounded(conversation):
+            prompt += f"\n\nLater conversation:\n<<<\n{_bounded(conversation)}\n>>>"
+        if _bounded(start_document) and _bounded(start_document) != _bounded(text):
+            prompt += f"\n\nStart document:\n<<<\n{_bounded(start_document)}\n>>>"
+        return prompt
     if kind == "chat":
         if not _bounded(conversation) and not _bounded(start_document):
             return build_prompt(text) + "\nIf no concrete subject can be identified, reply NO_TITLE."
@@ -404,6 +409,7 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
     from . import first_names_ports as p
     slot = f"chat:{chat_doc_id}" if kind == "chat" else kind
     ticket = uuid.uuid4().hex
+    naming_input = None
 
     def live():
         group, found = p.targets(flow_id, chat_doc_id if kind == "chat" else None,
@@ -415,6 +421,7 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
 
     try:
         def claim():
+            nonlocal naming_input
             group, target = live()
             if not legacy_adapter.has_permission(user, UPDATE_PERMISSION, group["project_id"]):
                 raise PermissionError("no_update_permission")
@@ -441,6 +448,16 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
                 return group, target, "apply"
             if entry.get("lease_until", 0) > time.time():
                 return group, target, "busy"
+            if kind in ("flow", "root"):
+                # Read once under the claim guard; use this exact snapshot outside the
+                # transaction for the model. Never reset a live lease or an applied name.
+                naming_input = _name_input(flow_id, provider_id, kind, message, chat_doc_id)
+                input_hash = hashlib.sha256(json.dumps(naming_input, ensure_ascii=False).encode("utf-8")).hexdigest()
+                if entry.get("input_hash") != input_hash:
+                    # Pre-hash entries get one fresh budget, then the same three-call cap.
+                    entry["attempts"] = 0
+                    entry.pop("state", None)
+                entry["input_hash"] = input_hash
             if entry.get("attempts", 0) >= NAME_ATTEMPTS_MAX:
                 entry["state"] = "exhausted"
                 p.ledger.save(flow_id, record)
@@ -459,7 +476,8 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
             return "unchanged"
         if step == "generate":
             title, unavailable = _generate_candidate(flow_id, group, provider_id, kind, target, message,
-                                        chat_doc_id, str((user or {}).get("user_id") or ""), allow_fallback)
+                                        chat_doc_id, str((user or {}).get("user_id") or ""), allow_fallback,
+                                        naming_input=naming_input)
 
             def remember():
                 record = p.ledger.load(flow_id)
@@ -516,10 +534,8 @@ def _name_target(flow_id: str, user: dict, provider_id: str, kind: str, message:
         return "failed"
 
 
-def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat_doc_id,
-                        user_id, allow_fallback) -> tuple[Optional[str], bool]:
-    """A candidate from the target's own content, named by the configured naming provider
-    (``complete_naming``: off, the executor or an explicit provider, remote agents included)."""
+def _name_input(flow_id, provider_id, kind, message, chat_doc_id) -> tuple[str, str, str]:
+    """Read the inputs used for naming, without invoking a model."""
     start_document = ""
     conversation = ""
     if kind == "chat":
@@ -528,13 +544,21 @@ def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat
         start_document = _root_text(flow_id, provider_id)
     elif kind == "flow":
         chat_message = (_first_user_message(chat_doc_id) if chat_doc_id else None) or ""
-        text = chat_message or str(message or "").strip() or _root_text(flow_id, provider_id)
-        if chat_message.strip():
-            # The chat's first message alone may name nothing; the start document can.
-            start_document = _root_text(flow_id, provider_id)
+        start_document = _root_text(flow_id, provider_id)
+        text = chat_message or str(message or "").strip() or start_document
+        conversation = _chat_context(chat_doc_id) if chat_doc_id else ""
     else:
         text = _root_text(flow_id, provider_id)
-    if not any(ch.isalnum() for ch in text):
+    return text, start_document, conversation
+
+
+def _generate_candidate(flow_id, group, provider_id, kind, target, message, chat_doc_id,
+                        user_id, allow_fallback, naming_input=None) -> tuple[Optional[str], bool]:
+    """Name the claimed input snapshot using the configured naming provider."""
+    text, start_document, conversation = (naming_input if naming_input is not None else
+                                        _name_input(flow_id, provider_id, kind, message, chat_doc_id))
+    usable_text = "\n".join((text, start_document, conversation)) if kind == "flow" else text
+    if not any(ch.isalnum() for ch in usable_text):
         logger.info("flow naming skipped reason=empty_message flow=%s target=%s", flow_id, kind)
         return None, True
     # The card shows its document: without a model answer, the document's own first line.

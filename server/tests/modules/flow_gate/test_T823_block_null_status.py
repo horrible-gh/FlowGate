@@ -160,7 +160,7 @@ def t823_seed(t823_db):
         "INSERT OR IGNORE INTO roles (role_id, role_name, created_at, updated_at) VALUES (?,?,?,?)",
         ["role_pm", "PM", now, now],
     )
-    for perm in ("document.create", "document.read", "document.update", "perm_document_create"):
+    for perm in ("document.create", "document.read", "document.update", "project.document.create"):
         store._execute(
             "INSERT OR IGNORE INTO permissions (permission_id, permission_name, created_at) VALUES (?,?,?)",
             [perm, perm, now],

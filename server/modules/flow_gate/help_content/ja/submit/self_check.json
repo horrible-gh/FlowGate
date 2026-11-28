@@ -1,0 +1,83 @@
+{
+  "locale": "ja",
+  "title": "TRの自己検証を実行",
+  "summary": "TRの自己検証を実行",
+  "purpose": "TRの自己検証を実行",
+  "request": {
+    "edit": {
+      "run": "{{route:self_check.run}}",
+      "list": "{{route:self_check.list}}",
+      "read": "{{route:self_check.read}}",
+      "cancel": "{{route:self_check.cancel}}"
+    },
+    "draft": {
+      "run": "{{route:self_check.draft.run}}",
+      "list": "{{route:self_check.draft.list}}",
+      "read": "{{route:self_check.draft.read}}",
+      "cancel": "{{route:self_check.draft.cancel}}"
+    },
+    "authorization": "Bearer {{token}}",
+    "limits": "{{self_check}}",
+    "fields": {
+      "program": "実行ファイル名1つ。例: pytest。コマンド文字列全体は不可。",
+      "args": "オプションと対象パスの文字列配列。既定 []。",
+      "cwd": "管理ワークツリー基準の相対パス。既定 \".\"。",
+      "timeout_seconds": "実行制限時間(秒)、正の整数。省略時はカードの上限で、それを超える値は上限に短縮する。",
+      "parallel_share": "この実行が使いたい処理器(worker)数、1 以上の整数。既定 1。実行は割り当てられた予約数の処理器だけで動く。"
+    },
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": "{{timeout_seconds}}",
+      "parallel_share": 1
+    },
+    "details": "editではトークンに紐づくtr_doc_id、newではdraft経路を使います。draft実行はトークンに属し、TR登録時に文書に紐づきます。",
+    "command": "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。"
+  },
+  "response": {
+    "success_status": {
+      "run": 202,
+      "read": 200,
+      "cancel": 200,
+      "list": 200
+    },
+    "states": [
+      "queued",
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "result_fields": [
+      "self_check_run_id",
+      "status",
+      "exit_code",
+      "timed_out",
+      "stdout_tail",
+      "stderr_tail",
+      "source_changed_during_run",
+      "worktree_state_changed",
+      "error_code",
+      "result_summary",
+      "environment_evidence"
+    ],
+    "details": [
+      "TR作成(new)・修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
+      "run_self_check → self_check_run_id を受け取る → 作業を続け、必要なときに read_self_check で結果を確認。必要なら cancel_self_check。",
+      "exit_code が 0 以外の completed は通信失敗ではなく、実際の検証失敗の可能性があります。stdout_tail/stderr_tail を読み、範囲内でコードを直し、新しい run_self_check を実行するのが正常な手順です。",
+      "status=failed は実行自体の失敗です。error_code を下のエラー表で解釈してください。",
+      "source_changed_during_run / worktree_state_changed が true なら実行中にソースやワークツリーの状態が変わっています。結果を鵜呑みにせず、安定してから再実行してください。"
+    ]
+  },
+  "errors": {
+    "details": [
+      "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
+      "要求・実行エラーはsubmit/check_errorsを参照します。ルートのエラーはerror.code、認証の拒否はhttp_statusとerror_messageを確認します。"
+    ]
+  }
+}

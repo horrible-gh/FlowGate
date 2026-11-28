@@ -1,0 +1,78 @@
+{
+  "locale": "en",
+  "title": "glob",
+  "summary": "List file paths matching a glob pattern.",
+  "purpose": "List file paths matching a glob pattern.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "glob"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "pattern",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "File path pattern. Example: **/*.py"
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Base directory for expanding the pattern. Empty means the source root."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional committed-tree ref. Omit or send null for the worktree, including uncommitted changes. Accepts head, target_sha, merge_base and merge_tree from merge_preview."
+      }
+    ],
+    "example": {
+      "pattern": "**/*.py"
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "glob",
+      "server_ts": "2026-07-29T13:34:31+09:00",
+      "paths": [
+        "server/modules/flow_gate/db/events.py",
+        "server/modules/flow_gate/db/documents.py"
+      ],
+      "total": 2
+    },
+    "details": [
+      "Pass a source-root-relative entry from paths directly to read."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The path does not exist or is not a directory."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "path escapes the source root."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the grep scope (glob shares the grep scope)."
+    }
+  ]
+}

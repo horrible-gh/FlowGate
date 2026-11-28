@@ -1,0 +1,13 @@
+{
+  "locale": "en",
+  "title": "Card forks and joins",
+  "summary": "Card forks and joins",
+  "purpose": "Card forks and joins",
+  "request": {
+    "route": "{{route:cards.place}}",
+    "authorization": "Bearer {{token}}",
+    "details": "POST explicit links with source and target. card:0..card:4 follow cards order, $after is the anchor and $end is the confirm or join card. Existing node keys can be sources. Set join to an unstarted work or confirm card. Send at most 30 links. An empty cards array requires links."
+  },
+  "response": "Links define all edges. With gate=false and no reused confirm or join, omit $end. Existing outgoing edges and ownership of the join card are preserved.",
+  "errors": "For 422 chat_cards_graph_invalid read issues. Remove cycles and ensure every new card is reachable and leads to $end when present."
+}

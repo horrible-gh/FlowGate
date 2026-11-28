@@ -275,6 +275,31 @@
   cursor: default;
 }
 
+/* flowgate.v02test.0106: the dirty card's row list. Expanded, it is capped at about 11 rows and scrolls inside the
+   card; the buttons after it stay outside the scroll area. */
+.gx-files-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.gx-files-list > * {
+  flex: none;
+}
+
+.gx-files-list.is-scroll {
+  max-height: calc(28px * 11);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gx-files-list:empty {
+  display: none;
+}
+
+.gx-files-list:not(:last-child) {
+  border-bottom: 1px solid var(--fg2-line);
+}
+
 .gx-file-st {
   width: 14px;
   flex: none;

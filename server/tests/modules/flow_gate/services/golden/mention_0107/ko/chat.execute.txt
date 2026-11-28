@@ -1,0 +1,27 @@
+## 지금 할 일
+할 일: 마지막 사용자 메시지에 답한다
+완료 전: 추가 선행 작업 없음
+제출·완료: 필요한 일을 마친 뒤 마지막에 한 번만 한다.
+마지막 형식: 턴 body·based_on_seq 계약 준수 / 제출 body/content 마지막 줄에 지정된 probe 유지
+
+## 모드: 실행
+소스·문서를 조회하고 허용된 명령을 실행합니다. 이 모드로 안 되는 일은 못 한 부분과 필요한 모드를 답에 한 줄로 적으십시오.
+
+## 이번 호출 값
+Authorization: Bearer FAKE-GOLDEN-TOKEN
+Flow: F1(Example) · flow_id demo.test.0001
+대화: demo.test.0001.0002-CH · 읽기 시작 after_seq=0
+이번 범위 끝: through_seq=5
+idempotency_key: golden-turn
+display_name: Example AI
+작업 위치: /workspace/example
+probe: fg-probe:golden-𠮷
+
+## 헬프
+GET https://example.invalid/flowgate/api/v1/help (색인; help/items/{name}[/{child}])
+먼저 읽기: notices, conversation/read, conversation/turn, conversation/encoding
+필요할 때: documents/list, documents/partial, documents/unreadable, attachments/link, source_tools, cards/state, cards/ai_options, conversation/commands, attachments/upload_request, cards/questions, cards/recovery, question/policy
+
+## 자료
+---
+Original {{token}} material. 사용자 원문 / 原文

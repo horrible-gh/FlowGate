@@ -122,23 +122,7 @@ def _chat_lookup_sections(
     *, base: str, raw_token: str, project: str, group_name: str,
     source_access: Optional[str] = None,
 ) -> list[str]:
-    """Read-only source + document search block for the chat mention.
-
-    's symptom: asked to check something in the source, the chat worker had no
-    API for anything outside its own CH document, so it guessed at a local directory
-    and reported the guess as fact. The scopes were never the problem — a chat token
-    already resolves to ["read", "grep"] (glob shares grep's scope), and verify_bearer
-    accepts it on /search/documents* — the mention simply never said so (the review finding
-    1/4). So this adds text, not permission.
-
-    The source section is the same builder N/NR mentions use, asked for a "CH" step so
-    it renders its read/search-only variant, behind the same source-mode gate: when the
-    project runs in local mode there is no remote source API to advertise (finding 3).
-    Document search stays either way — it reads storage, not the source tree.
-
-    Kept deliberately small. the earlier implementation.0010 rejected a chat mention padded with
-    non-chat sections, and compactness is still the rule here (finding 9).
-    """
+    """Legacy source and document lookup, gated by the token capability."""
     # Lazy: mention_service pulls in the full mention stack, and this module is
     # imported by the invoke path at request time.
     from modules.flow_gate.services import mention_service
@@ -146,23 +130,7 @@ def _chat_lookup_sections(
     sections: list[str] = []
     source_included = mention_service._include_remote_source_crud(project)
     if source_included:
-        # build_conversation_mention has no locale parameter of its own (chat mention
-        # stays English-only by design — see its docstring); pin "en" explicitly rather
-        # than falling through to the shared function's ko default.
-        #
-        # action_scope must be "chat", not the default "new": passing
-        # the real scope is what keeps this judge matching whatever remote_tool_service
-        # actually grants a chat token, instead of guessing from the step type alone.
-        # Under 0392's chat=none policy the two diverged — default "new" judged "read"
-        # while a real chat token got "none" — so this call used to render the section
-        # empty. the earlier implementation/the review flips that policy: kind_for_step now returns "read"
-        # for "chat" at the same early branch as "review"/"workflow_decide", so the
-        # section renders the four read-only tools, still matching what the token can
-        # actually call.
-        # the just-issued token's real capability, when known, wins over
-        # the generic chat default (kind_for_step("chat", ...) always answers "read",
-        # blind to this user's edit/edit_once setting). None/damaged falls through to
-        # that same default via _remote_source_crud_section's own kind=None branch.
+        # Preserve the legacy locale and use the issued token capability.
         section = mention_service._remote_source_crud_section(
             base, raw_token, "CH", "en", action_scope="chat",
             kind=source_access if source_access in ("read", "read_write") else None,
@@ -184,16 +152,12 @@ def _chat_lookup_sections(
     if source_included:
         search_lines += [
             "",
-            # Finding 5: every remote path is root-relative and the server picks the root
-            # (this group's worktree, else the project branch checkout). Naming an
-            # absolute path here would just give the worker a new wrong thing to trust.
             "Source paths are relative to the project source root, which the server resolves",
             "on its own (this group's worktree, otherwise the project branch checkout). Do not",
             "guess local absolute paths or search your own filesystem — use the APIs above.",
         ]
     search_lines += [
         "",
-        # Finding 8: a successful edit consumes the token and its remote grant dies with it.
         "Submitting your turn consumes this token, so finish all reading and searching first.",
     ]
     sections.append("## Document search and lookup rules\n---\n" + "\n".join(search_lines))
@@ -287,9 +251,6 @@ def _fold_notice(
         f"GET {api_base}/conversation/{doc_id}/turns?before_seq={first}",
         f"Authorization: Bearer {raw_token}",
         "If `prev_before_seq` is not null, call again with that value to keep going further back.",
-        # Said again here on purpose. The paragraph above carries the same rule, but the
-        # place where "am I allowed to read further back" is actually decided is this
-        # one.
         "Paging back does not consume this token either.",
     ]
 
@@ -299,6 +260,85 @@ from modules.flow_gate.services.prompt_blocks.blocks.conversation import (  # no
     conversation_turn_submission_lines,
     encoding_probe_paragraph as _encoding_probe_paragraph,
 )
+
+
+def _compact_chat_mention(
+    *, doc_id, group_id, token_id, raw_token, api_base, locale, source_access,
+    command_access, one_shot_claimed, provider, in_app, window,
+):
+    from modules.flow_gate.services.help import loader
+
+    can_write = source_access == "read_write"
+    if can_write:
+        mode = "chat.edit_once" if one_shot_claimed else "chat.edit"
+    elif source_access == "read" and command_access == "execute":
+        mode = "chat.execute"
+    else:
+        mode = "chat.read"
+    try:
+        rollout = loader.read_json("mention_rollout")
+    except loader.HelpContentError:
+        return None
+    if not rollout.get(mode, {}).get("enabled"):
+        return None
+
+    from fastapi import HTTPException
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    from modules.flow_gate.services import encoding_probe, message_image_delivery, question_policy, token_service
+    from modules.flow_gate.services.help.visibility import decide_visibility, resolve_context
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    from modules.flow_gate.services.prompt_blocks.matrix import MentionFacts
+    from modules.flow_gate.services.prompt_selection import chat_situation
+
+    try:
+        token = token_service.verify(raw_token)
+    except HTTPException:
+        return None
+    loc = _locale(locale)
+    help_context = resolve_context(token, loc, api_base)
+    through_seq = window.get("through_seq")
+    image_context = dict(conversation_id=doc_id, after_seq=window["after_seq"],
+                         through_seq=through_seq, locale=loc)
+    image_count = message_image_delivery.image_count(doc_id, window["after_seq"], through_seq)
+    if in_app and image_count:
+        # The legacy provider hook delivers actual image inputs for each provider attempt.
+        return None
+
+    situation = chat_situation(group_id, can_write=can_write)
+    facts = MentionFacts(
+        mode=mode, attachment_request=decide_visibility("attachments/upload_request", help_context).visible,
+        unanswered=situation.unanswered, current_run=situation.current_run,
+        question_policy=bool(question_policy.text(token.get("issued_to"), group_id)),
+        live_commands=in_app,
+    )
+    values = dict(
+        token=raw_token, base_url=api_base, flow_id=group_id,
+        flow_name=display_names.flow_name(group_id, _group_title(group_id)) or group_id,
+        doc_id=doc_id, after_seq=window["after_seq"], through_seq=through_seq,
+        idempotency_key=token_id, display_name=provider, probe=encoding_probe.probe_for(token_id),
+    )
+    material_labels = {
+        "ko": ("작업 이름 요청", "이미지 전달 안내", f"이미지 {image_count}장은 복사 경로로 전달되지 않습니다."),
+        "en": ("Task name request", "Image delivery", f"The copy path does not deliver {image_count} image(s)."),
+        "ja": ("作業名の依頼", "画像の受け渡し", f"コピー経由では画像{image_count}枚は送られません。"),
+    }
+    localized = {}
+    for lang, (title, image_title, image_note) in material_labels.items():
+        request = first_names_hooks.title_request(group_id, lang, "chat", doc_id)
+        materials = [f"## {title}\n{request}"] if request else []
+        if image_count:
+            materials.append(f"## {image_title}\n{image_note}")
+        localized[lang] = {"materials": "\n\n".join(materials)}
+    text = compose([], kind="chat", locale=loc, unanswered=situation.unanswered,
+                   can_write=can_write, mention=dict(facts=facts, values=values,
+                                                      context=help_context, localized_values=localized))
+    _, spec = terminal_prompt.split(text)
+    if not spec or "mention" not in spec:
+        return None
+    if in_app:
+        image_context["locale"] = spec["locale"]
+        return message_image_delivery.ConversationMention(text, image_context)
+    return terminal_prompt.finalize(text)
 
 
 def build_conversation_mention(
@@ -327,6 +367,7 @@ def build_conversation_mention(
     # the token's own `command_access` ("execute" for an execute-mode
     # chat: commands allowed while source_access stays "read"; None otherwise).
     command_access: Optional[str] = None,
+    one_shot_claimed: Optional[bool] = None,
     locale: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
@@ -348,13 +389,31 @@ def build_conversation_mention(
     window = chat_doc_settings_service.context_window(
         user_id, doc_id, settings, head_seq_of=conversation_turns.current_head_seq,
     )
+    api_base = api_base_url.rstrip("/")
+    # an edit-mode chat names its commit; FlowGate commits at the run end.
+    can_write = source_access == "read_write"
+    if one_shot_claimed is None:
+        # In-app mentions are built before admission commits/clears the claim.
+        # Compare token identity, never the saved mode (already reset to read_only).
+        one_shot_claimed = False
+        if can_write and user_id:
+            from modules.flow_gate.db import user_chat_source_access
+            claim = user_chat_source_access.get(user_id, project, group_name) or {}
+            one_shot_claimed = claim.get("one_shot_token_id") == token_id
+    compact = _compact_chat_mention(
+        doc_id=doc_id, group_id=group_name, token_id=token_id, raw_token=raw_token,
+        api_base=api_base, locale=locale, source_access=source_access, command_access=command_access,
+        one_shot_claimed=one_shot_claimed, provider=provider, in_app=command_execution, window=window,
+    )
+    if compact is not None:
+        return compact
+
     after_seq, folded = window["after_seq"], window["folded"]
     window_query = ""
     if window.get("through_seq") is not None:
         window_query += f"&through_seq={window['through_seq']}"
     if window.get("limit") is not None:
         window_query += f"&limit={window['limit']}"
-    api_base = api_base_url.rstrip("/")
     display_name = provider or "<your model name>"
     payload_lines = [
         "{",
@@ -364,8 +423,6 @@ def build_conversation_mention(
         f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
         "}",
     ]
-    # an edit-mode chat names its commit; FlowGate commits at the run end.
-    can_write = source_access == "read_write"
     if can_write:
         payload_lines[-2] += ","
         payload_lines.insert(-1, '  "commit_message": "<required when the flow worktree has uncommitted changes: see below>"')
@@ -384,9 +441,11 @@ def build_conversation_mention(
         *_conversation_reread_lines(locale),
         "When paging this selected context, keep through_seq and limit from the initial URL unchanged.",
     ]
-    # Right behind the paragraph that named the starting point, and ahead of the reply
-    # instructions: said in that order the worker reads the two as one thought. Appended
-    # at the end of the document it reads the first half and moves on (scenario 11).
+    from modules.flow_gate.services.prompt_blocks.registry import brief
+    lines += ["", brief("chat.current_mode", source_access=source_access,
+                        command_access=command_access, one_shot_claimed=one_shot_claimed,
+                        locale=_locale(locale))]
+    # Keep the selected range and earlier-page access together.
     if folded > 0:
         lines += [""] + _fold_notice(
             api_base=api_base,
@@ -422,10 +481,6 @@ def build_conversation_mention(
         )
         if not chat_run_hooks.registered(chat_run_hooks.PROVIDE_CHAT_TOOLS):
             sections = [_command_section(base=api_base, raw_token=raw_token)] if may_run else []
-        if may_run and not can_write:
-            from flowgate.conversation import commands as conversation_commands
-
-            sections.append(conversation_commands.execute_mode_mention_section())
         for section in sections:
             lines += ["", section]
     from modules.flow_gate.services import question_policy
@@ -572,6 +627,28 @@ def compose_rework_mention(base: str, doc: dict, reject_reason: Optional[str], *
     Both chunks already end in a blank line, so joining on "\n" leaves exactly one blank line
     between every pair.
     """
+    from modules.flow_gate.services import terminal_prompt, mention_service
+    _, task = terminal_prompt.split(base)
+    if task and "mention" in task:
+        loc = task["locale"]
+        reason = reject_reason or doc.get("rejection_reason") or ""
+        prior = _rejection_history(doc)[:-1]
+        heading = {"ko": "반려 사유", "en": "Rejection reason", "ja": "差し戻し理由"}[loc]
+        history_heading = {"ko": "이전 반려 이력", "en": "Prior rejection history", "ja": "以前の差し戻し履歴"}[loc]
+        values = task["mention"]["values"]
+        old_reason = doc.get("rejection_reason") or ""
+        old_section = f"## {heading}\n---\n{old_reason}"
+        materials = values.get("materials") or ""
+        if old_reason and materials.startswith(old_section):
+            materials = materials[len(old_section):].lstrip("\n")
+        values["materials"] = materials
+        chunks = [f"## {heading}\n---\n{reason}"] if reason else []
+        if prior:
+            chunks.append(f"## {history_heading}\n---\n" + "\n".join(
+                f"- [{item.get('rejected_at', '')}] {item.get('reason', '')}" for item in prior))
+        if handoff:
+            chunks.append(handoff)
+        return mention_service.add_card_materials(task, "\n\n".join(chunks))
     section = build_rejection_section(_rejection_history(doc), reject_reason or doc.get("rejection_reason"))
     leading = [chunk for chunk in (section, handoff) if chunk]
     return "\n".join(leading) + "\n" + base if leading else base
@@ -776,7 +853,10 @@ def prepend_pre_instruction_section(
     :func:`modules.flow_gate.services.work_plan_attachment_service.resolve_pre_instruction`,
     which raises rather than returning an invalid one. This function only formats.
     """
-    loc = _locale(locale)
+    from modules.flow_gate.services import terminal_prompt, mention_service
+    _, task = terminal_prompt.split(mention_text)
+    compact = bool(task and "mention" in task)
+    loc = task["locale"] if compact else _locale(locale)
     parts: list[str] = []
     if text and text.strip():
         parts.append(text.strip())
@@ -790,6 +870,8 @@ def prepend_pre_instruction_section(
     if not body:
         return mention_text
     section = f"## {_PRE_INSTRUCTION_SECTION_HEADER[loc]}\n---\n{body}"
+    if compact:
+        return mention_service.add_card_materials(task, section)
     if not mention_text:
         return section
     return section + SECTION_SEPARATOR + mention_text

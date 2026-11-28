@@ -20,8 +20,8 @@
   >
     <div ref="windowBodyRef" class="pd-window" data-test="project-window">
       <p class="pd-head-sub pd-window-sub">{{ t('gui.project.dialog.subtitle') }}</p>
-      <div v-if="isAdmin" class="pd-intro">
-        <Button type="button" variant="primary" size="sm" @click="createDialogOpen = true">
+      <div v-if="createKnown" class="pd-intro">
+        <Button type="button" variant="primary" size="sm" :disabled="!canCreateProject" :title="createReason || undefined" data-test="project-new" @click="createDialogOpen = true">
           {{ t('gui.project.dialog.new_project') }}
         </Button>
       </div>
@@ -68,8 +68,8 @@
 
     <template #default>
       <div class="pd-body">
-        <div v-if="isAdmin" class="pd-intro">
-          <Button type="button" variant="primary" size="sm" @click="createDialogOpen = true">
+        <div v-if="createKnown" class="pd-intro">
+          <Button type="button" variant="primary" size="sm" :disabled="!canCreateProject" :title="createReason || undefined" data-test="project-new" @click="createDialogOpen = true">
             {{ t('gui.project.dialog.new_project') }}
           </Button>
         </div>
@@ -138,7 +138,8 @@ import Input from '../../components/ui/Input.vue'
 import ModalShell from '../../components/ui/ModalShell.vue'
 import ModelessShell from '../../components/ui/ModelessShell.vue'
 import ToastHost, { type ToastHostItem } from '../../components/ui/ToastHost.vue'
-import { useCurrentUser } from '../../core/auth/currentUser'
+import { denialLines } from '@shared/permissions/denial'
+import { ensureWorkspaceCapabilityList, newProjectDecision } from '@shared/permissions/capabilities'
 import ProjectCreateDialog from './ProjectCreateDialog.vue'
 import ProjectList from './ProjectList.vue'
 import { useProjectStore } from './store'
@@ -149,10 +150,19 @@ const emit = defineEmits<{ opened: [project: Project] }>()
 
 const store = useProjectStore()
 const { t } = useI18n()
-const { user } = useCurrentUser()
-
-// Admin-only "+ 새 프로젝트" entry point (D0004 §3.6, T#2 §5).
-const isAdmin = computed(() => user.value?.isAdmin ?? false)
+// "+ 새 프로젝트": the server decides (the default workspace's `workspace.project.create`, the workspace a new
+// project goes to); the screen shows the button once that answer is in, and turns it off with the reason when
+// the answer is no. No `is_admin` here (flowgate.v02test.0090).
+const createDecision = computed(() => newProjectDecision())
+const createKnown = computed(() => createDecision.value.reason !== 'unknown')
+const canCreateProject = computed(() => createDecision.value.allowed)
+const createReason = computed(() => denialLines(
+  [{ action: 'workspace.project.create', decision: createDecision.value }],
+  null,
+  (key, params) => t(key, params ?? {}),
+  'workspace',
+).join(' '))
+onMounted(() => { void ensureWorkspaceCapabilityList() })
 
 const searchQuery = ref('')
 const selectedId = ref<string | null>(null)
@@ -238,9 +248,11 @@ watch(
     selectedId.value = null
     if (asWindow.value) windowGeometry.value = placeWindow()
     // the Designer's File › New Project opens this Dialog asking for the create
-    // child right away. The entry point stays admin-only, so for anyone else the
-    // request is dropped and the Dialog opens as it always does.
-    createDialogOpen.value = store.takeCreateRequest() && isAdmin.value
+    // child right away. The entry point follows the server's capabilities, so for anyone it
+    // does not allow the request is dropped and the Dialog opens as it always does.
+    const wantsCreate = store.takeCreateRequest()
+    if (wantsCreate && !createKnown.value) await ensureWorkspaceCapabilityList()
+    createDialogOpen.value = wantsCreate && canCreateProject.value
     // The modal focuses its search box itself (data-modal-autofocus); the window does it here.
     if (asWindow.value && !createDialogOpen.value) {
       await nextTick()

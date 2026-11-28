@@ -19,6 +19,21 @@ from tests.modules.flow_gate.test_flow_archive_v02test_0002 import (
     subprocess,
 )
 
+from starlette.requests import Request
+
+
+def _tree_request():
+    return Request({"type": "http", "headers": []})
+
+
+@pytest.fixture(autouse=True)
+def _authorized_tree_reader(monkeypatch):
+    # These tests cover tree contents; authentication has its own route tests.
+    from modules.flow_gate.api.v1 import tree_routes
+    monkeypatch.setattr(tree_routes, "verify_bearer",
+                        lambda request: {"issued_to": "tree-reader", "_is_user_jwt": True})
+    monkeypatch.setattr(tree_routes, "has_permission", lambda *args: True)
+
 def test_roundtrip_preserves_documents_runs_decisions_git_and_status(env, tmp_path):
     seed_run(env)
     seed_decision(env)
@@ -46,7 +61,7 @@ def test_tree_hides_whole_archive_and_restored_terminal_flow_stays_visible(env):
     call(env, "post")
     for tree in [process_service.get_group_tree("archive"), process_service.get_hidden_group_tree("archive")]:
         assert not any(FLOW in node["id"] for node in tree["nodes"])
-    shown = tree_routes.get_groups_tree("archive", include_terminal=False, include_archived=True, include_summary=False)
+    shown = tree_routes.get_groups_tree("archive", request=_tree_request(), include_terminal=False, include_archived=True, include_summary=False)
     group = next(n for n in shown["data"]["nodes"] if n["id"] == FLOW)
     assert group["archived_at"] and group["is_final_approved"]
     assert any(n["id"] == FLOW + '.0001-R' for n in shown["data"]["nodes"])

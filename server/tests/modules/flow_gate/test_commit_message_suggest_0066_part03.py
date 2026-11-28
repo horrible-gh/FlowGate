@@ -34,7 +34,7 @@ from tests.modules.flow_gate.test_commit_message_suggest_0066 import (
 
 def test_permission_and_strict_body(repo, provider, monkeypatch):
     stage(repo)
-    monkeypatch.setattr(git_routes, "_has_permission", lambda *args: args[1] == "project.settings.read")
+    monkeypatch.setattr(git_routes, "_has_permission", lambda *args: args[1] == "project.git.read")
     assert call(repo, 403)["code"] == "forbidden"
     assert not provider.captures
     monkeypatch.setattr(git_routes, "_has_permission", lambda *args: True)

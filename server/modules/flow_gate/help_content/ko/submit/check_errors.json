@@ -1,0 +1,139 @@
+{
+  "locale": "ko",
+  "title": "자체 검증 오류와 조치",
+  "summary": "자체 검증 오류와 조치",
+  "purpose": "자체 검증 오류와 조치",
+  "request": {
+    "details": "submit/self_check로 실행을 조회하고 error.code 또는 error_code를 확인합니다."
+  },
+  "response": "오류 종류와 사유에 따라 아래 조치를 적용합니다.",
+  "errors": {
+    "table": [
+      {
+        "category": "execution",
+        "code": "selfcheck_quota_exhausted",
+        "guidance": "검증 횟수를 모두 썼다. 마지막 실행 결과로 판정한다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_request",
+        "guidance": "요청이 객체가 아니거나 program/args/cwd/timeout_seconds/parallel_share 이외의 필드가 있다 → 이 다섯 필드만 보낸다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_share",
+        "guidance": "parallel_share 가 1 이상의 정수가 아니다(상한 64) → 명령이 쓸 worker 수를 정수로 보내거나 생략한다(생략하면 1)."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_cpu_limit_violation",
+        "guidance": "failed run 의 error_code 다(POSIX 호스트). run 의 프로세스가 받은 처리기 밖으로 처리기 집합을 넓혀 트리를 끝냈다. 결과를 검증 근거로 쓰지 않는다 → 명령이 처리기 설정을 바꾸지 않게 하고 다시 실행한다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_program",
+        "guidance": "program 이 실행 파일 이름 하나가 아니다(경로·구분자·제어문자 포함) → program 에는 실행 파일 이름만 넣고 옵션과 대상은 args 로 분리한다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_args",
+        "guidance": "args 가 문자열 배열이 아니거나 개수(256)·길이(8192) 제한을 넘는다 → 문자열 배열로 줄여서 다시 보낸다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_timeout",
+        "guidance": "timeout_seconds 는 양의 정수여야 한다. 생략하면 카드 한도를 쓴다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_shell_operator",
+        "guidance": "args 안에 |, &&, ;, >, < 같은 셸 연산자가 있다 → 명령을 하나씩 나누어 각각 별도 run 으로 실행한다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_inline_execution",
+        "guidance": "python -c, node -e 같은 인라인 코드 실행이다 → 테스트 파일이나 스크립트 경로를 args 로 준다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_program_denied",
+        "guidance": "정책이 금지한 실행 파일이다(셸, git, 네트워크·삭제·시스템 도구 등) → 테스트/린트/빌드용 실행 파일로 바꾼다. 우회를 시도하지 않는다."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_executable_not_found",
+        "guidance": "program 을 찾을 수 없다(설치되지 않았거나 'pytest -q ...' 처럼 명령 전체를 program 에 넣었다) → 이름만 정확히 쓰고 나머지는 args 로 옮긴다. 설치되지 않았다면 그 사실을 보고한다."
+      },
+      {
+        "category": "request",
+        "code": "selfcheck_invalid_cwd",
+        "guidance": "cwd 가 관리 워크트리 안의 존재하는 상대 디렉터리가 아니다(절대경로, 드라이브, 범위 밖) → 워크트리 기준 상대 경로를 쓰거나 '.' 로 둔다."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_disabled",
+        "guidance": "이 프로젝트는 Self-check 가 꺼져 있다 → 반환된 사유를 TR 에 보고하고 다른 실행 수단을 찾지 않는다."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_already_running",
+        "guidance": "이 Group 에 이미 실행 중인 run 이 있다. 실행 슬롯은 TR 마다가 아니라 Group 에 하나이므로 다른 TR 이나 TR 등록 전(draft) run 일 수도 있다. 응답 details 의 self_check_run_id 와 run 요약(tr_doc_id·draft·status·created_at·same_owner)을 본다 → same_owner 가 true 이면 read 로 조회해 끝나기를 기다리거나 cancel 한 뒤 다시 실행한다. false 이면(details.reason_code = selfcheck_foreign_run) 그 run 은 이 토큰으로 취소할 수 없으므로 group_read 경로로 상태만 조회하며 끝나기를 기다리고, 오래 남으면 그 사실과 run 요약을 TR 에 보고한다."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_owner_scope_closed",
+        "guidance": "이 토큰의 관리형 provider/hop 소유 범위가 끝났거나 이 서버에 활성 binding이 없다. 독립 실행으로 전환하지 않는다 → 이전 요청을 재시도하지 말고 현재 실행의 새 토큰과 상태를 확인한다."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_source_busy",
+        "guidance": "다른 소스 변경 작업이 프로젝트 소스 잠금을 잡고 있다 → 그 작업이 끝난 뒤 잠시 후 다시 시도한다."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_cancel_unconfirmed",
+        "guidance": "취소 요청은 기록됐지만(details.cancel.accepted) 실행이 멈췄음을 확인하지 못했다. 이 서버에 그 run 의 실행 제어가 없고, 소유 서버의 종료나 프로세스 트리 전체의 부재가 증명되지 않았다(details.cancel.reason, 사유별 코드는 details.reason_code). run 상태와 보호는 그대로 유지된다 → 취소를 반복하지 말고 read 로 상태를 지켜보며, 계속 남으면 run 요약과 사유를 TR 에 보고한다."
+      },
+      {
+        "category": "busy",
+        "code": "selfcheck_foreign_run",
+        "guidance": "selfcheck_already_running 의 details.reason_code 다. 슬롯을 잡은 run 이 다른 TR 이나 다른 draft 토큰의 것이라 이 토큰의 read/cancel 경로로는 보이지 않는다(selfcheck_run_not_found) → details.run 의 group_read_path 로 상태만 조회하며 끝나기를 기다리고, 오래 남으면 run 요약을 TR 에 보고한다. 취소를 시도하지 않는다."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_ownership_unknown",
+        "guidance": "그 run 을 소유한 서버를 알 수 없거나(기록 없음) 그 서버의 종료를 증명하지 못했다(조회 실패·다른 노드·인스턴스 행 없음). cancel_unconfirmed 의 details.reason_code 이거나 재검증 거절 코드다. run 상태와 보호는 그대로다 → 반복 요청하지 말고 run 요약과 사유를 TR 에 보고한다. 증명 없는 강제 해제는 없다."
+      },
+      {
+        "category": "ownership",
+        "code": "selfcheck_tree_unproven",
+        "guidance": "소유 서버의 종료는 증명됐지만 run 의 프로세스 트리 전체(target·supervisor·그룹/Job·run 마커)가 비었음을 증명하지 못했다(구성원 잔존 또는 조회 불가). cancel_unconfirmed 의 details.reason_code 이거나 재검증 거절 코드다. run 은 recovery_incomplete 로 남고 Group 의 G 는 보호된다 → 반복하지 말고 사유를 보고한다. 서버의 주기 reaper 가 증명이 성립하면 정리한다."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_owner_alive",
+        "guidance": "재검증 거절: 그 run 을 소유한 서버(또는 이 서버의 워커)가 살아 있다. 소유자가 직접 끝내므로 서버가 대신 해제하지 않는다 → read 로 상태를 지켜본다."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_reverify_not_applicable",
+        "guidance": "재검증 대상이 아니다. 소유권 재검증은 recovery_incomplete 인 active run 에만 한다(콘솔 사용자, project.document.update) → 끝난 run 이나 보호되지 않은 run 은 read 로 상태를 본다."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_state_conflict",
+        "guidance": "판정하는 사이 run 상태가 바뀌었다(다른 복구·취소·워커가 먼저 기록함) → read 로 현재 상태를 다시 본 뒤 필요하면 한 번 더 요청한다."
+      },
+      {
+        "category": "recovery",
+        "code": "selfcheck_lock_lost",
+        "guidance": "failed run 의 error_code 다. 실행 중 Group 잠금(G)이 사라져 다른 작업이 같은 워크트리에 들어왔을 수 있으므로 run 을 멈췄다. 결과(exit_code·tail)를 검증 근거로 쓰지 않는다 → 다시 실행해 결과를 얻는다."
+      },
+      {
+        "category": "execution",
+        "code": "selfcheck_worktree_unavailable",
+        "guidance": "이 TR 의 관리 워크트리를 쓸 수 없다 → 반환된 사유를 보고한다. 다른 경로나 복사본으로 우회하지 않는다."
+      }
+    ]
+  }
+}

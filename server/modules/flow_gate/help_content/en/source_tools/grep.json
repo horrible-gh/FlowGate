@@ -1,0 +1,108 @@
+{
+  "locale": "en",
+  "title": "grep",
+  "summary": "Search the source tree with a regular expression.",
+  "purpose": "Search the source tree with a regular expression.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "grep"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "pattern",
+        "type": "string",
+        "required": true,
+        "default": null,
+        "description": "Regular expression to find (Python re syntax)."
+      },
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Directory where the search starts. Empty means the entire source root."
+      },
+      {
+        "name": "glob",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "File filter. Example: **/*.py"
+      },
+      {
+        "name": "ignore_case",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Ignore letter case."
+      },
+      {
+        "name": "max_results",
+        "type": "integer",
+        "required": false,
+        "default": null,
+        "description": "Maximum matches to return. Once filled, scanning stops after that file."
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "Optional committed-tree ref. Omit or send null for the worktree, including uncommitted changes. Accepts head, target_sha, merge_base and merge_tree from merge_preview."
+      }
+    ],
+    "example": {
+      "pattern": "TODO",
+      "glob": "**/*.py",
+      "ignore_case": true,
+      "max_results": 20
+    },
+    "details": [
+      "Replace {name} in the route with path_parameters.name.",
+      "Do not edit the project source on disk directly — every source read and change goes through these tools."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "grep",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "matches": [
+        {
+          "file": "server/modules/flow_gate/template_provision.py",
+          "line": 194,
+          "text": "def normalize_locale(x_locale: Optional[str]) -> str:"
+        }
+      ],
+      "total": 1,
+      "truncated": false
+    },
+    "details": [
+      "total is exact only when truncated=false; when true, it is a lower bound at the point scanning stopped.",
+      ".venv / venv / node_modules / .git / __pycache__ are excluded from traversal. Point path directly into one to inspect it.",
+      "Very large and binary files are skipped."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 404,
+      "code": "not_found",
+      "when": "The path does not exist or is not a directory."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "The regular expression is invalid or path escapes the source root."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "This token does not have the grep scope."
+    }
+  ]
+}

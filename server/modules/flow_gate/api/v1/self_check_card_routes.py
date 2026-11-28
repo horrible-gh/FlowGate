@@ -27,13 +27,15 @@ def read_card(request: Request, flow_id: str, node_key: str):
     def handle():
         user_id = _access(request, flow_id)
         return {'verification': service.status(flow_id, node_key,
-            lambda project_id: has_permission(user_id, project_id, 'perm_document_read'))}
+            lambda project_id: has_permission(user_id, project_id, 'project.document.read'))}
     return envelope.run(request, handle)
 
 
 def _control(request, flow_id, node_key, run_id, action):
     def handle():
-        _access(request, flow_id)
+        actor = _access(request, flow_id)
+        if action == 'mark_ended':
+            return {'verification': service.control(flow_id, node_key, run_id, action, actor_user_id=actor)}
         return {'verification': service.control(flow_id, node_key, run_id, action)}
     return envelope.run(request, handle)
 
@@ -46,3 +48,7 @@ def force_stop(request: Request, flow_id: str, node_key: str, run_id: str):
 @router.post('/{flow_id}/nodes/{node_key}/self-check/runs/{run_id}/cancel-waiting')
 def cancel_waiting(request: Request, flow_id: str, node_key: str, run_id: str):
     return _control(request, flow_id, node_key, run_id, 'cancel_waiting')
+
+@router.post('/{flow_id}/nodes/{node_key}/self-check/runs/{run_id}/mark-ended')
+def mark_ended(request: Request, flow_id: str, node_key: str, run_id: str):
+    return _control(request, flow_id, node_key, run_id, 'mark_ended')

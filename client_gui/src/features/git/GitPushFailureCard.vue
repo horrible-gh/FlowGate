@@ -22,7 +22,7 @@
       <button v-if="closed" type="button" class="gx-btn primary" :disabled="cancelBlocked" data-test="git-push-cancel" @click="cancel">
         {{ t('gui.git.gate_job.cancel_approval') }}
       </button>
-      <button type="button" class="gx-btn" :class="closed ? 'ghost' : 'primary'" :disabled="closed || (operation ? !operation.gate.recovery?.retryable || gateJobs?.busy.value || gateJobs?.readOnly() : !session.canAct.value)" data-test="git-push-retry" @click="retry">
+      <button type="button" class="gx-btn" :class="closed ? 'ghost' : 'primary'" :disabled="closed || (operation ? !operation.gate.recovery?.retryable || gateJobs?.busy.value || gateJobs?.readOnly() : !session.canMerge.value)" data-test="git-push-retry" @click="retry">
         {{ t('gui.git.push.retry') }}
       </button>
       <button v-if="closed" type="button" class="gx-btn ghost" data-test="git-goto-gate" @click="gotoGate">

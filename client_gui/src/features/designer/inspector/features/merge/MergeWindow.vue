@@ -3,23 +3,23 @@
     :initial-x="16" :initial-y="80" :min-width="300" :min-height="200" :minimized="win?.minimized ?? false"
     @update:minimized="value => { if (win) win.minimized = value }" @close="close">
 
-  <section class="merge-window" data-test="merge-window" :data-screen="screen" :aria-busy="busy ? 'true' : 'false'">
+  <section ref="root" class="merge-window" data-test="merge-window" :data-screen="screen" :aria-busy="busy ? 'true' : 'false'">
     <p v-if="screen === 'loading' && !readFailed" class="mz-note" role="status">{{ t('gui.inspector.merge.loading') }}</p>
     <p v-if="readFailed" class="mz-alert" role="alert" data-test="merge-read-failed">
       {{ t('gui.inspector.merge.read_failed') }}
       <button type="button" class="mz-link" @click="reload">{{ t('gui.inspector.merge.retry_read') }}</button>
     </p>
 
-    <!-- automatic conflict resolution (read only: the server runs and ends it): running outside the progress box, or out of tries -->
+    <!-- automatic conflict resolution (read only: the server runs and ends it): running outside the progress box, or out of tries
+         while a person has to choose (F84-9: only then the big red box; its files open, its tries folded) -->
     <div v-if="autoDetail && autoResolve" class="mz" :class="{ 'is-info': autoResolve.state === 'running' }" data-test="merge-auto-box" :data-auto-state="autoResolve.state">
       <h4 class="mz-title" :class="autoResolve.state === 'running' ? 'is-info' : 'is-danger'">
         <span v-if="autoResolve.state === 'running'" class="mz-spin"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.spinner" /></svg></span>
         <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.conflict" /></svg>{{ autoTitle }}
       </h4>
-      <p class="mz-text" data-test="merge-auto-text">{{ autoText }}</p>
-      <MergeAutoResolve :auto="autoResolve" :show-unresolved="autoResolve.state === 'exhausted'" />
+      <p v-if="autoText" class="mz-text" data-test="merge-auto-text">{{ autoText }}</p>
+      <MergeAutoResolve :auto="autoResolve" :show-unresolved="autoResolve.state === 'exhausted'" :history-folded="autoResolve.state === 'exhausted' || pastFailed" />
     </div>
-    <p v-else-if="autoNote" class="mz-note" role="status" data-test="merge-auto-note">{{ autoNote }}</p>
 
     <!-- waiting (blue) -->
     <div v-if="screen === 'waiting' && state" class="mz is-info" data-test="merge-box">
@@ -44,22 +44,15 @@
         {{ autoInBox ? autoText : state.resolving ? tc('gui.inspector.merge.catching_up.resolving', state.files.length) : t('gui.inspector.merge.catching_up.merging') }}
       </p>
       <div class="mz-prog" :class="{ 'is-indeterminate': !state.files.length }"><i :style="progressStyle" /></div>
-      <MergeAutoResolve v-if="autoInBox && autoResolve" :auto="autoResolve" />
+      <!-- F84-9: a retry after a failed try keeps the past tries folded under the progress (the title tells the current try) -->
+      <MergeAutoResolve v-if="autoInBox && autoResolve" :auto="autoResolve" :history-folded="pastFailed" />
       <div v-else class="mz-log" data-test="merge-log">
         <div v-for="step in steps" :key="step.key" :data-step="step.state"><span :class="`mz-log-${step.state}`">{{ STEP_MARKS[step.state] }}</span> {{ step.text }}</div>
       </div>
-      <div v-if="autoInBox" class="mz-btns">
-        <button v-if="can('ai_resolve')" type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
-        </button>
-        <button v-if="can('pick') && openFiles.length" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
-        </button>
-      </div>
     </div>
 
-    <!-- ② could not reconcile (red) -->
-    <div v-else-if="screen === 'needs_choice' && state" class="mz" data-test="merge-box">
+    <!-- ② could not reconcile (red); after every automatic try failed, the box above tells it (one box, 시안 jvj9ff9t §1) -->
+    <div v-else-if="screen === 'needs_choice' && state && !exhaustedBox" class="mz" data-test="merge-box">
       <h4 class="mz-title is-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.conflict" /></svg>{{ t(allResolved ? 'gui.inspector.merge.needs_choice.title_resolved' : 'gui.inspector.merge.needs_choice.title') }}</h4>
       <p class="mz-text" data-test="merge-summary">
         <template v-if="allResolved">{{ t('gui.inspector.merge.needs_choice.resolved_all') }}</template>
@@ -74,38 +67,6 @@
           <span v-else class="mz-why">{{ t(`gui.inspector.merge.kinds.${file.kind}`) }}</span>
         </div>
       </div>
-      <template v-if="can('merge')">
-        <div class="mz-btns">
-          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-merge" @click="merge">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.needs_choice.merge') }}
-          </button>
-          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
-          </button>
-        </div>
-      </template>
-      <template v-else>
-        <div v-if="can('ai_resolve')" class="mz-btns">
-          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
-          </button>
-          <label class="mz-aisel">
-            <span class="mz-sr">{{ t('gui.inspector.merge.needs_choice.ai_pick') }}</span>
-            <select v-model="providerId" :disabled="busy" data-test="merge-ai-provider">
-              <option :value="''">{{ defaultLabel }}</option>
-              <option v-for="provider in otherProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
-            </select>
-          </label>
-        </div>
-        <div class="mz-btns mz-btns-gap">
-          <button v-if="can('pick')" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
-          </button>
-          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
-          </button>
-        </div>
-      </template>
       <p v-if="state.waitingCards.length" class="mz-meta" data-test="merge-meta">
         <template v-if="state.waitingCards.length">
           {{ t('gui.inspector.merge.waiting_cards') }}
@@ -138,39 +99,110 @@
           </span>
         </div>
       </div>
-      <div class="mz-btns">
-        <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-pick-submit" @click="submitPick">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.pick.submit') }}
-        </button>
-        <button type="button" class="mz-b" :disabled="busy" data-test="merge-pick-cancel" @click="picking = false">{{ t('gui.inspector.merge.pick.cancel') }}</button>
-      </div>
     </div>
 
     <!-- failed (red) -->
     <div v-else-if="screen === 'failed' && state" class="mz" data-test="merge-box">
       <h4 class="mz-title is-danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.failed" /></svg>{{ t('gui.inspector.merge.failed.title') }}</h4>
       <p class="mz-text" data-test="merge-failed-text">{{ reasonText || t('gui.inspector.merge.failed.body') }}</p>
-      <div class="mz-btns">
-        <button v-if="can('retry')" type="button" class="mz-b" :disabled="busy" data-test="merge-retry" @click="retry">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.retry" /></svg>{{ t('gui.inspector.merge.failed.retry') }}
-        </button>
-        <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
-        </button>
-      </div>
       <p v-if="state.waitingCards.length" class="mz-meta">
         {{ t('gui.inspector.merge.waiting_cards') }}
         <template v-for="(waiting, index) in state.waitingCards" :key="waiting.nodeKey"><template v-if="index">, </template><button type="button" class="mz-link" @click="goCard(waiting.nodeKey)">{{ waiting.title }}</button></template>
       </p>
     </div>
 
-    <!-- ④ merged (green) -->
-    <div v-else-if="screen === 'merged'" class="mz is-ok" data-test="merge-box">
-      <h4 class="mz-title is-ok"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.merged.title') }}</h4>
-      <p class="mz-text" data-test="merge-merged-text">{{ t('gui.inspector.merge.merged.body') }}</p>
+    <!-- ④ merged (green); a merge an AI resolved offers [병합 취소] (시안 jvj9ff9t §2) -->
+    <!-- F84-9: a plain merge closes itself after a countdown (held while the pointer is on the window); the tries are not repeated here -->
+    <div v-else-if="screen === 'merged'" class="mz is-ok" data-test="merge-box" :data-ai-merged="aiResolved ? 'true' : 'false'" :data-auto-close="closeLeft === null ? undefined : hovering ? 'held' : String(closeLeft)">
+      <h4 class="mz-title is-ok" data-test="merge-merged-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ mergedTitle }}</h4>
+      <p class="mz-text" data-test="merge-merged-text">{{ t(aiResolved ? 'gui.inspector.merge.merged.body_ai' : 'gui.inspector.merge.merged.body') }}</p>
     </div>
 
+    <!-- F84-9: below the current step — the short automatic-resolution line and the past tries as one folded line (shown once) -->
+    <p v-if="autoNote" class="mz-note" role="status" data-test="merge-auto-note">{{ autoNote }}</p>
+    <MergeAutoResolve v-if="historyFolded && autoResolve" :auto="autoResolve" history-folded />
+
+    <p v-if="exhaustedBox && state?.waitingCards.length" class="mz-meta" data-test="merge-meta">
+      {{ t('gui.inspector.merge.waiting_cards') }}
+      <template v-for="(waiting, index) in state.waitingCards" :key="waiting.nodeKey"><template v-if="index">, </template><button type="button" class="mz-link" data-test="merge-waiting-card" @click="goCard(waiting.nodeKey)">{{ waiting.title }}</button></template>
+    </p>
+
     <p v-if="errorText" class="mz-alert" role="alert" data-test="merge-error">{{ errorText }}</p>
+    <p v-if="undoFailed" class="mz-alert" role="alert" data-test="merge-undo-failed">{{ t('gui.inspector.merge.undo.failed') }}</p>
+
+    <!-- The window's buttons stay at its bottom: seen without scrolling at the default size (시안 jvj9ff9t §1). -->
+    <div v-if="footShown" class="mz-foot" data-test="merge-foot">
+      <template v-if="screen === 'catching_up' && autoInBox">
+        <div class="mz-btns">
+          <button v-if="can('ai_resolve')" type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
+          </button>
+          <button v-if="can('pick') && openFiles.length" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
+          </button>
+        </div>
+      </template>
+      <template v-else-if="screen === 'needs_choice' && can('merge')">
+        <div class="mz-btns">
+          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-merge" @click="merge">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.needs_choice.merge') }}
+          </button>
+          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+          </button>
+        </div>
+      </template>
+      <template v-else-if="screen === 'needs_choice'">
+        <div v-if="can('ai_resolve')" class="mz-btns">
+          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-ai" @click="startAi">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.sparkle" /></svg>{{ t('gui.inspector.merge.needs_choice.ai') }}
+          </button>
+          <label class="mz-aisel">
+            <span class="mz-sr">{{ t('gui.inspector.merge.needs_choice.ai_pick') }}</span>
+            <select v-model="providerId" :disabled="busy" data-test="merge-ai-provider">
+              <option :value="''">{{ defaultLabel }}</option>
+              <option v-for="provider in otherProviders" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="mz-btns">
+          <button v-if="can('pick')" type="button" class="mz-b" :disabled="busy" data-test="merge-pick-open" @click="openPick">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.hand" /></svg>{{ t('gui.inspector.merge.needs_choice.pick') }}
+          </button>
+          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+          </button>
+        </div>
+      </template>
+      <template v-else-if="screen === 'pick'">
+        <div class="mz-btns">
+          <button type="button" class="mz-b is-pri" :disabled="busy" data-test="merge-pick-submit" @click="submitPick">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.check" /></svg>{{ t('gui.inspector.merge.pick.submit') }}
+          </button>
+          <button type="button" class="mz-b" :disabled="busy" data-test="merge-pick-cancel" @click="picking = false">{{ t('gui.inspector.merge.pick.cancel') }}</button>
+        </div>
+      </template>
+      <template v-else-if="screen === 'failed'">
+        <div class="mz-btns">
+          <button v-if="can('retry')" type="button" class="mz-b" :disabled="busy" data-test="merge-retry" @click="retry">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.retry" /></svg>{{ t('gui.inspector.merge.failed.retry') }}
+          </button>
+          <button v-if="can('discard_rerun')" type="button" class="mz-b is-dng" :disabled="busy" data-test="merge-discard" @click="confirmOpen = true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.rerun" /></svg>{{ t('gui.inspector.merge.needs_choice.discard') }}
+          </button>
+        </div>
+      </template>
+      <template v-else-if="undoShown || doneShown">
+        <div class="mz-btns">
+          <button v-if="undoShown" type="button" class="mz-b is-dng" :disabled="undoBusy || !!undoBlocked" :aria-describedby="undoBlocked ? undoReasonId : undefined" data-test="merge-undo" @click="openUndo">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="ICONS.undo" /></svg>{{ t('gui.inspector.merge.undo.button') }}
+          </button>
+          <button v-if="doneShown" type="button" class="mz-b" data-test="merge-close" @click="close">{{ t('gui.inspector.merge.merged.close') }}</button>
+          <span v-if="doneShown" class="mz-why-off" data-test="merge-done-hint">{{ t('gui.inspector.merge.merged.done_ai') }}</span>
+          <span v-if="undoShown && undoBlocked" :id="undoReasonId" class="mz-why-off" data-test="merge-undo-reason">{{ t(`gui.inspector.merge.undo.blocked.${undoBlocked}`) }}</span>
+        </div>
+      </template>
+    </div>
 
     <ConfirmDialog
       :open="confirmOpen"
@@ -182,19 +214,37 @@
       @confirm="discard"
       @cancel="confirmOpen = false"
     />
+    <ConfirmDialog
+      :open="undoOpen"
+      danger
+      :busy="undoBusy"
+      :title="t('gui.inspector.merge.undo.title')"
+      :confirm-label="t('gui.inspector.merge.undo.ok')"
+      :cancel-label="t('gui.inspector.merge.undo.cancel')"
+      @confirm="runUndo"
+      @cancel="undoOpen = false"
+    >
+      <template #message="{ descriptionId }">
+        <ul :id="descriptionId" class="mz-undo-list" data-test="merge-undo-confirm">
+          <li class="is-back" data-test="merge-undo-back">{{ t('gui.inspector.merge.undo.back', { cards: undoImpact.back.join(', ') }) }}</li>
+          <li v-if="undoImpact.keep.length" class="is-keep" data-test="merge-undo-keep">{{ t('gui.inspector.merge.undo.keep', { cards: undoImpact.keep.join(', ') }) }}</li>
+          <li>{{ t('gui.inspector.merge.undo.note') }}</li>
+        </ul>
+      </template>
+    </ConfirmDialog>
   </section>
   </ModelessShell>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModelessShell from '../../../../../components/ui/ModelessShell.vue'
 import { closeMergeWindow, type MergeWindowEntry } from './mergeWindows'
 import ConfirmDialog from '../../../../../components/ui/ConfirmDialog.vue'
 import type { InspectorTarget } from '../../inspectorTarget'
 import MergeAutoResolve from './MergeAutoResolve.vue'
-import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeCountKey, mergeReasonKey } from './mergeModel'
+import { mergeAutoCurrent, mergeAutoProgress, mergeAutoRunning, mergeAutoWaiting, mergeCountKey, mergeReasonKey, mergeWorkOf } from './mergeModel'
 import { openCardMerge, useMerge } from './useMerge'
 
 const props = defineProps<{ target: InspectorTarget; win?: MergeWindowEntry }>()
@@ -214,6 +264,7 @@ const ICONS = {
   check: 'M5 12l4 4L19 6',
   arrow: 'M5 12h14 M13 6l6 6-6 6',
   failed: 'M5 3v4l6 6v8 M17 3v4l-6 6 M15 16l5 5 M20 16l-5 5',
+  undo: 'M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
 } as const
 
 /** How a file overlaps (the merge state's file kind). */
@@ -223,12 +274,12 @@ type Side = (typeof SIDES)[number]
 type StepState = 'ok' | 'run' | 'todo'
 const STEP_MARKS: Record<StepState, string> = { ok: '✓', run: '●', todo: '○' }
 
-const { state, screen, readFailed, error, busy, picking, providers, reload, aiResolve, pick, merge, discardRerun, retry, loadProviders } =
+const { state, screen, readFailed, error, busy, picking, providers, aiResolved, reload, aiResolve, pick, merge, discardRerun, retry, loadProviders } =
   useMerge(() => props.target, () => props.win?.refresh())
 
 const shell = ref<InstanceType<typeof ModelessShell> | null>(null)
 const initialWidth = Math.min(560, window.innerWidth - 32)
-const windowTitle = computed(() => t(`gui.inspector.merge.window.${autoInBox.value ? 'auto_running' : screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
+const windowTitle = computed(() => t(`gui.inspector.merge.window.${autoInBox.value && !autoWaiting.value ? 'auto_running' : screen.value === 'pick' ? 'needs_choice' : screen.value}`) + ' · ' + props.target.title)
 const close = () => { if (props.win) closeMergeWindow(props.win.key) }
 watch(() => props.win?.raise, () => { shell.value?.bringToFront(); void reload() })
 
@@ -251,24 +302,47 @@ const reasonText = computed(() => {
 
 // The server's automatic conflict resolution: shown as it is read; this screen never starts or stops it.
 const autoResolve = computed(() => state.value?.autoResolve ?? null)
+const autoWaiting = computed(() => mergeAutoWaiting(autoResolve.value))
 /** Running while the merge is in progress: the progress box itself tells it (title, text, the tries). */
 const autoInBox = computed(() => mergeAutoRunning(autoResolve.value) && screen.value === 'catching_up')
-/** The framed box: running anywhere but the progress box, or every try used up. */
+/** The framed box: running anywhere but the progress box, or every try used up while a person has to choose (F84-9: once the
+ *  merge moved on — catching up again, merged, failed — the old failure is only the folded line below the current step). */
 const autoDetail = computed(() => {
   const auto = autoResolve.value
   if (!auto || screen.value === 'pick' || screen.value === 'loading') return false
-  return auto.state === 'exhausted' || (auto.state === 'running' && !autoInBox.value)
+  if (auto.state === 'running') return !autoInBox.value
+  return auto.state === 'exhausted' && screen.value === 'needs_choice' && !allResolved.value
 })
-const autoAiName = computed(() => mergeAutoCurrent(autoResolve.value)?.provider?.name ?? state.value?.defaultProvider?.name ?? t('gui.inspector.merge.needs_choice.ai_default'))
+const autoAiName = computed(() => {
+  const current = mergeAutoCurrent(autoResolve.value)
+  const name = current ? current.provider?.name : state.value?.defaultProvider?.name
+  const label = name?.trim()
+  return label && !/^(none|null)$/i.test(label) ? label : null
+})
 const autoTitle = computed(() => {
   const auto = autoResolve.value
   if (!auto) return ''
+  if (autoWaiting.value) return t('gui.inspector.merge.auto.waiting_for_run_title')
   if (auto.state === 'running') return t('gui.inspector.merge.auto.running_title', mergeAutoProgress(auto))
   return tc('gui.inspector.merge.auto.exhausted_title', auto.attempts.length || auto.maxAttempts)
 })
-const autoText = computed(() => (autoResolve.value?.state === 'running'
-  ? t('gui.inspector.merge.auto.running_text', { ai: autoAiName.value })
-  : t('gui.inspector.merge.auto.exhausted_text')))
+/** Out of tries: no sentence; the buttons right below tell what to do. */
+const autoText = computed(() => {
+  if (autoWaiting.value) return t('gui.inspector.merge.auto.waiting_for_run_text')
+  if (autoResolve.value?.state !== 'running') return ''
+  const ai = autoAiName.value
+  return ai ? t('gui.inspector.merge.auto.running_text', { ai }) : t('gui.inspector.merge.auto.running_text_unnamed')
+})
+/** Every automatic try failed and nothing is settled yet: the automatic box is the window's one box (its files and tries). */
+const exhaustedBox = computed(() => autoDetail.value && autoResolve.value?.state === 'exhausted')
+/** F84-9: a try already failed (not running, not resolved): the tries are then past failures, kept folded wherever drawn. */
+const pastFailed = computed(() => !!autoResolve.value?.attempts.some((attempt) => attempt.result !== 'running' && attempt.result !== 'resolved'))
+/** F84-9: past tries with a failure, drawn once as a folded line under the current step when no box above already holds them
+ *  (also under the per-file pick a person opened after the tries ran out). */
+const historyFolded = computed(() => {
+  if (!autoResolve.value?.attempts.length || autoDetail.value || autoInBox.value || screen.value === 'loading') return false
+  return pastFailed.value
+})
 /** The other states are one short line. */
 const autoNote = computed(() => {
   const auto = autoResolve.value
@@ -352,12 +426,130 @@ async function discard(): Promise<void> {
   await discardRerun()
 }
 
+// flowgate.v02test.0084 (F84-8, 시안 jvj9ff9t §2): [병합 취소] of a merge an AI resolved — the Designer's Graph Time Machine
+// of this card (props.win.undo): a confirmation names the cards it takes back and the ones it leaves, then it runs and the
+// Designer shows the outcome. Disabled with the reason while the card cannot be rewound (the run not idle, …).
+const undoShown = computed(() => screen.value === 'merged' && aiResolved.value && !!props.win?.undo)
+const undoBlocked = computed(() => {
+  if (!undoShown.value) return null
+  const reason = props.win?.undo?.blocked() ?? null
+  return reason && te(`gui.inspector.merge.undo.blocked.${reason}`) ? reason : reason ? 'unavailable' : null
+})
+const undoReasonId = `merge-undo-reason-${Math.random().toString(36).slice(2, 10)}`
+const undoOpen = ref(false)
+const undoBusy = ref(false)
+const undoFailed = ref(false)
+const undoImpact = ref<{ back: readonly string[]; keep: readonly string[] }>({ back: [], keep: [] })
+function openUndo(): void {
+  if (!props.win?.undo || undoBlocked.value) return
+  undoImpact.value = props.win.undo.impact()
+  if (!undoImpact.value.back.length) undoImpact.value = { back: [props.target.title], keep: undoImpact.value.keep }
+  undoFailed.value = false
+  undoOpen.value = true
+}
+async function runUndo(): Promise<void> {
+  const undo = props.win?.undo
+  if (!undo || undoBusy.value) return
+  undoBusy.value = true
+  let done = false
+  try {
+    done = await undo.run()
+  } catch {
+    done = false
+  } finally {
+    undoBusy.value = false
+    undoOpen.value = false
+    undoFailed.value = !done
+    props.win?.refresh()
+  }
+  // Undone: the merge this window showed is gone; the Designer's Time Machine dialog tells the outcome.
+  if (done) close()
+  else void reload()
+}
+
+// F84-9: a merge an AI resolved stays open (its [병합 취소]); [닫기] and a short "done" line sit beside it.
+const doneShown = computed(() => screen.value === 'merged' && aiResolved.value && !!props.win)
+
+// F84-9: a plain merge this window saw finish closes after AUTO_CLOSE_SECONDS. The pointer on the window holds the count;
+// leaving it counts again from the start. A window opened on a merge already done does not close by itself.
+// "Saw finish": the screen moved to merged from a work screen, or from loading when the card showed merge work as the window
+// opened (the merge ended before the first read came back) — a card already integrated at opening is the done one.
+const AUTO_CLOSE_SECONDS = 3
+const SETTLED_SCREENS = new Set<string>(['merged', 'loading', 'none'])
+let openedOnWork = mergeWorkOf(props.target)
+const root = ref<HTMLElement | null>(null)
+const closeLeft = ref<number | null>(null)
+const hovering = ref(false)
+let closeTimer: ReturnType<typeof setInterval> | undefined
+let hoverEl: HTMLElement | null = null
+function stopAutoClose(): void {
+  clearInterval(closeTimer)
+  closeTimer = undefined
+  closeLeft.value = null
+}
+function countAutoClose(): void {
+  clearInterval(closeTimer)
+  closeLeft.value = AUTO_CLOSE_SECONDS
+  closeTimer = setInterval(() => {
+    if (hovering.value || closeLeft.value === null) return
+    closeLeft.value -= 1
+    if (closeLeft.value <= 0) {
+      stopAutoClose()
+      close()
+    }
+  }, 1000)
+}
+function pointerOn(el: HTMLElement | null): boolean {
+  try { return !!el?.matches(':hover') } catch { return false }
+}
+const onEnter = () => { hovering.value = true }
+const onLeave = () => {
+  hovering.value = false
+  if (closeLeft.value !== null) countAutoClose()
+}
+onMounted(() => {
+  hoverEl = (root.value?.closest('.ui-modeless-panel') as HTMLElement | null) ?? root.value
+  hoverEl?.addEventListener('mouseenter', onEnter)
+  hoverEl?.addEventListener('mouseleave', onLeave)
+})
+onBeforeUnmount(() => {
+  stopAutoClose()
+  hoverEl?.removeEventListener('mouseenter', onEnter)
+  hoverEl?.removeEventListener('mouseleave', onLeave)
+})
+watch(screen, (now, before) => {
+  if (now !== 'merged') { stopAutoClose(); return }
+  const sawFinish = !!before && (!SETTLED_SCREENS.has(before) || (before === 'loading' && openedOnWork))
+  if (aiResolved.value || !props.win || !sawFinish || closeLeft.value !== null) return
+  hovering.value = pointerOn(hoverEl)
+  countAutoClose()
+})
+watch(aiResolved, (ai) => { if (ai) stopAutoClose() })
+const mergedTitle = computed(() => {
+  if (aiResolved.value) return t('gui.inspector.merge.merged.title_ai')
+  if (closeLeft.value === null) return t('gui.inspector.merge.merged.title')
+  return hovering.value ? t('gui.inspector.merge.merged.closing_paused') : t('gui.inspector.merge.merged.closing', { n: closeLeft.value })
+})
+
+/** The footer shows a screen's buttons (kept at the window's bottom). */
+const footShown = computed(() => {
+  const current = screen.value
+  if (current === 'catching_up') return autoInBox.value && (can('ai_resolve') || (can('pick') && openFiles.value.length > 0))
+  if (current === 'needs_choice' || current === 'pick') return true
+  if (current === 'failed') return can('retry') || can('discard_rerun')
+  return undoShown.value || doneShown.value
+})
+
 function goCard(nodeKey: string): void {
   openCardMerge(props.target.flowId, nodeKey)
 }
 
 watch(() => props.target.nodeId, () => {
   confirmOpen.value = false
+  undoOpen.value = false
+  undoFailed.value = false
+  stopAutoClose()
+  openedOnWork = mergeWorkOf(props.target)
   providerId.value = ''
   for (const key of Object.keys(choices)) delete choices[key]
 })
@@ -395,7 +587,13 @@ watch(() => props.target.nodeId, () => {
 .mz-fr code { flex: 1 1 auto; min-width: 0; overflow: hidden; color: #dbe8f6; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .mz-why { flex: none; color: #8ea5bd; font-size: 11px; white-space: nowrap; }
 .mz-why.is-done { color: #4fe0b0; }
-.mz-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.mz-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Pinned to the bottom of the window's scrolling body (its 12px padding), so the buttons never scroll out of sight. */
+.mz-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; position: sticky; bottom: -12px; z-index: 1; margin: 0 -14px -12px; padding: 8px 14px; border-top: 1px solid #233650; background: var(--fg2-panel, #0b1626); }
+.mz-why-off { color: #8ea5bd; font-size: 11.5px; }
+.mz-undo-list { margin: 0 0 4px 16px; padding: 0; font-size: 12.5px; line-height: 1.7; color: #a9bed4; }
+.mz-undo-list .is-back { color: #ff96a6; }
+.mz-undo-list .is-keep { color: #4fe0b0; }
 .mz-btns-gap { margin-top: 8px; }
 .mz-b {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
