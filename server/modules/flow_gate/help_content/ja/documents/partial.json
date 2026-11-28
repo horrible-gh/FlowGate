@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "文書の部分取得",
+  "summary": "全文を取得せず、メタデータ、節、検索結果の必要な部分を取得します。",
+  "purpose": "全文を取得せず、メタデータ、節、検索結果の必要な部分を取得します。",
+  "request": "{{route:document.meta}}、{{route:document.outline}}、{{route:document.section}}、{{route:document.relations}} を使います。`section_id` はアウトラインから取得します。本文検索は {{route:search.content}} に `q` を指定します。`doc_id` または `group_id` で会話または Flow を絞り込みます。",
+  "response": "移行済みの単一 CH の検索では既定でターンの概要が返ります。位置の詳細には `include_matches=true` を指定し、次ページでは同じ条件で `next_cursor` を使います。",
+  "errors": "壊れたカーソルや条件変更で `400` が返った場合は最初から検索します。`doc_id` と `group_id` はどちらか一方を指定します。"
 }

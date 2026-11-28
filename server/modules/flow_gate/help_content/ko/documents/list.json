@@ -1,5 +1,9 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "Flow·문서 목록 조회",
+  "summary": "목록 API에서 Flow, 그룹 문서, 문서 타입을 조회합니다.",
+  "purpose": "목록 API에서 Flow, 그룹 문서, 문서 타입을 조회합니다.",
+  "request": "{{route:list.groups}}, {{route:list.group}}, {{route:list.group_documents}}, {{route:list.doc_types}}. 각각 프로젝트 Flow 목록, 그룹 상세, 그룹 문서 목록, 문서 타입 목록입니다.",
+  "response": "각 목록 API가 실데이터를 반환합니다. 그룹 상세에는 이름, 모듈, 상태, 날짜, 문서 수가 포함됩니다.",
+  "errors": "대상 없음 또는 조회 권한에 따른 `404`는 프로젝트와 그룹 식별자 및 권한을 확인합니다."
 }

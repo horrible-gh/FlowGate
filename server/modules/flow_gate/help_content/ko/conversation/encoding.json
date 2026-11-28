@@ -1,5 +1,12 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "본문 인코딩",
+  "summary": "UTF-8 파일을 사용해 대화와 문서 본문을 전송합니다.",
+  "purpose": "UTF-8 파일을 사용해 대화와 문서 본문을 전송합니다.",
+  "request": {
+    "transport": "아래 토큰별 probe를 파일의 마지막 줄에 넣고 파일을 읽어 ASCII 이스케이프된 JSON으로 전송합니다. `body_chars`와 `body_sha256`을 보낼 때에는 probe를 포함한 같은 파일로 계산합니다.",
+    "probe": "{{probe}}"
+  },
+  "response": "정상 probe는 저장 전에 제거되고 손상 휴리스틱을 건너뜁니다.",
+  "errors": "손상된 probe는 전송 경로를 수정한 뒤 다시 보냅니다. probe가 없고 지문이 어긋나거나 원문을 그대로 보내야 할 때는 공백을 제외한 10자 이상의 `force_encoding_reason`을 제공합니다."
 }

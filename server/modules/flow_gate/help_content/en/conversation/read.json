@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Read conversation history",
+  "summary": "Page forward or backward through turns.",
+  "purpose": "Page forward or backward through turns.",
+  "request": "{{route:conversation.turns}}. Use `after_seq` with `include_head=1` to page forward, or `before_seq` to read older turns. For context preceding `after_seq=start`, start with `before_seq=start+1`.",
+  "response": "Continue with `next_after_seq` or `prev_before_seq`. Backward reads leave token consumption and the forward read cursor unchanged.",
+  "errors": "If both direction parameters were sent, retry with one."
 }

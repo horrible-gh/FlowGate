@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Request attachment approval",
+  "summary": "Send one produced file for human approval as an attachment.",
+  "purpose": "Send one produced file for human approval as an attachment.",
+  "request": "POST `multipart/form-data` to {{route:attachments.upload_request}} with `file` and JSON `meta` containing the filename and note. See `attachments/request_rules` for limits.",
+  "response": "The response is immediately `pending`. Continue working while approval is pending.",
+  "errors": "See `attachments/request_rules` for size, extension, target, and limit errors."
 }

@@ -1,5 +1,9 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "대화 턴 전송",
+  "summary": "읽은 대화에 응답을 한 턴으로 추가합니다.",
+  "purpose": "읽은 대화에 응답을 한 턴으로 추가합니다.",
+  "request": "{{route:conversation.turn}}. `body`에 답변을 넣고 마지막 조회의 `head_seq`를 `based_on_seq`에 넣습니다. 전송은 `conversation/encoding`, 파일 링크는 `attachments/link`를 참조합니다. 미커밋 변경이 있으면 `commit_message`에 영어 한 줄을 넣습니다.",
+  "response": "새 턴은 순서대로 기록됩니다. `dry_run: true`는 링크와 인코딩을 검사하며 턴 등록과 토큰 소모가 없습니다.",
+  "errors": "`422 commit_message_required`이면 미커밋 변경의 메시지를 넣어 재전송합니다. 첨부 및 인코딩 오류는 해당 도움말을 참조합니다."
 }

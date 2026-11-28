@@ -1,5 +1,9 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "대화 이력 읽기",
+  "summary": "대화 턴을 순방향 또는 역방향으로 읽습니다.",
+  "purpose": "대화 턴을 순방향 또는 역방향으로 읽습니다.",
+  "request": "{{route:conversation.turns}}. 앞으로는 `after_seq`와 `include_head=1`, 이전 턴은 `before_seq`를 사용합니다. `after_seq=start` 앞의 문맥은 `before_seq=start+1`부터 조회합니다.",
+  "response": "`next_after_seq` 또는 `prev_before_seq`로 계속합니다. 역방향은 토큰을 소모하거나 마지막 읽기 위치를 갱신하지 않습니다.",
+  "errors": "두 방향 값을 함께 보냈다면 한 방향만 지정해 다시 조회합니다."
 }

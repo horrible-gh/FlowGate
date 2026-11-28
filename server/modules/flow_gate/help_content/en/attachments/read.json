@@ -1,5 +1,9 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 2
+  "title": "Read document attachments",
+  "summary": "List or read document attachments and copy them into source with permission.",
+  "purpose": "List or read document attachments and copy them into source with permission.",
+  "request": "Use {{route:attachments.document.list}}, {{route:attachments.document.read}}, or {{route:attachments.document.copy}}. For a copy, supply `target_path` relative to the caller’s worktree.",
+  "response": "The list shows document attachments. Source tools can find files after copying.",
+  "errors": "On a permission error, check the token’s attachment capability. Copying requires `read_write`."
 }

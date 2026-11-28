@@ -1,5 +1,9 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 2
+  "title": "읽을 수 없는 문서",
+  "summary": "본문 상태를 구분하고 읽지 못한 본문을 근거로 사용하지 않습니다.",
+  "purpose": "본문 상태를 구분하고 읽지 못한 본문을 근거로 사용하지 않습니다.",
+  "request": "{{route:document.read}}의 `content_state`를 확인하고 필요하면 다시 조회합니다.",
+  "response": "`readable`은 본문을 읽은 상태이며 헤더만 있으면 빈 문서입니다. `file_path_missing`은 경로 미기록, `file_not_found`는 파일 없음, `path_unresolved`는 저장소에서 경로를 해석하지 못한 상태입니다.",
+  "errors": "읽지 못한 상태를 기록하고 확인한 자료로 진행합니다. 본문 없이는 결정할 수 없으면 문서에 묶인 질의를 사용합니다."
 }

@@ -1,5 +1,9 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 2
+  "title": "文書の参照",
+  "summary": "文書の本文と、その文書に紐づく質問の回答を取得します。",
+  "purpose": "文書の本文と、その文書に紐づく質問の回答を取得します。",
+  "request": "{{route:document.read}}。保存パスには {{route:document.path}} を使います。一部分だけを読む場合は `documents/partial` を参照します。",
+  "response": "`content_state` で本文の状態を確認します。`answers` の `A: null` は未回答です。参照文書の回答はその文書から取得します。",
+  "errors": "本文を取得できない場合は `documents/unreadable` を参照します。"
 }
