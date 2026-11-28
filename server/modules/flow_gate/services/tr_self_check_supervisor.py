@@ -74,7 +74,20 @@ def _group(proc: subprocess.Popen, leader_start: str | None) -> str:
     exited = _leader_exited(proc)
     if proc.returncode is not None:
         return UNPROVEN
-    live = [pid for pid in members if pid != proc.pid or not exited]
+    live = []
+    for pid in members:
+        if pid == proc.pid:
+            if not exited:
+                live.append(pid)
+            continue
+        # Reap only adopted group members, never the pinned leader. Otherwise
+        # their zombies keep the owned group present through both deadlines.
+        try:
+            reaped, _ = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            reaped = 0  # not our child: retain it in the ownership decision
+        if not reaped:
+            live.append(pid)
     return OWNED if live else EMPTY
 
 
@@ -148,14 +161,15 @@ def _tasks(pid: int) -> list[int]:
     return tids or [pid]
 
 
-def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozenset, run_id: str | None) -> bool:
+def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozenset, run_id: str | None,
+             started_at: float | None = None) -> bool:
     """A thread of a process of the run -- the target's group or a carrier of the run marker --
     runs on a processor outside ``allowed`` (POSIX lets a thread widen its own set). A thread
     gone or unreadable meanwhile is skipped: the residual limit of the POSIX ownership."""
     _state, members, _owned = proof.posix_group_members(proc.pid, leader_start)
     pids = set(members)
     if run_id:
-        pids.update(proof.marker_scan(run_id)[1])
+        pids.update(proof.marker_scan(run_id, started_at)[1])
     for pid in pids:
         for tid in _tasks(pid):
             try:
@@ -166,7 +180,74 @@ def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozense
     return False
 
 
+def _enable_subreaper() -> bool:
+    """Best effort: unsupported platforms keep the original ownership path."""
+    if getattr(sys, "platform", "") != "linux":
+        return False
+    try:
+        # Check before enabling adoption: kernels without CONFIG_PROC_CHILDREN
+        # must keep the original path, rather than enter an unfinishable drain.
+        _adopted_children()
+        import ctypes
+        return ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+    except (AttributeError, OSError):
+        return False
+
+
+def _adopted_children() -> list[int]:
+    """Kernel-maintained direct children (ppid == our PID), across all threads.
+
+    Read failures propagate: an incomplete listing must never prove emptiness.
+    Used before Popen for capability detection, and after leader reaping for cleanup.
+    """
+    children = set()
+    for tid in os.listdir("/proc/self/task"):
+        try:
+            with open(f"/proc/self/task/{tid}/children", encoding="ascii") as stream:
+                children.update(int(pid) for pid in stream.read().split())
+        except FileNotFoundError:
+            if tid == str(os.getpid()):
+                raise
+            # An exiting reader thread cannot own the target launched by main.
+    return sorted(children)
+
+
+def _drain_adopted() -> bool:
+    """TERM, then KILL adopted descendants, reaping zombies and repeat adoptions.
+
+    waitpid confirms each PID is still our child before signalling. A live child
+    cannot have its PID reused until this sole reaper waits for it.
+    """
+    try:
+        for sig, grace in ((signal.SIGTERM, .3), (signal.SIGKILL, .7)):
+            deadline = time.monotonic() + grace
+            while True:
+                for pid in _adopted_children():
+                    try:
+                        reaped, _ = os.waitpid(pid, os.WNOHANG)
+                        if not reaped:
+                            os.kill(pid, sig)
+                    except (ChildProcessError, ProcessLookupError):
+                        continue
+                # ECHILD is the authoritative empty proof, including zombies and
+                # children reparented during this pass. Reap all exited children.
+                while True:
+                    try:
+                        pid, _ = os.waitpid(-1, os.WNOHANG)
+                    except ChildProcessError:
+                        return True
+                    if pid == 0:
+                        break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(.02)
+    except OSError:
+        return False
+    return False
+
+
 def main() -> None:
+    subreaper = _enable_subreaper()
     payload = json.loads(sys.stdin.buffer.readline())
     try:
         allowed = _limit(payload.get("cpu_limit"))
@@ -176,6 +257,7 @@ def main() -> None:
         sys.stdout.flush()
         return
     run_id = (payload.get("env") or {}).get(proof.MARKER_ENV)
+    started_at = time.time()  # before spawning any target descendants
     proc = subprocess.Popen(payload["argv"], shell=False, cwd=payload["cwd"], env=payload["env"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True)
@@ -210,7 +292,7 @@ def main() -> None:
             if time.monotonic() >= deadline:
                 reason = "timeout"
                 break
-            if allowed is not None and _widened(proc, leader_start, allowed, run_id):
+            if allowed is not None and _widened(proc, leader_start, allowed, run_id, started_at):
                 reason = "cpu_limit"
                 break
             events = selector.select(min(.2, max(0, deadline - time.monotonic())))
@@ -227,6 +309,9 @@ def main() -> None:
             _terminate(proc, leader_start)
         except Exception:
             pass
+        children_empty = None
+        if subreaper:
+            children_empty = proc.returncode is not None and _drain_adopted()
         for thread in threads:
             thread.join(timeout=5)
         progress.flush()
@@ -235,11 +320,22 @@ def main() -> None:
                   "cpu_limit_violated": reason == "cpu_limit",
                   "stdout_tail": bytes(out).decode("utf-8", "ignore"),
                   "stderr_tail": bytes(err).decode("utf-8", "ignore")}
+        if subreaper:
+            result.update(subreaper_enabled=True, children_empty=children_empty)
         try:
             sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
             sys.stdout.flush()
         except BrokenPipeError:
             pass
+        # Stay visible to the existing tree proof until ownership is empty.
+        # In particular, losing the server must not orphan uncollected children.
+        while subreaper and not children_empty:
+            time.sleep(.2)
+            try:
+                _terminate(proc, leader_start)
+                children_empty = proc.returncode is not None and _drain_adopted()
+            except Exception:
+                children_empty = False
 
 
 if __name__ == "__main__":

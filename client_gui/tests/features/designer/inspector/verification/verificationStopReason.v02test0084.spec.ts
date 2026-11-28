@@ -93,10 +93,11 @@ describe('answer and model', () => {
     expect(v(failed({ stop_reason: undefined, run: runRaw({ stop_reason: 'host_changed' }) })).stopReason).toBe('host_changed')
   })
 
-  it('names the three reasons, any other code as unknown, and nothing outside 종료 실패', () => {
+  it('names the public reasons, any other code as unknown, and nothing outside 종료 실패', () => {
     expect(verificationStopReason(v(failed({ stop_reason: 'host_changed' })))).toBe('host_changed')
     expect(verificationStopReason(v(failed({ stop_reason: 'processes_remain' })))).toBe('processes_remain')
     expect(verificationStopReason(v(failed({ stop_reason: 'owner_alive' })))).toBe('owner_alive')
+    expect(verificationStopReason(v(failed({ stop_reason: 'release_unconfirmed' })))).toBe('release_unconfirmed')
     expect(verificationStopReason(v(failed({ stop_reason: 'tree_unproven' })))).toBe('unknown')
     expect(verificationStopReason(v(failed({ stop_reason: null })))).toBeNull()
     expect(verificationStopReason(v(raw({ stop_reason: 'processes_remain' })))).toBeNull()
@@ -224,7 +225,7 @@ describe('the 종료 실패 line', () => {
     expect(q(ja, 'verification-mark_ended').text()).toBe('終了扱いにする')
     for (const locale of ['ko', 'en', 'ja']) {
       i18n.global.locale.value = locale
-      for (const key of ['reason.host_changed', 'reason.processes_remain', 'reason.owner_alive', 'reason.unknown', 'markEnded.title', 'markEnded.message', 'button.mark_ended', 'hint.mark_ended']) {
+      for (const key of ['reason.host_changed', 'reason.processes_remain', 'reason.release_unconfirmed', 'reason.owner_alive', 'reason.unknown', 'markEnded.title', 'markEnded.message', 'button.mark_ended', 'hint.mark_ended']) {
         expect(t(k(key))).not.toBe(k(key))
       }
     }
