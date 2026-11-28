@@ -292,7 +292,7 @@ def test_posix_supervisor_detects_a_widened_member_of_the_group_or_the_marker(mo
     fake = _Affinity(allowed, {10: {0, 1}, 11: {1}, 12: {0, 1}})
     monkeypatch.setattr(os, "sched_getaffinity", fake.get, raising=False)
     monkeypatch.setattr(proof, "posix_group_members", lambda pgid, start: (proof.MATCH, (10, 11, 99), True))
-    monkeypatch.setattr(proof, "marker_scan", lambda run_id: (proof.MATCH, (12,)))
+    monkeypatch.setattr(proof, "marker_scan", lambda run_id, started_at=None: (proof.MATCH, (12,)))
     target = type("P", (), {"pid": 10})()
     assert supervisor._widened(target, "1", allowed, "scr_x") is False      # 99 vanished: skipped
     fake.others[12] = {0, 1, 2}                                             # a marker carrier widened
@@ -321,7 +321,7 @@ def test_posix_supervisor_checks_every_thread_of_a_process_not_only_its_main_one
     monkeypatch.setattr(os, "sched_getaffinity", fake.get, raising=False)
     monkeypatch.setattr(os, "listdir", listdir)
     monkeypatch.setattr(proof, "posix_group_members", lambda pgid, start: (proof.MATCH, (100,), True))
-    monkeypatch.setattr(proof, "marker_scan", lambda run_id: (proof.MATCH, (200,)))
+    monkeypatch.setattr(proof, "marker_scan", lambda run_id, started_at=None: (proof.MATCH, (200,)))
     target = type("P", (), {"pid": 100})()
     assert supervisor._tasks(100) == [100, 101, 102] and supervisor._tasks(200) == [200]
     assert fake.get(100) <= allowed                                        # the main thread alone looks fine
