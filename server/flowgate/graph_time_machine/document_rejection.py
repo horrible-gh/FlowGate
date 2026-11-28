@@ -207,7 +207,7 @@ def finish(ctx, plan, reverts):
         for slot, mark in original['documents'].items():
             if not mark:
                 continue
-            preserved = key == root_key and plan['slot'] == 'report' and slot == 'instruction'
+            preserved = key == root_key and plan['slot'] == 'report' and slot in ('instruction', 'scenario')
             rejection_store.append(plan, key, 'document', mark['doc_id'], 'preserved' if preserved else 'invalidated',
                                    {'slot': slot, 'mark': {k:v for k,v in mark.items() if k != 'doc_review_status'},
                                     'decision_version': version, 'request_id': request_id})

@@ -412,14 +412,14 @@ def test_recorded_coordinate_is_fixed_even_when_slot_is_empty(agent,monkeypatch)
     assert_failure(agent.post(payload()),404,"no_document")
 
 
-def test_ts_shared_scenario_is_one_instruction_coordinate(agent,monkeypatch):
+def test_ts_legacy_alias_resolves_to_scenario_coordinate(agent,monkeypatch):
     documents.update(D,{"type_code":"TS"})
     repository.delete(F,"research","instruction","N")
     repository.insert(F,"research","instruction","TS",D,True,0,"user")
     repository.insert(F,"research","scenario","TS",D,False,1,"user")
     monkeypatch.setattr(target.settings,"card_node",lambda *a:{**agent.env.node,"doc_type":"TS"})
     bound=agent_binding.bind(token_service.verify(agent.raw),documents.get_by_id(D))
-    assert bound["slot"]=="instruction"
+    assert bound["slot"]=="scenario"
 
 
 def test_supersede_binding_keeps_old_token_coordinate(agent):

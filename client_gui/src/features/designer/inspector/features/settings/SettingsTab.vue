@@ -33,8 +33,12 @@
        card opens; a value picked in it keeps it open. It opens above its row when the Inspector has no room under it
        (else the body scrolls to show it, capped to the body). A ⚙ whose settings differ from their defaults carries a yellow dot. A WP card has no 지시 AI; a card that omits its instruction keeps its 지시 AI and 지시서 검수 off with
        their values kept; 검수 횟수 and 검수 기준 are off while the review AI is 사용하지 않음. No notice, warning, status or
-       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before. -->
-  <div class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
+       explanation line is drawn, in the ⚙ window either (0003-CH: what 검수 횟수 소진 시 does is its label's tooltip). Values are saved through the same card settings change as before.
+       flowgate.v02test.0081 (0029-T, 시안 v4): the time settings (실행 제한 시간 · 검증 1회 시간) are [number][unit ▾] boxes over
+       seconds (`time_limit_sec` / `verify_run_sec`). A test card has one ⚙ — beside the test run zone's 작업 AI, none in the case
+       writing zone — whose window (테스트 실행 시간 설정) holds 자동 케이스 · AI 판정 [케이스 수 | 고정] · 1회 시간, and 횟수 only while the
+       judgement is 고정; its rows stay in the window, so the AI tab keeps its rows. -->
+  <div ref="settingsRoot" class="inspector-settings" data-test="inspector-settings" :data-source="source" :data-kind="kind" :data-status="status">
     <InspectorReadFailure v-if="errorKey" :reason="t(k(errorKey))" @retry="reload" />
     <template v-else>
       <InspectorLockNote v-if="locked" :text="lockText" />
@@ -105,9 +109,9 @@
               </InspectorControlRow>
             </div>
           </InspectorBlock>
-          <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-zone-review-count" data-zone="case_write" :data-key="TEST_AI_ZONES.case_write.review_count">
-            <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('review_count')">
-              <Select :model-value="views.review_count.value" :options="optionsOf('review_count')" :disabled="locked || views.review_count.disabled" :aria-label="t(runKey('review_count'))" @update:model-value="(value: string) => onAiChange('review_count', value)" />
+          <InspectorBlock v-if="card.node.value.fields.case_review_count" :locked="locked" data-test="ai-zone-review-count" data-zone="case_write" :data-key="TEST_AI_ZONES.case_write.review_count">
+            <InspectorControlRow :label="t(runKey('review_count'))" :hint="hintOf('case_review_count')">
+              <Select :model-value="views.case_review_count.value" :options="optionsOf('case_review_count')" :disabled="locked || views.case_review_count.disabled" :aria-label="t(runKey('review_count'))" @update:model-value="(value: string) => onAiChange('case_review_count', value)" />
             </InspectorControlRow>
           </InspectorBlock>
           <div class="inspector-ai-zone" data-test="ai-zone" data-zone="test_run">{{ t(k('test_zone.test_run')) }}</div>
@@ -131,21 +135,51 @@
                 @click="toggleGear(item.role)"
               ><LineIcon name="settings" /></button>
             </InspectorControlRow>
+            <!-- 0031-T: the window is drawn on the page's top layer (body), placed by its ⚙ (see placeGear), so the
+                 Inspector's scroll area and its blocks (each a layout container) can no longer cut it. -->
+            <Teleport to="body">
             <div
               v-if="gearOpen === item.role"
-              :ref="setGearPop"
+              :ref="(element) => setGearPop(item.role, element)"
               class="inspector-ai-pop"
               :class="{ 'is-above': gearPlace === 'above' }"
-              :style="gearMaxHeight !== null ? { maxHeight: `${gearMaxHeight}px` } : undefined"
+              :style="gearStyle"
               :data-place="gearPlace"
               role="dialog"
-              :aria-label="t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) })"
+              :aria-label="gearWindowTitle(item.role)"
               :data-for="item.role"
               data-test="inspector-ai-advanced"
             >
-              <div class="inspector-ai-pop-title">{{ t('gui.inspector.ai.advanced_title', { role: roleLabel(item.role) }) }}</div>
+              <div class="inspector-ai-pop-title">{{ gearWindowTitle(item.role) }}</div>
               <InspectorControlRow v-for="field in gearFields(item.role)" :key="field" :label="advancedLabel(field)" :hint="hintOf(field)">
+                <!-- flowgate.v02test.0081: a time setting is [number][unit ▾] (seconds); the AI judgement is [케이스 수 | 고정]. -->
+                <InspectorDurationInput
+                  v-if="cardSettingsIsDurationField(field)"
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="durationOf(field)"
+                  :min="DURATION_RANGE[field][0]"
+                  :max="DURATION_RANGE[field][1]"
+                  :disabled="locked || views[field].disabled"
+                  :label="advancedLabel(field)"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  :test-id="`inspector-run-settings-${field}`"
+                  @update:model-value="(seconds: number) => onAiChange(field, String(seconds))"
+                />
+                <InspectorSegment
+                  v-else-if="field === 'ai_judge_mode'"
+                  :class="{ 'is-modified': fieldModified(field) }"
+                  :model-value="views[field].value || AI_JUDGE_MODE_DEFAULT"
+                  :options="views[field].options.map((option) => ({ value: option.value, label: labelOf(option), title: null }))"
+                  :disabled="locked || views[field].disabled"
+                  :aria-label="advancedLabel(field)"
+                  :data-field="field"
+                  :data-modified="fieldModified(field) ? 'true' : undefined"
+                  :data-test="`inspector-run-settings-${field}`"
+                  @update:model-value="(value: string) => onAiChange(field, value)"
+                />
                 <Select
+                  v-else
                   :class="{ 'is-modified': fieldModified(field) }"
                   :model-value="selectValue(field)"
                   :options="optionsOf(field)"
@@ -177,7 +211,7 @@
                 <InspectorFailureIcon v-if="failureOf(field)" :name="t(k('failed'))" :reason="failureOf(field)!" />
               </InspectorControlRow>
             </div>
-            <div v-if="gearOpen === item.role && gearRoom !== null" class="inspector-ai-pop-room" aria-hidden="true" :style="{ top: `${gearRoom}px` }" />
+            </Teleport>
           </div>
         </InspectorBlock>
         <InspectorBlock v-if="card.node.value.fields.review_count" :locked="locked" data-test="ai-review-count">
@@ -233,7 +267,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTestCard } from '../testSpec/useTestCard'
 import Select from '../../../../../components/ui/Select.vue'
@@ -246,8 +280,8 @@ import InspectorLockNote from '../../parts/InspectorLockNote.vue'
 import InspectorReadFailure from '../../parts/InspectorReadFailure.vue'
 import InspectorRunSettings, { type InspectorRunSettingsField, type InspectorRunSettingsFields } from '../../parts/InspectorRunSettings.vue'
 import InspectorSegment, { type InspectorSegmentOption } from '../../parts/InspectorSegment.vue'
+import InspectorDurationInput from '../../parts/InspectorDurationInput.vue'
 import { inspectorSettingsKind, type InspectorTarget } from '../../inspectorTarget'
-import { INSPECTOR_BODY } from '../../inspectorHost'
 import {
   CARD_SETTINGS_FIELDS,
   cardSettingsAiOptions,
@@ -257,14 +291,21 @@ import {
   cardSettingsFailureKey,
   cardSettingsFailureText,
   cardSettingsInstructionAiShown,
+  cardSettingsDurationSeconds,
   cardSettingsIsAiField,
+  cardSettingsIsDurationField,
   cardSettingsIsVerifyField,
+  cardSettingsJudgeRunsShown,
   cardSettingsReviewOff,
   cardSettingsSwitchOn,
   cardSettingsText,
   cardSettingsValue,
   cardSettingsValueOf,
   cardSettingsVerifyCustomValue,
+  AI_JUDGE_MODE_DEFAULT,
+  AI_JUDGE_RUNS_DEFAULT,
+  DURATION_DEFAULT,
+  DURATION_RANGE,
   VERIFY_CUSTOM,
   VERIFY_RANGE,
   type CardSettingsField,
@@ -274,7 +315,7 @@ import { useSharedCardSettings } from './useCardSettings'
 import { AiRoleSelect, installAiRoleMessages } from '@/features/ai'
 import type { AiRoleValue } from '@/features/document'
 import { visibleReviewCountOptions } from './reviewCountModel'
-import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, TEST_AI_ZONES, cardRoleRows, instructionWritten } from './cardRolesModel'
+import { AI_ADVANCED_FIELDS, AI_FIELDS, AI_GEAR_FIELDS, TEST_AI_ZONES, TEST_GEAR_FIELDS, cardRoleRows, instructionWritten } from './cardRolesModel'
 import { useSettings } from './useSettings'
 
 const props = withDefaults(defineProps<{ target: InspectorTarget; panel?: 'settings' | 'ai' }>(), { panel: 'settings' })
@@ -338,6 +379,12 @@ type GearRole = keyof typeof AI_GEAR_FIELDS
  * the last row's), so no setting drops off the tab.
  */
 const gearGroups = computed(() => {
+  // flowgate.v02test.0081: a test card's one ⚙ is its test run work AI's — the time settings, 횟수 only while fixed.
+  if (kind.value === 'test') {
+    const judgeFixed = cardSettingsJudgeRunsShown(cardSettingsValue(card.node.value, card.pending.value, 'ai_judge_mode'))
+    const fields = (TEST_GEAR_FIELDS as readonly CardSettingsField[]).filter(field => aiFieldOf(field) && (field !== 'ai_judge_runs' || judgeFixed))
+    return (fields.length && roleRows.value.some(row => row.role === 'execution') ? { execution: fields } : {}) as Partial<Record<GearRole, CardSettingsField[]>>
+  }
   const rows = roleRows.value.map(row => row.role)
   const own = (role: GearRole) => (AI_GEAR_FIELDS[role] as readonly CardSettingsField[]).filter(field => aiFieldOf(field))
   const out: Partial<Record<GearRole, CardSettingsField[]>> = {}
@@ -354,10 +401,27 @@ const isInstructionReview = (field: CardSettingsField) => (AI_ADVANCED_FIELDS.in
 function advancedLabel(field: CardSettingsField): string {
   return isInstructionReview(field) ? t(`gui.inspector.ai.${field}`) : fieldLabel(field)
 }
-/** A field whose shown value (a sent one included) is not the server's default for it. */
+/** A field whose shown value (a sent one included) is not the server's default for it (the contract's when it sends none). */
 function fieldModified(field: CardSettingsField): boolean {
   const item = card.node.value?.fields[field]
-  return !!item && cardSettingsText(cardSettingsValue(card.node.value, card.pending.value, field)) !== cardSettingsText(item.default)
+  if (!item) return false
+  const fallback = cardSettingsIsDurationField(field)
+    ? DURATION_DEFAULT[field]
+    : field === 'ai_judge_mode'
+      ? AI_JUDGE_MODE_DEFAULT
+      : field === 'ai_judge_runs'
+        ? AI_JUDGE_RUNS_DEFAULT
+        : null
+  const value = cardSettingsValue(card.node.value, card.pending.value, field)
+  return cardSettingsText(value ?? fallback) !== cardSettingsText(item.default ?? fallback)
+}
+/** The ⚙ window's title: the AI's advanced settings, or the test card's 테스트 실행 시간 설정. */
+function gearWindowTitle(role: string): string {
+  return kind.value === 'test' ? t(k('test_zone.time_title')) : t('gui.inspector.ai.advanced_title', { role: roleLabel(role) })
+}
+/** A time setting's shown seconds (the one sent and not answered yet, else the read's), or null. */
+function durationOf(field: CardSettingsField): number | null {
+  return cardSettingsDurationSeconds(cardSettingsValue(card.node.value, card.pending.value, field))
 }
 const gearModified = (role: string) => gearFields(role).some(fieldModified)
 function gearTitle(role: string): string {
@@ -367,7 +431,20 @@ function gearTitle(role: string): string {
 /** The one ⚙ window open now (its AI role), or null; a card opens with none. */
 const gearOpen = ref<string | null>(null)
 function toggleGear(role: string) {
-  gearOpen.value = gearOpen.value === role ? null : role
+  if (gearOpen.value === role) return closeGear()
+  gearOpen.value = role
+}
+/**
+ * (0030-TR 3rd) Closes the ⚙ window by a click (outside it, or on its ⚙), taking what is being typed in it first. The
+ * window is dropped before the browser moves the focus for the click, so a box in it would never see its focus leave:
+ * the focused box is blurred here, while it is still in the page, which takes its value the way leaving it does
+ * ([number][unit] → seconds sent once). Esc does not come here: it closes without taking (a box that holds a typed
+ * value keeps that Esc to itself and puts the value back).
+ */
+function closeGear() {
+  const focused = document.activeElement
+  if (focused instanceof HTMLElement && focused.closest('.inspector-ai-pop')) focused.blur()
+  gearOpen.value = null
 }
 // (CH QA): only another card or tab closes the window. Each source is compared on its own:
 // a value saved from the window re-reads the Flow and hands down a new target object for the same card, which the
@@ -376,76 +453,152 @@ watch([() => props.target.nodeId, () => props.panel], () => { gearOpen.value = n
 function onOutside(event: Event) {
   if (gearOpen.value === null) return
   const at = event.target as Element | null
+  // 0031-T: the window lives under body now, not in this tab; a press in it (or on a ⚙) is still inside.
+  if (at instanceof Node && gearPopNow()?.contains(at)) return
   if (at?.closest?.('.inspector-ai-pop, .inspector-ai-gear')) return
-  gearOpen.value = null
+  closeGear()
 }
 function onKey(event: KeyboardEvent) {
   if (event.key === 'Escape') gearOpen.value = null
 }
 
 /**
- * (CH QA): where the open window goes inside the Inspector's scrolling body. Under its row
- * when it fits there; else above the row when it fits there; else under the row with the body scrolled just enough to
- * show it whole — its height capped (scrolling inside) only when even the whole body is too low for it. Under the row
- * an invisible 1px mark is kept GEAR_EDGE past the window, so the body can scroll the window clear of its bottom edge
- * (a margin does not count to a scroll area). Placed when it opens and when the window is resized; with no body
- * measured (outside the Frame, no layout) it stays under the row.
+ * 0031-T: where the open window goes. It is drawn on the page's top layer (Teleport to body, position: fixed), placed
+ * by its row's ⚙: its right edge on the row's right edge (kept GEAR_EDGE inside the browser window), as wide as
+ * GEAR_WIDTH (narrower only when the browser window is). Under the row when it fits in the browser window there; else
+ * above the row (towards the canvas) when it fits there; only when it fits on neither side does it take the larger side
+ * with its height capped (scrolling inside). Placed again when the browser window is resized and when anything around
+ * it scrolls (the Inspector body), so it stays by its ⚙. The Inspector's own height no longer matters.
+ * 0032-TR: also placed again when what is in the open window changes its height (e.g. the test card's judgement set to
+ * '고정' adds the count row), so a grown window turns above / gets capped instead of running off the browser window.
+ * The window always stays inside the browser window: when its ⚙ row has been scrolled out of sight it waits at the
+ * nearest edge (GEAR_EDGE in) instead of going out with the row.
  */
-const inspectorBody = inject(INSPECTOR_BODY, null)
 const GEAR_GAP = 6
 const GEAR_EDGE = 8
-const GEAR_MIN_HEIGHT = 96
+const GEAR_WIDTH = 360
+const settingsRoot = ref<HTMLElement | null>(null)
 const gearPlace = ref<'below' | 'above'>('below')
-const gearMaxHeight = ref<number | null>(null)
-/** Top of the 1px scroll mark under the open window, from its row's top (px), or null for none. */
-const gearRoom = ref<number | null>(null)
-let gearPop: HTMLElement | null = null
-let gearPlacing = 0
-function setGearPop(element: Element | ComponentPublicInstance | null) {
-  gearPop = element instanceof HTMLElement ? element : null
-}
-function scrollBoxOf(element: HTMLElement): HTMLElement | null {
-  const body = inspectorBody?.element.value
-  if (body?.contains(element)) return body
-  for (let at = element.parentElement; at; at = at.parentElement) {
-    const overflow = getComputedStyle(at).overflowY
-    if (overflow === 'auto' || overflow === 'scroll') return at
+/** The open window's place in the browser window (px), or null while it is first measured (drawn hidden). */
+const gearBox = ref<{ left: number; width: number; top: number | null; bottom: number | null; maxHeight: number | null } | null>(null)
+const gearWidth = ref<number>(GEAR_WIDTH)
+const gearStyle = computed(() => {
+  const box = gearBox.value
+  if (!box) return { left: '0px', top: '0px', width: `${gearWidth.value}px`, visibility: 'hidden' as const }
+  return {
+    left: `${box.left}px`,
+    width: `${box.width}px`,
+    top: box.top !== null ? `${box.top}px` : undefined,
+    bottom: box.bottom !== null ? `${box.bottom}px` : undefined,
+    maxHeight: box.maxHeight !== null ? `${box.maxHeight}px` : undefined,
   }
-  return null
+})
+/**
+ * The drawn window of each role, kept by role: going from one ⚙ to another, the next window may be drawn before the
+ * former one is dropped (rows are patched in order), so a single slot would be emptied by the former one.
+ */
+const gearPops = new Map<string, HTMLElement>()
+let gearPlacing = 0
+/** 0032-TR: the open window's content height (scrollHeight) at its last placing; a change means its content changed. */
+let gearContent = -1
+/**
+ * 0032-TR: watches each drawn window's size. The placing itself (cap on / off) changes only the window's box, not its
+ * content height (scrollHeight), so only a content change places it again — no placing loop.
+ */
+const gearSizes = typeof ResizeObserver !== 'undefined'
+  ? new ResizeObserver(() => {
+    const pop = gearPopNow()
+    if (pop && pop.scrollHeight !== gearContent) void placeGear()
+  })
+  : null
+function setGearPop(role: string, element: Element | ComponentPublicInstance | null) {
+  const former = gearPops.get(role)
+  if (element instanceof HTMLElement) {
+    if (former === element) return
+    if (former) gearSizes?.unobserve(former)
+    gearPops.set(role, element)
+    gearSizes?.observe(element)
+  } else {
+    if (former) gearSizes?.unobserve(former)
+    gearPops.delete(role)
+  }
+}
+/** The open window's element, or null. */
+function gearPopNow(): HTMLElement | null {
+  return gearOpen.value !== null ? gearPops.get(gearOpen.value) ?? null : null
+}
+/** The row line of the open ⚙ (what the window is placed by), or null when it is not in the page. */
+function gearRowOf(role: string): HTMLElement | null {
+  const gear = settingsRoot.value?.querySelector<HTMLElement>(`[data-gear="${role}"]`)
+  return gear?.closest<HTMLElement>('.inspector-ai-role-line') ?? gear ?? null
 }
 async function placeGear() {
   const turn = ++gearPlacing
-  gearPlace.value = 'below'
-  gearMaxHeight.value = null
-  gearRoom.value = null
+  const role = gearOpen.value
   await nextTick()
-  const pop = gearPop
-  const line = pop?.parentElement
-  const box = pop ? scrollBoxOf(pop) : null
-  if (turn !== gearPlacing || !pop || !line || !box) return
-  const view = box.getBoundingClientRect()
-  if (view.height <= 0) return
-  const row = line.getBoundingClientRect()
+  const pop = role !== null ? gearPops.get(role) ?? null : null
+  const row = role !== null ? gearRowOf(role) : null
+  if (turn !== gearPlacing || !pop || !row || gearOpen.value !== role) return
+  const viewWidth = window.innerWidth || document.documentElement.clientWidth
+  const viewHeight = window.innerHeight || document.documentElement.clientHeight
+  const at = row.getBoundingClientRect()
+  const width = Math.max(0, Math.min(GEAR_WIDTH, viewWidth - 2 * GEAR_EDGE))
+  const left = Math.max(GEAR_EDGE, Math.min(at.right, viewWidth - GEAR_EDGE) - width)
+  // measured at its own height first: no cap, at its final width (a label may wrap), so the window can be seen whole
+  if (gearBox.value) gearBox.value = { ...gearBox.value, left, width, maxHeight: null }
+  else gearWidth.value = width
+  await nextTick()
+  if (turn !== gearPlacing || gearPopNow() !== pop) return
   const full = pop.offsetHeight
-  if (full + GEAR_GAP + GEAR_EDGE > view.bottom - row.bottom && full + GEAR_GAP + GEAR_EDGE <= row.top - view.top) {
-    gearPlace.value = 'above'
-    return
+  gearContent = pop.scrollHeight
+  // 0032-TR: the edges the window grows from, kept inside the browser window (a row scrolled out of sight above or
+  // below no longer puts the window, or the room it counts, outside it)
+  const inView = (y: number) => Math.max(GEAR_EDGE, Math.min(viewHeight - GEAR_EDGE, y))
+  const downFrom = inView(at.bottom + GEAR_GAP)
+  const upFrom = inView(at.top - GEAR_GAP)
+  const below = viewHeight - GEAR_EDGE - downFrom
+  const above = upFrom - GEAR_EDGE
+  const up = full > below && (full <= above || above > below)
+  const room = Math.floor(up ? above : below)
+  gearPlace.value = up ? 'above' : 'below'
+  gearBox.value = {
+    left,
+    width,
+    top: up ? null : Math.round(downFrom),
+    bottom: up ? Math.round(viewHeight - upFrom) : null,
+    maxHeight: full > room ? Math.max(0, room) : null,
   }
-  const fit = Math.floor(view.height - row.height - GEAR_GAP - 2 * GEAR_EDGE)
-  const height = full > fit ? Math.max(GEAR_MIN_HEIGHT, fit) : full
-  if (height < full) gearMaxHeight.value = height
-  gearRoom.value = Math.ceil(row.height + GEAR_GAP + height + GEAR_EDGE - 1)
-  const shift = Math.min(row.bottom + GEAR_GAP + height + GEAR_EDGE - view.bottom, row.top - view.top - GEAR_EDGE)
-  if (shift <= 0) return
-  await nextTick()
-  if (turn === gearPlacing) box.scrollTop += shift
 }
+// a newly opened window starts hidden and unplaced (set before it is drawn, so it never shows at a former place)
+watch(gearOpen, () => {
+  gearContent = -1
+  gearBox.value = null
+  gearPlace.value = 'below'
+  gearWidth.value = GEAR_WIDTH
+}, { flush: 'sync' })
 watch(gearOpen, (role) => { if (role !== null) void placeGear() }, { flush: 'post' })
 function onResize() {
   if (gearOpen.value !== null) void placeGear()
 }
-onMounted(() => { document.addEventListener('pointerdown', onOutside, true); document.addEventListener('keydown', onKey); window.addEventListener('resize', onResize) })
-onBeforeUnmount(() => { document.removeEventListener('pointerdown', onOutside, true); document.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize) })
+/** Something scrolled (the Inspector body, the page): the window follows its ⚙. Its own inner scroll is not a move. */
+function onScroll(event: Event) {
+  if (gearOpen.value === null) return
+  if (event.target instanceof Node && gearPopNow()?.contains(event.target)) return
+  void placeGear()
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', onOutside, true)
+  document.addEventListener('keydown', onKey)
+  document.addEventListener('scroll', onScroll, true)
+  window.addEventListener('resize', onResize)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onOutside, true)
+  document.removeEventListener('keydown', onKey)
+  document.removeEventListener('scroll', onScroll, true)
+  window.removeEventListener('resize', onResize)
+  gearSizes?.disconnect()
+})
 const runKey = (key: string) => `gui.designer.inspector.run_settings.${key}`
 const sequence = useSettings(() => (source.value === 'sequence' ? props.target : null))
 
@@ -611,7 +764,7 @@ function failureOf(field: CardSettingsField): string | null {
   return last && SEQUENCE_FIELD[field] === last.field ? t(k(last.key)) : null
 }
 
-const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit', 'verify_max_runs', 'verify_run_minutes', 'review_basis', 'after_review_exhausted']
+const RUN_BLOCK_FIELDS: readonly InspectorRunSettingsField[] = ['run_ai', 'restart', 'review_ai', 'review_count', 'time_limit_sec', 'verify_max_runs', 'verify_run_sec', 'review_basis', 'after_review_exhausted']
 
 function fieldLabel(field: CardSettingsField): string {
   return field === 'after_review_exhausted' ? t(k('after_review_exhausted.label')) : t(runKey(field))
@@ -628,7 +781,7 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
     if (name === 'after_review_exhausted' && !card.node.value?.fields.after_review_exhausted) continue
     if (card.node.value?.aiRoles && (name === 'run_ai' || name === 'review_ai')) continue
     // flowgate.v02test.0053 0003-T: a card the server gives no 검증 option (a plan card, a v0.1 sequence row) draws none.
-    if (cardSettingsIsVerifyField(name) && (kind.value !== 'run' || source.value !== 'card' || !card.node.value?.fields[name])) continue
+    if ((name === 'verify_max_runs' || name === 'verify_run_sec') && (kind.value !== 'run' || source.value !== 'card' || !card.node.value?.fields[name])) continue
     const view = views.value[name]
     out[name] = {
       value: view.value,
@@ -637,6 +790,8 @@ const runFields = computed<InspectorRunSettingsFields>(() => {
       disabled: view.disabled,
       reason: view.reason ? t(k(view.reason)) : planHint(name),
       failure: failureOf(name),
+      // flowgate.v02test.0081: the time settings are [number][unit] boxes over seconds
+      ...(cardSettingsIsDurationField(name) ? { duration: { min: DURATION_RANGE[name][0], max: DURATION_RANGE[name][1] } } : {}),
     }
   }
   return out
@@ -665,7 +820,7 @@ function onChange(field: CardSettingsField, text: string) {
  */
 function optionsOf(field: CardSettingsField) {
   const view = views.value[field]
-  const counted = field === 'review_count' || field === 'instruction_review_count'
+  const counted = field === 'review_count' || field === 'instruction_review_count' || field === 'case_review_count'
   return (counted ? visibleReviewCountOptions(view.options, view.value) : view.options)
     .map(option => ({ value: option.value, label: labelOf(option) }))
 }
@@ -681,7 +836,12 @@ function hintOf(field: CardSettingsField): string | null {
   if (field === 'after_review_exhausted') return t(k(`after_review_exhausted.${views.value.after_review_exhausted.value === 'stop' ? 'stop' : 'continue'}_hint`))
   if (field === 'instruction_review_count') return t(k('after_review_exhausted.instruction_hint'))
   if (field === 'verify_max_runs') return t(k('verify.max_runs_hint'))
-  if (field === 'verify_run_minutes') return t(k('verify.run_minutes_hint'))
+  if (field === 'verify_run_sec') return t(k('verify.run_sec_hint'))
+  if (field === 'time_limit_sec') return t(k('time.time_limit_hint'))
+  if (field === 'auto_case_timeout_sec') return t(k('test_time.auto_case_hint'))
+  if (field === 'ai_judge_mode') return t(k(`test_time.mode_${views.value.ai_judge_mode.value === 'fixed' ? 'fixed' : 'case_count'}_hint`))
+  if (field === 'ai_judge_run_sec') return t(k('test_time.run_hint'))
+  if (field === 'ai_judge_runs') return t(k('test_time.runs_hint'))
   return field === 'review_count' ? planHint('review_count') : null
 }
 
@@ -855,40 +1015,34 @@ function reload() {
   background: #c9a14a;
 }
 
+/* 0031-T: drawn under body (Teleport) at a fixed place by its ⚙ (left / top or bottom / width set by placeGear), above
+   the Designer's panels. Away from the Inspector it carries its own text size (the tab's 12px) and is its own width
+   container for the rows inside. It scrolls inside only when the browser window is too low for it on both sides. */
 .inspector-ai-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
+  z-index: var(--fg2-overlay-z, 9999);
   box-sizing: border-box;
-  width: min(360px, 100%);
+  container-type: inline-size;
   padding: 10px 12px;
   border: 1px solid #4aa3ff;
   border-radius: 8px;
   background: #16293c;
   box-shadow: 0 8px 24px rgb(0 0 0 / 56%);
+  color: var(--fg2-text, #dce7f2);
+  font-size: 12px;
   pointer-events: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-/* The scroll mark kept just past an open window under its row (see placeGear): seen by the body's scroll area only. */
-.inspector-ai-pop-room {
-  position: absolute;
-  left: 0;
-  width: 1px;
-  height: 1px;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-/* Not enough room under the row in the Inspector body: the window opens above it (see placeGear). */
-.inspector-ai-pop.is-above {
-  top: auto;
-  bottom: calc(100% + 6px);
+/* The tab's selects (32px, 12px) — the window is no longer inside .inspector-settings, so it says it again. */
+.inspector-ai-pop :deep(.ui-select) {
+  height: 32px;
+  font-size: 12px;
 }
 
 /* A long label (English 'Instruction review AI') goes on to a second line instead of being cut; the window is 360px
-   wide so a long English value ('Card review role value') fits its select. */
+   wide (GEAR_WIDTH) so a long English value ('Card review role value') fits its select. */
 .inspector-ai-pop :deep(.inspector-control-label) {
   overflow: visible;
   line-height: 1.3;

@@ -821,9 +821,9 @@ def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
         from modules.flow_gate.services import test_run_service, test_spec_service
 
         content = test_run_service._read_doc_content_or_empty(doc)
-        if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_LEGACY:
-            return
         parsed = test_spec_service.parse_spec(content)
+        if not parsed["cases"]:
+            raise TransitionError("scenario_no_cases")
         if parsed["errors"]:
             raise TransitionError(
                 _TEST_GATE_MESSAGES["ts"][lang].format(

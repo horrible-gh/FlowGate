@@ -203,7 +203,7 @@ describe('useInspectorFieldWrite (flowgate.v02.0053 T#7)', () => {
     await flushPromises()
     await writes.write('restart', 1)
     expect(writes.failure.value).not.toBeNull()
-    const sent = writes.write('time_limit', 120)
+    const sent = writes.write('time_limit_sec', 7200)
     key.value = 'f\nn2'
     await flushPromises()
     expect(writes.failure.value).toBeNull()

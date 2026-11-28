@@ -91,9 +91,12 @@ def test_research_design_work_test_are_placed_in_one_chain_as_palette_cards(env,
     assert [_lines(k) for k in keys] == [
         [("instruction", "N"), ("report", "NR")], [("instruction", "DS"), ("report", "D")],
         [("instruction", "T"), ("report", "TR")],
-        [("instruction", "TS"), ("scenario", "TS"), ("report", "TSR")]]
+        [("scenario", "TS"), ("report", "TSR")]]
     for card in cards:
-        assert card["instruction"]["slot"] == "instruction" and card["instruction"]["doc_id"]
+        slot = "scenario" if card["doc_type"] == "TS" else "instruction"
+        assert card[slot]["slot"] == slot and card[slot]["doc_id"]
+        if slot == "scenario":
+            assert "instruction" not in card
         assert set(card["roles"]) == {"instruction", "execution", "review"}
     assert [list(c["settings"]) for c in cards] == [FIVE, FIVE, FIVE, ["review_count"]]
     assert "instruction" in placed["next"]
@@ -168,7 +171,8 @@ def test_an_empty_instruction_of_every_placed_type_refuses_the_start(env, decide
 
     first = _place([{"doc_type": t} for t in ("N", "D", "P", "L", "DB")])
     second = _place([{"doc_type": "T"}, {"doc_type": "TS"}])
-    placed = [c["node_key"] for c in first["cards"] + second["cards"]]
+    placed = [c["node_key"] for c in first["cards"] + second["cards"] if c["doc_type"] != "TS"]
+    assert second["cards"][1]["node_key"] not in service.missing_instructions(FA, _draft())
     assert set(placed) <= set(service.missing_instructions(FA, _draft()))
     latest = definition_store.latest_revision_no(FA)
     with pytest.raises(GraphApiError) as caught:

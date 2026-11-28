@@ -15,7 +15,17 @@ export default {
       approved: '검수 소진 후 승인',
     },
     "result_check": "결과 확인",
-    "test_zone": {"case_write": "케이스 작성", "test_run": "테스트 실행", "work_ai": "작업 AI"},
+    "test_zone": {"case_write": "케이스 작성", "test_run": "테스트 실행", "work_ai": "작업 AI", "time_title": "테스트 실행 시간 설정"},
+    // flowgate.v02test.0081: the test card's AI judgement mode and the tooltips of its time settings.
+    ai_judge_mode: { case_count: '케이스 수', fixed: '고정' },
+    test_time: {
+      auto_case_hint: '자동 케이스 1건의 최대 실행 시간 · 기본값 2분 · 1분~30분',
+      mode_case_count_hint: '자동을 뺀 케이스마다 1회씩 판정합니다',
+      mode_fixed_hint: '정한 횟수만큼 판정합니다',
+      run_hint: 'AI 판정 1회 최대 시간 · 기본값 2분 · 1분~30분',
+      runs_hint: '고정 방식의 판정 횟수 · 기본값 5회 · 사용자 정의는 1 이상의 정수',
+    },
+    time: { time_limit_hint: '카드 1회 실행의 최대 시간 · 기본값 4시간 · 30분~4시간' },
     "result_cause": {"label": "원인 판정", "ai": "AI 판단 후 확정", "human": "사람만"},
     "follow_scope": {"label": "후속 전달", "summary": "결함 요약", "full": "요약 + 로그 · 증거"},
     instruction: {
@@ -56,7 +66,7 @@ export default {
     // flowgate.v02test.0053 0003-T: the tooltips of the two 검증 options (managed per card, default 3회 / 2분).
     verify: {
       max_runs_hint: '카드별 검증 횟수 · 기본값 10회 · 사용자 정의는 1 이상의 정수',
-      run_minutes_hint: '검증 1회 최대 시간(분) · 기본값 1분 · 사용자 정의는 1~30분',
+      run_sec_hint: '검증 1회 최대 시간 · 기본값 1분 · 1분~30분',
     },
     count: {
       until_pass: '통과할 때까지',
@@ -142,7 +152,17 @@ export default {
       approved: 'Approved after reviews ran out',
     },
     "result_check": "Result confirmation",
-    "test_zone": {"case_write": "Case writing", "test_run": "Test run", "work_ai": "Work AI"},
+    "test_zone": {"case_write": "Case writing", "test_run": "Test run", "work_ai": "Work AI", "time_title": "Test run time settings"},
+    // flowgate.v02test.0081: the test card's AI judgement mode and the tooltips of its time settings.
+    ai_judge_mode: { case_count: 'Case count', fixed: 'Fixed' },
+    test_time: {
+      auto_case_hint: 'Time per automatic case · default 2 min · 1 to 30 min',
+      mode_case_count_hint: 'One judgement per case, automatic cases left out',
+      mode_fixed_hint: 'Judges the set number of times',
+      run_hint: 'Time per AI judgement · default 2 min · 1 to 30 min',
+      runs_hint: 'Fixed-mode judgements · default 5 · custom: 1 or more',
+    },
+    time: { time_limit_hint: 'Time per card run · default 4 h · 30 min to 4 h' },
     "result_cause": {"label": "Cause decision", "ai": "Confirm AI judgment", "human": "Human only"},
     "follow_scope": {"label": "Follow-up", "summary": "Defect summary", "full": "Summary + logs · evidence"},
     instruction: {
@@ -179,7 +199,7 @@ export default {
     },
     verify: {
       max_runs_hint: 'Verifications per card · default 10 · custom: 1 or more',
-      run_minutes_hint: 'Minutes per verification · default 1 · custom 1 to 30',
+      run_sec_hint: 'Time per verification · default 1 min · 1 to 30 min',
     },
     count: {
       until_pass: 'Until it passes',
@@ -263,7 +283,17 @@ export default {
       approved: '検収回数消化後に承認',
     },
     "result_check": "結果確認",
-    "test_zone": {"case_write": "ケース作成", "test_run": "テスト実行", "work_ai": "作業AI"},
+    "test_zone": {"case_write": "ケース作成", "test_run": "テスト実行", "work_ai": "作業AI", "time_title": "テスト実行の時間設定"},
+    // flowgate.v02test.0081: the test card's AI judgement mode and the tooltips of its time settings.
+    ai_judge_mode: { case_count: 'ケース数', fixed: '固定' },
+    test_time: {
+      auto_case_hint: '自動ケース 1 件の最大実行時間 · 既定値 2 分 · 1~30 分',
+      mode_case_count_hint: '自動を除くケースごとに 1 回ずつ判定します',
+      mode_fixed_hint: '決めた回数だけ判定します',
+      run_hint: 'AI 判定 1 回の最大時間 · 既定値 2 分 · 1~30 分',
+      runs_hint: '固定方式の判定回数 · 既定値 5 回 · ユーザー定義は 1 以上の整数',
+    },
+    time: { time_limit_hint: 'カード 1 回の実行の最大時間 · 既定値 4 時間 · 30 分~4 時間' },
     "result_cause": {"label": "原因判定", "ai": "AI 判断を確認", "human": "人のみ"},
     "follow_scope": {"label": "後続への引継ぎ", "summary": "不具合概要", "full": "概要 + ログ・証拠"},
     instruction: {
@@ -300,7 +330,7 @@ export default {
     },
     verify: {
       max_runs_hint: 'カードごとの検証回数 · 既定値 10 回 · ユーザー定義は 1 以上の整数',
-      run_minutes_hint: '検証 1 回の最大時間(分) · 既定値 1 分 · ユーザー定義は 1~30 分',
+      run_sec_hint: '検証 1 回の最大時間 · 既定値 1 分 · 1~30 分',
     },
     count: {
       until_pass: '合格するまで',

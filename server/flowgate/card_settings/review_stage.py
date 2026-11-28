@@ -280,6 +280,9 @@ def on_run_ended(run: dict) -> None:
         _clear_handoffs(run.get("run_id"))
         return
     try:
+        from flowgate.card_settings import test_execution
+        if test_execution.finish(run):
+            return
         if run.get("document_review_loop"):
             from flowgate.card_settings import question_loop_wait  # noqa: PLC0415
 

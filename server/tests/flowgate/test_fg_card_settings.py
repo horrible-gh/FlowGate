@@ -414,7 +414,7 @@ def test_card_kinds_and_their_settings_follow_the_v7_blocks():
     names = {kind: [x.name for x in f.fields_of(kind)] for kind in f.CARD_KINDS}
     assert names == {
         f.RUN: RUN_FIELDS,
-        f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "result_cause", "follow_scope"],
+        f.TEST: ["instruction", "run_ai", "review_ai", "review_count", "case_review_count", "result_cause", "follow_scope"],
         f.REQUIREMENT: [],
         # no usage; the earlier change the earlier implementation: the local merge branch next to the remote
         f.CHECK: ["archive", "merge_mode", "merge_target", "merge_target_branch", "push", "keep_branch"],
@@ -488,6 +488,32 @@ def test_the_items_the_sequence_row_never_stored_are_saved(env):
         "instruction": "omit", "restart": 1, "time_limit": 120, "review_basis": "last"}
     assert stored_rows(env, FB, key) == {(key, "instruction"): '"omit"', (key, "restart"): "1",
                                          (key, "review_basis"): '"last"', (key, "time_limit"): "120"}
+
+
+def test_case_review_count_is_saved_separately_and_used_for_preparation(env):
+    from flowgate.card_settings import fields, stage_assignment as stages
+
+    draft = put_draft(env, FB, 0, [node("tmp_ts", "TS")])
+    key = draft["key_map"]["tmp_ts"]
+    # A legacy card only has the execution count.
+    from flowgate.card_settings import repository
+    repository.put(FB, key, "review_count", 2, None)
+    original = get_settings(env, FB, key)["fields"]
+    assert original["case_review_count"]["value"] == 2
+    assert original["case_review_count"]["default"] == original["review_count"]["default"]
+    assert original["case_review_count"]["choices"] == original["review_count"]["choices"]
+    assert stages.instruction_review_setting(fields.TEST, FB, key) == "needs_review"
+
+    changed = setting(env, FB, key, "review_count", 3)["fields"]
+    assert changed["case_review_count"]["value"] == 2
+    assert changed["review_count"]["value"] == 3
+    setting(env, FB, key, "case_review_count", 0)
+    assert stages.instruction_review_setting(fields.TEST, FB, key) == stages.NO_REVIEW_SETTING
+    setting(env, FB, key, "case_review_count", 1)
+    assert stages.instruction_review_setting(fields.TEST, FB, key) == "needs_review"
+    current = get_settings(env, FB, key)["fields"]
+    assert current["case_review_count"]["value"] == 1
+    assert current["review_count"]["value"] == 3
 
 
 def test_each_card_kind_keeps_its_own_settings(env):
