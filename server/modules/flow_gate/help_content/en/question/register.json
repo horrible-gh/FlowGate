@@ -9,7 +9,7 @@
       "Authorization": "Bearer {{token}}",
       "Content-Type": "application/json"
     },
-    "details": "Register question data on the document. Apply question/policy and question/precheck first. Supply title and body. If choices are necessary, put them in options on one question. A choice requiring a new attempt uses label and requires=new_attempt. Follow conversation/encoding for transport.",
+    "details": "Register question data on the document. Apply question/policy and question/precheck first. Supply title and body. If choices are necessary, put them in options on one question. A choice requiring a new attempt uses label and requires=new_attempt. Follow conversation/encoding for transport. This token is bound to {{doc_id}}. Use that document ID in the request path.",
     "example": {
       "asker_kind": "ai",
       "questions": [

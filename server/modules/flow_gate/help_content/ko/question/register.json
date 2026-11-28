@@ -9,7 +9,7 @@
       "Authorization": "Bearer {{token}}",
       "Content-Type": "application/json"
     },
-    "details": "문서에 연결되는 질의 데이터입니다. question/policy와 question/precheck를 먼저 적용합니다. title/body를 작성하고 보기가 필요하면 options를 담은 질의 한 건을 보냅니다. 선택 시 새 시도가 필요한 보기는 label과 requires=new_attempt를 사용합니다. 전송은 conversation/encoding을 따릅니다.",
+    "details": "문서에 연결되는 질의 데이터입니다. question/policy와 question/precheck를 먼저 적용합니다. title/body를 작성하고 보기가 필요하면 options를 담은 질의 한 건을 보냅니다. 선택 시 새 시도가 필요한 보기는 label과 requires=new_attempt를 사용합니다. 전송은 conversation/encoding을 따릅니다. 이번 토큰에 바인딩된 문서는 {{doc_id}}입니다. 이 문서 번호를 요청 경로에 사용합니다.",
     "example": {
       "asker_kind": "ai",
       "questions": [

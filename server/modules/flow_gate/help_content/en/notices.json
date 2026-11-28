@@ -6,6 +6,7 @@
   "body": [
     "Check the applicable instructions and work scope before proceeding.",
     "Read the full user policy in question/policy. Use question/precheck to look for prior answers.",
-    "Make changes in the assigned workspace and report the changed files. In continuous runs, proceed with decisions you can make independently. Register a document question when missing information prevents progress. For bounded TR verification see submit/self_check."
+    "Make changes in the assigned workspace and report the changed files. In continuous runs, proceed with decisions you can make independently. Register a document question when missing information prevents progress. For bounded TR verification see submit/self_check.",
+    "Never record the Bearer token in logs, work reports, or other artifacts."
   ]
 }

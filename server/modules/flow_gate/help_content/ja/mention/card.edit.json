@@ -1,8 +1,7 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "title": "card.edit",
-  "summary": "メンションテンプレート作成待ち",
-  "purpose": "呼び出し値の組み立て",
-  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+  "title": "編集",
+  "summary": "ソースを参照・編集し、結果を文書として提出します。TR では自己検証を使います。",
+  "purpose": "今回の呼び出しの値",
+  "body": "{{task_block}}\n\n## 編集\nソースを参照・編集し、結果を文書として提出します。TR では自己検証を使います。\n\n## 今回の呼び出しの値\nAuthorization: Bearer {{token}}\nフロー: {{flow_name}} · {{flow_id}}\nカード: {{card_ref}}\n対象文書: {{doc_id}} · {{doc_type}} · {{doc_title}}\nリビジョン: {{revision_no}}\n提出アクション: {{submit_action}}\n期待リビジョン: {{expected_revision}}\n修正理由: {{edit_reason}}\n差し戻し識別子: {{rejection_ref}}\n次の文書のヘッダー値: {{next_header}}\n参照文書: {{reference_doc_ids}}\n自己検証: {{self_check}}\n作業場所: {{workspace}}\nprobe: {{probe}}\n\n## ヘルプ\n{{route:help.index}}\n最初に読む項目: {{help_first}}\n必要に応じて読む項目: {{help_more}}\n\n{{materials}}"
 }

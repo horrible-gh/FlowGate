@@ -9,7 +9,7 @@
       "Authorization": "Bearer {{token}}",
       "Content-Type": "application/json"
     },
-    "details": "文書に紐づく質問データを登録します。先にquestion/policyとquestion/precheckを適用します。titleとbodyを書き、選択肢が必要なら1件のoptionsに入れます。新しい試行を要する項目はlabelとrequires=new_attemptを使います。送信はconversation/encodingに従います。",
+    "details": "文書に紐づく質問データを登録します。先にquestion/policyとquestion/precheckを適用します。titleとbodyを書き、選択肢が必要なら1件のoptionsに入れます。新しい試行を要する項目はlabelとrequires=new_attemptを使います。送信はconversation/encodingに従います。 このトークンに関連付けられた文書は {{doc_id}} です。リクエストパスにはこの文書 ID を使います。",
     "example": {
       "asker_kind": "ai",
       "questions": [

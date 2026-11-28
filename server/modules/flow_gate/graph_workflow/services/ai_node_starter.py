@@ -147,7 +147,12 @@ def start_ai_invoke(job: dict) -> dict:
             token_service.revoke(issue["token_id"], reason="graph_node_not_open")
             raise
         mention = mention_service.build_mention_from_token_rec(
-            token_rec={"project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"]},
+            token_rec={
+                "project": project_id, "group_id": flow_id, "scratch_dir": issue["scratch_dir"],
+                "token_id": issue["token_id"], "action_scope": scope, "doc_ref": doc_ref,
+                "issued_to": job["issued_to"], "ai_run_id": ai_run_id,
+            },
+            card_locale=job.get("locale"), card_node=card_node,
             head_type=job.get("result_doc_type") or job["doc_type"], head_status="pending", parent_doc=parent,
             api_base_url=api_base_url(job["issued_to"]), raw_token=issue["raw_token"], ref_doc_ids=ref_doc_ids, action_scope=scope,
             # the instruction stage's edit writes the line's empty document for the first time —
@@ -156,19 +161,25 @@ def start_ai_invoke(job: dict) -> dict:
                                                           or job.get("result_first_write")) else {}),
         )
         from modules.flow_gate.services import invoke_mention_service
+        _, task = mention_service.terminal_prompt.split(mention or "")
+        compact = bool(task and "mention" in task)
+        material_locale = task["locale"] if compact else job.get("locale") or "ko"
+        decorated = "" if compact else mention or ""
         stored = job.get("card_settings") or {}
         stage_note = stored.get("instruction_note" if job.get("stage") == "instruction" else "run_note")
         stage_prompt = stored.get("run_pre_instruction") if job.get("stage") == "result" else None
         messages = [value for value in (stage_note, stage_prompt) if value]
         if messages:
-            mention = invoke_mention_service.prepend_messages_section(mention or "", messages, job.get("locale") or "ko")
+            decorated = invoke_mention_service.prepend_messages_section(decorated, messages, material_locale)
         # v02gui.0029: the earlier cards approved after their review count ran out, as a section of its own (both stages).
         from . import card_settings_ports                                # noqa: PLC0415
-        notice = card_settings_ports.upstream_notice(job)
+        notice = card_settings_ports.upstream_notice(dict(job, locale=material_locale) if compact else job)
         if notice:
-            mention = notice + invoke_mention_service.SECTION_SEPARATOR + (mention or "")
-        mention = ai_start_precheck.node_mention(mention or "", job, ai_run_id)    # T-B1e: memos go in front of it
-        mention = card_memo_hooks.prepend_memo_section(mention or "", flow_id, node_key=job["node_key"])
+            decorated = (notice + invoke_mention_service.SECTION_SEPARATOR + decorated
+                         if decorated or not compact else notice)
+        decorated = ai_start_precheck.node_mention(decorated, job, ai_run_id)    # T-B1e: memos go in front of it
+        decorated = card_memo_hooks.prepend_memo_section(decorated, flow_id, node_key=job["node_key"])
+        mention = mention_service.add_card_materials(task, decorated) if compact else decorated
         if title_requested:                     # T-B4d: worded at the provider boundary, at the very end
             node_title_hooks.request_title(issue["raw_token"], job.get("locale"))
         return {"raw_token": issue["raw_token"], "token_id": issue["token_id"],
