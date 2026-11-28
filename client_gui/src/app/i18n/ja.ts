@@ -2659,6 +2659,11 @@ export default {
       command_auto: '組み立て値',
       command_edited: '手動編集',
       command_custom: '手動入力',
+      // v02test.0108 F108-4: モデル構成カードと 1 行のコマンドプレビュー。
+      group_model: 'モデル構成',
+      command_preview: 'コマンドプレビュー',
+      command_edit: '手動で編集',
+      command_edit_close: '編集を閉じる',
       catalog_load_failed: 'モデル一覧を読み込めませんでした。コマンドを直接入力してください。',
       compose_failed: 'コマンドを組み立てられませんでした。',
       executable_invalid: '実行ファイルは空白のないパス 1 つで入力してください。',
