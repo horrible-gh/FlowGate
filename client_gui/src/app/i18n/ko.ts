@@ -2673,6 +2673,11 @@ export default {
       command_auto: '조합값',
       command_edited: '직접 편집',
       command_custom: '직접 입력',
+      // v02test.0108 F108-4: 모델 구성 card and the one-line command preview.
+      group_model: '모델 구성',
+      command_preview: '커맨드 미리보기',
+      command_edit: '직접 편집',
+      command_edit_close: '편집 닫기',
       catalog_load_failed: '모델 목록을 불러오지 못했습니다. 커맨드를 직접 입력하세요.',
       compose_failed: '커맨드를 조합하지 못했습니다.',
       executable_invalid: '실행 파일은 공백 없는 경로 하나로 입력하세요.',

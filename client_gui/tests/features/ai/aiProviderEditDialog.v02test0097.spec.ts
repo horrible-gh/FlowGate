@@ -10,8 +10,9 @@ import { fakeCompose, mockCliCatalog } from './cliCatalogMock'
 
 registerAppMessages(i18n)
 
-// flowgate.v02test.0097 F97-4: the AI 연결 수정 window of mockup v7 — one 4-column grid, name and
-// command composed by the server from 종류/버전/모델/추론도, 사용자 정의 for anything else.
+// flowgate.v02test.0097 F97-4: the AI 연결 수정 window — name and command composed by the server from
+// 종류/버전/모델/추론도, 사용자 정의 for anything else. v02test.0108 F108-4 redesign: 모델 구성 card,
+// a one-line command preview with 직접 편집, and 사용 여부 in the title row.
 
 const wrappers: VueWrapper[] = []
 let mocks: ReturnType<typeof mockCliCatalog>
@@ -27,7 +28,9 @@ const field = (id: string) => select(id).closest('.form-group') as HTMLElement
 const save = () => $<HTMLButtonElement>('.dialog-actions .ui-btn--primary')!
 const nameInput = () => $<HTMLInputElement>('#provider-name')!
 const command = () => $<HTMLTextAreaElement>('#provider-command')
-const commandSwitch = () => $<HTMLButtonElement>('.switch-cell .ui-toggle')!
+// F108-4: the CLI 실행 커맨드 switch became the 직접 편집 button next to the command preview.
+const commandSwitch = () => $<HTMLButtonElement>('.command-edit-btn')!
+const preview = () => $('.command-preview')
 const link = (text: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('.link-btn')).find((b) => b.textContent?.trim() === text)
 
 async function choose(id: string, value: string) {
@@ -64,17 +67,45 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('v7 layout', () => {
-  it('lays the fields on one 4-column grid with the v7 spans', async () => {
+describe('layout (F108-4)', () => {
+  it('orders the body 이름 → 실행 방식 → 모델 구성 → 커맨드 and groups the four model fields in one card', async () => {
     await open(null)
-    expect(nameInput().closest('.form-group')!.classList.contains('c4')).toBe(true)
-    expect(field('provider-exec').classList.contains('c2')).toBe(true)
-    expect(field('provider-agent').classList.contains('c2')).toBe(true)
+    const group = $('.model-group')!
+    expect(group.querySelector('.group-title')!.textContent?.trim()).toBe('모델 구성')
     for (const id of ['provider-kind', 'provider-version', 'provider-model-name', 'provider-effort']) {
-      expect(field(id).classList.contains('c1'), id).toBe(true)
+      expect(group.contains(select(id)), id).toBe(true)
     }
-    const labels = Array.from(document.querySelectorAll('.switch-label')).map((n) => n.textContent?.trim())
-    expect(labels).toEqual(['CLI 실행 커맨드', '사용 여부'])
+    // 종류 on its own line, 버전 · 모델 · 추론도 together on the next one.
+    expect(field('provider-kind').closest('.model-row')).toBeNull()
+    const row = field('provider-version').closest('.model-row')!
+    expect(['provider-version', 'provider-model-name', 'provider-effort'].every((id) => row.contains(select(id)))).toBe(true)
+    const order = [nameInput(), select('provider-exec'), group, preview()!]
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING, String(i)).toBeTruthy()
+    }
+    expect(document.querySelectorAll('.switch-label, .switch-cell')).toHaveLength(0)
+  })
+
+  it('puts 사용 여부 in the title row with a 사용 / 사용 안 함 label and saves it', async () => {
+    const w = await open(null)
+    const toggle = $<HTMLButtonElement>('.dialog-header .ui-toggle')!
+    // The switch is now the first focusable, but opening still starts on the name.
+    expect(document.activeElement).toBe(nameInput())
+    expect(toggle.getAttribute('aria-label')).toBe('사용 여부')
+    expect($('.header-switch-state')!.textContent?.trim()).toBe('사용')
+    toggle.click()
+    await flushPromises()
+    expect($('.header-switch-state')!.textContent?.trim()).toBe('사용 안 함')
+    expect(document.querySelectorAll('.dialog-form .ui-toggle')).toHaveLength(0)
+    save().click()
+    expect(saved(w)!.enabled).toBe(false)
+  })
+
+  it('gives 실행 방식 the full row for local CLI and shares it with the target Agent for remote CLI', async () => {
+    await open(null)
+    expect(field('provider-exec').classList.contains('span-all')).toBe(true)
+    await choose('provider-exec', 'remote_cli')
+    expect(field('provider-exec').classList.contains('span-all')).toBe(false)
   })
 
   it('lists the execution modes by name only, CLI first, API greyed out', async () => {
@@ -87,7 +118,7 @@ describe('v7 layout', () => {
     ])
   })
 
-  it('keeps the agent cell empty for local CLI so the rows below do not move', async () => {
+  it('hides the agent cell for local CLI and shows it for remote CLI', async () => {
     await open(null)
     expect(field('provider-agent').classList.contains('ghost')).toBe(true)
     await choose('provider-exec', 'remote_cli')
@@ -136,14 +167,30 @@ describe('composition', () => {
     }
   })
 
-  it('opens a new AI with the composed name and command, command hidden until the switch is on', async () => {
+  it('opens a new AI with the composed command on the preview line, which stays while 직접 편집 is open', async () => {
     await open(null)
     expect(nameInput().value).toBe('Claude Opus 5.5')
     expect(command()).toBeNull()
+    expect(preview()!.textContent?.trim()).toBe(CLAUDE)
+    expect(preview()!.getAttribute('title')).toBe(CLAUDE)
+    expect(commandSwitch().textContent?.trim()).toBe('직접 편집')
+    expect(commandSwitch().getAttribute('aria-expanded')).toBe('false')
     commandSwitch().click()
     await flushPromises()
     expect(command()!.value).toBe(CLAUDE)
     expect($<HTMLInputElement>('#provider-executable')!.value).toBe('claude')
+    // The preview line is always shown; the editor opens below it.
+    expect(preview()!.textContent?.trim()).toBe(CLAUDE)
+    expect(preview()!.compareDocumentPosition(command()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(commandSwitch().textContent?.trim()).toBe('편집 닫기')
+    expect(commandSwitch().getAttribute('aria-expanded')).toBe('true')
+    await type(command()!, `${CLAUDE} --verbose`)
+    expect(preview()!.textContent?.trim()).toBe(`${CLAUDE} --verbose`)
+    expect(preview()!.getAttribute('title')).toBe(`${CLAUDE} --verbose`)
+    commandSwitch().click()
+    await flushPromises()
+    expect(command()).toBeNull()
+    expect(preview()!.textContent?.trim()).toBe(`${CLAUDE} --verbose`)
   })
 
   it('recomposes name and command after typed selection settles', async () => {
@@ -202,23 +249,28 @@ describe('composition', () => {
     expect(save().disabled).toBe(true)
   })
 
-  it('switch off means no command area at all', async () => {
+  it('without 직접 편집 there is only the preview line, which follows the selection', async () => {
     await open(null)
     expect(command()).toBeNull()
     expect($('#provider-executable')).toBeNull()
+    await choose('provider-model-name', 'haiku')
+    expect(preview()!.textContent).toContain('claude-haiku-5-5')
   })
 
-  it('사용자 정의 widens the kind cell, drops version/model/effort and keeps the command shown and locked', async () => {
+  it('사용자 정의 drops version/model/effort and shows the command editor under the preview line', async () => {
     await open(null)
     await choose('provider-kind', 'custom')
-    expect(field('provider-kind').classList.contains('c2')).toBe(true)
+    expect($('.model-row')).toBeNull()
     expect($('#provider-version')).toBeNull()
     expect($('#provider-model-name')).toBeNull()
     expect($('#provider-effort')).toBeNull()
     expect($('#provider-executable')).toBeNull()
     expect(command()).not.toBeNull()
-    expect(commandSwitch().getAttribute('aria-checked')).toBe('true')
-    expect(commandSwitch().disabled).toBe(true)
+    // The preview line stays even though the editor is always open here.
+    expect(preview()!.textContent?.trim()).toBe((command()!.value || '—').trim())
+    await type(command()!, 'my-cli --flag')
+    expect(preview()!.textContent?.trim()).toBe('my-cli --flag')
+    expect($('.command-edit-btn')).toBeNull()
     expect($('.command-chip')!.textContent?.trim()).toBe('직접 입력')
   })
 })
@@ -236,6 +288,7 @@ describe('opening a saved connection', () => {
     expect(select('provider-model-name').value).toBe('sol')
     expect(select('provider-effort').value).toBe('high')
     expect(command()).toBeNull()
+    expect(preview()!.textContent?.trim()).toBe(CODEX_61)
     save().click()
     expect(saved(w)).toMatchObject({ kind: 'codex', name: 'Codex GPT-6.1 Sol', cli_command: CODEX_61 })
   })
@@ -258,7 +311,8 @@ describe('opening a saved connection', () => {
     const w = await open(saved0({ name: 'Mine', kind, cli_command: cli }))
     expect(select('provider-kind').value).toBe('custom')
     expect(command()!.value).toBe(cli)
-    expect(commandSwitch().disabled).toBe(true)
+    expect(preview()!.textContent?.trim()).toBe(cli)
+    expect($('.command-edit-btn')).toBeNull()
     save().click()
     expect(saved(w)).toMatchObject({ kind, name: 'Mine', cli_command: cli })
   })
@@ -302,7 +356,8 @@ describe('target Agent combo', () => {
 
 describe('i18n', () => {
   const added = ['field_executable', 'field_command', 'field_version', 'field_model', 'field_effort', 'name_auto_reset',
-    'command_reset', 'command_auto', 'command_edited', 'command_custom', 'catalog_load_failed', 'compose_failed', 'executable_invalid']
+    'command_reset', 'command_auto', 'command_edited', 'command_custom', 'catalog_load_failed', 'compose_failed', 'executable_invalid',
+    'group_model', 'command_preview', 'command_edit', 'command_edit_close']
   const removed = ['gui.ai.providers.placeholder_name', 'gui.ai.providers.placeholder_cli_command', 'gui.ai.providers.agent_loading',
     'gui.ai.providers.agent_reason_disabled', 'gui.ai.providers.agent_reason_revoked', 'gui.ai.providers.agent_reason_no_cli',
     'gui.ai.providers.placeholder_api_key', 'gui.ai.providers.placeholder_keep_key', 'gui.ai.providers.api_key_needed_hint',

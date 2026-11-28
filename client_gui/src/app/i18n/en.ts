@@ -2658,6 +2658,11 @@ export default {
       command_auto: 'Composed',
       command_edited: 'Edited',
       command_custom: 'Manual',
+      // v02test.0108 F108-4: model setup card and the one-line command preview.
+      group_model: 'Model setup',
+      command_preview: 'Command preview',
+      command_edit: 'Edit manually',
+      command_edit_close: 'Close editor',
       catalog_load_failed: 'Could not load the model list. Enter the command yourself.',
       compose_failed: 'Could not compose the command.',
       executable_invalid: 'Enter the executable as one path without spaces.',
