@@ -308,9 +308,13 @@ function measure() {
   setModelessTaskbar(id, root.value?.getBoundingClientRect().height || 50)
 }
 let readSeq = 0
-watch(user, async () => {
+// Watch the person's name, not the user object: /auth/me is read again after requests (permission refresh) and each
+// answer used to arrive as a new object, so this re-ran, reset the style to 'flowgate' and fired another request —
+// a loop that made the taskbar flicker between the saved style and the default. The style goes back to the default
+// only on sign-out or an account switch; a first read keeps what is shown until the saved style arrives.
+watch(() => user.value?.username ?? null, async (name, previous) => {
   const seq = ++readSeq
-  modelessStyle.value = 'flowgate'
+  if (previous !== undefined && previous !== name) modelessStyle.value = 'flowgate'
   try {
     const { data } = await getRequest<UiSettingsResponse>(UI_SETTINGS_PATH)
     if (seq === readSeq) modelessStyle.value = normalizeTaskbarStyle(data.settings?.[TASKBAR_STYLE_FIELD])
