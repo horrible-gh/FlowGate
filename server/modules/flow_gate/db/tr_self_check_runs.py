@@ -1539,3 +1539,33 @@ def snapshot_cleanup_pending(limit: int = 50) -> list[dict]:
         "SELECT * FROM tr_self_check_runs WHERE cleanup_pending = 1 AND snapshot_path IS NOT NULL"
         " AND status IN ('completed', 'failed', 'cancelled') ORDER BY finished_at ASC LIMIT ?", [limit])
     return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
+
+
+def record_stop_reason(run_id: str, reason: str | None) -> None:
+    get_store()._execute_affected(
+        "UPDATE tr_self_check_runs SET recovery_reason = ? WHERE self_check_run_id = ?"
+        " AND status IN ('pending', 'running') AND cancel_requested = 1",
+        [reason, run_id])
+
+
+def mark_ended_by_user(row: dict, actor_user_id: str) -> dict | None:
+    """Explicit operator override. Audit and terminal CAS commit together."""
+    from . import workflow_events
+    store = get_store()
+    rid, now = row["self_check_run_id"], now_iso()
+    with store.transaction():
+        changed = store._execute_affected(
+            "UPDATE tr_self_check_runs SET status = 'cancelled', recovery_state = 'recovered',"
+            " recovery_reason = 'marked_ended_by_user', error_code = 'selfcheck_marked_ended',"
+            " active_key = NULL, finished_at = ?, updated_at = ?"
+            " WHERE self_check_run_id = ? AND status IN ('pending', 'running')"
+            " AND cancel_requested = 1 AND updated_at = ?",
+            [now, now, rid, row["updated_at"]])
+        if not changed:
+            return None
+        workflow_events.create({"event_type": "selfcheck_mark_ended", "project_id": row["project_id"],
+            "group_id": row["group_id"], "actor_user_id": actor_user_id,
+            "from_state": row["status"], "to_state": "cancelled",
+            "metadata": json.dumps({"self_check_run_id": rid, "stop_reason": row.get("recovery_reason"),
+                                    "process_exit_confirmed": False})})
+    return get_run(rid)
