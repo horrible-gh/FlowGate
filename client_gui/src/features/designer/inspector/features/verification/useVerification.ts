@@ -3,6 +3,8 @@
 // slowly; 403 / 404 hide the line and stop asking. The answers are shared per card, so the line part (mounted only while
 // the line is shown) draws the same answer and its actions write back into it. A button always names the exact run the
 // line was drawn for; a refused action reads the line again (409 selfcheck_not_waiting: the request has just started).
+// flowgate.v02test.0084 #13: [끝난 것으로 처리] (`mark_ended`) is confirmed like [강제 종료] (in a dialog, see VerificationRow)
+// and its answer replaces the line like any other action; a new `stop_failed` answer brings its own `stop_reason`.
 import { computed, getCurrentScope, inject, onScopeDispose, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   cardVerificationAct,
