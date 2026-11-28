@@ -17,7 +17,8 @@ NOW = datetime(2026, 11, 19, 12, tzinfo=timezone.utc)
 def row(rid='r1', node='a', flow='f', state='running', age=240, **extra):
     return dict(self_check_run_id=rid, node_key=node, group_id=flow, project_id='p',
                 status=state, started_at=(NOW-timedelta(seconds=age)).isoformat(),
-                enqueued_at=NOW.isoformat(), queue_order=rid, **extra)
+                enqueued_at=NOW.isoformat(), queue_order=rid,
+                timeout_seconds=extra.pop('timeout_seconds', 180), **extra)
 
 
 @pytest.fixture
@@ -26,7 +27,9 @@ def setup(monkeypatch):
     monkeypatch.setattr(service, '_now', lambda: NOW)
     monkeypatch.setattr(service.repository, 'card_node', lambda f, n: {
         'node_type': 'document', 'doc_type': 'T', 'label': 'Card '+n})
-    monkeypatch.setattr(service, 'resolve_verify_limits', lambda f, n: SimpleNamespace(run_timeout_sec=180))
+    monkeypatch.setattr(service.lifecycle.proof, 'owner_instance_of', lambda r: 'test-owner')
+    monkeypatch.setattr(service.lifecycle.proof, 'owner_server_state',
+                        lambda owner: service.lifecycle.proof.Proof(service.lifecycle.proof.ABSENT))
     monkeypatch.setattr(service.instance_registry, 'node_key', lambda: 'host')
     def rows(flow_id=None, node_key=None, run_id=None):
         return [r for r in data if (flow_id is None or r['group_id'] == flow_id)
@@ -45,9 +48,8 @@ def test_display_boundary(setup, age, visible):
     assert actual['actions'] == (['force_stop'] if visible else [])
 
 
-def test_resolved_card_limit_and_latest_launch(setup, monkeypatch):
-    monkeypatch.setattr(service, 'resolve_verify_limits', lambda f, n: SimpleNamespace(run_timeout_sec=600))
-    setup.extend([row('old', age=900), row('new', age=659)])
+def test_admitted_limit_and_latest_launch(setup):
+    setup.extend([row('old', age=900), row('new', age=659, verify_timeout_sec=600)])
     assert service.status('f', 'a')['visible'] is False
     setup[1]['started_at'] = (NOW-timedelta(seconds=660)).isoformat()
     assert service.status('f', 'a')['state'] == 'overdue'
@@ -158,7 +160,7 @@ def test_stop_result_is_honest(setup, monkeypatch, final, expected):
     monkeypatch.setattr(service.queue, 'force_stop', stop)
     actual = service.control('f','a','r1','force_stop')
     assert actual['state'] == expected
-    assert actual['actions'] == (['force_stop'] if expected == 'stop_failed' else [])
+    assert actual['actions'] == (['force_stop', 'mark_ended'] if expected == 'stop_failed' else [])
     assert service.status('f','a')['state'] == ('stop_failed' if expected == 'stop_failed' else 'hidden')
 
 
@@ -177,7 +179,7 @@ def client(monkeypatch):
     return TestClient(app)
 
 
-@pytest.mark.parametrize('suffix,method', [('', 'get'),('/runs/r1/force-stop','post'),('/runs/r1/cancel-waiting','post')])
+@pytest.mark.parametrize('suffix,method', [('', 'get'),('/runs/r1/force-stop','post'),('/runs/r1/cancel-waiting','post'),('/runs/r1/mark-ended','post')])
 def test_every_endpoint_requires_write_permission(client, monkeypatch, suffix, method):
     seen=[]
     monkeypatch.setattr(routes.envelope, 'has_permission', lambda u,p,perm: seen.append(perm) or False)
@@ -188,7 +190,7 @@ def test_every_endpoint_requires_write_permission(client, monkeypatch, suffix, m
     assert seen == ['project.document.update']
 
 
-@pytest.mark.parametrize('suffix,method', [('', 'get'),('/runs/r1/force-stop','post'),('/runs/r1/cancel-waiting','post')])
+@pytest.mark.parametrize('suffix,method', [('', 'get'),('/runs/r1/force-stop','post'),('/runs/r1/cancel-waiting','post'),('/runs/r1/mark-ended','post')])
 def test_worker_tokens_refused(client, monkeypatch, suffix, method):
     monkeypatch.setattr(routes.envelope, 'verify_bearer', lambda request: {'issued_to':'u','action_scope':'edit'})
     response=getattr(client,method)('/api/v1/flows/f/nodes/a/self-check'+suffix)
@@ -252,5 +254,92 @@ def test_control_http_with_unjoined_queue_row(client, setup, monkeypatch, action
     assert actual['run']['status'] == final
     assert actual['run']['finished_at'] == NOW.isoformat()
     assert actual['run']['show_at'] == NOW.isoformat()
-    assert actual['actions'] == (['force_stop'] if expected == 'stop_failed' else [])
+    assert actual['actions'] == (['force_stop', 'mark_ended'] if expected == 'stop_failed' else [])
     assert 'node_key' not in ended  # Response enrichment must not mutate the queue result.
+
+
+def test_stop_reason_on_read_and_control(setup, monkeypatch):
+    setup.append(row(cancel_requested=1, recovery_reason='processes_remain'))
+    assert service.status('f', 'a')['stop_reason'] == 'processes_remain'
+    monkeypatch.setattr(service.queue, 'force_stop', lambda rid: setup[0])
+    actual = service.control('f', 'a', 'r1', 'force_stop')
+    assert actual['stop_reason'] == 'processes_remain'
+    assert actual['actions'] == ['force_stop', 'mark_ended']
+
+
+@pytest.mark.parametrize('state,cancel,age', [('queued',1,240), ('running',0,240),
+                                            ('running',1,239), ('cancelled',1,240)])
+def test_mark_ended_requires_stop_failed(setup, state, cancel, age):
+    setup.append(row(state=state, cancel_requested=cancel, age=age))
+    with pytest.raises(GraphApiError, match='selfcheck_mark_ended_not_applicable'):
+        service.control('f', 'a', 'r1', 'mark_ended', actor_user_id='u')
+
+
+@pytest.mark.parametrize('queued', [True, False])
+def test_mark_ended_http_releases_and_emits(client, setup, monkeypatch, queued):
+    setup.append(row(cancel_requested=1, updated_at=NOW.isoformat()))
+    if not queued:
+        setup[0]['enqueued_at'] = None
+    monkeypatch.setattr(routes.envelope, 'has_permission', lambda *a: True)
+    calls=[]
+    def mark(r, actor):
+        assert actor == 'u'
+        setup[0].update(status='cancelled', error_code='selfcheck_marked_ended')
+        return setup[0]
+    monkeypatch.setattr(service.runs, 'mark_ended_by_user', mark)
+    monkeypatch.setattr(service.lifecycle.lock_manager, 'selfcheck_release_recovered', lambda *a: calls.append(a))
+    monkeypatch.setattr(service.lifecycle, '_emit', lambda row: None)
+    monkeypatch.setattr(service.queue, 'wake', lambda: None)
+    cleaned=[]
+    monkeypatch.setattr(service.queue, 'cleanup_snapshot', lambda r: cleaned.append(dict(r)))
+    response=client.post('/api/v1/flows/f/nodes/a/self-check/runs/r1/mark-ended')
+    assert response.status_code == 200
+    assert response.json()['verification']['state'] == 'stopped'
+    assert calls == [('p', 'f', 'r1')]
+    assert len(cleaned) == int(queued)
+    if queued:
+        assert cleaned[0]['status'] == 'cancelled'
+        assert cleaned[0]['error_code'] == 'selfcheck_marked_ended'
+    assert not service.status('f', 'a')['visible']
+
+
+@pytest.mark.parametrize('reason', ['host_changed', 'processes_remain', 'owner_alive', 'ownership_unknown'])
+def test_shared_screen_contract(client, setup, monkeypatch, reason):
+    # The frontend consumes these same envelopes through the real HTTP adapter/parser.
+    import json
+    from pathlib import Path
+    contract = json.loads((Path(__file__).resolve().parents[4] /
+        'client_gui/tests/features/designer/inspector/verification/stopFailureContract.v02test0084.json'
+    ).read_text(encoding='utf-8'))
+    flow, node, rid = 'flowgate.v02test.0084', 'gn_4', 'scr_1'
+    setup.append(row(rid, node, flow, cancel_requested=1, recovery_reason=reason))
+    if reason == 'ownership_unknown':
+        monkeypatch.setattr(service.lifecycle.proof, 'owner_server_state',
+                            lambda owner: service.lifecycle.proof.Proof(service.lifecycle.proof.UNKNOWN))
+    monkeypatch.setattr(routes.envelope, 'has_permission', lambda *a: True)
+    path = f'/api/v1/flows/{flow}/nodes/{node}/self-check'
+
+    def check(response, key):
+        assert response.status_code == 200
+        body = response.json()
+        assert body.pop('server_ts')
+        assert body == contract[key]
+
+    check(client.get(path), reason)
+    monkeypatch.setattr(service.queue, 'force_stop', lambda run_id: dict(setup[0]))
+    check(client.post(path + f'/runs/{rid}/force-stop'), reason)
+
+    def mark(current, actor):
+        assert actor == 'u'
+        current.update(status='cancelled', finished_at=NOW.isoformat(),
+                       error_code='selfcheck_marked_ended', recovery_reason='marked_ended_by_user')
+        return current
+    monkeypatch.setattr(service.runs, 'mark_ended_by_user', mark)
+    monkeypatch.setattr(service.lifecycle.lock_manager, 'selfcheck_release_recovered', lambda *a: None)
+    monkeypatch.setattr(service.lifecycle, '_emit', lambda r: None)
+    monkeypatch.setattr(service.queue, 'wake', lambda: None)
+    monkeypatch.setattr(service.queue, 'cleanup_snapshot', lambda r: None)
+    check(client.post(path + f'/runs/{rid}/mark-ended'), 'stopped')
+    check(client.get(path), 'hidden')
+    # A terminal force-stop has the same transient screen feedback as mark-ended.
+    check(client.post(path + f'/runs/{rid}/force-stop'), 'stopped')

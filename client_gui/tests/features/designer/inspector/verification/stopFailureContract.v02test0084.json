@@ -1,0 +1,132 @@
+{
+  "host_changed": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": true,
+      "state": "stop_failed",
+      "run": {
+        "self_check_run_id": "scr_1",
+        "status": "running",
+        "started_at": "2026-11-19T11:56:00+00:00",
+        "enqueued_at": "2026-11-19T12:00:00+00:00",
+        "finished_at": null,
+        "show_at": "2026-11-19T12:00:00+00:00",
+        "elapsed_seconds": 240
+      },
+      "blocker": null,
+      "actions": [
+        "force_stop",
+        "mark_ended"
+      ],
+      "stop_reason": "host_changed"
+    }
+  },
+  "processes_remain": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": true,
+      "state": "stop_failed",
+      "run": {
+        "self_check_run_id": "scr_1",
+        "status": "running",
+        "started_at": "2026-11-19T11:56:00+00:00",
+        "enqueued_at": "2026-11-19T12:00:00+00:00",
+        "finished_at": null,
+        "show_at": "2026-11-19T12:00:00+00:00",
+        "elapsed_seconds": 240
+      },
+      "blocker": null,
+      "actions": [
+        "force_stop",
+        "mark_ended"
+      ],
+      "stop_reason": "processes_remain"
+    }
+  },
+  "owner_alive": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": true,
+      "state": "stop_failed",
+      "run": {
+        "self_check_run_id": "scr_1",
+        "status": "running",
+        "started_at": "2026-11-19T11:56:00+00:00",
+        "enqueued_at": "2026-11-19T12:00:00+00:00",
+        "finished_at": null,
+        "show_at": "2026-11-19T12:00:00+00:00",
+        "elapsed_seconds": 240
+      },
+      "blocker": null,
+      "actions": [
+        "force_stop",
+        "mark_ended"
+      ],
+      "stop_reason": "owner_alive"
+    }
+  },
+  "ownership_unknown": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": true,
+      "state": "stop_failed",
+      "run": {
+        "self_check_run_id": "scr_1",
+        "status": "running",
+        "started_at": "2026-11-19T11:56:00+00:00",
+        "enqueued_at": "2026-11-19T12:00:00+00:00",
+        "finished_at": null,
+        "show_at": "2026-11-19T12:00:00+00:00",
+        "elapsed_seconds": 240
+      },
+      "blocker": null,
+      "actions": [
+        "force_stop",
+        "mark_ended"
+      ],
+      "stop_reason": "ownership_unknown"
+    }
+  },
+  "stopped": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": true,
+      "state": "stopped",
+      "run": {
+        "self_check_run_id": "scr_1",
+        "status": "cancelled",
+        "started_at": "2026-11-19T11:56:00+00:00",
+        "enqueued_at": "2026-11-19T12:00:00+00:00",
+        "finished_at": "2026-11-19T12:00:00+00:00",
+        "show_at": "2026-11-19T12:00:00+00:00",
+        "elapsed_seconds": 240
+      },
+      "blocker": null,
+      "actions": [],
+      "stop_reason": null
+    }
+  },
+  "hidden": {
+    "ok": true,
+    "verification": {
+      "flow_id": "flowgate.v02test.0084",
+      "node_key": "gn_4",
+      "visible": false,
+      "state": "hidden",
+      "run": null,
+      "blocker": null,
+      "actions": [],
+      "stop_reason": null
+    }
+  }
+}

@@ -355,19 +355,21 @@ def forced_code(run_id: str) -> str | None:
 
 
 def force_stop(run_id: str, reason: str = FORCE_STOPPED, wait_sec: float = 10.0) -> dict:
-    """Stop a request whatever its state: a waiting one is cancelled (``cancel_waiting``); an
-    executing one has its whole process group / Job killed, its slot (reservation) freed and is
-    recorded ``failed`` with ``reason``. The run must be driven by this server; one driven by
-    another server (or none) goes through the ordinary cancel and its proof rules. Returns the
-    run as stored when this returns."""
+    """Cancel waiting requests or retry verified termination of executing requests.
+
+    Return the stored run plus stop_reason (None after termination). Unconfirmed
+    cancellation keeps protection and records its bounded reason; other service
+    errors become QueueError. A recovered cancellation may end cancelled, while
+    the active worker may record failed with the requested force-stop reason.
+    """
     from modules.flow_gate.services import tr_self_check_service as service
     row = db_runs.get_run(run_id)
     if row is None:
         raise QueueError("selfcheck_run_not_found")
     if row["status"] == db_runs.QUEUED:
-        return cancel_waiting(run_id, reason) or db_runs.get_run(run_id)
+        return dict(cancel_waiting(run_id, reason) or db_runs.get_run(run_id), stop_reason=None)
     if row["status"] not in ("pending", "running"):
-        return row
+        return dict(row, stop_reason=None)
     with _forced_lock:
         _forced[run_id] = reason
     try:
@@ -377,18 +379,48 @@ def force_stop(run_id: str, reason: str = FORCE_STOPPED, wait_sec: float = 10.0)
         if item is None:
             try:
                 service._cancel(run_id, lambda: db_runs.get_run(run_id))
-            except service.SelfCheckError:
-                pass
-            return db_runs.get_run(run_id)
+            except service.SelfCheckError as exc:
+                if exc.code != "selfcheck_cancel_unconfirmed":
+                    raise QueueError(exc.code) from exc
+                current = db_runs.get_run(run_id)
+                if current is None:
+                    raise QueueError("selfcheck_run_not_found") from exc
+                why = service.stop_reason(current, exc.details.get("cancel", {}).get("reason"))
+                db_runs.record_stop_reason(run_id, why)
+                latest = db_runs.get_run(run_id)
+                if latest is None:
+                    raise QueueError("selfcheck_run_not_found")
+                return dict(latest, stop_reason=service.stop_reason(latest, why))
+            current = db_runs.get_run(run_id)
+            if current is None:
+                raise QueueError("selfcheck_run_not_found")
+            if service.stop_overdue(current):
+                service._reprove(current)
+                current = db_runs.get_run(run_id)
+            if current is None:
+                raise QueueError("selfcheck_run_not_found")
+            why = service.stop_reason(current)
+            db_runs.record_stop_reason(run_id, why)
+            return dict(current, stop_reason=why)
         item[1].set()
         item[0].cancel()
         deadline = _now() + timedelta(seconds=wait_sec)
         while _now() < deadline:
             current = db_runs.get_run(run_id)
-            if current is None or current["status"] not in ("pending", "running"):
-                return current
+            if current is None:
+                raise QueueError("selfcheck_run_not_found")
+            if current["status"] not in ("pending", "running"):
+                return dict(current, stop_reason=None)
             threading.Event().wait(0.1)
-        return db_runs.get_run(run_id)
+        current = db_runs.get_run(run_id)
+        if current and current["status"] in ("pending", "running"):
+            service._reprove(current)
+            current = db_runs.get_run(run_id)
+        if current is None:
+            raise QueueError("selfcheck_run_not_found")
+        why = service.stop_reason(current)
+        db_runs.record_stop_reason(run_id, why)
+        return dict(current, stop_reason=why)
     finally:
         with _forced_lock:
             _forced.pop(run_id, None)
