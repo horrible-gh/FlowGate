@@ -6,6 +6,7 @@ Final format: Follow the turn body/based_on_seq contract / Keep the assigned pro
 
 ## Mode: Edit once
 Read and edit source and documents and run commands for this call. The next conversation returns to read mode.
+Posting one reply turn to this conversation (POST https://example.invalid/flowgate/api/v1/conversation/demo.test.0001.0002-CH/turn) is required in every mode and is not a document edit.
 
 ## Values for this call
 Authorization: Bearer FAKE-GOLDEN-TOKEN

@@ -10,7 +10,7 @@ from modules.flow_gate.services.prompt_blocks.registry import brief
     ("read", None, False, "읽기"),
     ("read", "execute", False, "실행"),
     ("read_write", None, False, "편집"),
-    ("read_write", None, True, "편1"),
+    ("read_write", None, True, "1회 편집"),
     ("read", None, True, "읽기"),
 ])
 def test_block_grants(locale, title, source, command, claimed, label):
@@ -21,7 +21,7 @@ def test_block_grants(locale, title, source, command, claimed, label):
         assert text.splitlines()[2] == label
         assert "모드를 바꾸라고 요구하지 말고" in text
         assert "한 줄로 한 번만" in text
-        assert ("이번 한 번만" in text) == (label == "편1")
+        assert ("이번 한 번만" in text) == (label == "1회 편집")
     assert ("chat_command_execute_mode_denied" in text) == (label == "실행")
 
 
@@ -45,7 +45,7 @@ def context(monkeypatch):
 @pytest.mark.parametrize("invoked", [False, True])
 @pytest.mark.parametrize("source,command,claimed,label", [
     ("read", None, False, "읽기"), ("read", "execute", False, "실행"),
-    ("read_write", None, False, "편집"), ("read_write", None, True, "편1"),
+    ("read_write", None, False, "편집"), ("read_write", None, True, "1회 편집"),
     ("read", None, False, "읽기"),
 ])
 def test_complete_prompt(context, invoked, source, command, claimed, label):
@@ -54,10 +54,10 @@ def test_complete_prompt(context, invoked, source, command, claimed, label):
     assert text.count("## 현재 모드") == 1
     assert "## 현재 모드\n---\n" + label + "\n" in text
     assert "## Execute mode" not in text
-    assert ("이번 한 번만" in text) == (label == "편1")
+    assert ("이번 한 번만" in text) == (label == "1회 편집")
 
 
-@pytest.mark.parametrize("marker,label", [("test-id", "편1"), ("other-token", "편집"), (None, "편집")])
+@pytest.mark.parametrize("marker,label", [("test-id", "1회 편집"), ("other-token", "편집"), (None, "편집")])
 def test_invoked_claim_uses_token_identity(context, monkeypatch, marker, label):
     from modules.flow_gate.db import user_chat_source_access
     monkeypatch.setattr(user_chat_source_access, "get", lambda *a: {

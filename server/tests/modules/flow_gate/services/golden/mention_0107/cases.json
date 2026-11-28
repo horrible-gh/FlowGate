@@ -107,8 +107,8 @@
         "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1204,
-      "max_chars": 1268
+      "chars": 1390,
+      "max_chars": 1454
     },
     {
       "file": "en/chat.edit_once.txt",
@@ -140,8 +140,8 @@
         "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1267,
-      "max_chars": 1331
+      "chars": 1453,
+      "max_chars": 1517
     },
     {
       "file": "en/chat.execute.txt",
@@ -173,8 +173,8 @@
         "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1216,
-      "max_chars": 1280
+      "chars": 1667,
+      "max_chars": 1731
     },
     {
       "file": "en/chat.read.txt",
@@ -206,8 +206,8 @@
         "materials": "## Materials\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1163,
-      "max_chars": 1227
+      "chars": 1614,
+      "max_chars": 1678
     },
     {
       "file": "ja/card.edit.txt",
@@ -315,8 +315,8 @@
         "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 978,
-      "max_chars": 1042
+      "chars": 1110,
+      "max_chars": 1174
     },
     {
       "file": "ja/chat.edit_once.txt",
@@ -348,8 +348,8 @@
         "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1004,
-      "max_chars": 1068
+      "chars": 1136,
+      "max_chars": 1200
     },
     {
       "file": "ja/chat.execute.txt",
@@ -381,8 +381,8 @@
         "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 938,
-      "max_chars": 1002
+      "chars": 1192,
+      "max_chars": 1256
     },
     {
       "file": "ja/chat.read.txt",
@@ -414,8 +414,8 @@
         "materials": "## 資料\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 903,
-      "max_chars": 967
+      "chars": 1157,
+      "max_chars": 1221
     },
     {
       "file": "ko/card.edit.txt",
@@ -523,8 +523,8 @@
         "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 986,
-      "max_chars": 1050
+      "chars": 1124,
+      "max_chars": 1188
     },
     {
       "file": "ko/chat.edit_once.txt",
@@ -556,8 +556,8 @@
         "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 1011,
-      "max_chars": 1075
+      "chars": 1152,
+      "max_chars": 1216
     },
     {
       "file": "ko/chat.execute.txt",
@@ -589,8 +589,8 @@
         "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 952,
-      "max_chars": 1016
+      "chars": 1219,
+      "max_chars": 1283
     },
     {
       "file": "ko/chat.read.txt",
@@ -622,8 +622,8 @@
         "materials": "## 자료\n---\nOriginal {{token}} material. 사용자 원문 / 原文"
       },
       "workspace": "/workspace/example",
-      "chars": 918,
-      "max_chars": 982
+      "chars": 1185,
+      "max_chars": 1249
     }
   ]
 }

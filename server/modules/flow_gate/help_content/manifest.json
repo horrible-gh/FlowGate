@@ -4460,7 +4460,8 @@
       },
       "routes": [
         "help.index",
-        "help.leaf"
+        "help.leaf",
+        "conversation.turn"
       ],
       "aliases": [],
       "dynamic": false,
@@ -4617,7 +4618,8 @@
       },
       "routes": [
         "help.index",
-        "help.leaf"
+        "help.leaf",
+        "conversation.turn"
       ],
       "aliases": [],
       "dynamic": false,
@@ -4774,7 +4776,8 @@
       },
       "routes": [
         "help.index",
-        "help.leaf"
+        "help.leaf",
+        "conversation.turn"
       ],
       "aliases": [],
       "dynamic": false,
@@ -4931,7 +4934,8 @@
       },
       "routes": [
         "help.index",
-        "help.leaf"
+        "help.leaf",
+        "conversation.turn"
       ],
       "aliases": [],
       "dynamic": false,
