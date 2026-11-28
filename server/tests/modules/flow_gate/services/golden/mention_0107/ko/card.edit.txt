@@ -25,7 +25,7 @@ probe: fg-probe:golden-𠮷
 ## 헬프
 GET https://example.invalid/flowgate/api/v1/help
 먼저 읽기: notices, submit/format, submit/changed_files, documents/access
-필요할 때: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, submit/self_check, attachments/upload_request
+필요할 때: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, submit/self_check, attachments/upload_request
 
 ## 자료
 ---
