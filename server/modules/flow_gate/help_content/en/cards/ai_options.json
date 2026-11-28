@@ -1,5 +1,13 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Card AI options",
+  "summary": "Card AI options",
+  "purpose": "Card AI options",
+  "request": {
+    "route": "{{route:cards.ai_options}}",
+    "authorization": "Bearer {{token}}",
+    "details": "GET before placing cards. Look up user-named AI groups in role_groups."
+  },
+  "response": "Choose an AI from options (id, name, kind). Use role_groups for from_group.",
+  "errors": "On access refusal, check the bound Flow and chat token."
 }

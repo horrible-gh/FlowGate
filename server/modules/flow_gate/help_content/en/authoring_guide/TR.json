@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Writing a work report",
+  "summary": "Writing a work report",
+  "purpose": "Writing a work report",
+  "body": "A work report (TR) states, in this order:\n\n1. What you changed — one paragraph per instructed item, describing the behaviour that actually changed.\n2. Why — which design decision you followed, and the reason for any deviation.\n3. How you verified it — the test commands you ran and their results. If you could not run them, say so.\n4. What is left — the scope you did not cover and why.\n5. The changed-files section — its format is in the submit/changed_files help leaf.\n\nDo not hand verification back to the user. Reproduce, fix and measure before submitting.\n\nRecord test code, fixtures, mocks and bounded self-check results. TS/TSR handles the formal gate."
+}

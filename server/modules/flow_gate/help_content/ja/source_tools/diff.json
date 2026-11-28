@@ -1,0 +1,73 @@
+{
+  "locale": "ja",
+  "title": "diff",
+  "summary": "merge-base以降の相手ref側の変更patchを取得する。",
+  "purpose": "merge-base以降の相手ref側の変更patchを取得する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "diff"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "path",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "任意のソースルート相対パス。"
+      },
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "比較対象ref。option形式とrevspecは禁止。省略時はトークンGroupのwork base(Groupがなければ Project base)のstart point — originが進んでいれば origin/<branch>、そうでなければ <branch>。"
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main",
+      "path": "server/app.py"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "diff",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "target_ref": "origin/main",
+      "patch": "diff --git a/server/app.py b/server/app.py\n...",
+      "returned_bytes": 58,
+      "truncated": false
+    },
+    "details": [
+      "HEADとtarget_refのmerge-baseからtarget_refまでだけを比較し、HEAD側固有の変更は含めない。",
+      "patchは1 MiBで切り詰め、truncatedで示す。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "refがないかmerge-base/diffのgit commandが失敗した。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "refまたはpathの形式が正しくない。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このtokenにread scopeがない。"
+    }
+  ]
+}

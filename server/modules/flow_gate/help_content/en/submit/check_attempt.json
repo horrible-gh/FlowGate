@@ -1,5 +1,32 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Self-check for a card attempt",
+  "summary": "Self-check for a card attempt",
+  "purpose": "Self-check for a card attempt",
+  "request": {
+    "routes": [
+      "{{route:self_check.run}}",
+      "{{route:self_check.draft.run}}"
+    ],
+    "details": "Set cwd relative to the attempt worktree."
+  },
+  "response": {
+    "fields": [
+      "attempt_id",
+      "input_commit",
+      "source_head_before",
+      "source_head_after"
+    ],
+    "details": "This token is mapped to a Graph attempt. Self-check runs in that attempt's own worktree (the tree the remote source tools read and write), not in the group worktree, and cwd is relative to that tree. attempt_id and input_commit in the run and read responses are the run's basis (the attempt and the commit its tree started from); source_head_before/after are the attempt tree's HEAD. Source writes to this attempt tree are locked while the run executes; when the run's process tree is not proved empty at its end (recovery_incomplete), the lock stays protected until that is proved. The run slot is one per Group, not per attempt."
+  },
+  "errors": [
+    {
+      "code": "graph_attempt_inactive",
+      "guidance": "The run is stopping or the attempt was invalidated, so no Self-check can start for this attempt -> do not call again; report details (reason, attempt_id) in the TR. Do not route around it through the group worktree or a local run."
+    },
+    {
+      "code": "graph_worktree_unavailable",
+      "guidance": "The attempt's own worktree cannot be confirmed (not prepared, tree missing, marker mismatch, ... see details.reason) -> report the reason in the TR. The group worktree is never used in its place."
+    }
+  ]
 }

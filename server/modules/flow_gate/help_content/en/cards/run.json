@@ -1,5 +1,13 @@
 {
   "locale": "en",
-  "status": "pending",
-  "owner": 3
+  "title": "Start the run",
+  "summary": "Start the run",
+  "purpose": "Start the run",
+  "request": {
+    "route": "{{route:cards.run}}",
+    "authorization": "Bearer {{token}}",
+    "details": "After writing instructions, POST allow_instruction_ai=false. Use true if AI authoring of an instruction is intended."
+  },
+  "response": "The draft is confirmed and the full run starts or resumes. manual_write_wait in waiting means no AI is assigned to a role. Check wait_reason and intervention via cards/state later. Run completion does not wake this chat automatically.",
+  "errors": "On 409 chat_run_instruction_missing fill the missing instructions. On 403 chat_edit_mode_required check the applied chat mode."
 }

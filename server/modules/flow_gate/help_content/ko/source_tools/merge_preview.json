@@ -1,0 +1,73 @@
+{
+  "locale": "ko",
+  "title": "merge_preview",
+  "summary": "authorized group worktree HEAD를 target_ref에 얹었을 때의 3-way merge를 실제 변경 없이 시뮬레이션해 conflict 파일 목록·clean 여부와 병합 결과 tree oid(merge_tree)를 조회한다.",
+  "purpose": "authorized group worktree HEAD를 target_ref에 얹었을 때의 3-way merge를 실제 변경 없이 시뮬레이션해 conflict 파일 목록·clean 여부와 병합 결과 tree oid(merge_tree)를 조회한다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "merge_preview"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "비교할 상대 ref. 옵션형과 revspec은 금지. 생략하면 토큰 Group의 work base(Group이 없으면 Project base) start point — origin이 앞서면 origin/<branch>, 아니면 <branch>."
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "merge_preview",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "clean": false,
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "head": "fedcba9876543210fedcba9876543210fedcba98",
+      "target_ref": "origin/main",
+      "target_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "merge_tree": "abcdef0123456789abcdef0123456789abcdef01",
+      "conflicts": [
+        "server/app.py"
+      ],
+      "truncated": false
+    },
+    "details": [
+      "git merge-tree --write-tree만 쓰며 HEAD/index/working tree를 절대 바꾸지 않는다(내부적으로 object database에 병합 결과 tree/blob을 남길 수 있으나 어떤 ref에도 연결되지 않는다).",
+      "clean=false일 때만 conflicts에 파일이 들어 있고, conflicts가 200(_MAX_CONFLICT_FILES)을 넘으면 잘리고 truncated=true가 된다.",
+      "이 조회는 실제 merge를 수행하는 것이 아니라 미리보기다 — 실제로 병합하려면 이 도구가 아니라 사람의 개입 또는 다른 절차가 필요하다.",
+      "merge_tree는 후보 병합 결과의 tree oid다. clean 여부와 무관하게 read/grep/glob의 ref에 그대로 넣으면 그 tree 기준 병합 결과를 조회할 수 있으며, 충돌 파일에는 <<<<<<< / ======= / >>>>>>> 마커가 포함된다.",
+      "충돌 경로 하나를 다섯 관점에서 한 번에 볼 수 있다 — 현재 worktree: read(path)(ref 생략, 미커밋 변경 포함) / 작업 브랜치 committed HEAD: read(path, ref=head) / target·main: read(path, ref=target_sha) / 공통 base: read(path, ref=merge_base) / 가상 merge 결과: read(path, ref=merge_tree). 이 응답의 head/target_sha/merge_base/merge_tree를 그대로 ref에 넣으면 되고, 동일한 ref를 grep/glob/stat에도 그대로 쓸 수 있다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "ref가 없거나 merge-base/rev-parse/merge-tree git 명령이 실패했다."
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "target_ref 형식이 잘못됐거나 요청에 merge_preview가 허용하지 않는 필드가 있다(reason=unknown_field)."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "이 토큰에 read 스코프가 없다."
+    }
+  ]
+}

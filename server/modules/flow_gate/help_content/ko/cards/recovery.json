@@ -1,5 +1,13 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "owner": 3
+  "title": "Flow 복구",
+  "summary": "Flow 복구",
+  "purpose": "Flow 복구",
+  "request": {
+    "route": "{{route:cards.recovery_basis}}",
+    "authorization": "Bearer {{token}}",
+    "details": "재시작은 {{route:cards.recovery_basis}}, 카드 재시도는 {{route:cards.node_basis}}로 기준을 읽습니다. {{route:cards.restart}} 또는 {{route:cards.retry}}에 새 request_id와 그대로 복사한 expected_context를 보냅니다. 전송 실패 시 두 값을 함께 재사용합니다."
+  },
+  "response": "new_attempt, existing_attempt, group_head를 구분합니다. 새 카드 시도는 선행 결과 또는 조회한 그룹 HEAD를 사용합니다. 실제 적용은 actual_basis로 확인합니다. pending 동안 기존 실행이 종료되는 중이면 같은 요청을 다시 보내 이어갑니다.",
+  "errors": "문맥이 바뀌거나 request_id가 충돌하면 기준을 다시 조회합니다. 대기·게이트·병합 조건이 거절 원인이면 응답의 사유를 확인합니다."
 }

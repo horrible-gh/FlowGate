@@ -1,0 +1,84 @@
+{
+  "locale": "ko",
+  "title": "resolve_base_dirty",
+  "summary": "기준 작업 트리의 추적 변경을 처리합니다.",
+  "purpose": "기준 작업 트리의 추적 변경을 처리합니다.",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "resolve_base_dirty"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "decisions",
+        "type": "array",
+        "required": true,
+        "default": null,
+        "description": "경로와 commit 또는 discard 조치를 보냅니다."
+      },
+      {
+        "name": "complete",
+        "type": "boolean",
+        "required": true,
+        "default": null,
+        "description": "기준 목록 전체를 포함했는지 표시합니다."
+      },
+      {
+        "name": "commit_message",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "완료 시 커밋할 파일이 있으면 메시지를 보냅니다."
+      }
+    ],
+    "example": {
+      "decisions": [
+        {
+          "path": "app/main.py",
+          "action": "commit"
+        }
+      ],
+      "complete": true,
+      "commit_message": "fix: resolve base changes"
+    },
+    "details": [
+      "주소의 {name}을 path_parameters.name 값으로 바꿉니다.",
+      "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
+      "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요.",
+      "write/patch/move/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요."
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "resolve_base_dirty",
+      "status": "resolved",
+      "remaining": [],
+      "commit": "0123456789abcdef"
+    },
+    "details": [
+      "프로젝트와 작업 트리는 실행 토큰에서 결정됩니다. complete=false는 partial, 불완전한 complete=true는 dirty를 반환합니다."
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "유효하지 않은 결정이 있으면 요청 전체를 거절합니다."
+    },
+    {
+      "http_status": 409,
+      "code": "git_busy",
+      "when": "다른 Git 작업이 잠금을 보유합니다."
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "전용 작업 토큰을 확인합니다."
+    }
+  ]
+}

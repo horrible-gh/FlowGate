@@ -1,0 +1,7 @@
+{
+  "locale": "en",
+  "title": "Writing an investigation instruction",
+  "summary": "Writing an investigation instruction",
+  "purpose": "Writing an investigation instruction",
+  "body": "You are authoring this N (investigation-instruction) directly instead of\nthe server emitting a fixed template. Reflect the actual context of this group and\nthe requirement it serves. A good N does NOT investigate or implement anything — it\nDIRECTS the investigation the paired NR will carry out. Cover:\n- Purpose/background: why this investigation is needed (tie it to the driving R/B).\n- Investigation scope: the concrete questions the NR must answer + the code/areas to inspect.\n- Expected output: what the NR should conclude (root cause, coordinates, reuse anchors).\nKeep it an instruction: name what to find out, not the findings themselves — those\nbelong in the NR that follows. Do NOT modify source code in this step.\n\nWhen the mention has an 'Instruction to include next document header' section, include the\nnext-document header exactly as given there (next_type / project / module / group / title / target_id).\nWhen the mention asks you to write into an existing document (edit), it has no such section: keep\nthat document's existing header (front matter) as it is and add no next-document header.\nOn submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\nthe unmanned chain proceeds to its paired report step."
+}

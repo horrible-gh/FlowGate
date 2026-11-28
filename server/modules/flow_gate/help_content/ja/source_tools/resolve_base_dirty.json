@@ -1,0 +1,84 @@
+{
+  "locale": "ja",
+  "title": "resolve_base_dirty",
+  "summary": "基準作業ツリーの追跡済み変更に判断を適用します。",
+  "purpose": "基準作業ツリーの追跡済み変更に判断を適用します。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "resolve_base_dirty"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "decisions",
+        "type": "array",
+        "required": true,
+        "default": null,
+        "description": "パスとcommitまたはdiscardを列挙します。"
+      },
+      {
+        "name": "complete",
+        "type": "boolean",
+        "required": true,
+        "default": null,
+        "description": "基準の一覧全体を含むか指定します。"
+      },
+      {
+        "name": "commit_message",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "完了時にコミットするファイルがあればメッセージを送ります。"
+      }
+    ],
+    "example": {
+      "decisions": [
+        {
+          "path": "app/main.py",
+          "action": "commit"
+        }
+      ],
+      "complete": true,
+      "commit_message": "fix: resolve base changes"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
+      "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。",
+      "write / patch / move / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "resolve_base_dirty",
+      "status": "resolved",
+      "remaining": [],
+      "commit": "0123456789abcdef"
+    },
+    "details": [
+      "プロジェクトと作業ツリーは実行トークンから決まります。complete=falseはpartial、不完全なcomplete=trueはdirtyを返します。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "無効な判断があれば要求全体を拒否します。"
+    },
+    {
+      "http_status": 409,
+      "code": "git_busy",
+      "when": "別のGit操作がロックを保有しています。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "専用作業トークンを確認します。"
+    }
+  ]
+}

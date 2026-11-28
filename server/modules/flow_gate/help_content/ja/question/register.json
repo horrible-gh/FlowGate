@@ -1,5 +1,25 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "文書に質問を登録",
+  "summary": "文書に質問を登録",
+  "purpose": "文書に質問を登録",
+  "request": {
+    "route": "{{route:question.register}}",
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "details": "文書に紐づく質問データを登録します。先にquestion/policyとquestion/precheckを適用します。titleとbodyを書き、選択肢が必要なら1件のoptionsに入れます。新しい試行を要する項目はlabelとrequires=new_attemptを使います。送信はconversation/encodingに従います。",
+    "example": {
+      "asker_kind": "ai",
+      "questions": [
+        {
+          "title": "受け入れ基準",
+          "body": "このカードで確認する結果の基準を指定してください。"
+        }
+      ]
+    }
+  },
+  "response": "added_item_idsは新規質問です。新しい試行が必要な選択肢が選ばれると、試行が開くまで介入待ちになります。reused_answerはquestion/precheckを参照します。",
+  "errors": "409 existing_answer_requires_reasonはquestion/precheck、422の送信エラーはconversation/encodingを参照します。"
 }

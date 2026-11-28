@@ -1,5 +1,32 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "owner": 3
+  "title": "カード試行の自己検証",
+  "summary": "カード試行の自己検証",
+  "purpose": "カード試行の自己検証",
+  "request": {
+    "routes": [
+      "{{route:self_check.run}}",
+      "{{route:self_check.draft.run}}"
+    ],
+    "details": "cwdは試行ワークツリーからの相対パスです。"
+  },
+  "response": {
+    "fields": [
+      "attempt_id",
+      "input_commit",
+      "source_head_before",
+      "source_head_after"
+    ],
+    "details": "このトークンは Graph attempt にマッピングされています。Self-check はグループのワークツリーではなく、この attempt 専用のワークツリー(リモートソースツールが読み書きするツリー)で実行され、cwd はそのツリー基準の相対パスです。run 応答と取得結果の attempt_id・input_commit が実行の基準(attempt とそのツリーの開始コミット)で、source_head_before/after は attempt ツリーの HEAD です。実行中はこの attempt ツリーへのソース書き込みがロックされます。終了時にそのプロセスツリーが空だと証明できない場合(recovery_incomplete)、ロックは保護されたまま残り、証明された後に解除されます。実行スロットは attempt ではなく Group に1つです。"
+  },
+  "errors": [
+    {
+      "code": "graph_attempt_inactive",
+      "guidance": "実行の停止中、または attempt が無効化されたため、この attempt では Self-check を開始できない → 繰り返し呼ばず、details(reason・attempt_id)を TR に報告する。グループのワークツリーやローカル実行で回避しない。"
+    },
+    {
+      "code": "graph_worktree_unavailable",
+      "guidance": "attempt 専用のワークツリーを確認できない(準備前、ツリーなし、marker 不一致など details.reason) → 理由を TR に報告する。グループのワークツリーで代わりに実行しない。"
+    }
+  ]
 }

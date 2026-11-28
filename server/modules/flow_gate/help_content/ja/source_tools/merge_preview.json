@@ -1,0 +1,73 @@
+{
+  "locale": "ja",
+  "title": "merge_preview",
+  "summary": "authorized group worktreeのHEADをtarget_refに載せた場合の3-way mergeを実際の変更なしにシミュレーションし、conflictファイル一覧・clean可否と統合結果tree oid（merge_tree）を取得する。",
+  "purpose": "authorized group worktreeのHEADをtarget_refに載せた場合の3-way mergeを実際の変更なしにシミュレーションし、conflictファイル一覧・clean可否と統合結果tree oid（merge_tree）を取得する。",
+  "request": {
+    "route": "{{route:source.tool}}",
+    "path_parameters": {
+      "name": "merge_preview"
+    },
+    "headers": {
+      "Authorization": "Bearer {{token}}",
+      "Content-Type": "application/json"
+    },
+    "fields": [
+      {
+        "name": "target_ref",
+        "type": "string",
+        "required": false,
+        "default": null,
+        "description": "比較対象ref。option形式とrevspecは禁止。省略時はトークンGroupのwork base(Groupがなければ Project base)のstart point — originが進んでいれば origin/<branch>、そうでなければ <branch>。"
+      }
+    ],
+    "example": {
+      "target_ref": "origin/main"
+    },
+    "details": [
+      "アドレスの{name}をpath_parameters.nameの値に置き換えます。",
+      "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。"
+    ]
+  },
+  "response": {
+    "example": {
+      "ok": true,
+      "op": "merge_preview",
+      "server_ts": "2026-07-29T13:34:25+09:00",
+      "clean": false,
+      "merge_base": "0123456789abcdef0123456789abcdef01234567",
+      "head": "fedcba9876543210fedcba9876543210fedcba98",
+      "target_ref": "origin/main",
+      "target_sha": "89abcdef0123456789abcdef0123456789abcdef",
+      "merge_tree": "abcdef0123456789abcdef0123456789abcdef01",
+      "conflicts": [
+        "server/app.py"
+      ],
+      "truncated": false
+    },
+    "details": [
+      "git merge-tree --write-treeのみを使い、HEAD/index/working treeを絶対に変更しない(内部的にobject databaseへ統合結果のtree/blobを残す場合があるが、どのrefにも接続されない)。",
+      "clean=falseのときのみconflictsにファイルが入り、conflictsが200(_MAX_CONFLICT_FILES)を超えると切り詰められてtruncated=trueになる。",
+      "この参照は実際にmergeを行うものではなくプレビューである — 実際に統合するにはこのツールではなく人の介入または別の手順が必要である。",
+      "merge_treeは候補統合結果のtree oidである。clean可否にかかわらずread/grep/globのrefへそのまま指定すると、そのtree基準の統合結果を参照でき、conflictファイルには<<<<<<< / ======= / >>>>>>>マーカーが含まれる。",
+      "衝突パス1つを5つの視点で一度に確認できる — 現在のworktree: read(path)(ref省略、未commit変更を含む) / 作業ブランチのcommitted HEAD: read(path, ref=head) / target・main: read(path, ref=target_sha) / 共通base: read(path, ref=merge_base) / 仮想merge結果: read(path, ref=merge_tree)。このレスポンスのhead/target_sha/merge_base/merge_treeをそのままrefに渡せばよく、同じrefはgrep/glob/statにもそのまま使える。"
+    ]
+  },
+  "errors": [
+    {
+      "http_status": 503,
+      "code": "unavailable",
+      "when": "refがないか、merge-base/rev-parse/merge-treeのgit commandが失敗した。"
+    },
+    {
+      "http_status": 422,
+      "code": "invalid_request",
+      "when": "target_refの形式が正しくないか、merge_previewが許可しないフィールドがリクエストに含まれる(reason=unknown_field)。"
+    },
+    {
+      "http_status": 403,
+      "code": "forbidden",
+      "when": "このtokenにread scopeがない。"
+    }
+  ]
+}
