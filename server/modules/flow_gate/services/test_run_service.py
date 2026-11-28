@@ -752,6 +752,43 @@ def request_cancel(run_id: str) -> dict:
         return {"run_id": run_id, "status": "cancelling"}
 
 
+def execution_time_settings(doc: dict, cases: Optional[list] = None) -> dict:
+    """TS execution budget only; never used while writing a scenario.
+
+    One worker handles all cases. Its budget is seconds per judgement multiplied
+    by the fixed count or by the current non-automatic case count (minimum one).
+    Review and restart counts remain independent.
+    """
+    from flowgate.card_documents import repository as documents
+    from flowgate.card_settings import fields, repository as settings
+    stored = {}
+    if doc.get("group_id"):
+        keys = {row["node_key"] for row in documents.rows(doc["group_id"])
+                if row.get("doc_id") == doc.get("doc_id") and row.get("slot") == "scenario"}
+        if len(keys) > 1:
+            raise RuntimeError("test_card_settings_ambiguous")
+        if keys:
+            stored = settings.values(doc["group_id"], next(iter(keys)))
+    mode = stored.get("ai_judge_mode", "case_count")
+    fixed = stored.get("ai_judge_runs", 5)
+    fixed = fixed if type(fixed) is int and fixed >= 1 else 5
+    if cases is None:
+        if ts_contract_version(doc) == test_spec_service.CONTRACT_SPEC:
+            _, parsed = load_spec_ts(doc["doc_id"])
+            cases = parsed["cases"]
+        else:
+            cases = []
+    runs = fixed if mode == "fixed" else max(1, sum(c.get("execution_mode") != "automated" for c in cases))
+    seconds = fields.seconds_value(stored, "ai_judge_run_sec", 120)
+    return {"auto_case_timeout_sec": fields.seconds_value(stored, "auto_case_timeout_sec", 120),
+            "ai_judge_mode": mode, "ai_judge_run_sec": seconds, "ai_judge_runs": runs,
+            "ai_judge_timeout_sec": seconds * runs}
+
+
+def automatic_case_timeout(doc: dict) -> int:
+    return execution_time_settings(doc, cases=[])["auto_case_timeout_sec"]
+
+
 def issue_test_run_request(
     *,
     doc_id: str,
@@ -930,6 +967,16 @@ def _build_spec_result_mention(
         "type: TS (test specification, test_contract_version: 2)\n"
         f"title: {doc.get('title') or ''}\n\n"
         f"{continuous_block}"
+        "## Server assembled report contract\n"
+        "Do NOT write or upload TSR markdown. Record results and evidence per case; the server assembles the report.\n"
+        "A 409 report_server_generated is expected for any attempted TSR write: do not ask a question about it. "
+        "Continue with the result API below and let the server assemble the report.\n"
+        "Resolve open case remarks first, then execute unrun cases. Wait for all server runs to finish before ending.\n"
+        f"GET {api_base_url}/documents/{doc['doc_id']}/test-spec/remarks\n"
+        f"POST {api_base_url}/documents/test-results\n"
+        "Use the same Bearer and {doc_id, results: [{case_id, status, actual}], overall_comment} for incremental "
+        "result entry. This API keeps the token usable for later cases and regenerates TSR after each submission. "
+        "Completion means all case results are recorded and the server report is assembled, not a document submission.\n\n"
         "## AI/manual/external result entry\n"
         "---\n"
         "Read the approved TS. Verify ONLY the Cases listed under \"Cases you record\" and "
@@ -1220,7 +1267,9 @@ def record_spec_results(
         if execution_live is not None:
             judged = test_basis_service.judge(basis, execution_live)
     else:
-        live_state = test_basis_service.live_state(doc, parsed["cases"])
+        reference = db_test_runs.latest_spec_run(doc_id, doc.get("revision_no") or 0)
+        reference_basis = test_spec_service.load_result_meta((reference or {}).get("result_meta")).get("test_basis")
+        live_state = test_basis_service.run_live_state(doc, reference_basis, parsed["cases"])
         if live_state["live"] is None and not live_state["no_worktree"]:
             raise _http_error(409, "basis_unavailable", doc_id=doc_id,
                               basis_state=live_state["state"], reasons=live_state["reasons"])
@@ -1233,6 +1282,12 @@ def record_spec_results(
                                 "measured_at": now_iso(), "submission": triggered_via,
                                 "project_id": doc.get("project_id"),
                                 "group_id": doc.get("group_id")}
+        if basis is not None and reference_basis:
+            # Manual cases following an attempt's code cases keep the same source context.
+            inherited = reference_basis.get("binding") or {}
+            for key in ("execution_token_id", "group_basis_id"):
+                if inherited.get(key):
+                    basis["binding"][key] = inherited[key]
         judged = test_basis_service.judge(basis, live_state)
     if basis:
         # server authority outranks a caller's claim
@@ -1563,7 +1618,9 @@ def tsr_gate_state(tsr_doc: Optional[dict], *, memo: bool = False) -> dict:
                 "overall": recorded.get("overall"), "run_id": recorded.get("run_id"),
                 "basis_id": test_spec_service.load_result_meta(recorded.get("result_meta")).get("basis_id"),
                 "stale": False, "basis_state": test_basis_service.VALID, "basis_reasons": []}
-    state = test_basis_service.live_state(ts_doc, memo=memo) if ts_doc else {
+    newest = db_test_runs.latest_spec_run(ts_id, revision)
+    newest_basis = test_spec_service.load_result_meta((newest or {}).get("result_meta")).get("test_basis")
+    state = test_basis_service.run_live_state(ts_doc, newest_basis, memo=memo) if ts_doc else {
         "live": None, "state": test_basis_service.UNVERIFIABLE, "no_worktree": False,
         "reasons": [test_basis_service.REASON_UNMEASURABLE + ":ts_missing"]}
     live = state["live"]
@@ -2047,7 +2104,7 @@ def describe_test_document(doc: dict) -> dict:
             if reference is not None:
                 basis = test_spec_service.load_result_meta(reference.get("result_meta")).get(
                     "test_basis")
-                state = test_basis_service.live_state(doc, parsed["cases"], memo=True)
+                state = test_basis_service.run_live_state(doc, basis, parsed["cases"], memo=True)
                 judged = test_basis_service.judge(basis, state)
                 if state["live"] is not None:
                     effective_run = db_test_runs.latest_spec_result(
@@ -2702,7 +2759,7 @@ def _execute_case(
     result, exit_code, output, stdout_raw = _run_shell_command(
         _replace_placeholders(case["cmd"], port, scratch),
         root,
-        CASE_TIMEOUT_SEC,
+        automatic_case_timeout(doc),
         env,
         active,
     )
@@ -3352,6 +3409,26 @@ def _settle_execution_tsr(doc: dict, run: dict) -> None:
         logger.warning("settling the report of %s failed", run.get("run_id"), exc_info=True)
 
 
+def _card_tsr_for_ts(doc: dict) -> Optional[dict]:
+    """Prefer the scenario's own card report, including an untouched revision-zero slot."""
+    from flowgate.card_documents import repository
+    rows = repository.rows(doc.get("group_id"))
+    keys = {r["node_key"] for r in rows if r["slot"] == "scenario"
+            and r["doc_type"] == "TS" and r["doc_id"] == doc["doc_id"]}
+    reports = [r for r in rows if r["node_key"] in keys and r["slot"] == "report" and r["doc_type"] == "TSR"]
+    if not reports:
+        return None
+    if len(reports) != 1:
+        raise RuntimeError("tsr_card_slot_ambiguous")
+    report = db_docs.get_by_id(reports[0]["doc_id"])
+    if (not report or report.get("group_id") != doc.get("group_id")
+            or report.get("project_id") != doc.get("project_id") or report.get("type_code") != "TSR"
+            or report.get("target_id") not in (None, doc["doc_id"])
+            or report.get("superseded_by") or report.get("status") in {"cancelled", "archived"}):
+        raise RuntimeError("tsr_card_slot_invalid")
+    return report
+
+
 def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
     """The TSR document already holding this TS's report slot, if any.
 
@@ -3361,6 +3438,9 @@ def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
     the document the workflow actually tracks (cleaning up the existing orphan is the review
     admin work, deliberately not automated here).
     """
+    bound = _card_tsr_for_ts(doc)
+    if bound is not None:
+        return bound
     existing = [
         candidate
         for candidate in db_docs.get_documents_by_target_id(doc["doc_id"], types=("TSR",))

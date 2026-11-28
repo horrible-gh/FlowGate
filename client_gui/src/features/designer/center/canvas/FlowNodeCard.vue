@@ -192,6 +192,7 @@ import { FLOW_NODE_HOLD_ICON, flowNodeKindView, flowNodeStateDisplay, flowNodeHe
 import type { FlowGateNodeData } from './vueFlowMapping'
 import { cardDocumentButtonKey, type CardDocumentButton, type CardDocumentOpen } from './cardDocumentButtons'
 import { cardStateReasonText } from '../graph/cardStateView'
+import { documentTitleShown } from '@/features/documentWindow/documentWindowModel'
 
 const props = defineProps<{
   id: string
@@ -253,7 +254,9 @@ const questionTitle = computed(() => (props.data.questionWait ?? []).map(item =>
 
 function documentLabel(doc: CardDocumentButton): string {
   const kind = doc.scenario ? t('gui.designer.center.card_document_scenario') : doc.docType ?? t('gui.designer.center.document')
-  const label = t('gui.designer.center.open_card_document', { kind, title: doc.title })
+  // F81-9: the 시나리오 button's title never shows a stored 「지시서」 role (an old TS kept in the instruction slot).
+  const shownTitle = doc.scenario ? documentTitleShown(doc.title, 'TS', t('gui.document_window.scenario_title')) ?? doc.docId : doc.title
+  const label = t('gui.designer.center.open_card_document', { kind, title: shownTitle })
   return doc.empty ? t('gui.designer.center.card_document_empty', { label }) : label
 }
 

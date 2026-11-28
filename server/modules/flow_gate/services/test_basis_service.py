@@ -398,7 +398,7 @@ def measure_run(doc: dict, cases: list[dict], target: Path, *, run_id: str | Non
             "manifest": manifest}
 
 
-def resolve(doc: dict, cases: list[dict], *, memo: bool = False) -> dict:
+def resolve(doc: dict, cases: list[dict], *, memo: bool = False, source: Path | None = None) -> dict:
     """The identity the live source has now (no binding).
 
     Decision paths measure (``memo=False``) and raise BasisUnverifiable when the source
@@ -406,7 +406,7 @@ def resolve(doc: dict, cases: list[dict], *, memo: bool = False) -> dict:
     reused while the scan is unchanged, otherwise SourceNotMeasured.
     """
     try:
-        root = worktree(doc)
+        root = source if source is not None else worktree(doc)
     except source_fingerprint.SourceFingerprintError as exc:
         raise BasisUnverifiable(exc.code) from exc
     if memo:
@@ -490,6 +490,47 @@ def live_state(doc: dict | None, cases: list[dict] | None = None, *, memo: bool 
         return {"live": None, "state": UNVERIFIABLE, "reasons": [reason], "no_worktree": False}
 
 
+def run_live_state(doc: dict | None, basis: dict | None, cases: list[dict] | None = None, *,
+                   memo: bool = False) -> dict:
+    """Compare an attempt execution with its live source, without trusting a saved path.
+
+    The group baseline is captured before execution. If the group changes, judge that
+    source (including a completed integration); otherwise judge the bound attempt.
+    Both sources are freshly measured on decision paths. Lost bindings fail closed.
+    """
+    state = live_state(doc, cases, memo=memo)
+    binding = (basis or {}).get("binding") or {}
+    token_id = binding.get("execution_token_id")
+    if not token_id or not doc:
+        return state
+    live_id = (state.get("live") or {}).get("basis_id")
+    if live_id == basis.get("basis_id"):
+        return state  # The tested bytes have reached the group worktree.
+    if not live_id or live_id != binding.get("group_basis_id"):
+        return state  # A real group edit or an unavailable measurement is not ignored.
+    try:
+        from modules.flow_gate.db import tokens
+        from modules.flow_gate.services import graph_source_hooks
+        token = tokens.get_by_id(token_id)
+        if (not token or token.get("doc_ref") != doc["doc_id"]
+                or token.get("group_id") != doc.get("group_id")
+                or binding.get("project_id") != doc.get("project_id")
+                or binding.get("group_id") != doc.get("group_id")):
+            raise ValueError("execution_token_binding_changed")
+        root = graph_source_hooks.source_root(token)
+        if root is None:
+            raise ValueError("execution_source_missing")
+        live = resolve(doc, cases if cases is not None else _doc_cases(doc), memo=memo, source=root)
+        return {"live": live, "state": None, "reasons": [], "no_worktree": False}
+    except SourceNotMeasured:
+        return {"live": None, "state": UNCHECKED, "reasons": [REASON_NOT_MEASURED],
+                "no_worktree": False}
+    except Exception:
+        return {"live": None, "state": UNVERIFIABLE,
+                "reasons": [REASON_UNMEASURABLE + ":execution_source_unavailable"],
+                "no_worktree": False}
+
+
 def judge(basis: dict | None, state: dict) -> dict:
     """Basis Verdict of one record's Basis against a ``live_state`` (valid/stale/...)."""
     live = state["live"]
@@ -514,7 +555,7 @@ def verdict(doc: dict | None, basis: dict | None, cases: list[dict] | None = Non
     paths (``memo``) also unchecked. An outdated Basis is stale without measuring."""
     if basis and outdated(basis):
         return _judged(STALE, [REASON_BASIS_OUTDATED], basis)
-    return judge(basis, live_state(doc, cases, memo=memo))
+    return judge(basis, run_live_state(doc, basis, cases, memo=memo))
 
 
 def verdict_error(judged: dict, http_error, **context):

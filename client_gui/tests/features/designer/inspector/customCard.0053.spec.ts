@@ -60,7 +60,7 @@ const RUN_FIELDS: readonly [string, unknown, readonly unknown[] | null][] = [
   ['restart', 0, [-1, 0, 1, 2, 3]],
   ['review_ai', null, null],
   ['review_count', 0, [-1, 0, 1, 2, 3]],
-  ['time_limit', 60, [30, 45, 60, 90, 120, 180, 240]],
+  ['time_limit_sec', 14400, null],
   ['review_basis', 'type', ['type', 'last']],
 ]
 

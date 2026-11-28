@@ -678,6 +678,9 @@ def test_a_ts_completion_admits_its_run_with_its_record_atomically_and_takes_no_
     _command(env)
     result = _submit(env, t1, 90)
     _as_type(env, result, "TS")
+    from test_fg_card_settings_review import _write_written
+    from test_fg_card_approval_0056 import TS_AUTOMATED
+    _write_written(result, TS_AUTOMATED)
     tries = {"n": 0}
 
     def admit(doc, parsed, selected, runner_id):

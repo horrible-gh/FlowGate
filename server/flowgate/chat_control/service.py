@@ -70,7 +70,7 @@ GATE_LABELS = {"ko": "확인", "ja": "確認", "en": "Confirm"}
 RUN_FIELDS = ("run_id", "status", "revision_no", "mode", "idle_reason", "open_node_keys", "pending_node_keys")
 NEXT_AFTER_PLACE = ("Tell the user each card's AI and review count with a short reason. Write each card's instruction "
                     "into its instruction line (card document edit, slot=instruction): the user's own words, facts you checked (file:line), what was decided and rejected, the done "
-                    "criteria and what not to do. Then start the run (start_flow_run).")
+                    "criteria and what not to do. TS cards have a scenario line instead; no instruction is required for their start. Then start the run (start_flow_run).")
 NEXT_DEFAULTS_USED = ("Roles in `defaults_used` came from the AI role group / account defaults, not from you: choose "
                       "them yourself (set_card_roles) unless the user asked for those defaults or no AI fits.")
 NEXT_AFTER_START = ("The cards now run (work AI, then review). This chat is not woken when the run stops: tell the "
@@ -173,9 +173,9 @@ def _run_rows(flow_id: str) -> dict[str, dict]:
     return {r["node_key"]: r for r in run_store.node_runs(run["run_id"])} if run else {}
 
 
-def _instruction_line(flow_id: str, node_key: str) -> dict:
-    row = next((r for r in card_lines_store.rows(flow_id, [node_key]) if r["slot"] == cs.INSTRUCTION), None)
-    return {"slot": cs.INSTRUCTION, "doc_id": row["doc_id"] if row else None}
+def _instruction_line(flow_id: str, node_key: str, slot: str = cs.INSTRUCTION) -> dict:
+    row = next((r for r in card_lines_store.rows(flow_id, [node_key]) if r["slot"] == slot), None)
+    return {"slot": slot, "doc_id": row["doc_id"] if row else None}
 
 
 def _record_owner(flow_id: str, node_keys: list[str], owner: Optional[dict]) -> bool:
@@ -305,8 +305,12 @@ def place(group: dict, user_id: str, body: Any, locale: Optional[str] = None, ow
     for i, card in enumerate(cards):
         key = key_map[f"{placement.CLIENT_NODE}{i}"]
         placed.append({"node_key": key, "label": card["label"], "doc_type": card["doc_type"],
-                       "instruction": _instruction_line(flow_id, key),
+                       cs.preparation_slot("document", card["doc_type"]): _instruction_line(
+                           flow_id, key, cs.preparation_slot("document", card["doc_type"])),
                        "roles": placement_roles.summary(flow_id, key, card.get("roles")),
+                       "clamped": any(name in run_settings.fields.SECOND_RANGES and value is not None
+                                       and run_settings.fields.seconds_value({name: value}, name, value) != value
+                                       for name, value in (card.get("settings") or {}).items()),
                        "settings": _settings_summary(flow_id, key, card["doc_type"])})
     _record_owner(flow_id, [card["node_key"] for card in placed], owner)
     defaults = placement_roles.defaults_used({c["node_key"]: c["roles"] for c in placed})
@@ -349,11 +353,12 @@ def parse_start(body: Any) -> bool:
 
 def missing_instructions(flow_id: str, record: dict) -> list[str]:
     """Work cards still to run whose instruction line has no written body (the instruction AI would write one):
-    every placeable type (``WORK_TYPES``) has an instruction line."""
+    TS starts from its scenario and has no instruction prerequisite."""
     rows = _run_rows(flow_id)
     out = []
     for node in record.get("nodes", []):
-        if node.get("node_type") != "document" or node.get("doc_type") not in WORK_TYPES:
+        if (node.get("node_type") != "document" or node.get("doc_type") not in WORK_TYPES
+                or node.get("doc_type") == "TS"):
             continue
         if (rows.get(node["node_key"]) or {}).get("status") in PROTECTED:
             continue

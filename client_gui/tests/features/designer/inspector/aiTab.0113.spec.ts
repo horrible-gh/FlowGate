@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { config, mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { computed, defineComponent, h, ref } from 'vue'
 const http = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn() }))
 vi.mock('@shared/api', async original => ({ ...await original<typeof import('@shared/api')>(), getRequest: http.get, patchRequest: http.patch }))
@@ -20,7 +20,6 @@ import { toFlowGraph } from '@/features/designer/center/graph/serverFlowGraphSou
 import { toVueFlowNodes } from '@/features/designer/center/canvas/vueFlowMapping'
 import { target, cardRoles } from '../../ai/rolesFixtures.0113'
 import { prepareInspectorI18n } from './support/inspectorSupport'
-import { INSPECTOR_BODY } from '@/features/designer/inspector/inspectorHost'
 import aiMessages from '@/features/designer/inspector/features/ai/messages'
 import roleMessages from '@/features/ai/roles/messages'
 import ko from '@/app/i18n/ko'
@@ -30,8 +29,8 @@ const i18n = prepareInspectorI18n()
 let wrapper: VueWrapper<any> | null = null
 function settingsRaw(kind = 'run'): any {
   const fields: Record<string,any> = {}
-  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', after_review_exhausted: 'continue', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit: 60, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
-  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'after_review_exhausted' ? ['continue','stop'] : name === 'instruction' ? ['use','omit'] : name === 'time_limit' ? [60,120] : null }
+  const values: Record<string,any> = { instruction: 'use', instruction_ai: 'old', run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last', after_review_exhausted: 'continue', instruction_review_ai: 'gone', instruction_review_count: 2, restart: 2, time_limit_sec: 3600, result_cause: 'human', follow_scope: 'full', pre_instruction_auto: true, hold: true }
+  for (const [name,value] of Object.entries(values)) fields[name] = { value, stored: value, default: null, choices: name.includes('count') || name === 'restart' ? [-1,0,1,2,3] : name === 'review_basis' ? ['type','last'] : name === 'after_review_exhausted' ? ['continue','stop'] : name === 'instruction' ? ['use','omit'] : null }
   return { card_kind: kind, settings_version: 7, locked: false, fields, ai_roles: { options_state: 'ok', options: [{ id: 'a', name: 'None' }], card_init_state: 'legacy', has_legacy_roles: true,
     preserved: { run_ai: 'old', review_ai: 'old-review', review_count: 0, review_basis: 'last' }, roles: {
       ...(kind !== 'plan' ? { instruction: { selected: null, state: 'assigned_ok', outcome: 'ai', display_name: 'Old AI', provider_id: 'old', legacy_flag: true, source: 'legacy_fields' } } : {}),
@@ -55,6 +54,11 @@ beforeEach(() => {
     return { data: structuredClone(raw) }
   })
 })
+// 0031-T: the ⚙ window is drawn under body (Teleport); here it is drawn in place so the wrapper finds it. A test that
+// needs the real top layer mounts with `stubs: { teleport: false }`.
+let configStubs: typeof config.global.stubs
+beforeAll(() => { configStubs = config.global.stubs; config.global.stubs = { ...configStubs, teleport: true } })
+afterAll(() => { config.global.stubs = configStubs })
 afterEach(() => { wrapper?.unmount(); wrapper = null })
 async function tab(panel: 'ai' | 'settings', kind = 'run') {
   raw = settingsRaw(kind)
@@ -65,6 +69,11 @@ async function tab(panel: 'ai' | 'settings', kind = 'run') {
 async function gear(w: VueWrapper<any>, role: string) {
   await w.get(`[data-gear="${role}"]`).trigger('click'); await flushPromises()
   return w.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`)
+}
+/** flowgate.v02test.0081: types a number into a time setting's [number] box and takes it (Enter / leaving the box). */
+async function typeDuration(w: VueWrapper<any>, field: string, text: string) {
+  const box = w.get(`[data-test="inspector-run-settings-${field}-amount"]`)
+  await box.setValue(text); await box.trigger('focusout'); await flushPromises()
 }
 const labels = (w: { findAll: VueWrapper<any>['findAll'] }) => w.findAll('[data-test="inspector-control-row"]').map(row => row.attributes('data-label'))
 describe('D §8 UI conditions, settings remainder and preserved values', () => {
@@ -101,7 +110,7 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     expect(cardRoleRows(roles,'omit').map(row => [row.role, row.held])).toEqual([['instruction',true],['execution',false],['review',false]])
     expect(roles).toEqual(before)
     expect(SETTINGS_FIELDS).toEqual({ run: ['instruction'], test: ['instruction','result_cause','follow_scope'], plan: ['pre_instruction_auto'] })
-    expect(AI_FIELDS.test).toEqual(['review_count'])
+    expect(AI_FIELDS.test).toEqual(['review_count', 'auto_case_timeout_sec', 'ai_judge_mode', 'ai_judge_run_sec', 'ai_judge_runs'])
   })
   it.each(['run','test','plan'])('%s settings keeps procedure fields only', async kind => {
     const w = await tab('settings',kind)
@@ -176,9 +185,11 @@ describe('D §8 UI conditions, settings remainder and preserved values', () => {
     await gear(w, 'review')
     expect(w.get('[data-test="inspector-run-settings-after_review_exhausted"]').attributes('disabled')).toBeUndefined()
   })
-  it('a 테스트 card has the four rows and no ⚙ (no advanced item)', async () => {
+  // F81: two zones (case writing · test run) of 작업 AI · 검수 AI; flowgate.v02test.0081: its one ⚙ (test run 작업 AI) holds the
+  // time settings, so a card whose answer has none of them has no ⚙ (testCardTime.0081.spec has the ⚙ itself).
+  it('a 테스트 card has its zone rows and no ⚙ while the server gives no time setting (no advanced item)', async () => {
     const w = await tab('ai','test')
-    expect(w.findAll('[data-role]')).toHaveLength(3)
+    expect(w.findAll('[data-role]').map(row => row.attributes('data-role'))).toEqual(['execution','review','execution','review'])
     expect(w.find('[data-test="inspector-run-settings-review_count"]').exists()).toBe(true)
     expect(w.find('[data-test="inspector-run-settings-advanced"]').exists()).toBe(false)
     expect(w.find('[data-test="inspector-ai-gear"]').exists()).toBe(false)
@@ -315,7 +326,7 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
   })
   it('marks a ⚙ (and its selects) only when a value differs from its default', async () => {
     raw = settingsRaw()
-    for (const name of ['restart', 'time_limit', 'review_basis', 'after_review_exhausted']) raw.fields[name].default = raw.fields[name].value
+    for (const name of ['restart', 'time_limit_sec', 'review_basis', 'after_review_exhausted']) raw.fields[name].default = raw.fields[name].value
     raw.fields.instruction_review_ai.default = 'gone'; raw.fields.instruction_review_count.default = 1
     wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, global: { plugins: [i18n] } }); await flushPromises()
     expect(wrapper.get('[data-gear="execution"]').attributes('data-modified')).toBeUndefined()
@@ -327,10 +338,11 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
     expect(pop.get('[data-field="instruction_review_count"]').attributes('data-modified')).toBe('true')
     expect(pop.get('[data-field="instruction_review_ai"]').attributes('data-modified')).toBeUndefined()
     await gear(wrapper, 'execution')
-    await wrapper.get('[data-test="inspector-run-settings-time_limit"]').setValue('120'); await flushPromises()
-    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit', value: 120 })
+    // flowgate.v02test.0081: [1][시간] → [2][시간] is 7200 seconds
+    await typeDuration(wrapper, 'time_limit_sec', '2')
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit_sec', value: 7200 })
     expect(wrapper.get('[data-gear="execution"]').attributes('data-modified')).toBe('true')
-    expect(wrapper.get('[data-test="inspector-run-settings-time_limit"]').classes()).toContain('is-modified')
+    expect(wrapper.get('[data-test="inspector-run-settings-time_limit_sec"]').classes()).toContain('is-modified')
   })
   it('a card opens with every ⚙ window closed', async () => {
     const w = await tab('ai')
@@ -341,44 +353,126 @@ describe('flowgate.v02gui.0029 (0003-CH C안): each AI row ⚙', () => {
   it('0003-CH QA: a value picked in the window keeps it open, also when the same card comes back as a new target', async () => {
     const w = await tab('ai')
     await gear(w, 'execution')
-    await w.get('[data-test="inspector-run-settings-time_limit"]').setValue('120'); await flushPromises()
-    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit', value: 120 })
+    await typeDuration(w, 'time_limit_sec', '2')
+    expect(http.patch.mock.calls.at(-1)?.[1]).toMatchObject({ field: 'time_limit_sec', value: 7200 })
     await w.setProps({ target: { ...target() } }); await flushPromises()
     expect(w.find('[data-test="inspector-ai-advanced"][data-for="execution"]').exists()).toBe(true)
     await w.setProps({ panel: 'settings' }); await flushPromises()
     await w.setProps({ panel: 'ai' }); await flushPromises()
     expect(w.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
   })
-  it('0003-CH QA: opens under its row when it fits, above it when only that fits, else under it capped to the Inspector body', async () => {
+  it('0031-T: opens under its ⚙ row when it fits in the browser window, above it when only that fits, capped only when neither does; follows a scroll', async () => {
     const body = document.createElement('div'); document.body.appendChild(body)
-    const box = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 300, width: 300, x: 0, y: top, toJSON() { return {} } }) as DOMRect
-    let rowTop = 150; let popHeight = 120
+    const box = (top: number, bottom: number, right = 300) => ({ top, bottom, height: bottom - top, left: 0, right, width: right, x: 0, y: top, toJSON() { return {} } }) as DOMRect
+    // the Inspector body is only 216px high (the bottom Inspector): it no longer limits the window, the browser window does
+    let rowTop = 700; let popHeight = 200
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this === body) return box(0, 216)
+      if (this === body) return box(552, 768)
       if (this.classList.contains('inspector-ai-role-line')) return box(rowTop, rowTop + 32)
       return box(0, 0)
     })
     const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('inspector-ai-pop') ? popHeight : 0 })
+    const view = { width: window.innerWidth, height: window.innerHeight }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
     try {
       raw = settingsRaw()
-      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n], provide: { [INSPECTOR_BODY as symbol]: { element: ref(body) } } } })
+      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n] } })
       await flushPromises()
       const open = async (role: string) => { await gear(wrapper!, role); await flushPromises(); return wrapper!.get(`[data-test="inspector-ai-advanced"][data-for="${role}"]`) }
+      // row at the bottom: 22px under it, 686px above it → above, whole, its right edge on the row's (300 - 360 → kept 8px in)
       let pop = await open('review')
-      expect(pop.attributes('data-place')).toBe('above'); expect(pop.classes()).toContain('is-above'); expect(pop.attributes('style') ?? '').not.toContain('max-height')
+      let style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(pop.classes()).toContain('is-above')
+      expect(style).toContain('bottom: 74px'); expect(style).toContain('left: 8px'); expect(style).toContain('width: 360px')
+      expect(style).not.toContain('max-height'); expect(style).not.toContain('hidden')
       expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+      // row near the top: under it, whole
       rowTop = 40
       pop = await open('execution')
+      style = pop.attributes('style') ?? ''
       expect(pop.attributes('data-place')).toBe('below'); expect(pop.classes()).not.toContain('is-above')
-      expect(wrapper.get('[data-role="execution"] .inspector-ai-pop-room').attributes('style')).toContain('top: 165px')
-      rowTop = 100; popHeight = 190
+      expect(style).toContain('top: 78px'); expect(style).not.toContain('max-height')
+      // the Inspector body scrolls: the window follows its ⚙
+      rowTop = 100
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      expect(pop.attributes('style')).toContain('top: 138px')
+      // too high for either side of the browser window: the larger side (under: 422px) with the height capped there
+      await wrapper.get('[data-gear="execution"]').trigger('click'); await flushPromises()
+      rowTop = 300; popHeight = 900
       pop = await open('review')
-      expect(pop.attributes('data-place')).toBe('below'); expect(pop.attributes('style')).toContain('max-height: 162px')
-      expect(wrapper.get('[data-role="review"] .inspector-ai-pop-room').attributes('style')).toContain('top: 207px')
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('below'); expect(style).toContain('top: 338px'); expect(style).toContain('max-height: 422px')
       await wrapper.get('[data-gear="review"]').trigger('click'); await flushPromises()
-      expect(wrapper.find('.inspector-ai-pop-room').exists()).toBe(false)
+      expect(wrapper.find('[data-test="inspector-ai-advanced"]').exists()).toBe(false)
     } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: view.width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: view.height })
       rect.mockRestore(); height.mockRestore(); wrapper?.unmount(); wrapper = null; body.remove()
+    }
+  })
+  it('0032-TR: placed again when its content grows (turns above when only that fits); stays in the browser window when its row is scrolled out of sight', async () => {
+    const body = document.createElement('div'); document.body.appendChild(body)
+    const box = (top: number, bottom: number, right = 300) => ({ top, bottom, height: bottom - top, left: 0, right, width: right, x: 0, y: top, toJSON() { return {} } }) as DOMRect
+    let rowTop = 400; let popHeight = 200
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('inspector-ai-role-line')) return box(rowTop, rowTop + 32)
+      return box(0, 0)
+    })
+    const isPop = (element: HTMLElement) => element.classList.contains('inspector-ai-pop')
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return isPop(this) ? popHeight : 0 })
+    // the content height: the placing caps the box, not the content, so it stays the content's own height
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) { return this instanceof HTMLElement && isPop(this) ? popHeight - 2 : 0 })
+    // jsdom has no ResizeObserver: a stand-in that the test fires by hand
+    const sizeObservers: { callback: ResizeObserverCallback; watched: Set<Element> }[] = []
+    class SizeObserver {
+      callback: ResizeObserverCallback
+      watched = new Set<Element>()
+      constructor(callback: ResizeObserverCallback) { this.callback = callback; sizeObservers.push(this) }
+      observe(element: Element) { this.watched.add(element) }
+      unobserve(element: Element) { this.watched.delete(element) }
+      disconnect() { this.watched.clear() }
+    }
+    vi.stubGlobal('ResizeObserver', SizeObserver)
+    const resized = async () => {
+      for (const observer of sizeObservers) observer.callback([...observer.watched].map(target => ({ target }) as ResizeObserverEntry), observer as unknown as ResizeObserver)
+      await flushPromises()
+    }
+    const view = { width: window.innerWidth, height: window.innerHeight }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 })
+    try {
+      raw = settingsRaw()
+      wrapper = mount(SettingsTab, { props: { target: target(), panel: 'ai' }, attachTo: body, global: { plugins: [i18n] } })
+      await flushPromises()
+      const pop = await gear(wrapper, 'execution'); await flushPromises()
+      // row 400–432: 322px under it, 386px above it → a 200px window goes under
+      expect(pop.attributes('data-place')).toBe('below'); expect(pop.attributes('style')).toContain('top: 438px')
+      expect(sizeObservers.some(observer => observer.watched.has(pop.element))).toBe(true)
+      // nothing in it changed: a size note alone does not move it
+      await resized()
+      expect(pop.attributes('style')).toContain('top: 438px')
+      // a row is added inside (360px now): no longer fits under, whole above → turns above, not cut, not capped
+      popHeight = 360
+      await resized()
+      let style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(style).toContain('bottom: 374px'); expect(style).not.toContain('max-height')
+      // the row is scrolled out of sight above (bottom -40px): the window waits at the top edge, not at -34px
+      popHeight = 200; rowTop = -72
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('below'); expect(style).toContain('top: 8px'); expect(style).not.toContain('max-height')
+      // … and out of sight below: it waits at the bottom edge
+      rowTop = 800
+      body.dispatchEvent(new Event('scroll')); await flushPromises()
+      style = pop.attributes('style') ?? ''
+      expect(pop.attributes('data-place')).toBe('above'); expect(style).toContain('bottom: 8px'); expect(style).not.toContain('max-height')
+      await wrapper.get('[data-gear="execution"]').trigger('click'); await flushPromises()
+      expect(sizeObservers.every(observer => observer.watched.size === 0)).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: view.width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: view.height })
+      rect.mockRestore(); height.mockRestore(); content.mockRestore(); vi.unstubAllGlobals(); wrapper?.unmount(); wrapper = null; body.remove()
     }
   })
 })

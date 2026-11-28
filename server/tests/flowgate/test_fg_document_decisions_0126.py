@@ -45,7 +45,7 @@ def _body(doc_id, text="saved body"):
     def save():
         path = get_storage_root("flowgate", create=True) / "docs" / f"{doc_id}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        content = f"---\ntitle: {doc_id}\n---\n{text}"
+        content = text if text.startswith("---\n") else f"---\ntitle: {doc_id}\n---\n{text}"
         path.write_text(content, encoding="utf-8")
         doc = documents.update(doc_id, {"file_path": f"docs/{doc_id}.md"})
         record_body_saved(doc, source="decision_test", file_path=doc["file_path"], size=len(content.encode()))
@@ -58,7 +58,7 @@ def _card(env, kind="T", count=1):
     keys = [first["key_map"][f"tmp_{i}"] for i in range(count)]
     for key in keys:
         for line in first["card_documents"][key]:
-            if line["slot"] in ("instruction", "report", "plan"):
+            if line["slot"] in ("instruction", "scenario", "report", "plan"):
                 _body(line["doc_id"])
     return keys[0] if count == 1 else keys
 
@@ -483,7 +483,7 @@ def test_ts_admission_and_human_decision_share_transaction_and_commit_notificati
     from modules.flow_gate.storage.paths import get_storage_root
     env = decisions_env
     key = _card(env, "TS")
-    ts = _get(env, key)["documents"]["instruction"]["doc_id"]
+    ts = _get(env, key)["documents"]["scenario"]["doc_id"]
     path = get_storage_root("flowgate", create=True) / "docs" / f"{ts}.md"
     path.write_text(TS_AUTOMATED, encoding="utf-8")
     (tmp_path / "tests").mkdir(exist_ok=True)
@@ -497,13 +497,13 @@ def test_ts_admission_and_human_decision_share_transaction_and_commit_notificati
         notices.append(run["run_id"])
     monkeypatch.setattr(runner, "_emit_started", notice)
     monkeypatch.setattr(runner, "_broadcast", lambda *args, **kwargs: None)
-    body = _request(env, key, "instruction")
-    _post(env, key, body, "instruction")
-    _post(env, key, body, "instruction")
+    body = _request(env, key, "scenario")
+    _post(env, key, body, "scenario")
+    _post(env, key, body, "scenario")
     assert len(_sql(env["db"], "SELECT * FROM test_runs WHERE doc_id = ?", (ts,))) == 1
     assert len(notices) == 1
-    assert _get(env, key)["documents"]["instruction"]["human_decision"]["actor_id"] == "u_kim"
-    _post(env, key, _request(env, key, "instruction", "reject", "reject-ts"), "instruction", status=409)
+    assert _get(env, key)["documents"]["scenario"]["human_decision"]["actor_id"] == "u_kim"
+    _post(env, key, _request(env, key, "scenario", "reject", "reject-ts"), "scenario", status=409)
 
 
 def test_ts_admission_failure_rolls_back_human_decision(decisions_env, monkeypatch, tmp_path):
@@ -512,7 +512,7 @@ def test_ts_admission_failure_rolls_back_human_decision(decisions_env, monkeypat
     from modules.flow_gate.storage.paths import get_storage_root
     env = decisions_env
     key = _card(env, "TS")
-    ts = _get(env, key)["documents"]["instruction"]["doc_id"]
+    ts = _get(env, key)["documents"]["scenario"]["doc_id"]
     (get_storage_root("flowgate", create=True) / "docs" / f"{ts}.md").write_text(TS_AUTOMATED, encoding="utf-8")
     (tmp_path / "tests").mkdir(exist_ok=True)
     (tmp_path / "tests/test_x.py").write_text("def test_tc_1():\n    assert True\n", encoding="utf-8")
@@ -525,9 +525,9 @@ def test_ts_admission_failure_rolls_back_human_decision(decisions_env, monkeypat
         return get_store()._fetch_all("SELECT * FROM graph_document_decisions")
     monkeypatch.setattr(spec_execution_service, "admit_on_approval", fail)
     before = len(env["events"])
-    _post(env, key, _request(env, key, "instruction"), "instruction", status=500)
+    _post(env, key, _request(env, key, "scenario"), "scenario", status=500)
     assert _rows(env) == [] and _rows(env, "graph_document_decision_requests") == []
-    assert _get(env, key)["documents"]["instruction"]["doc_review_status"] is None
+    assert _get(env, key)["documents"]["scenario"]["doc_review_status"] is None
     assert len(env["events"]) == before
 
 

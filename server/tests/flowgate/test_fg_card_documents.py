@@ -261,7 +261,7 @@ def test_card_slot_table_follows_the_0053_agreement():
     assert table("document", "N") == [("instruction", "N", ai_or_human, None), ("report", "NR", "run", None)]
     assert table("document", "T") == [("instruction", "T", ai_or_human, None), ("report", "TR", "run", None)]
     assert table("document", "T2") == [("instruction", "T2", ai_or_human, None), ("report", "TR2", "run", None)]
-    assert table("document", "TS") == [("instruction", "TS", "human", None), ("scenario", "TS", "run", "instruction"),
+    assert table("document", "TS") == [("scenario", "TS", "run", None),
                                        ("report", "TSR", "run", None)]       # a test card has no instruction AI
     assert table("custom", None) == [("instruction", "T", ai_or_human, None), ("report", "TR", "run", None)]
     assert table("gate", None) == [] and table("document", "M") == []
@@ -280,11 +280,11 @@ def test_placing_cards_creates_their_document_lines(env):
     assert lines(body, km["tmp_p"]) == [("instruction", "DS"), ("report", "P")]
     assert lines(body, km["tmp_n"]) == [("instruction", "N"), ("report", "NR")]
     assert lines(body, km["tmp_t"]) == [("instruction", "T"), ("report", "TR")]
-    assert lines(body, km["tmp_ts"]) == [("instruction", "TS"), ("scenario", "TS"), ("report", "TSR")]
+    assert lines(body, km["tmp_ts"]) == [("scenario", "TS"), ("report", "TSR")]
     assert lines(body, km["tmp_c"]) == [("instruction", "T"), ("report", "TR")]
     assert lines(body, km["tmp_g"]) == []
     ts = body["card_documents"][km["tmp_ts"]]
-    assert ts[0]["doc_id"] == ts[1]["doc_id"] and ts[0]["author"] == "human" and ts[1]["author"] == "run"
+    assert ts[0]["doc_id"] != ts[1]["doc_id"] and ts[0]["author"] == ts[1]["author"] == "run"
     made = {line["doc_id"] for key in km.values() for line in body["card_documents"].get(key, [])}
     assert len(made) == 13                                       # the shared scenario line adds no document
     for key, card in zip(("tmp_r", "tmp_t"), ("요구", "구현")):
@@ -299,7 +299,7 @@ def test_placing_cards_creates_their_document_lines(env):
     head = (env["storage"] / t_doc["file_path"]).read_text(encoding="utf-8")
     assert head.startswith("---\n") and f"group_id: {FB}" in head and "type: T" in head
     assert len(doc_events(env, "doc_created")) == 13
-    assert {r["owned"] for r in line_rows(env, FB)} == {0, 1}    # scenario lines share, all others own
+    assert {r["owned"] for r in line_rows(env, FB)} == {1}       # scenario now owns the TS document
 
 
 def test_a_requirement_card_shows_the_existing_root_instead_of_a_second_one(env):
@@ -346,7 +346,7 @@ def test_resaving_keeps_the_lines_and_a_new_card_gets_its_own(env):
     assert again["card_documents"] == first["card_documents"]
     assert len(doc_events(env, "doc_created")) == count
     third = put_draft(env, FB, 2, [node(km["tmp_n"], "N"), node(km["tmp_t"], "T"), node("tmp_ts", "TS", "시험")])
-    assert lines(third, third["key_map"]["tmp_ts"]) == [("instruction", "TS"), ("scenario", "TS"), ("report", "TSR")]
+    assert lines(third, third["key_map"]["tmp_ts"]) == [("scenario", "TS"), ("report", "TSR")]
     assert len(doc_events(env, "doc_created")) == count + 2
 
 
@@ -415,7 +415,7 @@ def test_retyping_a_node_of_a_confirmed_revision_keeps_the_revision_lines(env):
         ("instruction", "DS", d_docs[0]), ("report", "D", d_docs[1]), ("report", "P", p_report)}
     revision = {n["node_key"]: n for n in canvas(env, FA, "?view=revision")["nodes"]}
     assert [line["doc_id"] for line in revision[d_key]["card_documents"]] == d_docs
-    assert [line["doc_type"] for line in revision[ts_key]["card_documents"]] == ["TS", "TS", "TSR"]
+    assert [line["doc_type"] for line in revision[ts_key]["card_documents"]] == ["TS", "TSR"]
     assert [line["doc_id"] for line in revision[ts_key]["card_documents"]] == ts_docs
     draft = {n["node_key"]: n for n in canvas(env, FA, "?view=draft")["nodes"]}
     assert draft[d_key]["card_documents"] == retyped["card_documents"][d_key]
@@ -753,7 +753,7 @@ def test_the_feature_code_is_in_the_v02_package_and_the_graph_holds_only_ports()
     assert {p.stem for p in pkg.glob("*.py")} == {
         "__init__", "slots", "lines", "repository", "legacy_adapter", "integration",
         "compose", "routes",                    # a person's line write and its route
-        "decisions", "decision_context", "decision_repository", "decision_routes"}  # 
+        "decisions", "decision_context", "decision_repository", "decision_routes", "test_approval_carry"}  # 
     graph = _SERVER_DIR / "modules" / "flow_gate" / "graph_workflow"
     for gone in ("domain/card_slots.py", "store/node_document_store.py", "services/card_documents.py"):
         assert not (graph / gone).exists(), gone

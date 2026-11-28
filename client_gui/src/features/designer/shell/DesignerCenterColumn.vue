@@ -53,6 +53,7 @@ import { openMergeWindow, type MergeUndoHost } from '../inspector/features/merge
 import { useMergeAutoOpen, type MergeAutoCandidate } from '../inspector/features/merge/useMergeAutoOpen'
 import { OPEN_CARD_EVENT } from '../inspector/features/verification/verificationModel'
 import { openDocument } from '../inspector/openDocument'
+import { requestTestCardScenario } from '../inspector/features/testSpec/testCardSession'
 import { cardDocumentButtons, type CardDocumentOpen } from '../center/canvas/cardDocumentButtons'
 import type { CanvasViewport } from '../center/canvasView'
 import type { DesignerCenterSession } from '../center/designerCenterSession'
@@ -304,8 +305,15 @@ function openCardDocument(flowId: string, requested: CardDocumentOpen) {
   if (!node) return
   const doc = cardDocumentButtons(node).find(item => item.docId === requested.docId && !!item.scenario === !!requested.scenario)
   if (!doc) return
-  // The 시나리오 button opens the shared TS document through its owner line, the instruction (as the Inspector does).
-  const ownerSlot = doc.scenario ? 'instruction' : doc.ownerSlot
+  // F81-9: a TS document always opens as the scenario — the card is selected and its scenario window opens (the
+  // Inspector's TestCardWindowHost), never a 지시서 document window.
+  if (doc.scenario) {
+    const projectId = props.center.state.projectId
+    if (projectId) requestTestCardScenario({ projectId, flowId, nodeKey: node.id })
+    props.center.selectNode(flowId, node.id)
+    return
+  }
+  const ownerSlot = doc.ownerSlot
   const card = node.definition && ownerSlot ? {
     projectId: props.center.state.projectId!, flowId, nodeKey: node.id,
     ownerSlot, openedDocId: doc.docId,

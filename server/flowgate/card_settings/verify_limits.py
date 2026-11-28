@@ -1,13 +1,13 @@
 """The one place that tells a card's verification limits — the earlier change the earlier implementation (1-A).
 
 ``resolve_verify_limits(flow_id, node_key) -> VerifyLimits(max_runs, run_timeout_sec)``: the card's own value, else the
-fixed card default (``fields.DEFAULT_VERIFY_MAX_RUNS`` / ``DEFAULT_VERIFY_RUN_MINUTES``: 10 runs, 1 minute). There is no
+fixed card default (``fields.DEFAULT_VERIFY_MAX_RUNS`` / ``DEFAULT_VERIFY_RUN_SEC``: 10 runs, 60 seconds). There is no
 system setting any more (verification is managed per card only; a value an older
 server stored in the system settings is left in place and no longer read). Cards 1-C (count / time applied to the
 self-check) and 1-D (the card document's verification line) must read the limits through this function and nowhere else.
 
-- The card's values are its run settings ``verify_max_runs`` (a whole number of 1 or more) and ``verify_run_minutes``
-  (1..30), stored by ``flowgate.card_settings`` like every card setting. A value that is absent, ``null`` or not
+- The card's values are its run settings ``verify_max_runs`` (a whole number of 1 or more) and ``verify_run_sec``
+  (60..1800), stored by ``flowgate.card_settings`` like every card setting. A value that is absent, ``null`` or not
   valid (a hand-edited row) is "not set" and the card default stands.
 - Only a run card (research / work / design / custom: ``fields.RUN``) has them. A test card (TS), a gate, a requirement
   card and a plan card are never read for them: the card default is answered whatever a row says (the TS path,
@@ -41,9 +41,9 @@ def _whole(value: object, low: int, high: Optional[int] = None) -> Optional[int]
 
 
 def default_limits() -> VerifyLimits:
-    """The fixed card defaults alone (what a card with no value of its own has): 10 runs, 1 minute."""
+    """The fixed card defaults alone (what a card with no value of its own has): 10 runs, 60 seconds."""
     return VerifyLimits(max_runs=fields.DEFAULT_VERIFY_MAX_RUNS,
-                        run_timeout_sec=min(fields.DEFAULT_VERIFY_RUN_MINUTES * 60, RUN_TIMEOUT_CEILING_SEC))
+                        run_timeout_sec=min(fields.DEFAULT_VERIFY_RUN_SEC, RUN_TIMEOUT_CEILING_SEC))
 
 
 def resolve_verify_limits(flow_id: str, node_key: str) -> VerifyLimits:
@@ -54,7 +54,7 @@ def resolve_verify_limits(flow_id: str, node_key: str) -> VerifyLimits:
         return default
     stored = repository.values(flow_id, node_key)
     runs = _whole(stored.get(fields.VERIFY_MAX_RUNS.name), fields.VERIFY_RUNS_MIN)
-    minutes = _whole(stored.get(fields.VERIFY_RUN_MINUTES.name), fields.VERIFY_MINUTES_MIN, fields.VERIFY_MINUTES_MAX)
+    seconds = fields.seconds_value(stored, "verify_run_sec", default.run_timeout_sec)
     return VerifyLimits(
         max_runs=default.max_runs if runs is None else runs,
-        run_timeout_sec=default.run_timeout_sec if minutes is None else min(minutes * 60, RUN_TIMEOUT_CEILING_SEC))
+        run_timeout_sec=min(seconds, RUN_TIMEOUT_CEILING_SEC))
