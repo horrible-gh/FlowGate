@@ -301,3 +301,45 @@ def test_mark_ended_http_releases_and_emits(client, setup, monkeypatch, queued):
         assert cleaned[0]['status'] == 'cancelled'
         assert cleaned[0]['error_code'] == 'selfcheck_marked_ended'
     assert not service.status('f', 'a')['visible']
+
+
+@pytest.mark.parametrize('reason', ['host_changed', 'processes_remain', 'owner_alive', 'ownership_unknown'])
+def test_shared_screen_contract(client, setup, monkeypatch, reason):
+    # The frontend consumes these same envelopes through the real HTTP adapter/parser.
+    import json
+    from pathlib import Path
+    contract = json.loads((Path(__file__).resolve().parents[4] /
+        'client_gui/tests/features/designer/inspector/verification/stopFailureContract.v02test0084.json'
+    ).read_text(encoding='utf-8'))
+    flow, node, rid = 'flowgate.v02test.0084', 'gn_4', 'scr_1'
+    setup.append(row(rid, node, flow, cancel_requested=1, recovery_reason=reason))
+    if reason == 'ownership_unknown':
+        monkeypatch.setattr(service.lifecycle.proof, 'owner_server_state',
+                            lambda owner: service.lifecycle.proof.Proof(service.lifecycle.proof.UNKNOWN))
+    monkeypatch.setattr(routes.envelope, 'has_permission', lambda *a: True)
+    path = f'/api/v1/flows/{flow}/nodes/{node}/self-check'
+
+    def check(response, key):
+        assert response.status_code == 200
+        body = response.json()
+        assert body.pop('server_ts')
+        assert body == contract[key]
+
+    check(client.get(path), reason)
+    monkeypatch.setattr(service.queue, 'force_stop', lambda run_id: dict(setup[0]))
+    check(client.post(path + f'/runs/{rid}/force-stop'), reason)
+
+    def mark(current, actor):
+        assert actor == 'u'
+        current.update(status='cancelled', finished_at=NOW.isoformat(),
+                       error_code='selfcheck_marked_ended', recovery_reason='marked_ended_by_user')
+        return current
+    monkeypatch.setattr(service.runs, 'mark_ended_by_user', mark)
+    monkeypatch.setattr(service.lifecycle.lock_manager, 'selfcheck_release_recovered', lambda *a: None)
+    monkeypatch.setattr(service.lifecycle, '_emit', lambda r: None)
+    monkeypatch.setattr(service.queue, 'wake', lambda: None)
+    monkeypatch.setattr(service.queue, 'cleanup_snapshot', lambda r: None)
+    check(client.post(path + f'/runs/{rid}/mark-ended'), 'stopped')
+    check(client.get(path), 'hidden')
+    # A terminal force-stop has the same transient screen feedback as mark-ended.
+    check(client.post(path + f'/runs/{rid}/force-stop'), 'stopped')
