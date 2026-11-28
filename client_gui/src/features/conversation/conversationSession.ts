@@ -11,6 +11,7 @@
 // from the server — when a chat opens, on every AI-run polling tick, once right after the run
 // ends and once after each decision — and each read replaces them as a whole. A new chat is a
 // standalone CH; nothing is shown before the server has it.
+import { subscribeAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, reactive, readonly, ref, watch, type ComputedRef, type DeepReadonly } from 'vue'
 import { draftUserId, type DraftSendSnapshot } from './drafts'
 import { createSubmissionTrace, type SubmissionTrace, type SubmissionPhase } from './submissionTrace'
@@ -1302,6 +1303,13 @@ export function createConversationSession(options: ConversationSessionOptions = 
     providersLoad = fetchProviders(projectId)
     return providersLoad
   }
+
+  const stopProviderChanges = subscribeAiProvidersChanged(() => {
+    if (disposed) return
+    const projectId = state.scope?.projectId ?? providersProject
+    providersProject = null
+    if (projectId) void loadProviders(projectId)
+  })
 
   function providersLoaded(): Promise<void> {
     return providersLoad
@@ -3248,6 +3256,7 @@ export function createConversationSession(options: ConversationSessionOptions = 
   }
 
   function dispose(): void {
+    stopProviderChanges()
     state.changeWindowEpoch += 1
     disposed = true
     titleGuard.disposed = true

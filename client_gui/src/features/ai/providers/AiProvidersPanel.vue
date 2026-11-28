@@ -267,6 +267,7 @@
 // server links the two in one transaction and says so, and this screen then tells the administrator).
 // Only failures are announced (an error toast under the header); a change that worked shows in
 // the card itself (toggle, star, radio), so there is no success toast.
+import { emitAiProvidersChanged, useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
@@ -354,6 +355,13 @@ const overId = ref<string | null>(null)
 // My display order (provider ids); ids it does not name are shown after it (system, then mine).
 const order = ref<string[]>([])
 let disposed = false
+let loadRequest = 0
+let broadcasting = false
+useAiProvidersChanged(() => { if (!broadcasting) void load() })
+function notifyProvidersChanged(): void {
+  broadcasting = true
+  try { emitAiProvidersChanged() } finally { broadcasting = false }
+}
 
 function listOf(owner: AiOwnerScope): ProviderItem[] {
   return owner === 'system' ? systemList.value : myList.value
@@ -364,6 +372,7 @@ function canEdit(owner: AiOwnerScope): boolean {
 }
 
 async function load(): Promise<void> {
+  const request = ++loadRequest
   loading.value = true
   loadError.value = ''
   try {
@@ -374,15 +383,17 @@ async function load(): Promise<void> {
       canManageSystem.value ? fetchSystemAi() : fetchVisibleSystemAi(),
       fetchMyAi(),
     ])
+    if (disposed || request !== loadRequest) return
     systemList.value = system.providers ?? []
     systemDefaultId.value = system.default_provider_id ?? null
     myList.value = mine.providers ?? []
     myDefaultId.value = mine.default_provider_id ?? null
     loaded.value = true
   } catch (err: unknown) {
+    if (disposed || request !== loadRequest) return
     loadError.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
   } finally {
-    loading.value = false
+    if (!disposed && request === loadRequest) loading.value = false
   }
 }
 
@@ -485,6 +496,7 @@ async function persist(
       myList.value = data.providers ?? []
       myDefaultId.value = data.default_provider_id ?? null
     }
+    notifyProvidersChanged()
     emit('changed')
     return null
   } catch (err: unknown) {
@@ -508,6 +520,7 @@ async function setMyDefault(providerId: string | null): Promise<void> {
   try {
     const data = await saveMyAiDefault(providerId)
     myDefaultId.value = data.default_provider_id ?? null
+    notifyProvidersChanged()
     emit('changed')
   } catch (err: unknown) {
     pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
@@ -561,6 +574,7 @@ async function persistOrder(next: string[]): Promise<void> {
       if (system && !disposed) systemList.value = system.providers ?? systemList.value
       pushToast(t('gui.ai.owned.fallback_order_changed'), 'info', true)
     }
+    notifyProvidersChanged()
     emit('changed')
   } catch (err: unknown) {
     if (disposed) return

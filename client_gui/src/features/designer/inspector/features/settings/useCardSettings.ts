@@ -6,6 +6,7 @@
 // A taken change asks the Host to read the written card's Flow again (`refresh-flow`): the instruction use / omit
 // moves the card's document buttons and the AI / role values its stage assignments. The Canvas event the write
 // causes names this tab (`x-canvas-client-id`) and is dropped by this tab, so this request is the only read.
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { inject, provide, computed, ref, shallowRef, watch, effectScope, getCurrentInstance, onScopeDispose, type ComputedRef, type Ref } from 'vue'
 import {
   settingsChoicesRead,
@@ -120,6 +121,7 @@ export function useCardSettings(target: () => InspectorTarget | null, host?: () 
     read: settingsChoicesRead,
     events: [],
   })
+  useAiProvidersChanged(() => { void choices.reload() })
   const writes = useInspectorFieldWrite<SettingsNode>({
     target: cardScope,
     resource,
