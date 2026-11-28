@@ -5395,7 +5395,7 @@
         "chat.command"
       ],
       "aliases": [],
-      "dynamic": true
+      "dynamic": false
     }
   }
 }

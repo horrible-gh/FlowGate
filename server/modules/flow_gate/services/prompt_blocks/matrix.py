@@ -51,6 +51,7 @@ class MentionFacts:
     question_policy: bool = False
     design_template: bool = False
     authoring_guide: bool = False
+    live_commands: bool = True
 
 
 def select_mention(facts):
@@ -59,7 +60,7 @@ def select_mention(facts):
         first = ["notices", "conversation/read", "conversation/turn", "conversation/encoding"]
         more = ["documents/list", "documents/partial", "documents/unreadable",
                 "attachments/link", "source_tools", "cards/state", "cards/ai_options"]
-        if facts.mode in ("chat.execute", "chat.edit", "chat.edit_once"):
+        if facts.live_commands and facts.mode in ("chat.execute", "chat.edit", "chat.edit_once"):
             more.append("conversation/commands")
         if facts.mode in ("chat.edit", "chat.edit_once"):
             more.extend(WRITE_CHAT)

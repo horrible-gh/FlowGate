@@ -1,8 +1,7 @@
 {
   "locale": "ja",
-  "status": "pending",
-  "title": "chat.read",
-  "summary": "メンションテンプレート作成待ち",
-  "purpose": "呼び出し値の組み立て",
-  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+  "title": "読み取り",
+  "summary": "読み取り",
+  "purpose": "読み取り",
+  "body": "{{task_block}}\n\n## モード: 読み取り\nソースと文書を参照できます。対応できない作業があれば、残る作業と必要なモードを一行で伝えてください。\n\n## 今回の呼び出しの値\nAuthorization: Bearer {{token}}\nFlow: {{flow_name}} · flow_id {{flow_id}}\n会話: {{doc_id}} · 読み取り開始 after_seq={{after_seq}}\n範囲の終端: through_seq={{through_seq}}\nidempotency_key: {{idempotency_key}}\ndisplay_name: {{display_name}}\n作業場所: {{workspace}}\nprobe: {{probe}}\n\n## ヘルプ\n{{route:help.index}} (索引; help/items/{name}[/{child}])\n最初に読む項目: {{help_first}}\n必要に応じて読む項目: {{help_more}}\n\n{{materials}}"
 }
