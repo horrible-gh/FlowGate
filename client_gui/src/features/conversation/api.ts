@@ -979,7 +979,7 @@ export async function saveChatSettings(patch: ChatSettingsPatch, scope?: Convers
 
 // ── Per-chat settings ───────────────────────────────────────────
 interface RawChatDocSettings {
-  settings?: { timeout_minutes?: number | null; provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
+  settings?: { timeout_seconds?: number | null; timeout_minutes?: number | null; command_timeout_seconds?: number | null; provider_id?: string | null; context_checkpoint_seq?: number | null; context_checkpoint_kind?: string | null } | null
 }
 
 function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocSettings {
@@ -987,7 +987,9 @@ function toChatDocSettings(raw: RawChatDocSettings | null | undefined): ChatDocS
   const seq = s.context_checkpoint_seq
   const checkpointSeq = Number.isInteger(seq) && Number(seq) >= 1 ? Number(seq) : null
   return {
-    timeoutMinutes: s.timeout_minutes ?? null,
+    // F108-6: timeout_seconds; a server without it yet answers timeout_minutes (× 60).
+    timeoutSeconds: s.timeout_seconds !== undefined ? s.timeout_seconds ?? null : s.timeout_minutes != null ? s.timeout_minutes * 60 : null,
+    commandTimeoutSeconds: s.command_timeout_seconds ?? null,
     providerId: typeof s.provider_id === 'string' && s.provider_id ? s.provider_id : null,
     checkpointSeq,
     checkpointKind: checkpointSeq == null ? null : s.context_checkpoint_kind === 'exclude' ? 'exclude' : 'include',
@@ -1023,7 +1025,7 @@ export async function issueChatMention(chatId: string): Promise<string> {
 }
 
 // ── My AI preferences (flowgate.v02test.0096 ④) ──────────────────────────────────────
-// The ⚙ AI tab's 최대 반복 횟수 / 제목 짓기 AI: the existing GET/PATCH /me/ai-preferences (v02test.0089), the same API
+// The ⚙ AI tab's 제목 짓기 AI (F108-6: its 최대 반복 row is gone; AI 관리 › 기타 설정 keeps it): the existing GET/PATCH /me/ai-preferences (v02test.0089), the same API
 // the AI 관리 screen uses — nothing new on the server.
 export async function fetchMyAiPrefs(): Promise<MyAiPrefs> {
   return call(() => getRequest<MyAiPrefs>(`${API}/me/ai-preferences`))

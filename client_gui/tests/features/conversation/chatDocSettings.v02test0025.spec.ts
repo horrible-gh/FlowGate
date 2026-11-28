@@ -237,6 +237,28 @@ describe('v02test.0025 context checkpoint', () => {
   })
 })
 
+describe('v02test.0108 F108-6 the chat\'s own times in saveSettings', () => {
+  it('keeps a time the chat PATCH stored even when /me/chat-settings fails afterwards', async () => {
+    const { session, source } = await setup()
+    source.saveChatDocSettings.mockImplementationOnce(async () => ({ providerId: null, checkpointSeq: null, checkpointKind: null, timeoutSeconds: 3600, commandTimeoutSeconds: null }))
+    source.saveChatSettings.mockRejectedValueOnce(new Error('nope'))
+    expect(await session.saveSettings({ send_action: 'none', timeout_seconds: 3600 })).toBe(false)
+    expect(source.saveChatDocSettings).toHaveBeenLastCalledWith(A, { timeout_seconds: 3600 })
+    expect(session.state.settings.timeoutSeconds).toBe(3600) // what the server holds now
+    expect(session.state.settings.sendAction).toBe('invoke_ai') // the failed part stays as it was
+    expect(session.state.savingSettings).toBe(false)
+  })
+
+  it('a patch of only the chat\'s times is not sent to /me/chat-settings', async () => {
+    const { session, source } = await setup()
+    source.saveChatDocSettings.mockImplementationOnce(async () => ({ providerId: null, checkpointSeq: null, checkpointKind: null, timeoutSeconds: null, commandTimeoutSeconds: 60 }))
+    const calls = source.saveChatSettings.mock.calls.length
+    expect(await session.saveSettings({ command_timeout_seconds: 60 })).toBe(true)
+    expect(source.saveChatSettings.mock.calls.length).toBe(calls)
+    expect(session.state.settings.commandTimeoutSeconds).toBe(60)
+  })
+})
+
 describe('v02test.0025 context setting 체크포인트 사용', () => {
   async function mountPanel(stored: Record<string, ChatDocSettings>, contextMode: 'recent' | 'checkpoint') {
     const { source, data } = await setup(stored)
