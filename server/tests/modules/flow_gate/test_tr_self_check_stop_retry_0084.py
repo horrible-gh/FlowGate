@@ -139,7 +139,7 @@ def test_startup_dead_owner_empty_tree_ends_cancelled(retry, monkeypatch):
 def test_marker_signal_pins_and_rechecks_identity(monkeypatch):
     row = run(owner_marker=json.dumps({'kind':'posix_marker'}))
     calls=[]
-    monkeypatch.setattr(proof, 'marker_scan', lambda rid: (proof.MATCH, (1234,)))
+    monkeypatch.setattr(proof, 'marker_scan', lambda rid, started_at=None: (proof.MATCH, (1234,)))
     monkeypatch.setattr(proof.executor, 'start_identity', lambda pid: 'first')
     monkeypatch.setattr(proof.os, 'pidfd_open', lambda pid: calls.append('pin') or 99, raising=False)
     monkeypatch.setattr(proof.os, 'close', lambda fd: calls.append('close'))
@@ -167,7 +167,7 @@ def test_real_detached_process_is_killed_without_touching_neighbor(monkeypatch):
         except OSError as exc:
             pytest.skip(f'child identity probes unavailable: {exc}')
         # Limit discovery to our children; identity, marker and pidfd signalling stay real.
-        monkeypatch.setattr(proof, 'marker_scan', lambda run_id: (proof.MATCH, (child.pid, neighbor.pid)))
+        monkeypatch.setattr(proof, 'marker_scan', lambda run_id, started_at=None: (proof.MATCH, (child.pid, neighbor.pid)))
         proof._terminate_marked(run(self_check_run_id=rid, owner_marker=json.dumps({'kind':'posix_marker'})))
         assert child.wait(timeout=5) == -signal.SIGKILL
         assert neighbor.poll() is None
@@ -331,7 +331,7 @@ def test_card_and_reaper_share_admitted_deadline(monkeypatch, admitted, age, ove
 
 
 def test_unknown_marker_scan_never_signals(monkeypatch):
-    monkeypatch.setattr(proof, 'marker_scan', lambda rid: (proof.UNKNOWN, (1234,)))
+    monkeypatch.setattr(proof, 'marker_scan', lambda rid, started_at=None: (proof.UNKNOWN, (1234,)))
     monkeypatch.setattr(proof, 'os', SimpleNamespace(
         pidfd_open=lambda pid: pytest.fail('unknown ownership must not signal')))
     proof._terminate_marked(run(owner_marker=json.dumps({'kind':'posix_marker'})))

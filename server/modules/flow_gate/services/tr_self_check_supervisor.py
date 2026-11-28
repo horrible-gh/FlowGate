@@ -148,14 +148,15 @@ def _tasks(pid: int) -> list[int]:
     return tids or [pid]
 
 
-def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozenset, run_id: str | None) -> bool:
+def _widened(proc: subprocess.Popen, leader_start: str | None, allowed: frozenset, run_id: str | None,
+             started_at: float | None = None) -> bool:
     """A thread of a process of the run -- the target's group or a carrier of the run marker --
     runs on a processor outside ``allowed`` (POSIX lets a thread widen its own set). A thread
     gone or unreadable meanwhile is skipped: the residual limit of the POSIX ownership."""
     _state, members, _owned = proof.posix_group_members(proc.pid, leader_start)
     pids = set(members)
     if run_id:
-        pids.update(proof.marker_scan(run_id)[1])
+        pids.update(proof.marker_scan(run_id, started_at)[1])
     for pid in pids:
         for tid in _tasks(pid):
             try:
@@ -176,6 +177,7 @@ def main() -> None:
         sys.stdout.flush()
         return
     run_id = (payload.get("env") or {}).get(proof.MARKER_ENV)
+    started_at = time.time()  # before spawning any target descendants
     proc = subprocess.Popen(payload["argv"], shell=False, cwd=payload["cwd"], env=payload["env"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True)
@@ -210,7 +212,7 @@ def main() -> None:
             if time.monotonic() >= deadline:
                 reason = "timeout"
                 break
-            if allowed is not None and _widened(proc, leader_start, allowed, run_id):
+            if allowed is not None and _widened(proc, leader_start, allowed, run_id, started_at):
                 reason = "cpu_limit"
                 break
             events = selector.select(min(.2, max(0, deadline - time.monotonic())))
