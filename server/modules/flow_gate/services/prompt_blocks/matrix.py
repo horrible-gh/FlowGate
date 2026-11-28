@@ -72,7 +72,7 @@ def select_mention(facts):
         if facts.design_template:
             first.append("design_template/" + facts.doc_type)
         more = ["documents/partial", "documents/unreadable", "attachments/read",
-                "question/register", "question/precheck", "source_tools", "cards/state"]
+                "question/register", "question/precheck", "source_tools"]
         if facts.authoring_guide:
             more.append("authoring_guide/" + facts.doc_type)
         if facts.mode == "card.edit" and facts.doc_type == "TR":
@@ -102,13 +102,11 @@ def transition_leaves(mode):
 def migrated_leaves(facts):
     """D-0012 sections 3-3/3-7: guidance discovery is optional at render time.
 
-    Source-tool discovery and AI options carry no relocated rule here. Card
-    state is chat-tool guidance, not a migrated card-document instruction.
+    Source-tool discovery and AI options carry no relocated rule here.
+    Card state is selected only for chat guidance.
     Conditional migrated rules stay required whenever selected by facts.
     The deployment probe still covers every selected leaf (section 3-7.2).
     """
     first, more = select_mention(facts)
     optional = {"source_tools", "cards/ai_options"}
-    if facts.mode.startswith("card."):
-        optional.add("cards/state")
     return tuple(name for name in first + more if name not in optional)

@@ -25,7 +25,7 @@ probe: fg-probe:golden-𠮷
 ## Help
 GET https://example.invalid/flowgate/api/v1/help
 Read first: notices, submit/format, submit/changed_files, documents/access
-When needed: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, submit/self_check, attachments/upload_request
+When needed: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, submit/self_check, attachments/upload_request
 
 ## Materials
 ---
