@@ -395,8 +395,8 @@ def terminate_tree(row: dict, *, wait: float = 3.0) -> Proof:
 
     Only what is proved to be this run's is signalled: the named Job (Windows), or the
     target's group when every member is owned (:func:`posix_group_members`). Marker-only
-    processes outside the group and a live supervisor are not signalled; they keep the
-    tree MATCH (the supervisor is waited for, it exits on its own once its server is gone).
+    processes outside the group are signalled after their marker and start identity are
+    checked again through a pinned PID handle. The supervisor is allowed to reap children.
     Call it only once the owning server is proved dead, or from the owning server itself.
     """
     tree = tree_state(row)
@@ -418,12 +418,46 @@ def terminate_tree(row: dict, *, wait: float = 3.0) -> Proof:
                     if state == MATCH and owned:
                         _signal_group(int(pgid), signal.SIGKILL)
                         _wait_group_gone(int(pgid), 2.0)
+    if os.name != "nt":
+        _terminate_marked(row)
     deadline = time.monotonic() + wait
     tree = tree_state(row)
     while tree.state == MATCH and time.monotonic() < deadline:
         time.sleep(.1)
         tree = tree_state(row)
     return tree
+
+
+def _terminate_marked(row: dict) -> None:
+    """Include descendants that called setsid; never signal a reused PID.
+
+    Pin each identity with pidfd before re-reading its marker. Unavailable/denied
+    pidfds retain the run's protection; a numeric PID alone grants no authority.
+    """
+    rid = row.get("self_check_run_id")
+    if _marker(row).get("kind") != "posix_marker":
+        return
+    state, pids = marker_scan(rid)
+    if state != MATCH:
+        return
+    needle = f"{MARKER_ENV}={rid}".encode("utf-8")
+    for pid in pids:
+        if pid in (os.getpid(), row.get("supervisor_pid")):
+            continue
+        fd = None
+        try:
+            identity = executor.start_identity(pid)
+            fd = os.pidfd_open(pid)
+            if executor.identity_state(pid, identity) != MATCH:
+                continue
+            if needle not in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0"):
+                continue
+            signal.pidfd_send_signal(fd, signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass  # tree_state remains the authority, not successful signal delivery
+        finally:
+            if fd is not None:
+                os.close(fd)
 
 
 def _signal_group(pgid: int, sig: int) -> None:

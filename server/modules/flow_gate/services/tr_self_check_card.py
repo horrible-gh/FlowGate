@@ -6,16 +6,15 @@ or token is exposed. A button always names the exact self-check run it was drawn
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from flowgate.card_settings import fields, repository
-from flowgate.card_settings.verify_limits import resolve_verify_limits
 from modules.flow_gate.db import tr_self_check_runs as runs
 from modules.flow_gate.graph_workflow.services.errors import GraphApiError
 from modules.flow_gate.services import tr_self_check_queue as queue
+from modules.flow_gate.services import tr_self_check_service as lifecycle
 from modules.flow_gate.services.git import instance_registry
 
-GRACE_SECONDS = 60
 ACTIVE = ('pending', 'running')
 
 
@@ -55,11 +54,7 @@ def _rows(flow_id=None, node_key=None, run_id=None):
 
 
 def _deadline(row):
-    started = _time(row.get('started_at'))
-    if started is None:
-        return None
-    seconds = resolve_verify_limits(row['group_id'], row['node_key']).run_timeout_sec
-    return started + timedelta(seconds=seconds + GRACE_SECONDS)
+    return lifecycle.stop_deadline(row)
 
 
 def _latest(rows):
@@ -80,7 +75,7 @@ def _brief(row, now):
 def status(flow_id, node_key, can_read_flow=lambda project_id: False):
     node = _node(flow_id, node_key)
     out = {'flow_id': flow_id, 'node_key': node_key, 'visible': False, 'state': 'hidden',
-           'run': None, 'blocker': None, 'actions': []}
+           'run': None, 'blocker': None, 'actions': [], 'stop_reason': None}
     if fields.card_kind(node.get('node_type'), node.get('doc_type')) != fields.RUN:
         return out
     rows = _rows(flow_id, node_key)
@@ -93,7 +88,8 @@ def status(flow_id, node_key, can_read_flow=lambda project_id: False):
         out['run'] = _brief(row, now)
         if deadline is not None and now >= deadline:
             out.update(visible=True, state='stop_failed' if row.get('cancel_requested') else 'overdue',
-                       actions=['force_stop'])
+                       actions=['force_stop', 'mark_ended'] if row.get('cancel_requested') else ['force_stop'],
+                       stop_reason=lifecycle.stop_reason(row))
         return out
     waiting = [r for r in rows if r['status'] == 'queued']
     if not waiting:
@@ -128,7 +124,7 @@ def status(flow_id, node_key, can_read_flow=lambda project_id: False):
     return out
 
 
-def control(flow_id, node_key, run_id, action):
+def control(flow_id, node_key, run_id, action, actor_user_id=None):
     node = _node(flow_id, node_key)
     if fields.card_kind(node.get('node_type'), node.get('doc_type')) != fields.RUN:
         raise GraphApiError(409, 'selfcheck_not_supported')
@@ -136,7 +132,24 @@ def control(flow_id, node_key, run_id, action):
     if not rows:
         raise GraphApiError(404, 'selfcheck_run_not_found')
     row = rows[0]
-    if action == 'cancel_waiting':
+    if action not in ('force_stop', 'cancel_waiting', 'mark_ended'):
+        raise GraphApiError(422, 'selfcheck_invalid_action')
+    if action == 'mark_ended':
+        deadline = _deadline(row)
+        if (not actor_user_id or row['status'] not in ACTIVE or not row.get('cancel_requested')
+                or deadline is None or _now() < deadline):
+            raise GraphApiError(409, 'selfcheck_mark_ended_not_applicable')
+        ended = runs.mark_ended_by_user(row, actor_user_id)
+        if ended is None:
+            raise GraphApiError(409, 'selfcheck_state_conflict')
+        # An operator explicitly accepts unproved process exit. Release both G and W.
+        lifecycle.lock_manager.selfcheck_release_recovered(row['project_id'], row['group_id'], run_id)
+        if lifecycle._is_queue_run(ended):
+            queue.cleanup_snapshot(ended)
+        queue.wake()
+        lifecycle._emit(ended)
+        state = 'stopped'
+    elif action == 'cancel_waiting':
         if row['status'] == 'cancelled' and row.get('error_code') == queue.CANCELLED_WAITING:
             ended = row  # safe repeat of the same button
         else:
@@ -154,4 +167,5 @@ def control(flow_id, node_key, run_id, action):
         state = 'stopped' if ended and ended['status'] in runs.QUEUE_TERMINAL else 'stop_failed'
     return {'flow_id': flow_id, 'node_key': node_key, 'visible': True, 'state': state,
             'run': _brief(dict(ended or row, node_key=row['node_key']), _now()), 'blocker': None,
-            'actions': ['force_stop'] if state == 'stop_failed' else []}
+            'stop_reason': (ended or row).get('stop_reason') or lifecycle.stop_reason(ended or row),
+            'actions': ['force_stop', 'mark_ended'] if state == 'stop_failed' else []}

@@ -266,7 +266,7 @@ def test_the_wait_limit_requeues_once_then_fails(env, monkeypatch):
     assert not Path(row["snapshot_path"]).exists()
 
 
-def test_queued_requests_survive_a_restart_and_an_interrupted_run_is_queued_again(env, monkeypatch):
+def test_queued_requests_survive_restart_but_interrupted_execution_is_ended(env, monkeypatch):
     waiting = env.admit(DOCS[P][0])
     interrupted = _row(env.admit(DOCS[P][1])["self_check_run_id"])
     # The "previous process" claimed and started the second one, then died.
@@ -286,14 +286,13 @@ def test_queued_requests_survive_a_restart_and_an_interrupted_run_is_queued_agai
                         lambda _row, terminate=True: SimpleNamespace(decision=service.proof.RELEASE, reason=None))
     service.recover()
     back = _row(interrupted["self_check_run_id"])
-    assert (back["status"], back["recovery_state"], back["owner_instance_id"]) == ("queued", "none", None)
-    assert back["snapshot_path"] == interrupted["snapshot_path"] and Path(back["snapshot_path"]).is_dir()
+    assert (back["status"], back["recovery_state"], back["error_code"]) == ("failed", "recovered", "interrupted_by_restart")
+    assert not Path(back["snapshot_path"]).exists()
     assert _row(waiting["self_check_run_id"])["status"] == "queued"        # the waiting one stayed
-    assert queue.dispatch_once() and queue.dispatch_once()
-    for run in (waiting, interrupted):
-        done = _row(run["self_check_run_id"])
-        assert (done["status"], done["exit_code"]) == ("completed", 0), done
-        assert "value=uncommitted" in done["stdout_tail"]
+    assert queue.dispatch_once() and not queue.dispatch_once()
+    done = _row(waiting["self_check_run_id"])
+    assert (done["status"], done["exit_code"]) == ("completed", 0), done
+    assert "value=uncommitted" in done["stdout_tail"]
 
 
 def test_a_claim_whose_lease_lapsed_before_any_spawn_goes_back_to_the_queue(env):
