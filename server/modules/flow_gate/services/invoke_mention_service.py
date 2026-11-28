@@ -301,6 +301,85 @@ from modules.flow_gate.services.prompt_blocks.blocks.conversation import (  # no
 )
 
 
+def _compact_chat_mention(
+    *, doc_id, group_id, token_id, raw_token, api_base, locale, source_access,
+    command_access, one_shot_claimed, provider, in_app, window,
+):
+    from modules.flow_gate.services.help import loader
+
+    can_write = source_access == "read_write"
+    if can_write:
+        mode = "chat.edit_once" if one_shot_claimed else "chat.edit"
+    elif source_access == "read" and command_access == "execute":
+        mode = "chat.execute"
+    else:
+        mode = "chat.read"
+    try:
+        rollout = loader.read_json("mention_rollout")
+    except loader.HelpContentError:
+        return None
+    if not rollout.get(mode, {}).get("enabled"):
+        return None
+
+    from fastapi import HTTPException
+    from modules.flow_gate.graph_workflow.services import first_names_hooks
+    from modules.flow_gate.services import encoding_probe, message_image_delivery, question_policy, token_service
+    from modules.flow_gate.services.help.visibility import decide_visibility, resolve_context
+    from modules.flow_gate.services.prompt_blocks.compose import compose
+    from modules.flow_gate.services.prompt_blocks.matrix import MentionFacts
+    from modules.flow_gate.services.prompt_selection import chat_situation
+
+    try:
+        token = token_service.verify(raw_token)
+    except HTTPException:
+        return None
+    loc = _locale(locale)
+    help_context = resolve_context(token, loc, api_base)
+    through_seq = window.get("through_seq")
+    image_context = dict(conversation_id=doc_id, after_seq=window["after_seq"],
+                         through_seq=through_seq, locale=loc)
+    image_count = message_image_delivery.image_count(doc_id, window["after_seq"], through_seq)
+    if in_app and image_count:
+        # The legacy provider hook delivers actual image inputs for each provider attempt.
+        return None
+
+    situation = chat_situation(group_id, can_write=can_write)
+    facts = MentionFacts(
+        mode=mode, attachment_request=decide_visibility("attachments/upload_request", help_context).visible,
+        unanswered=situation.unanswered, current_run=situation.current_run,
+        question_policy=bool(question_policy.text(token.get("issued_to"), group_id)),
+        live_commands=in_app,
+    )
+    values = dict(
+        token=raw_token, base_url=api_base, flow_id=group_id,
+        flow_name=display_names.flow_name(group_id, _group_title(group_id)) or group_id,
+        doc_id=doc_id, after_seq=window["after_seq"], through_seq=through_seq,
+        idempotency_key=token_id, display_name=provider, probe=encoding_probe.probe_for(token_id),
+    )
+    material_labels = {
+        "ko": ("작업 이름 요청", "이미지 전달 안내", f"이미지 {image_count}장은 복사 경로로 전달되지 않습니다."),
+        "en": ("Task name request", "Image delivery", f"The copy path does not deliver {image_count} image(s)."),
+        "ja": ("作業名の依頼", "画像の受け渡し", f"コピー経由では画像{image_count}枚は送られません。"),
+    }
+    localized = {}
+    for lang, (title, image_title, image_note) in material_labels.items():
+        request = first_names_hooks.title_request(group_id, lang, "chat", doc_id)
+        materials = [f"## {title}\n{request}"] if request else []
+        if image_count:
+            materials.append(f"## {image_title}\n{image_note}")
+        localized[lang] = {"materials": "\n\n".join(materials)}
+    text = compose([], kind="chat", locale=loc, unanswered=situation.unanswered,
+                   can_write=can_write, mention=dict(facts=facts, values=values,
+                                                      context=help_context, localized_values=localized))
+    _, spec = terminal_prompt.split(text)
+    if not spec or "mention" not in spec:
+        return None
+    if in_app:
+        image_context["locale"] = spec["locale"]
+        return message_image_delivery.ConversationMention(text, image_context)
+    return terminal_prompt.finalize(text)
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -349,22 +428,7 @@ def build_conversation_mention(
     window = chat_doc_settings_service.context_window(
         user_id, doc_id, settings, head_seq_of=conversation_turns.current_head_seq,
     )
-    after_seq, folded = window["after_seq"], window["folded"]
-    window_query = ""
-    if window.get("through_seq") is not None:
-        window_query += f"&through_seq={window['through_seq']}"
-    if window.get("limit") is not None:
-        window_query += f"&limit={window['limit']}"
     api_base = api_base_url.rstrip("/")
-    display_name = provider or "<your model name>"
-    payload_lines = [
-        "{",
-        '  "body": "<your reply>",',
-        f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
-        '  "based_on_seq": <the head_seq you got from your last read>,',
-        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
-        "}",
-    ]
     # an edit-mode chat names its commit; FlowGate commits at the run end.
     can_write = source_access == "read_write"
     if one_shot_claimed is None:
@@ -375,6 +439,29 @@ def build_conversation_mention(
             from modules.flow_gate.db import user_chat_source_access
             claim = user_chat_source_access.get(user_id, project, group_name) or {}
             one_shot_claimed = claim.get("one_shot_token_id") == token_id
+    compact = _compact_chat_mention(
+        doc_id=doc_id, group_id=group_name, token_id=token_id, raw_token=raw_token,
+        api_base=api_base, locale=locale, source_access=source_access, command_access=command_access,
+        one_shot_claimed=one_shot_claimed, provider=provider, in_app=command_execution, window=window,
+    )
+    if compact is not None:
+        return compact
+
+    after_seq, folded = window["after_seq"], window["folded"]
+    window_query = ""
+    if window.get("through_seq") is not None:
+        window_query += f"&through_seq={window['through_seq']}"
+    if window.get("limit") is not None:
+        window_query += f"&limit={window['limit']}"
+    display_name = provider or "<your model name>"
+    payload_lines = [
+        "{",
+        '  "body": "<your reply>",',
+        f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
+        '  "based_on_seq": <the head_seq you got from your last read>,',
+        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
+        "}",
+    ]
     if can_write:
         payload_lines[-2] += ","
         payload_lines.insert(-1, '  "commit_message": "<required when the flow worktree has uncommitted changes: see below>"')

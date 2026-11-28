@@ -1,0 +1,25 @@
+{
+  "locale": "ja",
+  "title": "会話からコマンドを実行",
+  "summary": "実行に接続された会話から、現在のFlowの作業フォルダーでコマンドを実行します。APIの接続先は `run_command` を使います。",
+  "purpose": "実行に接続された会話から、現在のFlowの作業フォルダーでコマンドを実行します。APIの接続先は `run_command` を使います。",
+  "request": {
+    "submit": "{{route:chat.commands}}",
+    "fields": "`program` は実行ファイル名、`args` は個別の引数の配列、`cwd` は作業フォルダーからの相対パスです。例の `timeout_seconds` は実行制限、`wait_seconds` は初回応答の待機時間です。シェル構文やインラインスクリプトは利用できません。",
+    "example": {
+      "program": "pytest",
+      "args": [
+        "-q",
+        "server/tests/test_example.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "wait_seconds": 60
+    }
+  },
+  "response": {
+    "poll": "{{route:chat.command}}",
+    "details": "`terminal=false` の場合は同じBearerで `wait=60` を付けて照会し、`terminal=true` まで確認します。結果には状態、終了コード、出力、タイムアウトと却下の情報が含まれます。コマンド要求はトークンを消費しません。"
+  },
+  "errors": "ユーザーの方針に従い、実行・承認待ち・却下になります。却下は回答で伝え、同じ要求を繰り返さないでください。実行モードでは許可された参照・テスト・ビルドのコマンドを利用できます。ファイルを変更するコマンドは `chat_command_execute_mode_denied` になります。"
+}

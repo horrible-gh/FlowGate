@@ -4,7 +4,7 @@
   "summary": "UTF-8 파일을 사용해 대화와 문서 본문을 전송합니다.",
   "purpose": "UTF-8 파일을 사용해 대화와 문서 본문을 전송합니다.",
   "request": {
-    "transport": "아래 토큰별 probe를 파일의 마지막 줄에 넣고 파일을 읽어 ASCII 이스케이프된 JSON으로 전송합니다. `body_chars`와 `body_sha256`을 보낼 때에는 probe를 포함한 같은 파일로 계산합니다.",
+    "transport": "아래 토큰별 probe를 파일의 마지막 줄에 넣고 파일을 읽어 ASCII 이스케이프된 JSON으로 전송합니다. `body_chars`와 `body_sha256`을 보낼 때에는 probe를 포함한 같은 파일로 계산합니다. 원격 CLI에서는 멘션에 적힌 주소와 Bearer를 사용합니다. 현재 작업 디렉터리에 UTF-8 파일을 만들고 스크립트에서 파일을 읽습니다. 본문과 probe를 명령줄이나 콘솔 파이프로 전달하지 않습니다.",
     "probe": "{{probe}}"
   },
   "response": "정상 probe는 저장 전에 제거되고 손상 휴리스틱을 건너뜁니다.",
