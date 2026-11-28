@@ -6,7 +6,7 @@
   "request": {
     "search": "{{route:question.search}}?q=<keyword>&limit=10",
     "detail": "{{route:question.search_item}}",
-    "details": "question/policy를 적용하고 사용자 판단이 필요한 때 검색합니다. 리터럴 단어 OR이며 관련도순입니다. 다음 페이지는 같은 프로젝트·검색어·버전의 next_cursor를 사용합니다. next_before_id는 순위 기준점입니다."
+    "details": "question/policy를 적용하고 사용자 판단이 필요한 때 검색합니다. 리터럴 단어 OR이며 관련도순입니다. 다음 페이지는 같은 프로젝트·검색어·버전의 next_cursor를 사용합니다. next_before_id는 순위 기준점입니다. 이번 토큰에 바인딩된 문서는 {{doc_id}}입니다. 이 문서 번호를 요청 경로에 사용합니다."
   },
   "response": "행에는 answer_id, doc_id, seq, title, author_label, score, matched_terms, answer_preview가 있습니다. 상세 응답에서 전문과 출처를 읽고 현재 지시·방침에 맞는 기존 답변을 사용합니다. HTTP 200 reused_answer 및 continue_with_existing_answer는 새 질의 없이 진행하라는 뜻입니다.",
   "errors": "409 existing_answer_requires_reason이면 답변을 쓰거나 rejected_answer_id와 reuse_rejection_reason을 적어 다시 등록합니다. 직접 일괄 등록은 이 거절에서 원자적으로 중단됩니다. 문서와 함께 등록하는 경우 문서는 유지되고 item_results에 결과가 나옵니다."

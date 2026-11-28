@@ -1,8 +1,7 @@
 {
   "locale": "ko",
-  "status": "pending",
-  "title": "card.edit",
-  "summary": "멘션 템플릿 작성 대기",
-  "purpose": "호출 값 조립",
-  "body": "{{task_block}}\n{{token}}\n{{flow_name}}\n{{doc_id}}\n{{workspace}}\n{{route:help.index}}\n{{help_first}}\n{{help_more}}\n{{materials}}"
+  "title": "편집",
+  "summary": "소스를 조회·수정하고 결과를 문서로 제출합니다. TR은 자체 검증을 사용합니다.",
+  "purpose": "이번 호출 값",
+  "body": "{{task_block}}\n\n## 편집\n소스를 조회·수정하고 결과를 문서로 제출합니다. TR은 자체 검증을 사용합니다.\n\n## 이번 호출 값\nAuthorization: Bearer {{token}}\n플로우: {{flow_name}} · {{flow_id}}\n카드: {{card_ref}}\n대상 문서: {{doc_id}} · {{doc_type}} · {{doc_title}}\n리비전: {{revision_no}}\n제출 동작: {{submit_action}}\n기대 리비전: {{expected_revision}}\n수정 사유: {{edit_reason}}\n반려 식별자: {{rejection_ref}}\n새 문서 머리 값: {{next_header}}\n참조 문서: {{reference_doc_ids}}\n자체 검증: {{self_check}}\n작업 위치: {{workspace}}\nprobe: {{probe}}\n\n## 헬프\n{{route:help.index}}\n먼저 읽기: {{help_first}}\n필요할 때: {{help_more}}\n\n{{materials}}"
 }

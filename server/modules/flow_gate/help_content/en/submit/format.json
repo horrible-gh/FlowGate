@@ -50,9 +50,11 @@
     "encoding": {
       "line": "{{probe}}",
       "reference": "conversation/encoding",
-      "fields": "body_sha256"
-    }
+      "fields": "body_chars, body_sha256"
+    },
+    "remote_cli": "For remote CLI, write the complete body (including review JSON where applicable) to a UTF-8 file in the current working directory. Read it into content and compute body_chars and body_sha256 from that same file. Remote CLI uses content instead of doc_path.",
+    "rejected_edit": "With edit_reason=rejected, provide a nonempty rejection_response separate from content. Carry through the rejection_id or review_id supplied in the mention."
   },
   "response": "Use dry_run=true to validate without registering. Inspect change_summary on save.",
-  "errors": "On revision conflict reread the latest body. On invalid_commit_message check the TR message format. For encoding refusal see conversation/encoding."
+  "errors": "On revision conflict reread the latest body. On invalid_commit_message check the TR message format. For encoding refusal see conversation/encoding. A blank rejection_response is rejected with 422 and an unresolved rejection target with 409."
 }

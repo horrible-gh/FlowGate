@@ -1,11 +1,12 @@
 """Short migration checks; no deployment activation and no real credentials."""
 import io
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from modules.flow_gate.services import terminal_prompt as terminal
+from modules.flow_gate.services import mention_service, terminal_prompt as terminal
 from modules.flow_gate.services.help import loader
 from modules.flow_gate.services.prompt_blocks import mention, mention_transition
 from modules.flow_gate.services.prompt_blocks.compose import compose
@@ -14,13 +15,100 @@ from modules.flow_gate.services.prompt_blocks.matrix import MentionFacts, select
 
 @pytest.mark.parametrize("mode", mention.MODES)
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])
-def test_disabled_is_byte_identical_and_assets_pending(mode, locale):
+def test_disabled_is_byte_identical(mode, locale):
     kind = "chat" if mode.startswith("chat.") else "first_write"
     legacy = compose(["opaque {doc_id}", "資料"], kind=kind, locale=locale)
     result = mention.render_mention(legacy, facts=MentionFacts(mode, kind), values={}, context={}, locale=locale)
     assert result.text == legacy
     assert result.fallback_reason == "switch_disabled"
+
+@pytest.mark.parametrize("mode", [mode for mode in mention.MODES if mode.startswith("chat.")])
+@pytest.mark.parametrize("locale", ("ko", "en", "ja"))
+def test_chat_assets_pending(mode, locale):
     assert loader.load_mention(mode, locale)[0] is None
+
+
+@pytest.mark.parametrize("mode", ("card.read", "card.edit"))
+@pytest.mark.parametrize("locale", ("ko", "en", "ja"))
+def test_card_asset_contract(mode, locale):
+    asset, applied, reasons = loader.load_mention(mode, locale)
+    assert applied == locale and not reasons
+    body = asset["body"]
+    assert body.startswith("{{task_block}}\n")
+    assert body.count("{{task_block}}") == 1
+    assert body.endswith("{{materials}}")
+    spec = loader.definition("mention/" + mode)
+    routes = loader.read_json("routes")
+    values = {name: "value-" + name for name in spec["required"]}
+    values["base_url"] = "https://example.invalid/api/v1"
+    values["materials"] = "{{token}} 原文"
+    text = mention.render_body(body, spec, values, routes)
+    assert text.startswith(values["task_block"] + "\n")
+    assert text.endswith(values["materials"])
+    assert values["doc_id"] in text
+    assert "GET https://example.invalid/api/v1/help" in text
+    for name in spec["required"]:
+        with pytest.raises(loader.HelpContentError, match="missing_values:" + name):
+            mention.render_body(body, spec, {k: v for k, v in values.items() if k != name}, routes)
+
+
+@pytest.mark.parametrize("mode,tool_kind", (("card.read", "read"), ("card.edit", "read_write")))
+def test_card_builder_provider_materials_and_locale_fallback(monkeypatch, mode, tool_kind):
+    from modules.flow_gate.db import groups
+    from modules.flow_gate.services import encoding_probe, tr_self_check_quota
+    from modules.flow_gate.services.help import visibility
+
+    context = {"tool_kind": tool_kind, "group_id": "flowgate.v02test.0107"}
+    monkeypatch.setattr(visibility, "resolve_context", lambda token, locale, base: context)
+    monkeypatch.setattr(visibility, "decide_visibility", lambda *args: SimpleNamespace(visible=False))
+    monkeypatch.setattr(groups, "get_by_id", lambda *args: {"title": "Flow"})
+    monkeypatch.setattr(encoding_probe, "probe_for", lambda token_id: "probe-" + token_id)
+    monkeypatch.setattr(tr_self_check_quota, "token_notice", lambda token, lang: "check-" + lang)
+    monkeypatch.setattr(mention_service, "_first_card_names", lambda *args: "")
+    read_json = loader.read_json
+    rollout = {}
+    monkeypatch.setattr(loader, "read_json", lambda name, root=None:
+                        rollout if name == "mention_rollout" else read_json(name, root))
+    token = {"token_id": "test-id", "action_scope": "edit", "doc_ref": "doc-123"}
+    legacy = compose("legacy body", kind="rework", locale="en")
+
+    def build_input():
+        return mention_service._card_mention_input(
+            token, "test-token", "https://example.invalid/api/v1", "en", "rework", "TR",
+            "doc-123", "TR", "Original document", "edit", ["ref-456"], 0,
+            "rejected", "rejection_id=test-rejection", None, False, False, None,
+            {"reason": "original {{token}} reason"}, None, [],
+        )
+
+    assert build_input() is None
+    rollout[mode] = {"enabled": True}
+    data = build_input()
+    assert data["context"] is context
+    assert data["facts"].mode == mode
+    assert data["values"]["expected_revision"] == 0
+    assert data["values"]["probe"] == "probe-test-id"
+    def select(facts, ctx, locale):
+        assert ctx is context
+        return (*select_mention(facts), "ko")
+    monkeypatch.setattr(mention, "help_selection", select)
+    assert mention.render_mention(legacy, **data, locale="en").text == legacy
+    first, more = select_mention(data["facts"])
+    rollout[mode]["verification"] = {
+        "mode": mode, "token_mode": mode, "checked_at": "now", "passed": True,
+        "items": {name: {"visible": True, "response": True, "context": True}
+                  for name in set(first + more + transition_leaves(mode))},
+    }
+    result = mention.render_mention(legacy, **data, locale="en")
+    assert result.fallback_reason is None
+    assert result.locale == "ko" and result.language_reasons
+    _, task = terminal.split(result.text)
+    decorated = mention_service.add_card_materials(task, "Start-time {{workspace}} material")
+    prompt = terminal.finalize(mention.provider_prompt(decorated, "provider-workspace"))
+    assert prompt.startswith("## 지금 할 일\n")
+    assert "provider-workspace" in prompt
+    assert "doc-123" in prompt and "ref-456" in prompt
+    assert ("check-ko" in prompt) == (mode == "card.edit")
+    assert prompt.endswith("Start-time {{workspace}} material\n\n## 반려 사유\n---\noriginal {{token}} reason")
 
 
 def test_optional_lines_zero_and_opaque_original():

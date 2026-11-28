@@ -50,9 +50,11 @@
     "encoding": {
       "line": "{{probe}}",
       "reference": "conversation/encoding",
-      "fields": "force_encoding_reason"
-    }
+      "fields": "body_chars, body_sha256"
+    },
+    "remote_cli": "リモート CLI では、現在の作業ディレクトリに完全な本文（該当する場合はレビュー JSON を含む）を UTF-8 で保存します。同じファイルを読み込んで content に設定し、body_chars と body_sha256 を計算します。リモート CLI では doc_path を使いません。",
+    "rejected_edit": "差し戻し対応では、本文とは別に空欄でない rejection_response が必要です。メンションにある rejection_id または review_id をそのまま送信します。"
   },
   "response": "dry_run=trueは登録せず検証します。保存応答のchange_summaryを確認します。",
-  "errors": "リビジョン競合時は最新本文を読み直します。invalid_commit_messageではTRメッセージ形式を、文字コード拒否ではconversation/encodingを確認します。"
+  "errors": "リビジョン競合時は最新本文を読み直します。invalid_commit_messageではTRメッセージ形式を、文字コード拒否ではconversation/encodingを確認します。 rejection_response が空欄なら 422、差し戻し対象が確認できなければ 409 が返ります。"
 }

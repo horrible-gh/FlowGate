@@ -50,9 +50,11 @@
     "encoding": {
       "line": "{{probe}}",
       "reference": "conversation/encoding",
-      "fields": "body_chars"
-    }
+      "fields": "body_chars, body_sha256"
+    },
+    "remote_cli": "원격 CLI에서는 현재 작업 디렉터리의 UTF-8 파일에 전체 본문(검수 JSON 포함)을 작성합니다. 파일을 읽어 요청의 content에 넣고 같은 파일에서 body_chars와 body_sha256을 계산합니다. 원격 CLI에서는 doc_path를 사용하지 않습니다.",
+    "rejected_edit": "반려 반영에는 본문과 별도로 비어 있지 않은 rejection_response가 필요합니다. 멘션이 제공한 rejection_id 또는 review_id를 그대로 전송합니다."
   },
   "response": "dry_run=true면 등록하지 않고 검증합니다. 저장 응답의 change_summary를 확인합니다.",
-  "errors": "리비전 충돌이면 최신 본문을 다시 읽습니다. invalid_commit_message이면 TR 메시지 형식을 확인합니다. 인코딩 거절은 conversation/encoding을 확인합니다."
+  "errors": "리비전 충돌이면 최신 본문을 다시 읽습니다. invalid_commit_message이면 TR 메시지 형식을 확인합니다. 인코딩 거절은 conversation/encoding을 확인합니다. 빈 rejection_response는 422, 반려 대상이 일치하지 않으면 409로 거절됩니다."
 }
