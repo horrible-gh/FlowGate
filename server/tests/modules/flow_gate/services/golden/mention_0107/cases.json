@@ -37,7 +37,7 @@
         "self_check": "60s / 10"
       },
       "workspace": "/workspace/example",
-      "chars": 1231,
+      "chars": 1218,
       "max_chars": 1295
     },
     {
@@ -74,7 +74,7 @@
         "doc_type": "D"
       },
       "workspace": "/workspace/example",
-      "chars": 1073,
+      "chars": 1060,
       "max_chars": 1137
     },
     {
@@ -245,7 +245,7 @@
         "self_check": "60s / 10"
       },
       "workspace": "/workspace/example",
-      "chars": 909,
+      "chars": 896,
       "max_chars": 973
     },
     {
@@ -282,7 +282,7 @@
         "doc_type": "D"
       },
       "workspace": "/workspace/example",
-      "chars": 788,
+      "chars": 775,
       "max_chars": 852
     },
     {
@@ -453,7 +453,7 @@
         "self_check": "60s / 10"
       },
       "workspace": "/workspace/example",
-      "chars": 909,
+      "chars": 896,
       "max_chars": 973
     },
     {
@@ -490,7 +490,7 @@
         "doc_type": "D"
       },
       "workspace": "/workspace/example",
-      "chars": 789,
+      "chars": 776,
       "max_chars": 853
     },
     {

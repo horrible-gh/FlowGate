@@ -25,7 +25,7 @@ probe: fg-probe:golden-𠮷
 ## ヘルプ
 GET https://example.invalid/flowgate/api/v1/help
 最初に読む項目: notices, submit/format, submit/changed_files, documents/access
-必要に応じて読む項目: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, cards/state, submit/self_check, attachments/upload_request
+必要に応じて読む項目: documents/partial, documents/unreadable, attachments/read, question/register, question/precheck, source_tools, submit/self_check, attachments/upload_request
 
 ## 資料
 ---

@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from ..help import loader
-from .mention import MODES, unresolved_context
+from .mention import MODES, probe_covers, unbound_for, unresolved_context
 from .matrix import transition_leaves
 
 
@@ -20,7 +20,7 @@ def verify_transition(mode, token_mode, base_url, raw_token, requirements, *, ti
     """
     record = {"mode": mode, "token_mode": token_mode,
               "checked_at": datetime.now(timezone.utc).isoformat(), "passed": False, "items": {}}
-    if mode not in MODES or mode != token_mode or not requirements:
+    if mode not in MODES or not probe_covers(token_mode, mode) or not requirements:
         record["reason"] = "mode_mismatch_or_empty_requirements"
         return record
     if not set(transition_leaves(mode)).issubset(requirements):
@@ -46,7 +46,7 @@ def verify_transition(mode, token_mode, base_url, raw_token, requirements, *, ti
             response_body = payload.get("content") or payload.get("children")
             values = tuple(loader.strings(response_body))
             row["response"] = bool(response_body) and all(any(fragment in value for value in values) for fragment in fragments)
-            row["context"] = not unresolved_context(name, response_body)
+            row["context"] = not unresolved_context(name, response_body, unbound_for(mode))
         except HTTPError as exc:
             row["reason"] = "http_" + str(exc.code)
         except (URLError, TimeoutError, ValueError, OSError):
