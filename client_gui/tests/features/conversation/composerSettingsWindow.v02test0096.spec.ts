@@ -2,6 +2,7 @@
 // one prop), last place / size / tab remembered, always inside the viewport, and the AI tab's saves.
 // F96-8: the height follows the content unless resized by hand, and the 대화 tab saves each change at once.
 import { flushPromises, mount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
@@ -144,24 +145,187 @@ describe('⚙ settings window (v02test.0096 ④)', () => {
     w.unmount()
   })
 
-  it('AI tab: picks this chat\'s AI, manages 📌 pins and saves my repeat limit at once', async () => {
-    const api = await import('@/features/conversation/api')
+  it('AI tab: 고정한 AI / 채팅 최대 시간 / 제목 짓기 AI and 📌 pins; no 이 대화의 AI or 최대 반복 (F108-6)', async () => {
     const w = mountSettings()
     await w.get('[data-test="conv-settings-btn"]').trigger('click')
     await w.findAll('[role="tab"]')[2].trigger('click')
     await flushPromises()
-    await w.get('[data-test="conv-setting-ai"]').setValue('p2')
-    expect(w.emitted('select-provider')?.[0]).toEqual(['p2'])
+    const ai = w.get('[data-test="conv-ai-settings"]')
+    expect(ai.findAll('.cas-label, .csx-label').map((l) => l.text())).toEqual(['고정한 AI', '채팅 최대 시간', '제목 짓기 AI'])
+    expect(w.find('[data-test="conv-setting-ai"]').exists()).toBe(false)
+    expect(w.find('[data-test="conv-setting-repeat-decrease"]').exists()).toBe(false)
+    const text = w.get('[data-test="conv-settings"]').text()
+    for (const gone of ['이 대화의 AI', '최대 반복', '타임아웃', '시스템']) expect(text).not.toContain(gone)
     await w.get('[data-test="conv-setting-pin-add"]').setValue('p1')
     expect(w.findAll('[data-test="conv-setting-pins"] li').map((li) => li.attributes('data-provider-id'))).toEqual(['p1'])
     await w.get('[data-test="conv-setting-pin-remove"]').trigger('click')
     expect(w.find('[data-test="conv-setting-pins"]').exists()).toBe(false)
-    expect(w.find('[data-test="conv-setting-repeat-system"]').exists()).toBe(false)
-    expect(w.get('[data-test="conv-settings"]').text()).not.toContain('시스템')
-    await w.get('[data-test="conv-setting-repeat-decrease"]').trigger('click')
+    w.unmount()
+  })
+})
+
+describe('⚙ 명령 실행 제한 / 채팅 최대 시간 (v02test.0108 F108-6)', () => {
+  const num = (w: ReturnType<typeof mountSettings>, key: string) => w.get(`[data-test="conv-setting-${key}-value"]`).element as HTMLInputElement
+  const unit = (w: ReturnType<typeof mountSettings>, key: string) => w.get(`[data-test="conv-setting-${key}-unit"]`).element as HTMLSelectElement
+  const lastPatch = (w: ReturnType<typeof mountSettings>) => {
+    const saves = w.emitted('save') as [Record<string, unknown>, (ok: boolean) => void][]
+    return saves[saves.length - 1][0]
+  }
+  async function open(w: ReturnType<typeof mountSettings>, tabIndex = 0) {
+    await w.get('[data-test="conv-settings-btn"]').trigger('click')
+    await w.findAll('[role="tab"]')[tabIndex].trigger('click')
     await flushPromises()
-    expect(api.saveMyAiPrefs).toHaveBeenCalledWith({ repeat_count_max: 4 })
-    expect(w.get('[data-test="conv-setting-repeat-value"]').text()).toBe('4')
+  }
+
+  it('대화 tab: 명령 실행 제한 starts at [5][분] with 제한 없음 · 시간 · 분 · 초; the old 타임아웃 row is gone', async () => {
+    const w = mountSettings()
+    await open(w)
+    expect(w.find('[data-test="conv-setting-timeout"]').exists()).toBe(false)
+    expect(w.get('[data-test="conv-setting-command-limit-row"]').text()).toContain('명령 실행 제한')
+    expect([...unit(w, 'command-limit').options].map((o) => o.text)).toEqual(['제한 없음', '시간', '분', '초'])
+    expect(num(w, 'command-limit').value).toBe('5')
+    expect(unit(w, 'command-limit').value).toBe('minute')
+    expect(w.get('[data-test="conv-settings"]').text()).not.toContain('타임아웃')
+    w.unmount()
+  })
+
+  it('AI tab: 채팅 최대 시간 starts at [—][제한 없음] with the number box disabled', async () => {
+    const w = mountSettings()
+    await open(w, 2)
+    expect(unit(w, 'chat-limit').value).toBe('none')
+    expect(num(w, 'chat-limit').disabled).toBe(true)
+    expect(num(w, 'chat-limit').placeholder).toBe('—')
+    expect(num(w, 'chat-limit').value).toBe('')
+    w.unmount()
+  })
+
+  it('a unit pick saves the number × the new unit at once (1 from 제한 없음); 제한 없음 saves 0 / null', async () => {
+    const w = mountSettings()
+    await open(w)
+    await w.get('[data-test="conv-setting-command-limit-unit"]').setValue('second')
+    expect(lastPatch(w)).toMatchObject({ command_timeout_seconds: 5 })
+    ;(w.emitted('save')!.at(-1) as [unknown, (ok: boolean) => void])[1](true)
+    await w.get('[data-test="conv-setting-command-limit-unit"]').setValue('none')
+    expect(lastPatch(w)).toMatchObject({ command_timeout_seconds: 0 })
+    expect(num(w, 'command-limit').disabled).toBe(true)
+    ;(w.emitted('save')!.at(-1) as [unknown, (ok: boolean) => void])[1](true)
+    await w.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    await w.get('[data-test="conv-setting-chat-limit-unit"]').setValue('hour')
+    expect(lastPatch(w)).toMatchObject({ timeout_seconds: 3600 })
+    expect(num(w, 'chat-limit').value).toBe('1')
+    w.unmount()
+  })
+
+  it('a typed number saves on Enter, out-of-range values are pulled to the nearest end, Esc puts the value back', async () => {
+    const w = mountSettings()
+    await open(w)
+    const input = w.get('[data-test="conv-setting-command-limit-value"]')
+    await input.setValue('90')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(lastPatch(w)).toMatchObject({ command_timeout_seconds: 1800 })
+    expect(num(w, 'command-limit').value).toBe('30')
+    expect(unit(w, 'command-limit').value).toBe('minute')
+    ;(w.emitted('save')!.at(-1) as [unknown, (ok: boolean) => void])[1](false)
+    await w.vm.$nextTick()
+    expect(num(w, 'command-limit').value).toBe('5')
+    const saves = w.emitted('save')!.length
+    await input.setValue('12a')
+    expect(num(w, 'command-limit').value).toBe('12')
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(num(w, 'command-limit').value).toBe('5')
+    expect(w.find('[data-test="conv-settings"]').exists()).toBe(true)
+    await input.setValue('0')
+    await input.trigger('blur')
+    expect(w.emitted('save')!.length).toBe(saves)
+    expect(num(w, 'command-limit').value).toBe('5')
+    w.unmount()
+  })
+
+  it('reopens a stored value in the largest unit that divides it, and keeps both rows disabled for an unsaved chat', async () => {
+    const w = mountSettings({ settings: { ...DEFAULT_CHAT_SETTINGS, commandTimeoutSeconds: 90, timeoutSeconds: 604800 } })
+    await open(w)
+    expect([num(w, 'command-limit').value, unit(w, 'command-limit').value]).toEqual(['90', 'second'])
+    await w.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    expect([num(w, 'chat-limit').value, unit(w, 'chat-limit').value]).toEqual(['168', 'hour'])
+    w.unmount()
+    const z = mountSettings({ settings: { ...DEFAULT_CHAT_SETTINGS, commandTimeoutSeconds: 0 }, timeoutEnabled: false })
+    await open(z)
+    expect(unit(z, 'command-limit').value).toBe('none')
+    expect(unit(z, 'command-limit').disabled).toBe(true)
+    await z.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    expect(unit(z, 'chat-limit').disabled).toBe(true)
+    z.unmount()
+  })
+
+  // Review rej_01M8H1QY7FT8KQFR
+  it('a unit pick pulled back to the shown unit puts the select back ([30][분] → 시간 stays [30][분], no save)', async () => {
+    const w = mountSettings({ settings: { ...DEFAULT_CHAT_SETTINGS, commandTimeoutSeconds: 1800 } })
+    await open(w)
+    expect([num(w, 'command-limit').value, unit(w, 'command-limit').value]).toEqual(['30', 'minute'])
+    await w.get('[data-test="conv-setting-command-limit-unit"]').setValue('hour')
+    await w.vm.$nextTick()
+    expect(w.emitted('save')).toBeUndefined()
+    expect([num(w, 'command-limit').value, unit(w, 'command-limit').value]).toEqual(['30', 'minute'])
+    w.unmount()
+  })
+
+  it('a typed number too big to be exact is still pulled to the upper end', async () => {
+    const w = mountSettings()
+    await open(w)
+    const input = w.get('[data-test="conv-setting-command-limit-value"]')
+    await input.setValue('9007199254740992')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(lastPatch(w)).toMatchObject({ command_timeout_seconds: 1800 })
+    expect([num(w, 'command-limit').value, unit(w, 'command-limit').value]).toEqual(['30', 'minute'])
+    ;(w.emitted('save')!.at(-1) as [unknown, (ok: boolean) => void])[1](true)
+    await input.setValue('9'.repeat(400))
+    await input.trigger('blur')
+    expect(lastPatch(w)).toMatchObject({ command_timeout_seconds: 1800 })
+    expect(num(w, 'command-limit').value).toBe('30')
+    w.unmount()
+  })
+
+  it('an invalid typed context number does not hold back 명령 실행 제한 / 채팅 최대 시간 (only the times are sent)', async () => {
+    const w = mountSettings()
+    await open(w)
+    const settle = () => {
+      const saves = (w.emitted('save') ?? []) as [unknown, (ok: boolean) => void][]
+      saves.forEach(([, done]) => done(true))
+    }
+    await w.get('[data-test="conv-setting-context"]').setValue('custom')
+    settle()
+    await w.get('[data-test="conv-setting-turns"]').setValue('')
+    await w.get('[data-test="conv-setting-turns"]').trigger('change')
+    expect(w.find('[data-test="conv-setting-turns-error"]').exists()).toBe(true)
+    const before = (w.emitted('save') ?? []).length
+    await w.get('[data-test="conv-setting-command-limit-unit"]').setValue('second')
+    expect(w.emitted('save')!.length).toBe(before + 1)
+    expect(lastPatch(w)).toEqual({ command_timeout_seconds: 5 })
+    settle()
+    await w.findAll('[role="tab"]')[2].trigger('click')
+    await flushPromises()
+    await w.get('[data-test="conv-setting-chat-limit-unit"]').setValue('hour')
+    expect(w.emitted('save')!.length).toBe(before + 2)
+    expect(lastPatch(w)).toMatchObject({ timeout_seconds: 3600 })
+    expect('send_action' in lastPatch(w)).toBe(false)
+    expect('context_turns' in lastPatch(w)).toBe(false)
+    w.unmount()
+  })
+
+  it('a failed save redraws the confirmed settings, including a time the server already stored', async () => {
+    const settings = reactive({ ...DEFAULT_CHAT_SETTINGS })
+    const w = mountSettings({ settings })
+    await open(w, 2)
+    await w.get('[data-test="conv-setting-chat-limit-unit"]').setValue('hour')
+    expect(lastPatch(w)).toMatchObject({ timeout_seconds: 3600 })
+    // The session kept the chat's stored time (its own PATCH passed) while /me/chat-settings failed.
+    settings.timeoutSeconds = 3600
+    ;(w.emitted('save')!.at(-1) as [unknown, (ok: boolean) => void])[1](false)
+    await w.vm.$nextTick()
+    expect([num(w, 'chat-limit').value, unit(w, 'chat-limit').value]).toEqual(['1', 'hour'])
     w.unmount()
   })
 })

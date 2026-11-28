@@ -1,8 +1,8 @@
 <template>
   <!-- ⚙ and the settings window (flowgate.v02test.0096 ④): a modeless window floating near the composer, so the chat
        stays readable and usable while it is open. It moves by its title bar, resizes by its corner, never leaves the
-       screen and reopens at its last place, size and tab (localStorage). Tabs: 대화 (send action, context, timeout),
-       음성 (this person's voice input settings) and AI (this chat's AI, 📌 pins, my repeat limit and title AI) — every
+       screen and reopens at its last place, size and tab (localStorage). Tabs: 대화 (send action, context, 명령 실행 제한),
+       음성 (this person's voice input settings) and AI (📌 pins, 채팅 최대 시간 and title AI) — every
        tab saves a change at once (F96-8: no 취소 / 저장 any more; a failed 대화 save puts the confirmed values back and
        the session shows the error toast). The height follows the open tab unless the person resized the window; all
        three tabs draw the same row (label left, value right, shared through the --csx-* variables below). A press
@@ -91,42 +91,36 @@
                 </div>
               </div>
             </div>
-            <label class="csx-row">
-              <span class="csx-label">{{ t('gui.conversation.settings.timeout') }}</span>
-              <select v-model="draftTimeout" :disabled="timeoutEnabled === false" class="csx-select" data-test="conv-setting-timeout" @change="commit">
-                <option value="none">{{ t('gui.conversation.settings.timeout_none') }}</option>
-                <option v-for="n in [30, 60, 120, 240]" :key="n" :value="String(n)">{{ t('gui.conversation.settings.timeout_minutes', { n }) }}</option>
-                <option value="custom">{{ t('gui.conversation.settings.context_custom') }}</option>
-              </select>
-            </label>
-            <div v-if="draftTimeout === 'custom'" class="csx-row csx-sub">
-              <span></span>
-              <div>
-                <input
-                  v-model="draftTimeoutText"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="off"
-                  class="csx-select csx-num"
-                  :class="{ 'is-invalid': !timeoutValid }"
-                  data-test="conv-setting-timeout-minutes"
-                  :aria-label="t('gui.conversation.settings.timeout')"
-                  :aria-invalid="!timeoutValid"
-                  @change="commit"
-                  @keydown.enter.prevent="commit"
-                />
-                <div v-if="!timeoutValid" class="csx-err" role="alert">{{ t('gui.conversation.settings.timeout_invalid') }}</div>
-              </div>
+            <!-- F108-6: 명령 실행 제한 — how long one command the AI runs may take (1초~30분 or 제한 없음). -->
+            <div class="csx-row" data-test="conv-setting-command-limit-row">
+              <span class="csx-label">{{ t('gui.conversation.settings.command_limit') }}</span>
+              <ComposerDurationInput
+                :model-value="commandLimitShown"
+                :min="COMMAND_LIMIT_MIN"
+                :max="COMMAND_LIMIT_MAX"
+                :disabled="timeoutEnabled === false"
+                :label="t('gui.conversation.settings.command_limit')"
+                data-test="conv-setting-command-limit"
+                @update:model-value="onCommandLimit"
+              />
             </div>
           </div>
           <ComposerVoiceSettings v-else-if="tab === 'voice'" />
-          <ComposerAiSettings
-            v-else
-            :providers="providers"
-            :selected-id="selectedProviderId"
-            :disabled="disabled"
-            @select-provider="(id) => emit('select-provider', id)"
-          />
+          <ComposerAiSettings v-else :providers="providers">
+            <!-- F108-6: 채팅 최대 시간 — between 고정한 AI and 제목 짓기 AI (1분~7일 or 제한 없음). -->
+            <div class="csx-row" data-test="conv-setting-chat-limit-row">
+              <span class="csx-label">{{ t('gui.conversation.settings.chat_limit') }}</span>
+              <ComposerDurationInput
+                :model-value="draftChatLimit"
+                :min="CHAT_LIMIT_MIN"
+                :max="CHAT_LIMIT_MAX"
+                :disabled="timeoutEnabled === false"
+                :label="t('gui.conversation.settings.chat_limit')"
+                data-test="conv-setting-chat-limit"
+                @update:model-value="onChatLimit"
+              />
+            </div>
+          </ComposerAiSettings>
         </div>
       </div>
       <div class="csx-grip" data-test="conv-settings-resize" aria-hidden="true" @pointerdown.stop="win.startResize" @dblclick="win.resetSize"></div>
@@ -139,6 +133,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type DeepReadonly } fr
 import { useI18n } from 'vue-i18n'
 import Tabs, { type TabItem, type TabOrientation } from '../../components/ui/Tabs.vue'
 import ComposerAiSettings from './ComposerAiSettings.vue'
+import ComposerDurationInput from './ComposerDurationInput.vue'
 import ComposerVoiceSettings from './ComposerVoiceSettings.vue'
 import { useFloatingWindow } from './floatingWindow'
 import type { ChatProvider, ChatSettings, ChatSettingsPatch, SendAction } from './types'
@@ -151,18 +146,25 @@ const props = withDefaults(defineProps<{
   saving: boolean
   hasProviders: boolean
   disabled?: boolean
+  /** false = a new chat not saved yet: 명령 실행 제한 and 채팅 최대 시간 (per-chat values) are disabled. */
   timeoutEnabled?: boolean
-  /** The AI tab's "이 대화의 AI": the chat's AI list and the AI picked now. */
+  /** The chat's AI list (the AI tab's 📌 pins and title AI choices). */
   providers?: readonly ChatProvider[]
-  selectedProviderId?: string
   /** Tab placement: a row on top (default) or a column on the left — one prop to switch. */
   tabOrientation?: TabOrientation
-}>(), { disabled: false, timeoutEnabled: undefined, providers: () => [], selectedProviderId: '', tabOrientation: 'horizontal' })
+}>(), { disabled: false, timeoutEnabled: undefined, providers: () => [], tabOrientation: 'horizontal' })
 
 const emit = defineEmits<{
   save: [patch: ChatSettingsPatch, done: (ok: boolean) => void]
-  'select-provider': [providerId: string]
 }>()
+
+// F108-6 server contract (per-chat settings): command_timeout_seconds null = not set (shown as 300초), 0 = 제한 없음,
+// 1~1800; timeout_seconds null = 제한 없음, 60~604800.
+const COMMAND_LIMIT_DEFAULT = 300
+const COMMAND_LIMIT_MIN = 1
+const COMMAND_LIMIT_MAX = 1800
+const CHAT_LIMIT_MIN = 60
+const CHAT_LIMIT_MAX = 604800
 
 const { t } = useI18n()
 
@@ -219,9 +221,20 @@ function close(): void {
   open.value = false
   win.onClose()
 }
-const draftTimeout = ref('none')
-const draftTimeoutText = ref('120')
-const timeoutValid = computed(() => draftTimeout.value !== 'custom' || (/^\d+$/.test(draftTimeoutText.value) && Number(draftTimeoutText.value) >= 1 && Number(draftTimeoutText.value) <= 10080))
+// 명령 실행 제한 in the server's form (0 = 제한 없음) and 채팅 최대 시간 (null = 제한 없음), both in seconds.
+const draftCommandLimit = ref(COMMAND_LIMIT_DEFAULT)
+const commandLimitShown = computed(() => (draftCommandLimit.value === 0 ? null : draftCommandLimit.value))
+const draftChatLimit = ref<number | null>(null)
+
+function onCommandLimit(seconds: number | null): void {
+  draftCommandLimit.value = seconds ?? 0
+  commit()
+}
+
+function onChatLimit(seconds: number | null): void {
+  draftChatLimit.value = seconds
+  commit()
+}
 const draftSendAction = ref<SendAction>('none')
 // A preset's number as text, 'custom' ("사용자 입력"), 'all' or 'checkpoint' ("체크포인트 사용").
 const draftRange = ref('20')
@@ -257,9 +270,8 @@ function toggleSettings(): void {
 
 /** The 대화 tab shows the last server-confirmed settings (on open, and after a failed save). */
 function resetDrafts(): void {
-  const minutes = props.settings.timeoutMinutes ?? null
-  draftTimeout.value = minutes == null ? 'none' : [30, 60, 120, 240].includes(minutes) ? String(minutes) : 'custom'
-  draftTimeoutText.value = String(minutes ?? 120)
+  draftCommandLimit.value = props.settings.commandTimeoutSeconds ?? COMMAND_LIMIT_DEFAULT
+  draftChatLimit.value = props.settings.timeoutSeconds ?? null
   draftSendAction.value = props.settings.sendAction
   // A saved number that is not a preset reopens as "사용자 입력" with that number filled in.
   draftRange.value =
@@ -284,11 +296,19 @@ function onRangeChange(event: Event): void {
 
 /**
  * The 대화 tab's values as a patch, or null when they are what the server already holds. Same shape as the former
- * 저장: send_action and the context always, timeout_minutes only when it changed. Never context_turns with 'all' /
+ * 저장: send_action and the context always, timeout_seconds / command_timeout_seconds only when they changed. Never context_turns with 'all' /
  * 'checkpoint' (L0010 §2-7-4: the kept number must survive).
+ * While the typed context number is not valid, only the two times are sent (when they changed): 명령 실행 제한 and
+ * 채팅 최대 시간 still save at once, and send action / context wait for a valid number as before.
  */
 function buildPatch(): ChatSettingsPatch | null {
   const s = props.settings
+  if (!turnsValid.value) {
+    const times: ChatSettingsPatch = {}
+    if (draftChatLimit.value !== (s.timeoutSeconds ?? null)) times.timeout_seconds = draftChatLimit.value
+    if (draftCommandLimit.value !== (s.commandTimeoutSeconds ?? COMMAND_LIMIT_DEFAULT)) times.command_timeout_seconds = draftCommandLimit.value
+    return Object.keys(times).length ? times : null
+  }
   const patch: ChatSettingsPatch = { send_action: draftSendAction.value }
   let sameContext: boolean
   if (draftRange.value === 'checkpoint_recent') {
@@ -303,9 +323,9 @@ function buildPatch(): ChatSettingsPatch | null {
     patch.context_turns = Number(draftRange.value === 'custom' ? draftTurnsText.value.trim() : draftRange.value)
     sameContext = s.contextMode !== 'all' && s.contextMode !== 'checkpoint' && s.contextMode !== 'checkpoint_recent' && s.contextTurns === patch.context_turns
   }
-  const timeout = draftTimeout.value === 'none' ? null : Number(draftTimeout.value === 'custom' ? draftTimeoutText.value : draftTimeout.value)
-  if (timeout !== (s.timeoutMinutes ?? null)) patch.timeout_minutes = timeout
-  const unchanged = sameContext && patch.send_action === s.sendAction && !('timeout_minutes' in patch)
+  if (draftChatLimit.value !== (s.timeoutSeconds ?? null)) patch.timeout_seconds = draftChatLimit.value
+  if (draftCommandLimit.value !== (s.commandTimeoutSeconds ?? COMMAND_LIMIT_DEFAULT)) patch.command_timeout_seconds = draftCommandLimit.value
+  const unchanged = sameContext && patch.send_action === s.sendAction && !('timeout_seconds' in patch) && !('command_timeout_seconds' in patch)
   return unchanged ? null : patch
 }
 
@@ -313,9 +333,11 @@ function buildPatch(): ChatSettingsPatch | null {
 let inFlight = false
 let queued = false
 
-/** A finished pick or typed value of the 대화 tab: saved at once when every value is valid (the old rules). */
+/**
+ * A finished pick or typed value of the 대화 or AI tab, saved at once. An invalid typed context number only holds back
+ * send action and context (buildPatch); the two times are saved regardless.
+ */
 function commit(): void {
-  if (!turnsValid.value || !timeoutValid.value) return
   if (inFlight) {
     queued = true
     return
