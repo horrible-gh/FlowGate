@@ -159,6 +159,12 @@ function publish(read: CapabilityRead, seq: number, data: unknown, options: { ke
   const next = toCurrentUser(data)
   if (!next && options.keepWhenUnreadable) return undefined
   if (!setSystemCapabilities(parseCapabilities(unwrap(data)?.capabilities), read)) return undefined
+  // The same answer again (a permission refresh that found nothing new) keeps the object, so screens watching
+  // `user` do not re-run for nothing.
+  if (next && current.value && JSON.stringify(next) === JSON.stringify(current.value)) {
+    status.value = 'ready'
+    return current.value
+  }
   current.value = next
   status.value = 'ready'
   return next
