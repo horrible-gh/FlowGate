@@ -202,18 +202,19 @@ def main() -> None:
     progress.sent = 0
     selector = selectors.DefaultSelector()
     selector.register(sys.stdin.buffer, selectors.EVENT_READ)
-    deadline = time.monotonic() + payload["timeout_seconds"]
+    timeout_seconds = payload["timeout_seconds"]
+    deadline = None if timeout_seconds == 0 else time.monotonic() + timeout_seconds
     reason = None
     try:
         while not _leader_exited(proc):
             progress.flush()
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 reason = "timeout"
                 break
             if allowed is not None and _widened(proc, leader_start, allowed, run_id):
                 reason = "cpu_limit"
                 break
-            events = selector.select(min(.2, max(0, deadline - time.monotonic())))
+            events = selector.select(.2 if deadline is None else min(.2, max(0, deadline - time.monotonic())))
             if events:
                 command = sys.stdin.buffer.readline()
                 reason = "cancel" if command.strip() == b"cancel" else "server_lost"

@@ -371,7 +371,7 @@ def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Eve
             thread.start()
         timed_out = False
         try:
-            proc.wait(timeout=timeout_seconds)
+            proc.wait(timeout=None if timeout_seconds == 0 else timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
             control.cancel()
@@ -393,7 +393,7 @@ def wait(control: ProcessControl, timeout_seconds: int, cancelled: threading.Eve
             if isinstance(count, int) and not isinstance(count, bool) and count > progress.total:
                 progress.add(count - progress.total)
         progress.flush()
-        proc.wait(timeout=timeout_seconds + 10)
+        proc.wait(timeout=None if timeout_seconds == 0 else timeout_seconds + 10)
         if result.get("event") != "result":
             raise OwnershipError("selfcheck_process_owner_unavailable")
         return ExecutionResult(result.get("exit_code"), bool(result.get("timed_out")),

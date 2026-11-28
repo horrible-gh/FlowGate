@@ -27,7 +27,8 @@ from modules.flow_gate.services import chat_settings_service
 
 _log = logging.getLogger(__name__)
 
-PATCH_FIELDS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind", "timeout_minutes")
+PATCH_FIELDS = ("provider_id", "context_checkpoint_seq", "context_checkpoint_kind", "timeout_minutes",
+                "timeout_seconds", "command_timeout_seconds")
 CHECKPOINT_KINDS = store.CHECKPOINT_KINDS
 CHECKPOINT_KIND_DEFAULT = store.CHECKPOINT_KIND_DEFAULT
 
@@ -47,6 +48,8 @@ def _view(row: Optional[dict]) -> dict:
     return {
         "provider_id": row.get("provider_id"),
         "timeout_minutes": row.get("timeout_minutes"),
+        "timeout_seconds": row.get("timeout_seconds"),
+        "command_timeout_seconds": row.get("command_timeout_seconds"),
         "context_checkpoint_seq": row.get("context_checkpoint_seq"),
         "context_checkpoint_kind": row.get("context_checkpoint_kind", "timeout_minutes"),
         "updated_at": row.get("updated_at"),
@@ -119,6 +122,19 @@ def save_settings(user_id: str, doc_id: str, patch: dict, *, project_id: Optiona
         if minutes is not None and (type(minutes) is not int or not 1 <= minutes <= 10080):
             raise ChatDocSettingsError("timeout_minutes", "timeout_minutes must be null or an integer from 1 to 10080.")
         values["timeout_minutes"] = minutes
+        values["timeout_seconds"] = minutes * 60 if minutes is not None else None
+    if "timeout_seconds" in patch:
+        seconds = patch["timeout_seconds"]
+        if seconds is not None and (type(seconds) is not int or not 60 <= seconds <= 604800):
+            raise ChatDocSettingsError("timeout_seconds", "timeout_seconds must be null or an integer from 60 to 604800.")
+        # Seconds take precedence when both the new and compatibility fields are sent.
+        values["timeout_seconds"] = seconds
+        values["timeout_minutes"] = (seconds + 59) // 60 if seconds is not None else None
+    if "command_timeout_seconds" in patch:
+        seconds = patch["command_timeout_seconds"]
+        if seconds is not None and (type(seconds) is not int or not 0 <= seconds <= 1800):
+            raise ChatDocSettingsError("command_timeout_seconds", "command_timeout_seconds must be null or an integer from 0 to 1800.")
+        values["command_timeout_seconds"] = seconds
     if "provider_id" in patch:
         values["provider_id"] = _validate_provider(patch["provider_id"], project_id, user_id)
     if "context_checkpoint_seq" in patch:
