@@ -6,7 +6,6 @@
       :extra-tabs="extraTabs"
       mode="page"
       @update:tab="onTabChange"
-      @providers-changed="onProvidersChanged"
     >
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
@@ -63,7 +62,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
@@ -119,9 +119,8 @@ function onTabChange(newTab: AiManageTab) {
 }
 
 // Evaluation and groups list the usable AI, so they are reloaded after an edit in the list.
-function onProvidersChanged() {
-  if (loaded.value) void loadData()
-}
+useAiProvidersChanged(() => { void loadData() })
+onScopeDispose(() => { requestEpoch += 1 })
 
 async function loadData() {
   const epoch = ++requestEpoch

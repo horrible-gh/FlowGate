@@ -12,6 +12,7 @@
 // Two stages (0033-D §3.4, §3.5, §8): S1 / S2 fields missing from git/status = stage 1, the
 // interim behaviour on the existing contract; present = stage 2. The choice is made per answer,
 // from the fields alone — there is no version negotiation.
+import { subscribeAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, inject, reactive, readonly, type ComputedRef, type DeepReadonly, type InjectionKey } from 'vue'
 import { randomUuid } from '@shared/utils/uuid'
 import type { FlowAiActivity, FlowRef, ProjectGitPendingRow, ProjectGitStatus } from '@/features/project'
@@ -626,17 +627,24 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
     }
   }
 
+  let providerRequest = 0
+  const stopProviderChanges = subscribeAiProvidersChanged(() => {
+    if (disposed) return
+    providersFor = null
+    ensureProviders()
+  })
   async function loadProviders(myCtx: number, projectId: string): Promise<void> {
     if (providersFor === projectId) return
     providersFor = projectId
+    const request = ++providerRequest
     try {
       const providers = await src().fetchProviders(projectId)
-      if (myCtx !== ctx || disposed) return
+      if (myCtx !== ctx || disposed || request !== providerRequest) return
       state.providers = providers
     } catch {
       // No list = no default AI: reject stays disabled with its reason (§3.7). Asked again
       // the next time the review card is read.
-      if (myCtx === ctx) providersFor = null
+      if (myCtx === ctx && request === providerRequest) providersFor = null
     }
   }
 
@@ -1197,6 +1205,7 @@ export function createGitSession(options: GitSessionOptions = {}): GitSession {
   }
 
   function dispose(): void {
+    stopProviderChanges()
     disposed = true
     ctx += 1
   }

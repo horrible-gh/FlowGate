@@ -49,6 +49,7 @@
 //   [제출] (`submit`, workPlanSubmitState: never with unsaved edits) is the existing server path — on the open card the
 //   card line write of its plan line (cardLineWrite, no body: the card's own draft is registered with the node's token),
 //   on a rejected plan `mark_revised`; then the opener reads its Flow again and the plan is read again.
+import { subscribeAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import {
   cardLineErrorOf,
@@ -499,6 +500,21 @@ export function useWorkPlanEditor(options: WorkPlanEditorOptions): WorkPlanEdito
     } finally {
       // A later read (or the window closing) owns the flag now.
       if (seq === generation) reloading.value = false
+    }
+  }
+
+  // Refresh only the registered choices: keep the draft, revision and any Step window edits.
+  let providerRequest = 0
+  sessionStops.add(subscribeAiProvidersChanged(() => { void refreshProviderChoices() }))
+  async function refreshProviderChoices(): Promise<void> {
+    const request = ++providerRequest
+    const docId = options.docId()
+    try {
+      const answer = toWorkPlanEditView(await workPlanEditRead(docId))
+      if (!alive.value || request !== providerRequest || options.docId() !== docId || !view.value) return
+      view.value = { ...view.value, registered: answer.registered }
+    } catch {
+      // Keep the draft and last usable choices when a background read fails.
     }
   }
 

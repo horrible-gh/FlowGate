@@ -1,5 +1,6 @@
 // Card merge state shared by the document row and its persistent modeless window.
 // Existing API actions and run updates remain the source of truth.
+import { useAiProvidersChanged } from '@shared/aiProvidersChanged'
 import { computed, inject, onBeforeUnmount, reactive, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   cardMergeAct,
@@ -145,6 +146,9 @@ export function useMerge(target: () => InspectorTarget | null, refresh?: () => v
   const hadWork = ref(false)
   let currentKey: string | null = null
   let ticket = 0
+  let providerRequest = 0
+  let disposed = false
+  useAiProvidersChanged(() => { void loadProviders() })
   let timer: ReturnType<typeof setInterval> | undefined
 
   function forget(key: string | null): void {
@@ -239,6 +243,7 @@ export function useMerge(target: () => InspectorTarget | null, refresh?: () => v
   )
 
   onBeforeUnmount(() => {
+    disposed = true
     clearInterval(timer)
     ++ticket
     forget(currentKey)
@@ -269,10 +274,14 @@ export function useMerge(target: () => InspectorTarget | null, refresh?: () => v
 
   async function loadProviders(): Promise<void> {
     const current = target()
-    if (!current || providers.value.length) return
+    if (!current || disposed) return
+    const request = ++providerRequest
     try {
-      providers.value = (await settingsChoicesRead(current.projectId)).providers
+      const choices = await settingsChoicesRead(current.projectId)
+      if (disposed || request !== providerRequest || target()?.projectId !== current.projectId) return
+      providers.value = choices.providers
     } catch {
+      if (disposed || request !== providerRequest) return
       providers.value = []
     }
   }

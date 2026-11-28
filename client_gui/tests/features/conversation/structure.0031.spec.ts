@@ -37,6 +37,8 @@ describe('features/conversation structure (flowgate.v02.0031)', () => {
         'ComposerSettings.vue',
         // flowgate.v02test.0096 ④: the ⚙ settings window's AI tab and the window's place / size / tab memory.
         'ComposerAiSettings.vue',
+        // flowgate.v02test.0108 F108-6: the [숫자][단위▾] time input of 명령 실행 제한 / 채팅 최대 시간.
+        'ComposerDurationInput.vue',
         'floatingWindow.ts',
         'ComposerSourceModes.vue',
         'ComposerToolsMenu.vue',
